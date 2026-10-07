@@ -1,0 +1,46 @@
+# CodeQL 静态分析（2026-10-05 开源前审查 · S-11）
+#
+# 为什么加它：本仓有大量"路径拼接 + 动态 import + ZIP 解压"的代码
+# （`panel/lib/next-page.js` 的资产白名单、`ext-install.js` 的解压、
+#  `plugin-host.js` 的动态 import）。人工审过一轮，但没人能保证以后不退化。
+# CodeQL 的 js/security-extended 查询组正好覆盖这些形状。
+#
+# ⚠️ 它**不替代**本项目的 `check-wb`：那套契约盯的是"接线在不在"，
+#    CodeQL 盯的是"数据流安不安全" —— 两件事，都要有。
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'   # 每周一早上，跑一次全量
+
+jobs:
+  analyze:
+    name: 分析
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write   # 结果要写回 Security 面板
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 初始化 CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      # 本仓零构建（直接跑 node src/index.js），不需要 autobuild
+      - name: 执行分析
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'

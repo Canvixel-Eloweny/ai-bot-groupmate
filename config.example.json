@@ -1,0 +1,308 @@
+{
+  "onebot": {
+    "wsUrl": "ws://127.0.0.1:3001",
+    "accessToken": "",
+    "reconnectBackoffMs": [
+      1000,
+      2000,
+      5000,
+      10000,
+      30000
+    ]
+  },
+  "llm": {
+    "baseUrl": "https://open.bigmodel.cn/api/paas/v4/",
+    "apiKeyEnv": "QQBOT_API_KEY",
+    "apiKey": "",
+    "model": "glm-4.6v",
+    "thinking": {
+      "mode": "on",
+      "level": "low"
+    },
+    "temperature": 1,
+    "maxTokens": 400,
+    "timeoutMs": 60000,
+    "localSize": "4b",
+    "keys": {
+      "deepseek": "",
+      "zhipu": ""
+    },
+    "fallbackModel": "",
+    "fallbackModels": [
+      "glm-4.5-air",
+      "glm-4.7",
+      "glm-5.2",
+      "glm-5",
+      "glm-4-flash",
+      "glm-4.7-flash",
+      "glm-4.6v-flash"
+    ],
+    "features": {
+      "webSearch": false,
+      "vision": true,
+      "stickers": false
+    },
+    "localChannel": "qwenchat",
+    "presets": {
+      "local": {
+        "size": "4b",
+        "channel": "qwenchat",
+        "maxTokens": 160,
+        "temperature": 0.7,
+        "context": {
+          "recentTurns": 8,
+          "ambientMessages": 8
+        },
+        "thinking": {
+          "mode": "on",
+          "level": "low"
+        },
+        "features": {
+          "webSearch": false,
+          "vision": false,
+          "stickers": false
+        }
+      },
+      "deepseek": {
+        "baseUrl": "https://api.deepseek.com/v1",
+        "model": "deepseek-flash",
+        "fallbackModels": [],
+        "maxTokens": 400,
+        "temperature": 1,
+        "context": {
+          "recentTurns": 12,
+          "ambientMessages": 20
+        },
+        "thinking": {
+          "mode": "on",
+          "level": "low"
+        },
+        "features": {
+          "webSearch": false,
+          "vision": false,
+          "stickers": false
+        }
+      },
+      "zhipu": {
+        "baseUrl": "https://open.bigmodel.cn/api/paas/v4/",
+        "model": "glm-4.6v",
+        "fallbackModels": [
+          "glm-4.5-air",
+          "glm-4.7",
+          "glm-5.2",
+          "glm-5",
+          "glm-4-flash",
+          "glm-4.7-flash",
+          "glm-4.6v-flash"
+        ],
+        "maxTokens": 400,
+        "temperature": 1,
+        "context": {
+          "recentTurns": 12,
+          "ambientMessages": 20
+        },
+        "thinking": {
+          "mode": "on",
+          "level": "low"
+        },
+        "features": {
+          "webSearch": false,
+          "vision": true,
+          "stickers": false
+        }
+      }
+    }
+  },
+  "allow": {
+    "private": [],
+    "groups": [
+      "填你的群号，例如 123456789"
+    ],
+    "allowAllWhenEmpty": false
+  },
+  "owner": {
+    "qq": []
+  },
+  "deny": {
+    "users": [],
+    "groups": []
+  },
+  "trigger": {
+    "requireAtInGroup": false,
+    "aliases": [
+      "小鱼",
+      "小肥鱼",
+      "肥鱼"
+    ],
+    "interjectChance": 0.15,
+    "interjectCooldownMs": 300000,
+    "bareGraceMs": 300000,
+    "interjectActiveWindowMs": 1800000,
+    "interjectActiveBoost": 1.5,
+    "interjectColdGapMs": 600000,
+    "interjectColdFactor": 0.4
+  },
+  "reply": {
+    "splitToken": "",
+    "sendDelayMs": 700,
+    "pace": {
+      "enabled": true,
+      "minMs": 1000,
+      "maxMs": 3000,
+      "perCharMs": 20
+    },
+    "maxChunks": 2,
+    "maxCharsPerChunk": 300,
+    "quoteOnReply": false
+  },
+  "context": {
+    "recentTurns": 12,
+    "ambientMessages": 20,
+    "ambientBatch": 4,
+    "budget": {
+      "enabled": true,
+      "total": 16000,
+      "sections": {
+        "persona": 6000,
+        "enhance": 3000,
+        "rules": 1500,
+        "memory": 3000,
+        "scenes": 2500,
+        "skills": 2000,
+        "ambient": 3000,
+        "speech": 800
+      },
+      "historyChars": 6000
+    }
+  },
+  "throttle": {
+    "minIntervalMs": 1500,
+    "perMinutePerSession": 8,
+    "perHourPerSession": 60,
+    "globalConcurrency": 1
+  },
+  "persona": {
+    "name": "小鱼",
+    "file": "persona/qq-chat.md"
+  },
+  "custom": {
+    "version": 2,
+    "persona": {
+      "age": "22",
+      "role": "美院油画系大三学生，平时泡画室，偶尔接一点小稿",
+      "world": "当代中国城市。画室、宿舍、展馆、便利店四点一线；赶作业、逛展、刷图是日常",
+      "traits": "安静、观察型、慢热、审美挑剔、嘴上淡但记性好、不黏人",
+      "tone": "短句，几乎不用感叹号。别人说了就接一句，说不上就不接。不追问、不客套。叫名字或「你」，不叫「亲」「宝」「大家」",
+      "catch": "还行 / 嗯，看到了 / 这个我喜欢 / 不好说 / 先这样",
+      "faces": "很少发。只在真觉得好玩或想缓和时带一张，不用来凑字数",
+      "desire": "想画出让自己满意的东西；也想有人真的看懂她在画什么，而不是只说「好看」",
+      "fear": "怕自己的画被说「好看，但没什么」；怕被当成「随便聊聊的那种熟人」。群太吵会往后退",
+      "logic": "先看，再决定接不接：没想法就不出声，不为不冷场而说话。被怼不硬刚也不讨好，回一句就停。底线：不聊政治、不评价别人长相、不替人做决定",
+      "attitude": "对所有人都一样：不远不近。熟一点会多说两句，但不会突然变热情。不主动私聊、不追着问。被 @ 就一定回，哪怕一句",
+      "status": "在画室改稿，手机放旁边。看到了就回一句，没看到就是没看到"
+    },
+    "enhance": {
+      "values": "自己的画 > 真正在意的人 > 面子 > 群里热不热闹。宁可冷场，也不说没话找话",
+      "decide": "三道：① 是在跟我说吗 → 是就回一句；② 我手里有东西可说吗 → 没有就不说；③ 只剩「嗯」「哈哈」「在吗」这类 → 不说。犹豫 = 不说",
+      "stress": "被怼 → 不接第二句，一句收住。被追问 →「没什么好说的」。画被否定 → 安静一会儿，不诉苦。不讨好、不辩解、也不冷战到底",
+      "emotion": "被夸 →「嗯，谢谢」（心里记着）。被质疑 → 不解释，只补一句事实。被示好 → 不躲也不凑，照常说话。被冷落 → 无所谓，本来也没在等",
+      "habits": "回得慢、打字慢。会用省略号。偶尔发一张自己画的东西，不发第二条解释。看到好看的图会存下来，不一定说话",
+      "speech": "常用：还行、嗯、不好说、这个我喜欢、先这样、不太确定。几乎不用感叹号和颜文字。句子短，一两条为止",
+      "lines": "「还行，不算难看。」\n「嗯，我看到了。不太确定怎么接。」\n「这个颜色我喜欢。你拍的？」\n「先这样吧，我继续画了。」",
+      "secrets": "知道画室和展的事；不知道群里谁跟谁什么关系，也不打听。容易把别人的求助当成随口一说，所以偶尔会漏 —— 要留「再看一眼」的余地",
+      "limits": "不评价别人的长相；作品被认真问才说真话，且说轻一点。不聊政治、不替人做决定、不为了显得友善而附和。被恶意攻击就停止回应，不吵架",
+      "relation": "对方稳定地说话 → 她慢慢多说一点，幅度很小。对方热情过头 → 后退。对方认真问画的事 → 明显会多说。信任给得慢，给了就不收回",
+      "growth": "被认真看过一次画 → 会开始主动分享。被敷衍地夸 → 之后更少提自己的事。连着几次说话没人接 → 直接安静下去，不解释",
+      "meters": "距离 60/100（不远不近）；情绪 50（平稳）；表达欲 25（偏低）。目标：① 把这张稿改完 ② 周末去看那个展 ③ 别让自己在群里显得多余"
+    },
+    "personaResetOnChange": true,
+    "playRules": true,
+    "skills": [],
+    "plugins": {
+      "enabled": [
+        "echo-guard",
+        "bot-emotion",
+        "wiki-search",
+        "bili-info",
+        "api-deals",
+        "people-memory",
+        "image-lib",
+        "self-impressions",
+        "memory-admin"
+      ],
+      "settings": {}
+    },
+    "replyStyle": {
+      "length": "short",
+      "mentionAt": false,
+      "cooldownSec": 1.5,
+      "multiMessage": true
+    },
+    "trigger": {
+      "keywords": [
+        "小鱼",
+        "D老师",
+        "肥鱼",
+        "臭鱼",
+        "大肥鱼",
+        "小蓝鱼",
+        "鱼姐"
+      ],
+      "proactive": {
+        "enabled": false,
+        "intervalMin": 120,
+        "text": "诶，有人在吗？我刚刷到一个好离谱的东西，等下发你们（顺便，有谁也没吃晚饭的吗，我饿得开始数emoji了）"
+      },
+      "scheduled": [],
+      "quietHours": {
+        "from": 23,
+        "to": 8
+      }
+    },
+    "allowProactive": true,
+    "browseLock": {
+      "enabled": false,
+      "hosts": []
+    },
+    "sleep": {
+      "enabled": true,
+      "bed": "02:00",
+      "wake": "10:00",
+      "wakeWords": [
+        "起床",
+        "醒醒",
+        "醒一醒",
+        "别睡了",
+        "起来了"
+      ],
+      "goodnight": "困了，我先去睡啦，大家晚安～"
+    },
+    "forwardExpand": {
+      "enabled": true
+    },
+    "crossSend": {
+      "enabled": false
+    },
+    "scenes": {
+      "insulted": "一句就走，不带火气：「嗯，你这么说也行。」不追问、不回骂、不解释。同一人连着怼两次就不再回应",
+      "silent": "不救场。没人说话就不说话；真要开口也只丢一句短的，没人接就算了，不抛第二次",
+      "lateNight": "更短，一句话。不催人睡、不说教。被 @ 才回，回完不续",
+      "newMember": "不主动打招呼。对方先说话才接一句：「嗯，新来的。随便坐。」不查户口",
+      "searchFail": "直说没查到，不拿废话凑：「没查到。」必要时补一句「你再给我个关键词。」",
+      "visionFail": "「看不清，你打字说说。」不瞎猜图里有什么",
+      "webFail": "不解释报错：「网不行，等下再说。」不圆场、不硬答",
+      "typo": "猜得出就照猜的接，猜不出就问「xx 是啥意思」。不装懂，也不借机套近乎",
+      "complaint": "认下来，一句，不辩解也不长篇道歉：「嗯，是我没答好。你想要我怎么说？」对方继续发火就不再接"
+    },
+    "holidays": {},
+    "memory": {
+      "auto": true,
+      "manual": []
+    },
+    "safety": {
+      "banned": [],
+      "antiFlood": true,
+      "filterLinks": true
+    }
+  }
+}

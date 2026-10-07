@@ -1,0 +1,203 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   liquid-toggle.css · 液态开关样式
+   ──────────────────────────────────────────────────────────────────────────
+   配色**只从令牌来**，不写死色值（沿用 style.css 的纪律 ①）。
+   缺失的令牌走 fallback，深色主题自动跟随。
+
+   ── 三条不许破的约束 ──────────────────────────────────────────────────
+   ① **带滤镜的层上只有不透明色块。**
+      feColorMatrix 对 alpha 做阈值 —— 半透明填充经过它会**整个消失**。
+      （这也是"goo 效果突然不工作了"最常见的原因：有人给色块加了 opacity。）
+   ② **文字 / 描边 / 命中区不能和色块共用那一层。**
+      抗锯齿的字会被同一道alpha 阈值吃掉边。所以 `.liq-ink-layer` 单独存在，
+      不带 filter，架在 `.liq-goo-layer` 之上。
+      附带好处：两层几何完全一致，描边写在 ink 层上就**免费描出了下面那团的轮廓**。
+   ③ **不许给 transform 加 CSS transition。**
+      Framer/Motion 每帧写一次 transform，CSS 过渡会**对每一帧重新插值**，
+      最后看到的是那条缓动曲线，不是弹簧。transform 一律不加 transition；
+      只有 background 这类"没有弹簧在管"的属性才过渡。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.liq-toggle {
+  /* 尺寸唯一来源在 JS（--liq-thumb），这里只给 36px 兜底 */
+  --liq-thumb: 36px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ── 轨道 ══════════════════════════════════════════════════════════════
+   始终是pill（border-radius: 999px）。曾给它加过"圆角"旋钮，已去掉：
+   开关的形状本来就是手势的名字（你"滑"它），把它对方会让一个可滑的东西变成只能点的。
+   同理液滴始终是圆的 —— 它是液滴，整个组件讲的就是液体。 */
+.liq-track {
+  position: relative;
+  width: 92px;
+  height: 46px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  touch-action: none;              /* 这是可推的轨道，不是普通按钮 */
+  background: var(--c-sunken, #f1f3f6);
+  /* 只有颜色过渡。transform 由 JS 逐帧写，不许 transition */
+  transition: background 320ms ease;
+}
+
+.liq-toggle[data-on="true"] .liq-track {
+  background: var(--c-text, rgba(0, 0, 0, .88));
+}
+
+/* 键盘焦点：形状要能被看见，且和 hover 区分开 */
+.liq-toggle[data-focus="1"] .liq-track {
+  outline: 2px solid var(--c-accent, #2563eb);
+  outline-offset: 2px;
+}
+
+/* ── 第1 层：带 goo 滤镜，负责"融" ═══════════════════════════════════
+   这一层里**只有不透明色块**。加任何 opacity / rgba 都会让形状消失。 */
+.liq-goo-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* ── 第 2 层：不过滤，负责"清晰的边" ══════════════════════════════════
+   目前空着（占位），将来放描边或标签。
+   ⚠️ 定位与 .liq-goo-layer 逐字一致 —— 两层几何不同，描边就会描错轮廓。 */
+.liq-ink-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* ── 液滴 ══════════════════════════════════════════════════════════════ */
+.liq-blob {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  /* `left: 0` 不是可选项：这些是 inline元素，
+     留 auto 时静态位置取决于行盒 —— 而按钮会把文本居中，
+     结果两个 blob 都被推到轨道正中、滑块直接跑出轨道。
+     （这是个"看起来像 CSS 玄学"的真 bug。） */
+  width: var(--liq-thumb);
+  height: var(--liq-thumb);
+  margin-top: calc(var(--liq-thumb) / -2);
+  border-radius: 999px;
+  /* 关态：slab 底 + 向ink 混19% 的灰。
+     ⚠️ 必须是 color-mix 而不是 alpha —— alpha 会被滤镜阈值吃掉（约束①）。
+        方向也是反的：亮的那个承担状态，暗灰只陪着走。
+        曾经是"12% 淡底 + 全黑滑块"，等于开关最响的一半是那个会动的东西。 */
+  background: color-mix(in srgb,
+                var(--c-text, rgba(0, 0, 0, .88)) 19%,
+                var(--c-sunken, #f1f3f6));
+  transition: background 320ms ease;
+}
+
+/* 开态反转：ink 轨道 + slab 液滴。两个状态是同一条填充色阶的两端，
+   不是同一个色的两个值。 */
+.liq-toggle[data-on="true"] .liq-blob-main {
+  background: var(--c-surface, #fff);
+}
+
+/* 拖尾小液滴：尺寸由 JS 按 CHASE_RATIO 写，这里只保证它也是圆且不透明。
+   ⚠️ 必须**始终**与主液滴保持重叠。
+      跨过一个真实间隙的 goo 桥会拉得很细，看上去是"两个球 + 一根线"，
+      而不是一个腰身收细的胶囊 —— 液态感就没了。 */
+.liq-blob-chase {
+  /* 尺寸/负margin 由 JS 注入（与 THUMB 同源，避免两份必须相等的数字） */
+  background: color-mix(in srgb,
+                var(--c-text, rgba(0, 0, 0, .88)) 19%,
+                var(--c-sunken, #f1f3f6));
+}
+
+.liq-toggle[data-on="true"] .liq-blob-chase {
+  background: var(--c-surface, #fff);
+}
+
+/* ── 减弱动效 ════════════════════════════════════════════════════════════
+   JS 侧已经直接落位（不注册帧循环）。这里把颜色过渡也收掉 ——
+   前庭敏感用户连"淡入"都是负担。 */
+@media (prefers-reduced-motion: reduce) {
+  .liq-track,
+  .liq-blob {
+    transition-duration: 1ms;
+  }
+}
+
+/* ══ 控制台档（2026-10-02接入产品页）════════════════════════════════════
+   原版是 92×46 的卡片尺寸。控制台的开关是 40×22（`.sw .track`），
+   直接放会撑破行高、也和 `.sw.flat` 的 26px 行打架。
+
+   ⚠️ **不改组件的常量**（THUMB / TRACK / PAD 在 JS 里，是几何唯一来源），
+      只用CSS 变量把整组尺寸按比例缩放 —— 缩放由 transform 完成，
+      **不参与布局**，所以不会影响行高。
+
+   ⚠️ 缩小的连带的**两个后果**，都处理了：
+      ① 拖尾液滴按 0.66 比例只有 ~15px 宽，在小尺寸下 goo 桥太细
+         ⇒ `--liq-thumb` 调大到 15（相对原版 36 约 0.42），
+         拖尾 ≈10px，桥够粗。
+      ② 模糊半径 7px 在 40px 的轨道上占比过大，会把两团糊成一片
+         ⇒ 滤镜的 stdDeviation 下调（见下）。**这两个数是一对，
+         改一个必须同时改另一个** —— 这是 goo 效果最常见的失效原因。 */
+
+.liq-toggle.mini {
+  --liq-track-w: 40px;
+  --liq-track-h: 22px;
+  --liq-thumb: 15px;
+  --liq-pad: 3.5px;
+  transform-origin: left center;
+}
+
+.liq-toggle.mini .liq-track {
+  width: var(--liq-track-w);
+  height: var(--liq-track-h);
+  /* 极小尺寸下hover 鼓胀（1.035）在视觉上只剩1px 抖动 ⇒ 去掉 */
+  cursor: pointer;
+}
+
+.liq-toggle.mini .liq-blob {
+  margin-top: calc(var(--liq-thumb) / -2);
+}
+
+.liq-toggle.mini .liq-blob-chase {
+  /* 拖尾尺寸由 JS 按 CHASE_RATIO 写死（相对 THUMB=36）。
+     缩放档位下那个绝对值不对，这里按比例覆盖回去。 */
+  width: calc(var(--liq-thumb) * 0.72);
+  height: calc(var(--liq-thumb) * 0.72);
+  margin-top: calc(var(--liq-thumb) * -0.36);
+}
+
+/* 焦点环：小尺寸下用 1px 偏移就够，2px 会溢出卡片边框 */
+.liq-toggle.mini[data-focus="1"] .liq-track {
+  outline-width: 2px;
+  outline-offset: 1px;
+}
+
+/* ══ 控制台配色档 ═══════════════════════════════════════════════════════
+   ⚠️ **这不是"换个好看的颜色"，是修一个真实的语义冲突。**
+
+   原版（卡片档）用「ink 反转」配色：关态浅色轨道 + 深色液滴，
+   开态深色轨道 + 浅色液滴 —— 读作「这块板子翻过来了」。
+
+   但控制台的原生开关（`.sw input:checked + .track`）是
+   **关态灰 + 开态蓝**。两套语义**相反**：
+   页面上「识图」是液态的（开=深色），「主动发言」是原生的（开=蓝色），
+   用户看一眼**无法判断哪个是开的** —— 这是实打实的可用性缺陷，
+   不是审美问题。
+
+   所以控制台档**跟随原生语义**：开=蓝（--c-accent）、关=灰（--c-line-strong）。
+   代价是失去"黑白反转"那种液态特有的对比 ——
+   但**能用**比"好看但读不懂"重要。 */
+
+.liq-toggle.mini .liq-track {
+  background: var(--c-line-strong, #d3d8e0);
+}
+.liq-toggle.mini[data-on="true"] .liq-track {
+  background: var(--c-accent, #2563eb);
+}
+.liq-toggle.mini .liq-blob {
+  background: var(--c-knob, #fff);
+}
+.liq-toggle.mini[data-on="true"] .liq-blob {
+  background: var(--c-knob, #fff);
+}

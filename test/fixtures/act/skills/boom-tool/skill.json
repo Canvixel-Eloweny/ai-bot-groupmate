@@ -1,0 +1,15 @@
+{
+  "id": "boom-tool",
+  "name": "setup 先注册工具再抛错",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "description": "setup 里先 registerTool 再抛错 —— 宿主必须把那个工具收回（否则模型的能力列表里会躺着幽灵工具）。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "permissions": [],
+  "requires": [],
+  "entry": "index.js",
+  "settings": {}
+}

@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>动效实验室 · 交互与动效判据</title>
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  动效实验室 · 判据的可视化（不是效果图集）
+  ───────────────────────────────────────────────────────────────────────────
+  配套文档：
+    · 判据正文  docs/MOTION-METHODOLOGY.md  §6「生动 = 状态被看见」/ §7 编排 / §8 适配
+    · 图解与决策版  docs/INTERACTION-MOTION-SPEC.html
+
+  本页把四条判据做成可直接玩的东西，每一块都标注**它验证的是哪一条**：
+    A 状态可视化  ← 来源 1「状态被画出来」
+    B 连续映射    ← 来源 2「它在序列里的哪一格」+ §8.3「一份契约、多个渲染器」
+    C 物理感      ← 来源 3「它从哪来到哪去」+ 判据③ 面积守恒 + 判据⑥ 三档阻尼
+    D 反例对照    ← 五条「不该动」的第 5 条「任何进场动画」
+
+  ⚠️ 纪律（与 control 台一致）：
+    · 不新写 rAF —— 全部走 window.Motion（一个 rAF 驱动全部）
+    · 不写死色值 —— 颜色只从下面的 --c-* 令牌来
+    · 零依赖、零构建、零服务 —— 双击本文件即可打开
+  ═══════════════════════════════════════════════════════════════════════════
+-->
+<style>
+  /* ── 令牌：与 style.css 的浅/深两块逐字一致（名字集合相等）─────────────
+     ⚠️ 刻意**不**重新发明颜色。控制台已有这套语义令牌，再抄一份色值
+        就多一个「深色下不一致」的漏点。页面走 file://，所以这里内联一份；
+        真接进面板时删掉本块（那里已加载 style.css）。 */
+  :root {
+    color-scheme: light;
+    --c-bg: #f5f6f8;   --c-surface: #ffffff;  --c-surface-2: #fafbfc; --c-sunken: #f1f3f6;
+    --c-hover: #f2f4f7; --c-line: #e7eaef;    --c-line-soft: #eef1f5; --c-line-strong: #d3d8e0;
+    --c-text: #101828; --c-text-2: #475467; --c-text-3: #667085;
+    --c-accent: #2563eb; --c-accent-weak: #eff5ff; --c-accent-line: #c3d7fd;
+    --c-on-accent: #ffffff;
+    --c-ok: #067647;   --c-ok-bg: #ecfdf3;   --c-ok-line: #abefc6;
+    --c-warn: #b54708; --c-warn-bg: #fffaeb; --c-warn-line: #fedf89;
+    --c-danger: #b42318; --c-danger-bg: #fef3f2; --c-danger-line: #fecdca;
+    --c-idle: #98a2b3;
+    --r-sm: 6px; --r1: 8px; --r2: 10px; --r3: 14px; --r-pill: 999px;
+    --t-xs: 11px; --t-sm: 12px; --t-md: 13px; --t-lg: 15px; --t-xl: 19px; --t-2xl: 24px;
+    --h-ctl: 32px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --dur: .16s; --ease: cubic-bezier(.4, 0, .2, 1);
+  }
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --c-bg: #0e1218; --c-surface: #151b23; --c-surface-2: #1a2129; --c-sunken: #10161d;
+    --c-hover: #1e262f; --c-line: #262f3a; --c-line-soft: #1f2731; --c-line-strong: #39434f;
+    --c-text: #e7ebf0; --c-text-2: #a9b2bf; --c-text-3: #7d8794;
+    --c-accent: #7aa2ff; --c-accent-weak: #141d2e; --c-accent-line: #2c3d5c;
+    --c-on-accent: #0e1218;
+    --c-ok: #47cd89; --c-ok-bg: #0d2b1d; --c-ok-line: #1c5c3c;
+    --c-warn: #fdb022; --c-warn-bg: #291a05; --c-warn-line: #5c3d09;
+    --c-danger: #f97066; --c-danger-bg: #2b1210; --c-danger-line: #5c2620;
+    --c-idle: #5a6472;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 24px 88px;
+    background: var(--c-bg); color: var(--c-text);
+    font: 400 var(--t-md)/1.6 var(--font);
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+  a { color: var(--c-accent); }
+  code {
+    font: 500 var(--t-sm)/1 var(--mono);
+    background: var(--c-sunken); padding: 2px 5px; border-radius: 4px;
+  }
+
+  header.hd { margin-bottom: 8px; }
+  .hd h1 { font-size: var(--t-2xl); line-height: 1.25; font-weight: 640; letter-spacing: -.01em; margin: 0 0 8px; }
+  .hd p { margin: 0 0 8px; color: var(--c-text-2); max-width: 74ch; }
+  .kicker { font-size: var(--t-xs); letter-spacing: .06em; text-transform: uppercase; color: var(--c-accent); font-weight: 700; }
+
+  /* 工具栏 */
+  .bar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 12px 0; margin-bottom: 20px;
+    background: var(--c-bg); border-bottom: 1px solid var(--c-line);
+  }
+  .bar .sp { flex: 1; }
+  .btn {
+    height: var(--h-ctl); padding: 0 13px;
+    font: 500 var(--t-md)/1 var(--font); color: var(--c-text);
+    background: var(--c-surface); border: 1px solid var(--c-line);
+    border-radius: var(--r1); cursor: pointer;
+    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+  }
+  .btn:hover { background: var(--c-hover); }
+  .btn[aria-pressed="true"] { background: var(--c-accent); color: var(--c-on-accent); border-color: var(--c-accent); }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 24px; padding: 0 9px; border-radius: var(--r-pill);
+    font-size: var(--t-xs); background: var(--c-sunken); color: var(--c-text-2);
+    border: 1px solid var(--c-line);
+  }
+  .badge i { width: 7px; height: 7px; border-radius: 50%; background: var(--c-idle); }
+  .badge.on i { background: var(--c-ok); }
+
+  /* 区块与卡片 */
+  section { margin-bottom: 34px; }
+  .sec-hd { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+  .sec-hd h2 { font-size: var(--t-xl); font-weight: 620; margin: 0; letter-spacing: -.01em; }
+  .sec-hd .tag {
+    font: 600 var(--t-xs)/1 var(--mono); padding: 4px 8px; border-radius: var(--r-sm);
+    background: var(--c-accent-weak); color: var(--c-accent); border: 1px solid var(--c-accent-line);
+  }
+  .sec-p { margin: 0 0 16px; color: var(--c-text-2); max-width: 78ch; }
+  .card {
+    background: var(--c-surface); border: 1px solid var(--c-line);
+    border-radius: var(--r3); padding: 18px 20px; margin-bottom: 14px;
+  }
+  .card h3 { margin: 0 0 4px; font-size: var(--t-lg); font-weight: 620; }
+  .card .hint { margin: 0 0 14px; color: var(--c-text-3); font-size: var(--t-sm); }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 14px; }
+  .lab { border: 1px solid var(--c-line-soft); border-radius: var(--r2); padding: 14px; background: var(--c-surface-2); }
+  .lab .cap2 { font-size: var(--t-sm); color: var(--c-text-3); margin-bottom: 10px; }
+
+  /* 旋钮 */
+  .knobs { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--c-line); }
+  .knob { display: flex; align-items: center; gap: 8px; font-size: var(--t-sm); color: var(--c-text-2); }
+  .knob input[type=range] { width: 116px; accent-color: var(--c-accent); }
+  .knob b { font-family: var(--mono); font-size: var(--t-sm); color: var(--c-text); min-width: 46px; text-align: right; }
+
+  /* A 区指标卡 */
+  .m { display: flex; align-items: center; gap: 12px; }
+  .m .lbl { font-size: var(--t-sm); color: var(--c-text-3); min-width: 58px; }
+  .m .num { font-family: var(--mono); font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+  .m .num.warn { color: var(--c-warn); }
+  .m .num.bad { color: var(--c-danger); }
+  .track { height: 10px; border-radius: var(--r-pill); background: var(--c-sunken); overflow: hidden; flex: 1; min-width: 90px; }
+  .track i { display: block; height: 100%; width: 0; border-radius: var(--r-pill); background: var(--c-ok); }
+  .bars { display: flex; align-items: flex-end; gap: 5px; height: 44px; }
+  .bars u { display: block; width: 12px; border-radius: 4px 4px 2px 2px; background: var(--c-accent); height: 4px; text-decoration: none; }
+  .stack { display: flex; height: 12px; border-radius: var(--r-sm); overflow: hidden; background: var(--c-sunken); }
+  .stack i { display: block; height: 100%; width: 0; }
+  .hide { display: none !important; }
+
+  /* B 区档位 */
+  .ticks { display: flex; align-items: flex-end; gap: 8px; height: 78px; padding: 0 2px; }
+  .ticks button {
+    flex: 1; min-width: 0; border: 0; padding: 0; cursor: pointer; background: transparent;
+    display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px;
+  }
+  .ticks b { display: block; width: 100%; border-radius: 5px 5px 3px 3px; background: var(--c-line-strong); height: 8px; }
+  .ticks button[aria-pressed="true"] b { background: var(--c-accent); }
+  .ticks span { font-size: var(--t-xs); color: var(--c-text-3); }
+  .ticks button[aria-pressed="true"] span { color: var(--c-accent); font-weight: 600; }
+  .seg { display: inline-flex; border: 1px solid var(--c-line); border-radius: var(--r1); overflow: hidden; }
+  .seg button {
+    height: var(--h-ctl); padding: 0 14px; border: 0; background: var(--c-surface);
+    font: 500 var(--t-md)/1 var(--font); color: var(--c-text-2); cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .seg button + button { border-left: 1px solid var(--c-line); }
+  .seg button[aria-pressed="true"] { background: var(--c-accent); color: var(--c-on-accent); }
+
+  /* C 区 */
+  .lane { position: relative; height: 40px; border-radius: var(--r1); background: var(--c-sunken); margin-bottom: 8px; }
+  .pill {
+    position: absolute; left: 0; top: 6px; width: 26px; height: 28px;
+    border-radius: var(--r-sm); background: var(--c-accent);
+  }
+  .dims { font-family: var(--mono); font-size: var(--t-xs); color: var(--c-text-3); }
+  .dot {
+    position: absolute; left: 0; top: 0; width: 36px; height: 36px; border-radius: 50%;
+    background: var(--c-accent); touch-action: none; cursor: grab;
+  }
+  .dot:active { cursor: grabbing; }
+  .grab { position: relative; height: 52px; border-radius: var(--r1); background: var(--c-sunken); padding: 8px; }
+  .grab .rail { position: absolute; left: 8px; right: 8px; top: 50%; height: 2px; background: var(--c-line-strong); }
+
+  /* D 区 */
+  .vs { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 14px; }
+  .verdict { display: flex; align-items: center; gap: 7px; font-weight: 620; font-size: var(--t-md); margin-bottom: 10px; }
+  .verdict.no { color: var(--c-danger); }
+  .verdict.yes { color: var(--c-ok); }
+  .stagger { opacity: 0; transform: translateY(10px); }
+  .stagger.play { animation: rise .5s var(--ease) forwards; }
+  @keyframes rise { to { opacity: 1; transform: none; } }
+
+  footer { margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--c-line); color: var(--c-text-3); font-size: var(--t-sm); }
+  @media (prefers-reduced-motion: reduce) { .stagger.play { animation-duration: 0s; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hd">
+  <span class="kicker">动效实验室 · 判据可视化</span>
+  <h1>交互与动效判据</h1>
+  <p>
+    这一页不是效果图集。每一块都在验证 <code>docs/MOTION-METHODOLOGY.md</code> 里的<strong>一条判据</strong>，
+    并且把能调的数做成旋钮。<br>
+    <strong>核心主张：生动 = 状态被看见，不是元素在动。</strong>
+    所以四块里只有 C 需要动效引擎 —— 另外三块的答案在数据层与映射层。
+  </p>
+</header>
+
+<div class="bar">
+  <button class="btn" id="theme" aria-pressed="false">深色</button>
+  <span class="badge" id="rmBadge"><i></i><span>reduced-motion</span></span>
+  <span class="badge" id="rafBadge"><i></i><span>活跃动画 <b id="rafN">0</b></span></span>
+  <span class="sp"></span>
+  <span style="font-size:var(--t-sm);color:var(--c-text-3)">零依赖 · 零构建 · 一个 rAF 驱动全部</span>
+</div>
+
+<!-- ══════════════ A · 状态可视化 ══════════════ -->
+<section>
+  <div class="sec-hd"><h2>A · 状态可视化</h2><span class="tag">来源 1 · 状态被画出来</span></div>
+  <p class="sec-p">
+    同一个数据。左列是"读出来"，右列是"看出来"。点「推一个新值」——
+    数字模式只看到数字跳变；形状模式会看到<strong>条长连续变化 + 阈值处颜色自己翻</strong>。
+    这就是来源 1：<strong>不用读数字就知道现在什么状态</strong>。
+  </p>
+
+  <div class="card">
+    <h3>同一份数据的两种呈现</h3>
+    <p class="hint">判据：这个动效属于「状态被画出来」—— 指得出，所以它成立。</p>
+    <div class="row">
+      <div class="lab">
+        <div class="cap2">数字模式（读）</div>
+        <div style="display:grid;gap:12px">
+          <div class="m"><span class="lbl">内存</span><span class="num" id="nA">0%</span></div>
+          <div class="m"><span class="lbl">情绪</span><span class="num" id="nB">0/0/0</span></div>
+          <div class="m"><span class="lbl">花费</span><span class="num" id="nC">¥0.00</span></div>
+        </div>
+      </div>
+      <div class="lab">
+        <div class="cap2">形状模式（看）</div>
+        <div style="display:grid;gap:14px">
+          <div class="m"><span class="lbl">内存</span><span class="track"><i id="bA"></i></span></div>
+          <div class="m"><span class="lbl">情绪</span><span class="bars">
+            <u id="bB0"></u><u id="bB1"></u><u id="bB2"></u><u id="bB3"></u>
+          </span><span class="dims" id="bBt"></span></div>
+          <div class="m" style="flex-direction:column;align-items:stretch;gap:6px">
+            <span class="stack"><i id="bC0"></i><i id="bC1"></i><i id="bC2"></i></span>
+            <span class="dims" id="bCt"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="knobs">
+      <button class="btn" id="pushA">推一个新值</button>
+      <div class="knob"><label for="kMem">内存阈值</label><input type="range" id="kMem" min="60" max="98" value="90"><b id="kMemV">90%</b></div>
+      <span style="font-size:var(--t-sm);color:var(--c-text-3)">条长映射到真实比例；过阈值时颜色自己翻 —— 颜色不靠文字说</span>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ B · 连续映射 ══════════════ -->
+<section>
+  <div class="sec-hd"><h2>B · 连续映射</h2><span class="tag">来源 2 · 它在序列里的哪一格</span></div>
+  <p class="sec-p">
+    「短 / 中 / 长」这种<strong>有序</strong>档位，用<strong>高度</strong>表达顺序 —— 顺序是看得见的，
+    而不是靠"哪个被选中了"去反推。<br>
+    把档位数拖到 2：它会<strong>自动退回分段控件</strong>，并说明原因（<code>MOTION-METHODOLOGY</code> §8.3）。
+    这不是两套代码 —— 是<strong>一份数据契约、两个渲染器</strong>。
+  </p>
+
+  <div class="card">
+    <h3>同一份 options，两种渲染器</h3>
+    <p class="hint" id="bNote">当前档位数 4 → 用 ticks（高度承载顺序）</p>
+    <div id="bHost"></div>
+    <div class="knobs">
+      <div class="knob"><label for="kOpts">档位数</label><input type="range" id="kOpts" min="2" max="7" value="4"><b id="kOptsV">4</b></div>
+      <div class="knob"><label for="kSegMin">退回阈值</label><input type="range" id="kSegMin" min="2" max="4" value="3"><b id="kSegMinV">3</b></div>
+      <span style="font-size:var(--t-sm);color:var(--c-text-3)">
+        为什么 2 档要退回：两档的高度差表达不了顺序，白占一行高度与一套指针逻辑
+      </span>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ C · 物理感 ══════════════ -->
+<section>
+  <div class="sec-hd"><h2>C · 物理感</h2><span class="tag">来源 3 · 它从哪来、到哪去</span></div>
+  <p class="sec-p">
+    这是<strong>唯一需要 <code>motion.js</code></strong> 的一块。
+    C1 验证判据⑥（三档阻尼的实测行为），C2 验证判据③（<strong>面积守恒</strong>的拉伸）。
+  </p>
+
+  <div class="card">
+    <h3>C1 · 三档阻尼，一起出发</h3>
+    <p class="hint">四种参数同时推进 220px。看它到不到位、有没有过冲 —— 以及"过冲 0.4%"到底是什么观感。<br>
+      ⚠️ 本块载入时会自动跑一次：<strong>这里是实验室，演示本身就是它的用途</strong>，不是给界面做的进场装饰 ——
+      产品页上同样的四根轨道不该有任何自动播放（见 D 区）。</p>
+    <div id="c1"></div>
+    <div class="knobs">
+      <button class="btn" id="go1">一起出发</button>
+      <span id="c1table" class="dims"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>C2 · 速度 → 形变（面积守恒）</h3>
+    <p class="hint">
+      拖那颗球。甩得越快它被拉得越长 —— 但同时按 <code>scaleY = 1/scaleX</code> 压扁，
+      <strong>乘起来恒等于 1</strong>。下面的实时读数就是证据。
+    </p>
+    <div class="grab" id="grab">
+      <span class="rail"></span>
+      <span class="dot" id="dot"></span>
+    </div>
+    <div class="knobs">
+      <span class="dims" id="c2read">拖动试一下</span>
+      <div class="knob"><label for="kDiv">速度除数</label><input type="range" id="kDiv" min="200" max="1400" step="50" value="600"><b id="kDivV">600</b></div>
+      <span style="font-size:var(--t-sm);color:var(--c-text-3)">
+        除数 1400 时峰值拉伸只有 1.039 —— 算术上存在、视觉上不可见。600 才是"恰好能看出来"
+      </span>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ D · 反例对照 ══════════════ -->
+<section>
+  <div class="sec-hd"><h2>D · 反例对照</h2><span class="tag">「不该动」第 5 条 · 任何进场动画</span></div>
+  <p class="sec-p">
+    两个<strong>一模一样</strong>的卡片：一个数据、一个开关。唯一的差别是<strong>怎么动</strong>。<br>
+    左边每次进页面都演一遍（<strong>指不出属于四来源的哪一条</strong>）；右边只在数据变时动（来源 1）。
+    点「重放进场动画」把左边的成本演给你看 —— 第三次你就知道为什么它是错的。
+  </p>
+
+  <div class="card">
+    <h3>装饰 vs 状态</h3>
+    <p class="hint">判据：一个动效必须能指出它属于四来源里的哪一条；指不出的就是装饰，删。</p>
+    <div class="vs">
+      <div class="lab">
+        <div class="verdict no">✗ 装饰性动效</div>
+        <div class="stagger" id="dec">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <span style="font-size:var(--t-md)">联网查询</span>
+            <span class="seg"><button aria-pressed="true">开</button><button aria-pressed="false">关</button></span>
+          </div>
+          <div class="bars"><u style="height:34px"></u><u style="height:18px"></u><u style="height:26px"></u><u style="height:12px"></u></div>
+        </div>
+        <div style="margin-top:12px;font-size:var(--t-sm);color:var(--c-text-3)">
+          进场动画 + 柱状图，但<strong>数据变了它不动</strong>
+        </div>
+      </div>
+      <div class="lab">
+        <div class="verdict yes">✓ 状态动效</div>
+        <div id="st">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <span style="font-size:var(--t-md)">联网查询</span>
+            <span class="seg" id="stSeg"><button data-v="1" aria-pressed="true">开</button><button data-v="0" aria-pressed="false">关</button></span>
+          </div>
+          <div class="bars" id="stBars"><u></u><u></u><u></u><u></u></div>
+        </div>
+        <div style="margin-top:12px;font-size:var(--t-sm);color:var(--c-text-3)">
+          无进场动画；<strong>开 / 关时柱高与颜色才变</strong>（来源 1）
+        </div>
+      </div>
+    </div>
+    <div class="knobs">
+      <button class="btn" id="replay">重放进场动画（左边）</button>
+      <button class="btn" id="flip">切换右边开关</button>
+      <span class="dims" id="flipInfo">已切换 0 次</span>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p style="margin:0 0 6px">
+    <strong>判据正文</strong>：<code>docs/MOTION-METHODOLOGY.md</code>（§6 生动 = 状态被看见 · §7 编排 · §8 适配）<br>
+    <strong>图解与决策版</strong>：<code>docs/INTERACTION-MOTION-SPEC.html</code> ·
+    <strong>委托新动效</strong>：<code>docs/MOTION-BRIEF.md</code><br>
+    <strong>姊妹实验室</strong>：<code>lab-liquid-toggle.html</code>（液态开关判据）· <code>lab-ticks.html</code>（刻度控件）
+  </p>
+  <p style="margin:0">
+    ⚠️ 本页必须与 <code>motion.js</code> 同目录，且 <code>&lt;script src="motion.js"&gt;</code> 要在内联脚本之前 ——
+    顺序反了会变成「零报错的空组件」。
+  </p>
+</footer>
+
+</div>
+
+<script src="motion.js"></script>
+<script>
+(function () {
+  'use strict';
+  var M = window.Motion;
+  if (!M) {
+    document.body.insertAdjacentHTML('afterbegin',
+      '<p style="color:#b42318;font-weight:600">motion.js 没加载（顺序反了或文件不在同目录）—— 本页全部效果都依赖它。</p>');
+    return;
+  }
+  var $ = function (id) { return document.getElementById(id); };
+  var clamp = M.clamp;
+
+  /* ── 工具栏：主题与两个状态徽章 ───────────────────────────────────── */
+  var theme = $('theme');
+  function setTheme(dark) {
+    if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
+    theme.setAttribute('aria-pressed', dark ? 'true' : 'false');
+    theme.textContent = dark ? '浅色' : '深色';
+  }
+  theme.addEventListener('click', function () {
+    setTheme(document.documentElement.getAttribute('data-theme') !== 'dark');
+  });
+  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) setTheme(true);
+
+  var rm = M.reducedMotion();
+  var rmBadge = $('rmBadge');
+  if (rm) { rmBadge.classList.add('on'); rmBadge.lastElementChild.textContent = 'reduced-motion：动效已降级为直接落位'; }
+  else rmBadge.lastElementChild.textContent = 'reduced-motion：未开启';
+
+  // 活跃动画数：非零说明还有帧在跑。这是"rAF 有没有泄漏"的唯一客观判据
+  var rafN = $('rafN'), rafBadge = $('rafBadge');
+  setInterval(function () {
+    var n = M.activeCount();
+    rafN.textContent = n;
+    rafBadge.classList.toggle('on', n > 0);
+  }, 200);
+
+  /* ══════════════ A · 状态可视化 ══════════════
+     判据来源 1。数字模式与形状模式读的是**同一份状态**，
+     差别只在「要不要把值接到几何上」。 */
+  var state = { mem: 87, mood: [47, 50, 0, 0], cost: [2.1, 0.9, 0.42] };
+  var memTh = 90;
+  var barW = M.motionValue(0);      // 内存条宽（%）
+  var memTxt = M.motionValue(0);    // 数字模式的数（跟着一起动，方便对比）
+
+  barW.on(function (v) { $('bA').style.width = v.toFixed(2) + '%'; });
+  memTxt.on(function (v) { $('nA').textContent = Math.round(v) + '%'; });
+  // 阈值色是**算出来的**，不是切换 class 写死的
+  function memColor(v) { return v >= 95 ? 'var(--c-danger)' : v >= memTh ? 'var(--c-warn)' : 'var(--c-ok)'; }
+  barW.on(function (v) { $('bA').style.background = memColor(v); });
+
+  function paintEmotion() {
+    var mx = Math.max.apply(null, state.mood) || 1;
+    state.mood.forEach(function (v, i) {
+      var h = Math.max(4, Math.round(v / mx * 40));
+      var el = $('bB' + i);
+      el.style.transition = 'height ' + (rm ? '0s' : '.28s') + ' var(--ease)';
+      el.style.height = h + 'px';
+      el.style.background = i === 0 ? 'var(--c-accent)' : 'var(--c-line-strong)';
+    });
+    $('bBt').textContent = state.mood.join(' / ');
+    $('nB').textContent = state.mood.join(' / ');
+  }
+  function paintCost() {
+    var tot = state.cost.reduce(function (a, b) { return a + b; }, 0);
+    var cs = ['var(--c-accent)', 'var(--c-ok)', 'var(--c-warn)'];
+    state.cost.forEach(function (v, i) {
+      var el = $('bC' + i);
+      el.style.transition = 'width ' + (rm ? '0s' : '.28s') + ' var(--ease)';
+      el.style.width = (tot ? v / tot * 100 : 0).toFixed(1) + '%';
+      el.style.background = cs[i];
+    });
+    $('bCt').textContent = '¥' + tot.toFixed(2) + ' · 主回复 / 记忆判定 / 主动话题';
+    $('nC').textContent = '¥' + tot.toFixed(2);
+  }
+
+  function applyState() {
+    M.animate(barW, state.mem, { stiffness: 170, damping: 26 });
+    M.animate(memTxt, state.mem, { stiffness: 170, damping: 26 });
+    paintEmotion(); paintCost();
+  }
+  applyState();
+
+  $('pushA').addEventListener('click', function () {
+    // 随机推一个新值：模拟轮询拿回新数据
+    state.mem = clamp(Math.round(state.mem + (Math.random() * 24 - 12)), 20, 99);
+    state.mood = [Math.round(Math.random() * 50), Math.round(Math.random() * 50), Math.round(Math.random() * 8), Math.round(Math.random() * 6)];
+    state.cost = [Math.random() * 3, Math.random() * 1.5, Math.random() * 0.6];
+    applyState();
+  });
+  $('kMem').addEventListener('input', function (e) {
+    memTh = +e.target.value; $('kMemV').textContent = memTh + '%';
+    $('bA').style.background = memColor(barW.get());
+  });
+
+  /* ══════════════ B · 连续映射 ══════════════
+     §8.3 的现场版：一份数据契约 + 两个渲染器（ticks / seg），
+     由档位数决定用哪个 —— 而不是两套代码各自维护。 */
+  var OPTIONS = ['很短', '短', '中', '长', '很长', '极长', '超长'];
+  var bOpts = 4, bSegMin = 3, bValue = 2;
+  var $host = $('bHost');
+
+  function renderB() {
+    var opts = OPTIONS.slice(0, bOpts);
+    if (bValue >= opts.length) bValue = opts.length - 1;
+    var useTicks = opts.length >= bSegMin;
+    $('bNote').textContent = '当前档位数 ' + opts.length + ' → ' +
+      (useTicks ? '用 ticks（高度承载顺序）' : '已退回 seg（少于阈值 ' + bSegMin + ' 档，高度差表达不了顺序）');
+
+    if (useTicks) {
+      $host.innerHTML = '<div class="ticks"></div>';
+      var box = $host.firstChild;
+      opts.forEach(function (label, i) {
+        var b = document.createElement('button');
+        // 高度真实映射顺序：第 i 档 = (i+1)/n 的满高
+        var h = Math.round(10 + (i / Math.max(1, opts.length - 1)) * 46);
+        b.innerHTML = '<b style="height:' + h + 'px"></b><span>' + label + '</span>';
+        b.setAttribute('aria-pressed', i === bValue ? 'true' : 'false');
+        b.addEventListener('click', function () { bValue = i; renderB(); });
+        box.appendChild(b);
+      });
+    } else {
+      $host.innerHTML = '<div class="seg"></div>';
+      var seg = $host.firstChild;
+      opts.forEach(function (label, i) {
+        var b = document.createElement('button');
+        b.textContent = label;
+        b.setAttribute('aria-pressed', i === bValue ? 'true' : 'false');
+        b.addEventListener('click', function () { bValue = i; renderB(); });
+        seg.appendChild(b);
+      });
+    }
+  }
+  renderB();
+  $('kOpts').addEventListener('input', function (e) { bOpts = +e.target.value; $('kOptsV').textContent = bOpts; renderB(); });
+  $('kSegMin').addEventListener('input', function (e) { bSegMin = +e.target.value; $('kSegMinV').textContent = bSegMin; renderB(); });
+
+  /* ══════════════ C1 · 三档阻尼 ══════════════
+     判据⑥：Bounce 是阻尼、Speed 是刚度 —— 两个拨盘是**同一个弹簧的属性**。
+     这里四个参数一起出发，让它自己说谁弹谁不弹。 */
+  var TIERS = [
+    { name: '默认档', k: 170, c: 26, m: 1, color: 'var(--c-accent)' },
+    { name: '欠阻尼', k: 170, c: 21.5, m: 0.9, color: 'var(--c-danger)' },
+    { name: '临界', k: 170, c: 24.738, m: 0.9, color: 'var(--c-ok)' },
+    { name: '过阻尼', k: 170, c: 30, m: 0.9, color: 'var(--c-text-3)' }
+  ];
+  var TRAVEL = 220;
+  var c1host = $('c1'), c1rows = [];
+  TIERS.forEach(function (t) {
+    var lane = document.createElement('div');
+    lane.className = 'lane';
+    var pill = document.createElement('span');
+    pill.className = 'pill'; pill.style.background = t.color;
+    lane.appendChild(pill);
+    c1host.appendChild(lane);
+
+    var head = document.createElement('div');
+    head.className = 'dims';
+    head.style.margin = '-4px 0 10px';
+    head.textContent = t.name + ' · ζ=' + (t.c / (2 * Math.sqrt(t.k * t.m))).toFixed(3) +
+      ' · k=' + t.k + ' c=' + t.c + ' m=' + t.m;
+    c1host.insertBefore(head, lane);
+
+    var mv = M.motionValue(0);
+    var peak = 0;
+    mv.on(function (v) { pill.style.transform = 'translateX(' + v.toFixed(2) + 'px)'; if (v > peak) peak = v; });
+    c1rows.push({ t: t, mv: mv, pill: pill, peak: function () { return peak; }, reset: function () { peak = 4; } });
+  });
+
+  function c1table() {
+    var html = TIERS.map(function (t, i) {
+      var over = (c1rows[i].peak() - TRAVEL) / TRAVEL * 100;
+      return t.name + ' ' + (over > 0.05 ? '过冲 ' + over.toFixed(2) + '%' : '不过冲');
+    }).join(' · ');
+    $('c1table').textContent = html;
+  }
+  function go1() {
+    // 先归位再出发：否则第二次点它时弹簧已在目标位，看起来"没反应"（能重放是判据可视化的一部分）
+    c1rows.forEach(function (r) { r.reset(); r.mv.jump(0); });
+    c1rows.forEach(function (r) {
+      M.animate(r.mv, TRAVEL, { stiffness: r.t.k, damping: r.t.c, mass: r.t.m });
+    });
+    setTimeout(c1table, 900);
+  }
+  $('go1').addEventListener('click', go1);
+  setTimeout(go1, 300);
+
+  /* ══════════════ C2 · 速度 → 形变（面积守恒）══════════════
+     判据③：scaleY = 1 / scaleX，乘积恒为 1。
+     不守恒的表现是「它鼓起来了 / 变胖了」，而不是「它被抻长了」—— 一眼假。 */
+  var grab = $('grab'), dot = $('dot');
+  var dx = M.motionValue(0);                 // 球的位置（px）
+  var sx = M.motionValue(1);                 // 横向拉伸
+  var sy = M.motionValue(1);                 // 纵向压缩 = 1/sx
+  var held = false, vdiv = 600;
+  var mvd = M.motionValue(0);                // 位置速度，用于读数
+
+  function applyDot() {
+    dot.style.transform = M.toTransform([['x', dx], ['scaleX', sx], ['scaleY', sy]]);
+  }
+  dx.on(applyDot); sx.on(applyDot); sy.on(applyDot);
+
+  sx.on(function (v) {
+    var r = dot.getBoundingClientRect();
+    $('c2read').textContent = 'scaleX ' + v.toFixed(3) + ' × scaleY ' + (1 / v).toFixed(3) +
+      ' = ' + (v * (1 / v)).toFixed(3) + '　实测面积 ' + (r.width * r.height).toFixed(0) +
+      ' px²（基准 36²=1296）　速度 ' + Math.abs(mvd.get()).toFixed(0) + ' px/s';
+  });
+
+  function maxX() { return Math.max(0, grab.clientWidth - 16 - 36); }
+
+  grab.addEventListener('pointerdown', function (e) {
+    held = true;
+    // ⚠️ 捕获本身也可能失败（指针已经不在了），必须 try —— 见 METHODOLOGY §2①
+    try { grab.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  grab.addEventListener('pointermove', function (e) {
+    if (!held) return;
+    var r = grab.getBoundingClientRect();
+    var x = clamp(e.clientX - r.left - 8 - 18, 0, maxX());
+    dx.set(x);                              // 硬写、跟手
+    mvd.jump(dx.velocity());
+    var target = clamp(1 + Math.abs(dx.velocity()) / vdiv, 1, 1.4);
+    sx.set(target);
+    sy.set(M.areaPreservingScaleX(target));  // ← 面积守恒的配对
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
+    grab.addEventListener(ev, function (e) {
+      if (!held) return;
+      held = false;
+      // ⚠️ 清理动作如果会抛，必须排在**状态恢复之前**（§2①）
+      try { grab.releasePointerCapture(e.pointerId); } catch (err) {}
+      // 松手：拉伸回弹（走引擎的弹簧，不用自己开帧循环）
+      M.animate(sx, 1, { stiffness: 170, damping: 26 });
+      M.animate(sy, 1, { stiffness: 170, damping: 26 });
+      mvd.jump(0);
+    });
+  });
+  $('kDiv').addEventListener('input', function (e) { vdiv = +e.target.value; $('kDivV').textContent = vdiv; });
+
+  /* ══════════════ D · 反例对照 ══════════════
+     左边：进场动画（指不出属于四来源哪一条 → 装饰）
+     右边：无进场动画，只在状态变化时动（来源 1） */
+  $('replay').addEventListener('click', function () {
+    var el = $('dec');
+    el.classList.remove('play');
+    void el.offsetWidth;                    // 强制重排，让动画能重播
+    el.classList.add('play');
+  });
+  setTimeout(function () { $('dec').classList.add('play'); }, 200);
+
+  var stOn = true, flips = 0;
+  var stVals = M.motionValue(0);
+  stVals.on(function (v) {
+    // 一条连续映射的动画：4 根柱按比例长起来（来源 1 + 2）
+    [6, 18, 26, 34].forEach(function (h, i) {
+      $('stBars').children[i].style.height = (h * v).toFixed(2) + 'px';
+      $('stBars').children[i].style.background = stOn ? 'var(--c-accent)' : 'var(--c-ok)';
+    });
+  });
+  function paintSt(animateIt) {
+    if (animateIt) M.animate(stVals, stOn ? 1 : 0.15, { stiffness: 170, damping: 26 });
+    else stVals.jump(stOn ? 1 : 0.15);
+    var bs = $('stSeg').querySelectorAll('button');
+    bs[0].setAttribute('aria-pressed', stOn ? 'true' : 'false');
+    bs[1].setAttribute('aria-pressed', stOn ? 'false' : 'true');
+  }
+  $('stSeg').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    stOn = b.dataset.v === '1';
+    paintSt(true);
+    flips += 1;
+    $('flipInfo').textContent = '已切换 ' + flips + ' 次' + (flips >= 3 ? ' —— 左边那套重放三次你应该已经烦了' : '');
+  });
+  $('flip').addEventListener('click', function () {
+    stOn = !stOn; paintSt(true); flips += 1;
+    $('flipInfo').textContent = '已切换 ' + flips + ' 次' + (flips >= 3 ? ' —— 左边那套重放三次你应该已经烦了' : '');
+  });
+  paintSt(false);
+  dx.jump(0);
+})();
+</script>
+</body>
+</html>

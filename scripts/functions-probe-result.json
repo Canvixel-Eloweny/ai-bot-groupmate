@@ -1,0 +1,616 @@
+{
+  "at": "2026-09-21T12:58:37.166Z",
+  "results": [
+    {
+      "provider": "zhipu",
+      "model": "glm-4.5-air",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "\n",
+        "promptTokens": 216,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 216,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.6v",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "\n我来帮您查询西安的当前时间。\n",
+        "promptTokens": 217,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "\n我来帮您查询西安的当前时间。\n",
+        "promptTokens": 217,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.7",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 207,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 207,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4-flash",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 205,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 205,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4-flash-250414",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 160,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 160,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.5",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 207,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 207,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-5",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "好的，我马上调用工具查询西安当前时间！",
+        "promptTokens": 214,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 214,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-5.2",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "好的，我马上调用工具查询西安当前时间。",
+        "promptTokens": 214,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "好的，我马上调用工具查询西安当前时间！",
+        "promptTokens": 214,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-5v-turbo",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "我来帮您查询西安当前的准确时间。",
+        "promptTokens": 212,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "我来帮您查询西安当前的准确时间。",
+        "promptTokens": 212,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.6",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 207,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 207,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.5-flash",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "\n",
+        "promptTokens": 216,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 216,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-5.1",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 207,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 207,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-5-turbo",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 207,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 207,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.7-flash",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 212,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 212,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.6v-flash",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "\n我将调用 get_current_time 函数，查询西安的当前时间。\n",
+        "promptTokens": 217,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 429,
+        "calls": 0,
+        "callNames": [],
+        "content": "",
+        "promptTokens": 0,
+        "error": "{\"error\":{\"code\":\"1305\",\"message\":\"该模型当前访问量过大，请您稍后再试\"}}",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-5.3",
+      "verdict": "yes",
+      "auto": {
+        "status": 0,
+        "calls": 0,
+        "callNames": [],
+        "content": "",
+        "promptTokens": 0,
+        "error": "This operation was aborted",
+        "timeout": true
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 214,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-5.3-flash",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 214,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 214,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.6v-flashx",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "\n我将调用get_current_time函数，参数city的值是西安。\n",
+        "promptTokens": 217,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "\n我将调用get_current_time工具，参数city的值是西安。\n",
+        "promptTokens": 217,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.5v",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "我来帮您查询西安当前的准确时间。",
+        "promptTokens": 212,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 212,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 345,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 400,
+        "calls": 0,
+        "callNames": [],
+        "content": "",
+        "promptTokens": 0,
+        "error": "{\"error\":{\"message\":\"Thinking mode does not support this tool_choice\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 408,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 400,
+        "calls": 0,
+        "callNames": [],
+        "content": "",
+        "promptTokens": 0,
+        "error": "{\"error\":{\"message\":\"Thinking mode does not support this tool_choice\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "I'll check the current time in Xi'an for you.",
+        "promptTokens": 321,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 326,
+        "error": "",
+        "timeout": false
+      }
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-reasoner",
+      "verdict": "yes",
+      "auto": {
+        "status": 200,
+        "calls": 1,
+        "callNames": [
+          "get_current_time"
+        ],
+        "content": "",
+        "promptTokens": 345,
+        "error": "",
+        "timeout": false
+      },
+      "forced": {
+        "status": 400,
+        "calls": 0,
+        "callNames": [],
+        "content": "",
+        "promptTokens": 0,
+        "error": "{\"error\":{\"message\":\"Thinking mode does not support this tool_choice\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+        "timeout": false
+      }
+    }
+  ]
+}

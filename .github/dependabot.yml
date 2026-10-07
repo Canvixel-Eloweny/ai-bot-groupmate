@@ -1,0 +1,19 @@
+# 依赖与 CI 动作的自动更新（2026-10-05 开源前审查 · S-11）
+#
+# 本项目运行时只有一个依赖（`ws`），但它照样会过期 ——
+# 而且**GitHub Actions 的版本**比 npm 包更容易被忽略：
+# `actions/checkout@v4` 这类标签不会有人定期检查。
+# 两个 ecosystem 都开，每周一次。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

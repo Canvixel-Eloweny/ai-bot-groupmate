@@ -1,0 +1,15 @@
+{
+  "id": "tool-skill",
+  "name": "会注册工具的样本",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "description": "setup 里调 api.registerTool —— 用来验证工具名带 owner 前缀、且进了注册表。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "permissions": ["web_fetch"],
+  "requires": [],
+  "entry": "index.js",
+  "settings": {}
+}

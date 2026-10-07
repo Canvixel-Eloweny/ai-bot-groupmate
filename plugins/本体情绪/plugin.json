@@ -1,0 +1,34 @@
+{
+  "id": "bot-emotion",
+  "name": "本体情绪",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "model",
+  "description": "跨群共享的心情/精力/压力/离散情绪。每轮极轻注入一句状态；聊天事件自动加减情绪。数据存 data/bot-state.json。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "settings": {
+    "injectPrompt": true,
+    "autoUpdate": true,
+    "injectPriority": 25
+  },
+  "configSchema": {
+    "injectPrompt": {
+      "type": "boolean",
+      "label": "注入状态提示词",
+      "description": "每轮往提示词加一句「此刻精力/心情/情绪」摘要。关掉则只存状态、不进提示。"
+    },
+    "autoUpdate": {
+      "type": "boolean",
+      "label": "自动按本轮更新情绪",
+      "description": "根据发送结果、工具成败、被冷落等自动加减情绪。"
+    },
+    "injectPriority": {
+      "type": "number",
+      "label": "提示词片段优先级",
+      "description": "越小越靠前。默认 25。"
+    }
+  }
+}

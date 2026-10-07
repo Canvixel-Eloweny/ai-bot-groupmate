@@ -1,0 +1,34 @@
+{
+  "id": "echo-guard",
+  "name": "复读拦截",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "阻止机器人在短时间内复读自己：同文/近似重复的 send_message 会被否决并提示模型换说法。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "settings": {
+    "windowMin": 20,
+    "minLen": 6,
+    "maxPerRun": 6
+  },
+  "configSchema": {
+    "windowMin": {
+      "type": "number",
+      "label": "去重时间窗（分钟）",
+      "description": "默认 20。窗口内发过的近似句会被拦。"
+    },
+    "minLen": {
+      "type": "number",
+      "label": "最短判重长度",
+      "description": "短于 N 字的句子不判重（「？」「哈哈」等误伤太多）。默认 6。"
+    },
+    "maxPerRun": {
+      "type": "number",
+      "label": "单轮最多通过条数",
+      "description": "超过则否决后续 send_message。默认 6。"
+    }
+  }
+}

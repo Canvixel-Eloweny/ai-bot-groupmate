@@ -1,0 +1,33 @@
+{
+  "id": "people-memory",
+  "name": "群友印象",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "description": "给群友记长期印象与好感度（跨群按 QQ 号共享）。模型在聊过后自己决定记什么。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "settings": {
+    "globalPeopleDir": true,
+    "favorEnabled": true
+  },
+  "configSchema": {
+    "favorEnabled": {
+      "type": "boolean",
+      "label": "启用好感度",
+      "description": "关掉后不再提供 people_favor 工具。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "people-memory-how",
+        "title": "群友印象",
+        "priority": 30,
+        "content": "对某人有了稳定的长期印象（喜好/雷点/风格/态度）时，用 people_append 记下（userId 必须是 QQ 号）。想起旧印象用 people_query。好感微调用 people_favor。不要把一次性闲聊也写成印象。"
+      }
+    ]
+  }
+}

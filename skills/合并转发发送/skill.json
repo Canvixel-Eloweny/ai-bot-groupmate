@@ -1,0 +1,38 @@
+{
+  "id": "send-forward",
+  "name": "合并转发发送",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "把多条聊天记录打成 QQ 合并转发发出（分享对话/刷证据），避免一条条刷屏。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "settings": {
+    "maxNodes": 20,
+    "defaultLimit": 10
+  },
+  "configSchema": {
+    "maxNodes": {
+      "type": "number",
+      "label": "单次最多节点数",
+      "description": "OneBot 合并转发上限约 40，本工具默认限 20。"
+    },
+    "defaultLimit": {
+      "type": "number",
+      "label": "从存档取最近条数默认值",
+      "description": "fromArchive 未传 limit 时用。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "send-forward-note",
+        "title": "合并转发",
+        "priority": 35,
+        "content": "要把多段聊天记录打包分享时，用 send_forward（nodes 数组，或 fromArchive=true 从当前会话存档取最近消息）。不要用空格假装分条。最多约 20 节点。"
+      }
+    ]
+  }
+}

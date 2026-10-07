@@ -1,0 +1,46 @@
+{
+  "id": "api-deals",
+  "name": "AI免费额度情报",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "description": "抓取「AI 免费额度 / 限时活动」情报并可查询。默认源：yangmao / linux.do。凌晨自动刷新。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "permissions": ["web_fetch"],
+  "settings": {
+    "enabled": true,
+    "refreshHour": 4,
+    "keepDays": 45,
+    "maxItems": 40
+  },
+  "configSchema": {
+    "refreshHour": {
+      "type": "number",
+      "label": "每日刷新时刻（0~23 点）",
+      "description": "默认 4 点。只在该小时整点附近检查。"
+    },
+    "keepDays": {
+      "type": "number",
+      "label": "条目保留天数",
+      "description": "默认 45。"
+    },
+    "maxItems": {
+      "type": "number",
+      "label": "清单上限",
+      "description": "默认 40。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "api-deals-when",
+        "title": "免费额度",
+        "priority": 40,
+        "content": "有人问「最近有什么模型免费额度 / API 白嫖」时，用 api_deals_search 查清单；没有就说没有，别编。"
+      }
+    ]
+  }
+}

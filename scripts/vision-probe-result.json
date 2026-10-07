@@ -1,0 +1,269 @@
+{
+  "at": "2026-09-28T16:02:12.772Z",
+  "results": [
+    {
+      "provider": "zhipu",
+      "model": "glm-4.6v",
+      "verdict": "yes",
+      "evidence": "red=right · green=right",
+      "perImage": {
+        "red": {
+          "ok": true,
+          "status": 200,
+          "content": "红色",
+          "error": "",
+          "raw": "",
+          "timeout": false
+        },
+        "green": {
+          "ok": true,
+          "status": 200,
+          "content": "绿色",
+          "error": "",
+          "raw": "",
+          "timeout": false
+        }
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-5v-turbo",
+      "verdict": "yes",
+      "evidence": "red=right · green=right",
+      "perImage": {
+        "red": {
+          "ok": true,
+          "status": 200,
+          "content": "红色",
+          "error": "",
+          "raw": "",
+          "timeout": false
+        },
+        "green": {
+          "ok": true,
+          "status": 200,
+          "content": "绿色",
+          "error": "",
+          "raw": "",
+          "timeout": false
+        }
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.6v-flash",
+      "verdict": "yes",
+      "evidence": "red=right · green=right",
+      "perImage": {
+        "red": {
+          "ok": true,
+          "status": 200,
+          "content": "红色",
+          "error": "",
+          "raw": "",
+          "timeout": false
+        },
+        "green": {
+          "ok": true,
+          "status": 200,
+          "content": "绿色",
+          "error": "",
+          "raw": "",
+          "timeout": false
+        }
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-5.3-flash",
+      "verdict": "yes",
+      "evidence": "red=right · green=right",
+      "perImage": {
+        "red": {
+          "ok": true,
+          "status": 200,
+          "content": "红色",
+          "error": "",
+          "raw": "",
+          "timeout": false
+        },
+        "green": {
+          "ok": true,
+          "status": 200,
+          "content": "绿色",
+          "error": "",
+          "raw": "",
+          "timeout": false
+        }
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.6v-flashx",
+      "verdict": "yes",
+      "evidence": "red=right · green=right",
+      "perImage": {
+        "red": {
+          "ok": true,
+          "status": 200,
+          "content": "红色",
+          "error": "",
+          "raw": "",
+          "timeout": false
+        },
+        "green": {
+          "ok": true,
+          "status": 200,
+          "content": "绿色",
+          "error": "",
+          "raw": "",
+          "timeout": false
+        }
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.5v",
+      "verdict": "yes",
+      "evidence": "red=right · green=right",
+      "perImage": {
+        "red": {
+          "ok": true,
+          "status": 200,
+          "content": "红色",
+          "error": "",
+          "raw": "",
+          "timeout": false
+        },
+        "green": {
+          "ok": true,
+          "status": 200,
+          "content": "绿色",
+          "error": "",
+          "raw": "",
+          "timeout": false
+        }
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.5-air",
+      "verdict": "no",
+      "evidence": "服务端返回 400 且点名图片参数非法",
+      "perImage": {
+        "red": {
+          "ok": false,
+          "status": 400,
+          "content": "",
+          "error": "{\"error\":{\"code\":\"1210\",\"message\":\"messages.content.type 参数非法，取值范围 ['text']\"}}",
+          "raw": "",
+          "timeout": false
+        },
+        "green": {
+          "ok": false,
+          "status": 400,
+          "content": "",
+          "error": "{\"error\":{\"code\":\"1210\",\"message\":\"messages.content.type 参数非法，取值范围 ['text']\"}}",
+          "raw": "",
+          "timeout": false
+        }
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.7",
+      "verdict": "no",
+      "evidence": "服务端返回 400 且点名图片参数非法",
+      "perImage": {
+        "red": {
+          "ok": false,
+          "status": 400,
+          "content": "",
+          "error": "{\"error\":{\"code\":\"1210\",\"message\":\"messages.content.type 参数非法，取值范围 ['text']\"}}",
+          "raw": "",
+          "timeout": false
+        },
+        "green": {
+          "ok": false,
+          "status": 400,
+          "content": "",
+          "error": "{\"error\":{\"code\":\"1210\",\"message\":\"messages.content.type 参数非法，取值范围 ['text']\"}}",
+          "raw": "",
+          "timeout": false
+        }
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-5.2",
+      "verdict": "no",
+      "evidence": "服务端返回 400 且点名图片参数非法",
+      "perImage": {
+        "red": {
+          "ok": false,
+          "status": 400,
+          "content": "",
+          "error": "{\"error\":{\"code\":\"1210\",\"message\":\"messages.content.type 参数非法，取值范围 ['text']\"}}",
+          "raw": "",
+          "timeout": false
+        },
+        "green": {
+          "ok": false,
+          "status": 400,
+          "content": "",
+          "error": "{\"error\":{\"code\":\"1210\",\"message\":\"messages.content.type 参数非法，取值范围 ['text']\"}}",
+          "raw": "",
+          "timeout": false
+        }
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-5",
+      "verdict": "no",
+      "evidence": "服务端返回 400 且点名图片参数非法",
+      "perImage": {
+        "red": {
+          "ok": false,
+          "status": 400,
+          "content": "",
+          "error": "{\"error\":{\"code\":\"1210\",\"message\":\"messages.content.type 参数非法，取值范围 ['text']\"}}",
+          "raw": "",
+          "timeout": false
+        },
+        "green": {
+          "ok": false,
+          "status": 400,
+          "content": "",
+          "error": "{\"error\":{\"code\":\"1210\",\"message\":\"messages.content.type 参数非法，取值范围 ['text']\"}}",
+          "raw": "",
+          "timeout": false
+        }
+      }
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4-flash",
+      "verdict": "no",
+      "evidence": "服务端返回 400 且点名图片参数非法",
+      "perImage": {
+        "red": {
+          "ok": false,
+          "status": 400,
+          "content": "",
+          "error": "{\"error\":{\"code\":\"1210\",\"message\":\"messages.content.type 参数非法，取值范围 ['text']\"}}",
+          "raw": "",
+          "timeout": false
+        },
+        "green": {
+          "ok": false,
+          "status": 400,
+          "content": "",
+          "error": "{\"error\":{\"code\":\"1210\",\"message\":\"messages.content.type 参数非法，取值范围 ['text']\"}}",
+          "raw": "",
+          "timeout": false
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<!-- ⚠️ 这一行是面板鉴权的**唯一注入点**（src/panel-auth.js 的 TOKEN_META_RE）。
+     服务端发页面时把 content 换成真 token；没有它，页面所有写请求都会被 401 拒掉。
+     原型模式（file:// 或未接后端）下它保持哨兵值，页面据此进入"只读演示"。
+     哨兵必须与 src/panel-auth.js 的 TOKEN_SLOT 逐字相同。
+     @sync-with panel-token-slot
+     （S-12 第四批 2026-10-05：旧页 parts/ 下线后，这一处就是登记的取用侧。） -->
+<meta name="panel-token" content="__QQBOT_PANEL_TOKEN__" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>QQ-BOT-CONTROL · 控制台 v2（初步重构）</title>
+<link rel="stylesheet" href="./style.css" />
+<!-- 动效组件样式。⚠️ **必须在 style.css 之后**：它的规则要能覆盖令牌默认值
+     （如 .liq-track 的尺寸、mini 档的 --liq-thumb）。
+     ⚠️⚠️ **样式表用 `<link>`，不要写成 `<script rel="stylesheet">`**：
+        那样浏览器会把 CSS 内容**当 JavaScript 解析**，
+        碰到 `.sw {` 这类选择器语法就抛 `SyntaxError: Unexpected token '.'`。
+        ⚠️ 这个错的表现很有欺骗性 —— **CSS 一样不生效**（没加载成功），
+        而报错又发生在解析期，看起来像"脚本坏了"，实际只是标签写错。
+        本轮真的踩过一次：`verify.mjs` 抓到的（真浏览器跑），
+        而 `check-wb` 抓不到 —— 它只看文件在不在，不执行 JS。 -->
+<link rel="stylesheet" href="./liquid-toggle.css">
+<link rel="stylesheet" href="./ticks.css">
+</head>
+<body>
+
+<!-- ══════════════ 背景引擎 · 颗粒渐变（2026-10-04 · 接替 .aurora 六团流体）════════
+     ⚠️ **必须排在 `<body>` 的最前面**，理由是层序而不是视觉顺序：
+        它声明 `z-index:-2`，而玻璃环境层是 `body.eg-on::before` 的 -1。
+        负层号之间比的是**谁先被声明进同一层叠上下文** —— 放在顶栏后面，
+        背景层就排到玻璃环境层之上，两层光效的半透明相遇处叠成脏块。
+     ⚠️ `aria-hidden="true"` + CSS `pointer-events:none`：纯装饰。它铺满视口，
+        进入无障碍树只会让读屏多念一个空节点。
+     ⚠️ 渲染与预设全在 `shader-bg.js`：颗粒渐变（grain）与网格渐变（mesh）两族，
+        顶栏有切换入口（#bgPick）；reduced-motion 下只画一帧；WebGL 不可用退 2D 渐变。
+     ⚠️ 旧的六团流体（.aurora-a…f 六元素）按用户要求整体移除（2026-10-04：
+        「不要目前这个背景了」，换成 beui ShaderBackground 风格的颗粒渐变）；
+        `.aurora-grid`（64px 方格网）更早已删（B28 批次4），不复活。 -->
+<canvas id="shaderBg" class="shader-bg" aria-hidden="true"></canvas>
+
+<!-- ══════════════ 顶栏：全局状态 + 全站动作 ══════════════ -->
+<header class="topbar">
+  <div class="tb-brand">
+    <span class="logo" aria-hidden="true">QQ</span>
+    <div class="tb-titles">
+      <b>QQ-BOT-CONTROL</b>
+      <span class="tb-sub" id="subline">正在读取状态…</span>
+    </div>
+  </div>
+
+  <div class="tb-pills" id="tbPills" aria-live="polite">
+    <span class="pill" id="pillMode"><span class="dot"></span>读取中</span>
+    <span class="pill" id="pillBridge"><span class="dot"></span>机器人</span>
+    <span class="pill" id="pillContainer"><span class="dot"></span>容器</span>
+    <span class="pill" id="pillLocal"><span class="dot"></span>本机模型</span>
+    <span class="pill" id="pillMem"><span class="dot"></span>内存</span>
+  </div>
+
+  <div class="tb-actions">
+    <!-- 这里原本有一个「旧界面」跳转入口（回到 `panel/parts/` 拼装的那一页）。
+         2026-10-02 旧页面连同它的拼装模块一起删掉了，所以这个入口**没有对象**了 ——
+         留一个指向不存在页面的链接，比没有链接更糟（点下去是 404，而看起来一切正常）。
+         ⚠️ 页面上**不再有任何跨版本跳转**：控制台只有这一套。 -->
+    <!-- ══════════════ 圆形深浅切换（2026-10-04）══════════════
+         beui「Theme Toggle · circle-blur」变体的**零构建移植**（原件是
+         React + next-themes + motion，本页零构建 ⇒ 只取配方不取包）：
+         圆形描边按钮 + 太阳/月亮图标（图标由 app.js 按当前主题画），
+         点击后整页以**按钮圆心**为发散点做 View Transition 圆形揭开
+         （用户裁决「发散位置以我们的为主」，不取 beui 默认的 bottom-up）。
+         ⚠️ 深浅只有两态 ⇒ 形状是「切换器」（按钮）不是「选择器」（下拉）
+         —— 原 #themeSel 下拉因此退役。动画的 CSS 在 style.css 的
+         「深浅切换的整页揭开」段，JS 在 app.js 的 toggleTheme。 -->
+    <button id="themeBtn" class="theme-btn" type="button"
+            aria-label="切换深浅色" title="切换深浅色（只影响这一页，不改机器人任何行为）"></button>
+    <!-- 一条细竖线：左边是"换"（配色），右边是"动"（起停进程）。
+         没有它，三个控件是一排等权的按钮，扫一眼分不出哪些会改运行时状态。 -->
+    <!-- 背景样式选择器（2026-10-04 · 仿 beui ColorSelector：swatch + 弹簧选中环）。
+         swatch 由 shader-bg.js 按 VARIANTS 数据驱动生成，这里只放容器。 -->
+    <div class="bgpick" id="bgPick" title="切换背景流光样式（只影响这一页）">
+      <span class="bgpick-cap" aria-hidden="true">背景</span>
+      <div class="bgpick-list" id="bgPickList" role="radiogroup" aria-label="背景流光样式"></div>
+    </div>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <button class="btn btn-primary" data-a="onekey-start">一键启动</button>
+    <button class="btn btn-danger" data-a="onekey-stop">结束本次运行</button>
+  </div>
+</header>
+
+<!-- ══════════════ 动画速度（B33→B36）：顶栏下挂小三角 + 展开式步进器 ══════════════
+     ⚠️ 结构与行为都在 shader-bg.js（与 bgpick 同一纪律：背景引擎自己建自己的控件，
+        不新开文件）。这里只放锚点 —— left 由 JS 按「背景」色板（#bgPick）
+        的实测位置写入（用户要求钉在色板正下方），CSS 的 50% 只是兜底。 -->
+<div class="spd" id="spdAnchor"></div>
+
+<!-- ══════════════ 吸顶导航行：二级栏 + 灵动岛（同一行，B40 起有共同父容器）════════
+     ⚠️⚠️ **2026-10-04 B40 新增这一层包裹**。前一轮（B39）用「两个块级兄弟 + 负 margin」
+        把两者挪到同一行 —— 那个做法**必然互相遮挡**：块级盒子各自占满整行宽度，
+        负 margin 只能让它们**垂直**错位，**完全无法分配水平空间**。
+        表现（用户实机截图）：视口不够宽时岛的玻璃从左边压过来，
+        **二级栏整条被盖住**，而页面上没有任何报错、契约全绿。
+        ⚠️ 而且 B39 给 `.nav1` 写的 `justify-content: space-between` 是**空转**的 ——
+        `.nav1` 里只有 `.nav-inner` 一个子元素，space-between 对单元素等同 flex-start，
+        岛永远贴左 ⇒ 必然压在二级栏上。（这句已写进 `.nav1` 的注释，别再写一次。）
+        ⇒ 正解：**让两者进入同一个 flex 容器 `.navrow`**，由它分配宽度 ——
+          · 二级栏 `flex: 0 1 auto`（可压缩，溢出由内部 `.nav2` 横向滚动接住）
+          · 岛     `flex: 0 0 auto`（不压缩，保证 8 个域一直完整可点）
+        空间不够时压缩的是二级栏，**岛不会再遮住它**。
+     ⚠️ DOM 顺序仍是 `nav2wrap → nav1`（契约 N14 钉的就是它），只是外面多包了一层；
+        而 `nav2wrap → nav1` 这个顺序在 flex 行里也是"二级栏在左、岛在右"。
+     ⚠️ 二者**不再各自 `position: sticky`**：吸顶由 `.navrow` 一处负责
+        （B29 记过"三层各自 sticky 时文档顺序决定谁在上"，合并后那条复杂度直接消失）。 -->
+<div class="navrow" id="navrow">
+  <!-- 二级导航：当前域内的页面。⚠️ B29 整块上移到顶栏正下方（用户的原话：「与顶部
+       现有的液态玻璃区域融为一体」）；B40 起它与灵动岛同处 `.navrow`。 -->
+  <div class="nav2wrap" id="nav2wrap">
+    <nav class="nav2" id="nav2" role="tablist" aria-label="页面"></nav>
+  </div>
+  <!-- B30：`.page-meta`（「即时页 / 点一下立刻生效」说明）按用户要求整块删除 ——
+       玻璃条只包住二级选项本身，右侧留斜角切割（见 style.css `.nav2wrap` 的 --nav2-cut）。 -->
+
+  <!-- ══════════════ 一级导航「灵动岛」Hero Navbar ══════════════
+       分层（理由写在 style.css 的同名区块里）：
+         .nav1        岛的容器（**不再自己吸顶**，由 .navrow 统一吸顶）
+           .nav-inner   岛本体 = **玻璃胶囊** + 横向滚动容器 + 指示器的定位基准
+           .nav-ind     唯一的高亮滑块（描边），由 app.js 写位置与宽度
+
+       ⚠️ 指示器为什么是**静态元素**、而不是 renderNav1 里生成的：
+          renderNav1 每次切页都会重建按钮（`innerHTML` 换掉），指示器若跟着一起重建，
+          每次都变成"新元素从 0 位置长出来" —— 滑动感当场消失，而页面照常工作。
+       ⚠️ 它为什么必须待在 `.nav-inner` **内部**：窄屏靠这一层横向滚动，
+          指示器挂在外层 `.nav1` 上，它会相对视口静止，一滑就与选中项错位。
+       ⚠️ `role="tablist"` 从 `.nav1` 挪到 `.nav-inner`：它现在才是 8 个 tab 的直接父节点
+          （`.nav-ind` 带 `aria-hidden`，不进无障碍树）。
+       ⚠️ B29 起岛**跟随主题**（原设计是"两套主题都是纯黑"）：浅色下是浅玻璃胶囊，
+          深色下是深玻璃胶囊。详细推导见 style.css 里 `--c-nav-bg` 上方那段注释。 -->
+  <nav class="nav1" id="nav1">
+    <div class="nav-inner" id="navInner" role="tablist" aria-label="功能域">
+      <span class="nav-ind" id="navInd" aria-hidden="true"></span>
+    </div>
+  </nav>
+</div>
+
+<!-- ══════════════ 告警条（按需出现，平时不占位置）══════════════
+     ⚠️ 2026-10-03 B29 从顶栏与灵动岛之间**下移到灵动岛之下**。
+        原因：它原来夹在两层吸顶带之间，而二级栏上移后会变成「三层吸顶玻璃」——
+        `.nav2wrap` 的 z-index 40会**压住**没有 z-index 的这一条，
+        表现是"告警条被玻璃切掉一半"。下移到灵动岛之后它回到内容流里，
+        三层吸顶玻璃成为连续的一整块。契约影响零（只被 verify.mjs 读，与位置无关）。 -->
+<div class="banners" id="banners" aria-live="polite"></div>
+
+<!-- ══════════════ 页面主体：由 schema 渲染 ══════════════ -->
+<main class="page" id="page" role="tabpanel"></main>
+
+<footer class="foot">
+  <span id="footNote">原型 · 由 <code>panel/next/schema.js</code> 单一声明驱动 —— 增减页面/卡片/控件只改那一份数据。</span>
+  <span id="footStat" class="foot-stat"></span>
+</footer>
+
+<!-- ══════════════ 草稿保存条：页面有未保存改动时出现 ══════════════ -->
+<div class="savebar" id="savebar" hidden>
+  <span class="savebar-txt" id="savebarTxt"></span>
+  <span class="spacer"></span>
+  <button class="btn btn-ghost btn-sm" data-a="draft-discard">丢弃改动</button>
+  <button class="btn btn-primary btn-sm" data-a="draft-save">保存并生效</button>
+</div>
+
+<!-- ══════════════ 反馈 ══════════════ -->
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="busy" id="busy" hidden><span class="spin"></span><span id="busyTxt">处理中…</span></div>
+<div class="modal" id="modal" hidden><div class="modal-box" id="modalBox"></div></div>
+
+<!-- ══════════════ 液态玻璃引擎（2026-10-03）══════════════════════════════
+     ⚠️ 它排在 `app.js` **之前**，且内部**只在文件尾部自行执行一次**：
+        ① 第 1 档（真折射）的候选 `.topbar` / `.savebar` 都是本文件里的静态元素，
+           此刻已在 DOM 中，不需要等 `app.js` 渲染；
+        ② 第 2/3 档（卡片 / 控件 / 环境层）是**纯 CSS**，挂在 `body.eg-on` 门控下，
+           而 `app.js` 动态创建的卡片、弹窗、提示条**自动继承** ——
+           所以 `app.js` 一行都不用改，也不需要 MutationObserver 盯着每 3 秒的轮询。
+     一键关闭：`glass.js` 里的 `G_ENABLED = false` → 不加 `eg-on` → 全站玻璃样式一条不生效。 -->
+<script src="./glass.js"></script>
+
+<!-- ══════════════ 动效能力层 · 脚本（2026-10-02 UI 升级轮）══════════════
+     ⚠️ **顺序不能反**：`liquid-toggle.js` / `morph.js` 启动时要读 `window.Motion`，
+     反了就是静默不渲染（页面照常工作、控件不出现，且**不报错**）。
+     ⚠️ 样式表在 <head> 里（见上），这里只放脚本。
+     ⚠️ 是否启用液态开关由 `app.js` 的 `LIQUID_ON` 决定 —— 退回原生只改那一行。 -->
+<script src="./motion.js"></script>
+<script src="./icons.js"></script>
+<script src="./morph.js"></script>
+<script src="./liquid-toggle.js"></script>
+<!-- 排序引擎（2026-10-03 · 模型线路拖拽排序）。⚠️ **必须在 motion.js 之后**：
+     它启动时读 window.Motion，反了就是一句 warn 之后整个不挂载 ——
+     页面照常工作、↑↓ 照常能改顺序，只是没有拖拽与让位动画，且**不抛异常**。 -->
+<script src="./sortable.js"></script>
+<!-- 3D 倾斜 + 跟随高光（B31 · 2026-10-04）。⚠️ 同样**必须在 motion.js 之后**：
+     它启动时读 window.Motion，反了就是一句 warn 之后整个模块不挂 ——
+     页面照常工作、卡片照常点，只是鼠标扫过去没有任何倾斜与反光，且**不抛异常**。 -->
+<script src="./tilt.js"></script>
+
+<!-- 背景引擎（2026-10-04）。⚠️ 自执行模块：自己找 #shaderBg 自己起循环、自己建
+     #bgPickList 里的 swatch。排在 app.js 之前或之后都成立（不依赖 Motion），
+     放这里与其它动效层同区。 -->
+<script src="./shader-bg.js"></script>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

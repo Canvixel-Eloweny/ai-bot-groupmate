@@ -1,0 +1,172 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   ticks.css · 档位刻度选择器
+   ──────────────────────────────────────────────────────────────────────────
+   来源：[bencho.dev](https://bencho.dev)「Progress ticks / Wheel」（MIT）。
+   抄的是**"用刻度表达档位"这个手法**，不是它的玻璃外观。
+
+   ══ 为什么本项目的做法和它不一样（三条，都是本项目的既有纪律）══════════
+
+   ① **不抄玻璃（`backdrop-filter` + 渐变描边）。
+      本项目 `style.css` 开头的视觉主线写着「安静的仪表盘」：
+      "信息靠**层级与留白**分区，**不靠装饰性渐变/阴影**"。
+      Bencho 的 `.lab` 用 `backdrop-filter: blur() saturate()` + 渐变 rim + 三层
+      box-shadow 做"玻璃厚度" —— 那是它的画布风格，与本项目相反。
+      ⇒ 刻度本身保留（信息表达），材质换成本项目的
+      `--c-surface-2` + `--c-line`（一行边框）。
+
+   ② **不抄它的自定义属性当全局。**
+      Bencho 那份 CSS 读 `--ink` / `--pane` / `--g-*` 等 22 个令牌，
+      而本项目的令牌是 `--c-*` 一套且**深浅两个块的名字集合必须逐个相等**
+      （`check-wb` 有契约在判）。另起一套名字 = 主题切换只换一半。
+      ⇒ 下面**只用**本项目已有的 `--c-*`；确实需要的一律定义在
+      **组件自己的根上**（`.tkx`），不外泄。
+
+   ③ **不引它的库。** 原组件是 React + 一个缩放修正 hook；
+      本项目零构建（依赖只有 `ws`），且面板每 3 秒整页重建
+      （`paintPage()` 的 `innerHTML`）⇒ 用原生实现 + `motion.js` 的弹簧。
+
+   ══ 保留它的哪部分 ════════════════════════════════════════════════════
+   · **刻度是主体，数字只是它说不出的那一个** ——
+     "一个需要配文才显得完整的组件，是一个还没做完的组件"（原注释）。
+     所以这里只有：一个数字 + 一排刻度。**不加标题、不加状态标签、不加鼓励语。**
+   · **刻度高度带波纹**，让 3 档看起来是"一族"而不是三根一样的柱子。
+   · **hover 是预览不是提交**（`data-cursor` 只在悬停/按下时出现）。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 根 ──────────────────────────────────────────────────────────────────
+   局部令牌**只定义在这里**（`.tkx`），不碰 :root ——
+   这是"没有等价物就局部定义，别定义成新全局"的直接落实。 */
+.tkx {
+  /* 档位填充色。跟随主题，不必自己判深浅。 */
+  --tkx-lit: var(--c-accent, #2563eb);
+  /* 未点亮的刻度。⚠️ 用 --c-line-strong 而不是半透明：
+     0.16 的墨色在浅色底上实测约 1.2:1，等于"没有"（原注释也记了这条）。 */
+  --tkx-dim: var(--c-line-strong, #d3d8e0);
+  display: grid; gap: 10px; min-width: 0;
+}
+
+/* ── 头：大数字 ───────────────────────────────────────────────────────────
+   Bencho 的 `.tik-fig`：Inter 而不是等宽 —— 等宽在这里唯一的作用是
+   "数字跳动时不跳宽"，而 `font-variant-numeric: tabular-nums`
+   在比例字体里就能给到，且不牺牲字形一致性。 */
+.tkx-head {
+  display: flex; align-items: baseline; gap: 8px;
+  /* 数字要低于 34px：控制台是密集中文界面，34px 的数字会抢掉整卡的标题 */
+}
+.tkx-fig {
+  font-size: var(--t-2xl, 24px);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -.02em;
+  color: var(--c-text-1, #101828);
+  font-variant-numeric: tabular-nums;
+}
+/* 单位在 1/3 权重、1/3 透明度 —— 一个百分比是「一个读数」，不是「一个数加一个词」 */
+.tkx-fig i { font-style: normal; font-size: .62em; margin-left: 1px; opacity: .45; }
+.tkx-name {
+  font-size: var(--t-sm, 12px); color: var(--c-text-2, #6b7280);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* delta 只在悬停/拖动时出现。它**占住自己的位置**而不是冒出来推挤数字 ——
+   一个每次移动指针都把数字推歪的读数，比没有读数更糟。 */
+.tkx-delta {
+  margin-left: auto; font-size: var(--t-xs, 11px);
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-3, #98a2b3);
+  opacity: 0; transition: opacity var(--dur, .16s) ease;
+}
+.tkx[data-scrub="1"] .tkx-delta { opacity: 1; }
+.tkx-delta[data-up="true"] { color: var(--c-ok, #067647); }
+
+/* ── 刻度行 ─────────────────────────────────────────────────────────────
+   ⚠️ `touch-action: pan-x`（不是 none，也不是 pan-y）：
+      刻度调整是**横向**手势，垂直方向必须留给页面滚动。
+      写成 `none` 会把手指竖划也吃掉= 用户想滚动却卡在这行上。
+      写成 `none` 是 Bencho 那条注释的原意（"横向是我们的，上下是别人的"），
+      只是方向按本组件的横排改成了 pan-x。 */
+.tkx-row {
+  position: relative;
+  display: flex; align-items: flex-end; gap: 3px;
+  height: 56px;
+  /* ⚠️ **刻度不铺满整行**（`justify-content: flex-start` + 定宽）。
+     试过 `flex: 1` 铺满，5 档时每格有 130px 宽 —— 一根 130×56px 的柱子
+     读作"条形图"，而**刻度该读作"刻度"**：它是尺子，不是量图。
+     定宽 22px + 起点对齐之后，3 档 / 5 档都更像一把尺。
+     档数多时靠 `gap` 收紧而不是让每格变宽。 */
+  justify-content: flex-start;
+  gap: 4px;
+  touch-action: pan-x;
+}
+.tkx-tick {
+  /* 定宽 + 不伸缩。⚠️ 上限 22px 是量出来的：
+     22px 宽、56px 高的比例（1:2.5）与截图里那种窄刻度一致；
+     再宽就变条形图了。 */
+  flex: 0 0 22px; max-width: 22px;
+  background: var(--tkx-dim);
+  border-radius: 2px;
+  /* 高度由 JS 写（波纹 + 点亮加高）。这里只给过渡。 */
+  transition: background 160ms ease, height 300ms cubic-bezier(.22, 1, .36, 1);
+}
+/* 渐次点亮：越靠近当前值越实 ⇒ 不用读数字也知道"大概在这附近"。
+   ⚠️ 用 color-mix 而不是第三个固定色，否则深色主题下会和底色撞。 */
+.tkx-tick[data-on="true"] { background: color-mix(in srgb, var(--tkx-lit) 62%, transparent); }
+.tkx-tick[data-near="true"] { background: var(--tkx-lit); }
+/* 光标那一格：唯一的强调色。用 --c-accent 而不是 --c-ok ——
+   这里是"你正在看哪里"，不是"好/坏"，绿色会被读成状态。 */
+.tkx-tick[data-cursor="true"] { background: var(--c-accent, #2563eb); }
+
+/* 键盘焦点：画在行上而不是某一格上 —— 整行是一个控件 */
+.tkx-row:focus-visible {
+  outline: 2px solid var(--c-accent, #2563eb);
+  outline-offset: 3px; border-radius: var(--r-sm, 6px);
+}
+.tkx-row { cursor: pointer; border-radius: var(--r-sm, 6px); }
+
+/* 标签行：与刻度行**同宽同起点**（同一套 flex 参数）——
+   标签比刻度宽会让"这个名字属于这一格"这件事消失。
+   ⚠️ 定宽 + 溢出省略：档名可能很长（"5 · 极活跃"），挤在 22px 里只能省略。
+     所以**当前档的名字在 `.tkx-head` 里另有一份大字**，
+     这里的标签只是"轴刻度"，读不清是设计的一部分。 */
+.tkx-legend {
+  display: flex; justify-content: flex-start; gap: 4px; margin-top: 5px;
+  font-size: var(--t-xs, 11px); color: var(--c-text-3, #98a2b3);
+}
+.tkx-legend > span {
+  flex: 0 0 22px; max-width: 22px; text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── 原生 radio · 语义的真正载体 ──────────────────────────────────────
+   ⚠️ **不能写 `display: none`** —— 那会把它从**无障碍树里整个摘掉**，
+      于是读屏用户什么也听不到（比"视觉重复"严重得多）。
+   ⚠️ 也不能用 `opacity: 0` + 留着它接收点击：那样它会**盖在刻度行上**
+      抢走指针事件，而刻度行的拖动正是这里的主交互。
+   ⇒ 解法：移出可视区（`position:absolute` + 负 inset），让它仍可聚焦、
+      仍进无障碍树、仍可被 label/键盘驱动，但**不占布局也不吃指针**。
+
+   刻度行自己是 `role="slider"`，所以读屏会同时读到 slider 和这组 radio。
+   为此给radio 组一个 `aria-label`，并在 mountTicks 里保证它只在
+   **键盘 Tab 到原生组时**才有意义 —— 刻度行是主要的可交互入口。 */
+.tkx-native {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  left: -9999px; top: auto; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+/* 键盘 Tab 进原生组时让它**可见**：否则"能用键盘改档位"
+   对 sighted 键盘用户等于不存在。focus-within 把它拉回可视区。 */
+.tkx-native:focus-within {
+  position: static; width: auto; height: auto; margin: 0;
+  left: auto; overflow: visible; clip-path: none;
+  display: flex; flex-wrap: wrap; gap: var(--s1, 4px);
+  font-size: var(--t-xs, 11px);
+}
+.tkx-native label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.tkx-native input { accent-color: var(--c-accent, #2563eb); }
+
+/* ── 减弱动效 ════════════════════════════════════════════════════════════
+   JS 侧已经直接落位（不注册帧循环）。这里把过渡也收掉。 */
+@media (prefers-reduced-motion: reduce) {
+  .tkx-tick { transition-duration: 1ms; }
+  .tkx-delta { transition-duration: 1ms; }
+}

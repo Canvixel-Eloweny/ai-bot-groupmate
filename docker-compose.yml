@@ -1,0 +1,69 @@
+services:
+  napcat:
+    # ⚠️ 这一行**不是**"浮动 tag 的第三方镜像"——它是**本仓自建镜像的名字**
+    #    （见 `docker/napcat/Dockerfile` 文件头 + 下面的 `build:`）。
+    #    别把它改成 digest 或固定 tag（2026-10-05 · 第 10 轮 · 开源前审查 H-07 的一处更正）：
+    #    那会把"镜像已存在就直接用"退化成"必须先 pull 到那个 tag/digest"，
+    #    而本机实测连 `registry-1.docker.io` 都是 `Bad Gateway`
+    #    ⇒ Docker 路线**当场不可用**（README §2 说它是唯一推荐路线）。
+    #    真正的外部输入只有三个，且都已钉住：`NAPCAT_VERSION`（下面的 build.args）、
+    #    LinuxQQ 的 deb（版本写死在 `fetch-linuxqq.sh` 的回退 URL 里）、底座 ubuntu:22.04
+    #    （**未钉 digest**，理由与解析出来的 digest 记在 Dockerfile 文件头）。
+    image: mlikiowa/napcat-docker:latest
+
+    # 国内直连 Docker Hub 会超时，免费加速站又拿不到大 layer，
+    # 所以配了本地构建：镜像已存在就直接用，不存在则自动构建。
+    # 构建逻辑见 docker/napcat/Dockerfile（QQ 从腾讯 CDN 取，NapCat 从 GitHub 取）
+    build:
+      context: ./docker/napcat
+      args:
+        NAPCAT_VERSION: v4.18.28
+
+    container_name: napcat
+    restart: always
+    network_mode: bridge
+
+    # 内存上限：NapCat + QQ 实际只吃 1 GB 左右，1.5 GB 很宽裕。
+    # 不加限制时，一旦它异常暴涨会拖垮整个 Docker 虚拟机，
+    # 表现为「容器凭空消失」—— 16GB 机器上再跑个 9B 模型时尤其容易触发。
+    # memswap_limit 设成等于 mem_limit = 不许它用交换分区，超了就快速失败而不是拖慢整机。
+    # ⚠️ 改这两行需要重建容器才生效：控制台点「一键启动」会自动重建，
+    #    登录态存在 ./napcat/QQ 卷里 + ACCOUNT 快速登录，一般不会掉线。
+    mem_limit: 1536m
+    memswap_limit: 1536m
+
+    # 固定 MAC 地址：NapCat 的反检测措施之一，官方模板同样这么配
+    mac_address: "02:42:ac:11:00:02"
+
+    environment:
+      - NAPCAT_UID=${NAPCAT_UID:-501}
+      - NAPCAT_GID=${NAPCAT_GID:-20}
+      # 留空则由 NapCat 自己生成随机 token，脚本会从日志里抓出来
+      - WEBUI_TOKEN=${WEBUI_TOKEN:-}
+      # 机器人 QQ 号：填上之后重启会走「快速登录」，不用再扫码。
+      #
+      # ⚠️ **这里的默认值必须是占位符形态，真实号写在项目根目录的 `.env` 里**
+      #    （`.env` 不入库、不进沙箱、发布会排除 —— 三处都有契约盯着）。
+      #    为什么不能写回真实号：提交 `1662737` 的开源去标识把它换成占位符时，
+      #    **没有人再把它填回去**，于是 NapCat 每次都拿占位符去查"历史登录记录"、
+      #    查不到就退回二维码 —— 表现是「每次重建容器都要重新扫码」，
+      #    而四层回归全绿、没有任何一道门会响（2026-09-26 D8 定位）。
+      #    → 契约在 `scripts/check-wb.mjs`：默认值落进 9–11 位真实号形态即判红。
+      - ACCOUNT=${ACCOUNT:-123456789}
+
+    ports:
+      # ⚠️ 三个端口**一律绑回环**（2026-10-05 · 第 10 轮 · 开源前审查 M-03）。
+      # 原来写的是 `3000:3000` —— 那等于绑 `0.0.0.0`，同一局域网里任何一台机器都能连上
+      # （6099 是 QQ 登录会话的 WebUI，3000 是 OneBot 的 HTTP API，两个都能直接动这个账号）。
+      # 而下面那行注释自己写着"别暴露到公网"，却**没有任何落地措施** ——
+      # 这正是本项目最怕的一类：文档说了、代码没做、回归全绿。
+      # 绑回环之后本机一切照常：`src/config.js` 的默认 `ws://127.0.0.1:3001`、
+      # 浏览器开的 `localhost:6099`，都解析到 127.0.0.1。
+      # ⚠️ 改这几行需要**重建容器**才生效：控制台点「一键启动」会自动重建。
+      - "127.0.0.1:3000:3000"   # OneBot HTTP API（只给本机）
+      - "127.0.0.1:3001:3001"   # OneBot WebSocket 服务端（桥接层在**本机**连它）
+      - "127.0.0.1:6099:6099"   # WebUI：扫码登录用（只给本机，绝不暴露到公网）
+
+    volumes:
+      - ./napcat/config:/app/napcat/config   # NapCat 配置
+      - ./napcat/QQ:/app/.config/QQ          # QQ 登录态（持久化，重启不掉登录）

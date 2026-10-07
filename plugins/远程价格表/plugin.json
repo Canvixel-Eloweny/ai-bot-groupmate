@@ -1,0 +1,35 @@
+{
+  "id": "price-feed",
+  "name": "远程价格表",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "model",
+  "description": "从自托管 URL 定时拉取模型价格表，覆盖内置表。断网用磁盘缓存，不影响查价。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "url": "",
+    "refreshHours": 24,
+    "retryHours": 3
+  },
+  "configSchema": {
+    "url": {
+      "type": "string",
+      "label": "价格表 JSON 地址",
+      "description": "支持裸 map / {prices} / 数组。留空则不拉取。"
+    },
+    "refreshHours": {
+      "type": "number",
+      "label": "成功后重拉间隔（小时）",
+      "description": "默认 24。"
+    },
+    "retryHours": {
+      "type": "number",
+      "label": "失败后重试间隔（小时）",
+      "description": "默认 3。"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+# 跨平台换行与二进制标记（L-05 · 2026-10-05 · 第 12 轮 · 开源前审查）
+#
+# 为什么需要这一份：仓库里有 `.sh`（macOS / Linux 行为不同）与 `.png` / `.icns` 等二进制。
+# 不声明的话，Windows 协作者一提交，CRLF 会污染整份 diff；
+# 更要紧的是 `.sh` 一旦被 CRLF 化，在 Linux 上会以 `bad interpreter` 直接跑不起来 ——
+# 那种失败看起来像"脚本写坏了"，根因却在一台你看不见的机器上。
+#
+# ⚠️ 加这一份**不产生历史 diff**：实测 288 个被跟踪文件里，CRLF 只出现在两个二进制
+#    （`AppIcon-preview.png` / `AppIcon.icns`），**文本文件一个都没有** ⇒
+#    不会触发一次全仓"重新规范化"的巨大提交（那才是加 `.gitattributes` 的常见代价）。
+#    判据由 `check-wb` 的「L 系列收口」一节盯着（含"文本文件当前确实没有 CRLF"这条前提）。
+
+# 默认：能被判定为文本的按 LF 入库，工作区也按 LF 检出。
+* text=auto eol=lf
+
+# 脚本必须 LF：CRLF 的 shebang 行在 Linux 上必然失败（`bad interpreter: /bin/bash^M`）。
+*.sh text eol=lf
+
+# 二进制显式声明。`text=auto` 多数能自己认出来，写死是为了**不依赖启发式**
+# （启发式会在"看起来像文本"的二进制上翻车，而翻车的表现是文件被静默改写）。
+*.png  binary
+*.icns binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.woff binary
+*.woff2 binary

@@ -1,0 +1,32 @@
+{
+  "id": "image-lib",
+  "name": "自定义图库",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "media",
+  "description": "维护可发送的图片库（自我形象/梗图/收藏）。按标签检索后 send_image 发出。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "settings": {
+    "maxEntries": 200
+  },
+  "configSchema": {
+    "maxEntries": {
+      "type": "number",
+      "label": "图库容量上限",
+      "description": "最多保留多少张索引，默认 200。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "image-lib-note",
+        "title": "图库",
+        "priority": 36,
+        "content": "被问「你长什么样」或要发自定义收藏图时，用 image_lib_search 检索，再 image_lib_send 发送。不要硬编不存在的图。"
+      }
+    ]
+  }
+}

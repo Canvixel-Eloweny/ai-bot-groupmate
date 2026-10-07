@@ -1,0 +1,45 @@
+{
+  "id": "bili-info",
+  "name": "B站视频解析",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "media",
+  "description": "解析 B 站视频：标题/UP主/时长/简介/热评/可选字幕。不下载视频。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "permissions": ["web_fetch"],
+  "settings": {
+    "cookie": "",
+    "maxSubtitleChars": 4000,
+    "hotComments": true
+  },
+  "configSchema": {
+    "cookie": {
+      "type": "secret",
+      "label": "B站 Cookie（可选）",
+      "description": "有 SESSDATA 时字幕/官方总结成功率更高。留空匿名。"
+    },
+    "maxSubtitleChars": {
+      "type": "number",
+      "label": "字幕/总结截断长度",
+      "description": "默认 4000 字。"
+    },
+    "hotComments": {
+      "type": "boolean",
+      "label": "附带热评摘要",
+      "description": "无字幕时用热评帮模型判断主题。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "bili-when",
+        "title": "B站链接",
+        "priority": 36,
+        "content": "有人丢 B 站链接问「这是啥/讲了啥」时，用 bili_info 拿标题和简介再回答。要下载转发视频用 media-download，不要用本工具。"
+      }
+    ]
+  }
+}

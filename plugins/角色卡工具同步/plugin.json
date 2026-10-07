@@ -1,0 +1,28 @@
+{
+  "id": "role-tool-sync",
+  "name": "角色卡工具区同步",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "description": "按工具白名单自动改写角色卡「可用工具」区；开过的工具留用法，关掉的删掉。改设置后生效。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "autoOnSettingsSave": true
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用同步",
+      "description": "关掉后不再改角色卡。"
+    },
+    "autoOnSettingsSave": {
+      "type": "boolean",
+      "label": "改白名单时自动同步",
+      "description": "插件页改设置时立刻跑一次（activate 时也会跑）。"
+    }
+  }
+}

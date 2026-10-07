@@ -1,0 +1,32 @@
+{
+  "id": "self-impressions",
+  "name": "自我印象",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "description": "让模型把自己总结成低权重背景板，写入角色卡「自我印象」区。每次注入都会带上，权重故意压低。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "settings": {
+    "maxItems": 8
+  },
+  "configSchema": {
+    "maxItems": {
+      "type": "number",
+      "label": "最多保留几条",
+      "description": "默认 8；写多了会挤爆角色卡。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "self-imp-note",
+        "title": "自我印象",
+        "priority": 48,
+        "content": "偶尔用 self_impression_add 记一条稳定的自我认知（如「知道自己是白鲸娘但平时不多说」）。只记可复用的，别记一次性情绪。"
+      }
+    ]
+  }
+}

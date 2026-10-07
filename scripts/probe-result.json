@@ -1,0 +1,1543 @@
+{
+  "glm-4.5-air": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 0,
+      "ct": 256,
+      "pt": 34,
+      "ms": 2496
+    },
+    "basePrompt": 34,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 2,
+      "pt": 38,
+      "ms": 220,
+      "out": "16"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 0,
+        "ct": 256,
+        "pt": 34,
+        "ms": 2325
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 0,
+        "ct": 256,
+        "pt": 34,
+        "ms": 2305
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 0,
+        "ct": 256,
+        "pt": 34,
+        "ms": 2282
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 0,
+        "ct": 256,
+        "pt": 34,
+        "ms": 2440
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 0,
+        "ct": 256,
+        "pt": 34,
+        "ms": 2317
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 0,
+      "ct": 220,
+      "pt": 2319,
+      "ms": 2597,
+      "basePt": 24,
+      "effective": true,
+      "out": ""
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-4.6v": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 184,
+      "ct": 192,
+      "pt": 35,
+      "ms": 4782
+    },
+    "basePrompt": 35,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 4,
+      "pt": 39,
+      "ms": 386,
+      "out": "23"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 188,
+        "ct": 196,
+        "pt": 35,
+        "ms": 2567
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 177,
+        "ct": 185,
+        "pt": 35,
+        "ms": 8212
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 184,
+        "ct": 192,
+        "pt": 35,
+        "ms": 3523
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 188,
+        "ct": 196,
+        "pt": 35,
+        "ms": 4199
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 183,
+        "ct": 191,
+        "pt": 35,
+        "ms": 9194
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 219,
+      "ct": 220,
+      "pt": 25,
+      "ms": 6262,
+      "basePt": 25,
+      "effective": false,
+      "out": ""
+    },
+    "vision": {
+      "ok": 1,
+      "think": 1,
+      "rt": 31,
+      "ct": 32,
+      "pt": 32,
+      "ms": 1006
+    }
+  },
+  "glm-4.7": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 511,
+      "ct": 514,
+      "pt": 34,
+      "ms": 8740
+    },
+    "basePrompt": 34,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 1,
+      "pt": 34,
+      "ms": 1207,
+      "out": "12"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 632,
+        "ct": 635,
+        "pt": 34,
+        "ms": 13689
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 571,
+        "ct": 574,
+        "pt": 34,
+        "ms": 11327
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 723,
+        "ct": 726,
+        "pt": 34,
+        "ms": 17134
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 524,
+        "ct": 527,
+        "pt": 34,
+        "ms": 11701
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 741,
+        "ct": 744,
+        "pt": 34,
+        "ms": 33331
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 2523,
+      "ct": 2558,
+      "pt": 1895,
+      "ms": 77320,
+      "basePt": 24,
+      "effective": true,
+      "out": "2026年9月3日至5日，2026中国国际福祉博览会在北京举办，重点展示了脑机接口、康复机器人等百余款科技创新成果。"
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-4-flash": {
+    "bare": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 3,
+      "pt": 34,
+      "ms": 396
+    },
+    "basePrompt": 34,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 3,
+      "pt": 34,
+      "ms": 569,
+      "out": "13"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 0,
+        "rt": 0,
+        "ct": 168,
+        "pt": 34,
+        "ms": 11395
+      },
+      "high": {
+        "ok": 1,
+        "think": 0,
+        "rt": 0,
+        "ct": 164,
+        "pt": 34,
+        "ms": 10039
+      },
+      "max": {
+        "ok": 1,
+        "think": 0,
+        "rt": 0,
+        "ct": 3,
+        "pt": 34,
+        "ms": 312
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 0,
+        "rt": 0,
+        "ct": 3,
+        "pt": 34,
+        "ms": 348
+      },
+      "max": {
+        "ok": 1,
+        "think": 0,
+        "rt": 0,
+        "ct": 3,
+        "pt": 34,
+        "ms": 1256
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 26,
+      "pt": 1896,
+      "ms": 2532,
+      "basePt": 24,
+      "effective": true,
+      "out": "2026年9月18日，中国宣布天问二号将于明年发射，执行小行星采样返回任务。"
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-4-flash-250414": {
+    "bare": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 3,
+      "pt": 34,
+      "ms": 306
+    },
+    "basePrompt": 34,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 3,
+      "pt": 34,
+      "ms": 233,
+      "out": "23"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 0,
+        "rt": 0,
+        "ct": 3,
+        "pt": 34,
+        "ms": 216
+      },
+      "high": {
+        "ok": 1,
+        "think": 0,
+        "rt": 0,
+        "ct": 3,
+        "pt": 34,
+        "ms": 233
+      },
+      "max": {
+        "ok": 1,
+        "think": 0,
+        "rt": 0,
+        "ct": 3,
+        "pt": 34,
+        "ms": 243
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 0,
+        "rt": 0,
+        "ct": 3,
+        "pt": 34,
+        "ms": 377
+      },
+      "max": {
+        "ok": 1,
+        "think": 0,
+        "rt": 0,
+        "ct": 3,
+        "pt": 34,
+        "ms": 646
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 59,
+      "pt": 2316,
+      "ms": 2188,
+      "basePt": 24,
+      "effective": true,
+      "out": "2026年9月3日至5日，中国国际福祉博览会将在北京国家会议中心举办，以“科技赋能，共享福祉”为主题，汇聚全球超500家"
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-4.5": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 697,
+      "ct": 700,
+      "pt": 34,
+      "ms": 14571
+    },
+    "basePrompt": 34,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 1,
+      "pt": 34,
+      "ms": 1171,
+      "out": "12"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 619,
+        "ct": 622,
+        "pt": 34,
+        "ms": 12197
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 699,
+        "ct": 702,
+        "pt": 34,
+        "ms": 13123
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 571,
+        "ct": 574,
+        "pt": 34,
+        "ms": 10909
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 549,
+        "ct": 552,
+        "pt": 34,
+        "ms": 79422
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 404,
+        "ct": 407,
+        "pt": 34,
+        "ms": 9009
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 1764,
+      "ct": 1818,
+      "pt": 1880,
+      "ms": 37403,
+      "basePt": 24,
+      "effective": true,
+      "out": "2026年9月3日至5日举办的2026中国国际福祉博览会将展示脑机接口、康复机器人等科技创新成果，9月4日至5日举办的2"
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-5": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 256,
+      "ct": 256,
+      "pt": 41,
+      "ms": 4290
+    },
+    "basePrompt": 41,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 1,
+      "pt": 35,
+      "ms": 791,
+      "out": "23"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 41,
+        "ms": 3902
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 41,
+        "ms": 5313
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 41,
+        "ms": 4500
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 41,
+        "ms": 4343
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 41,
+        "ms": 4516
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 220,
+      "ct": 220,
+      "pt": 1468,
+      "ms": 5046,
+      "basePt": 31,
+      "effective": true,
+      "out": ""
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-5.2": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 256,
+      "ct": 256,
+      "pt": 41,
+      "ms": 4563
+    },
+    "basePrompt": 41,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 1,
+      "pt": 35,
+      "ms": 777,
+      "out": "23"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 244,
+        "ct": 245,
+        "pt": 41,
+        "ms": 3607
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 41,
+        "ms": 4362
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 41,
+        "ms": 4478
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 41,
+        "ms": 4241
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 41,
+        "ms": 4216
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 220,
+      "ct": 220,
+      "pt": 1468,
+      "ms": 4760,
+      "basePt": 31,
+      "effective": true,
+      "out": ""
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-5v-turbo": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 254,
+      "ct": 256,
+      "pt": 34,
+      "ms": 7830
+    },
+    "basePrompt": 34,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 2,
+      "pt": 34,
+      "ms": 846,
+      "out": "23"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 253,
+        "ct": 256,
+        "pt": 34,
+        "ms": 7157
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 34,
+        "ms": 7817
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 254,
+        "ct": 256,
+        "pt": 34,
+        "ms": 7540
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 34,
+        "ms": 7116
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 235,
+        "ct": 239,
+        "pt": 34,
+        "ms": 7487
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 218,
+      "ct": 220,
+      "pt": 24,
+      "ms": 10302,
+      "basePt": 24,
+      "effective": false,
+      "out": ""
+    },
+    "vision": {
+      "ok": 1,
+      "think": 1,
+      "rt": 32,
+      "ct": 32,
+      "pt": 31,
+      "ms": 1952
+    }
+  },
+  "glm-4.6": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 572,
+      "ct": 575,
+      "pt": 34,
+      "ms": 10642
+    },
+    "basePrompt": 34,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 1,
+      "pt": 34,
+      "ms": 2814,
+      "out": "12"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 610,
+        "ct": 613,
+        "pt": 34,
+        "ms": 11775
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 406,
+        "ct": 409,
+        "pt": 34,
+        "ms": 9029
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 382,
+        "ct": 385,
+        "pt": 34,
+        "ms": 19203
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 625,
+        "ct": 628,
+        "pt": 34,
+        "ms": 21666
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 727,
+        "ct": 730,
+        "pt": 34,
+        "ms": 16604
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 638,
+      "ct": 675,
+      "pt": 1895,
+      "ms": 24183,
+      "basePt": 24,
+      "effective": true,
+      "out": "2026中国国际福祉博览会暨中国国际康复博览会将于9月3日至5日在北京举办，集中展示脑机接口、康复机器人、智能辅具等科技"
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-4.5-flash": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 0,
+      "ct": 256,
+      "pt": 34,
+      "ms": 12463
+    },
+    "basePrompt": 34,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 2,
+      "pt": 38,
+      "ms": 3238,
+      "out": "11"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 0,
+        "ct": 256,
+        "pt": 34,
+        "ms": 9233
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 0,
+        "ct": 256,
+        "pt": 34,
+        "ms": 8988
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 0,
+        "ct": 256,
+        "pt": 34,
+        "ms": 13994
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 0,
+        "ct": 256,
+        "pt": 34,
+        "ms": 10179
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 0,
+        "ct": 256,
+        "pt": 34,
+        "ms": 9972
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 0,
+      "ct": 220,
+      "pt": 1896,
+      "ms": 7926,
+      "basePt": 24,
+      "effective": true,
+      "out": ""
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-5.1": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 256,
+      "ct": 256,
+      "pt": 34,
+      "ms": 11230
+    },
+    "basePrompt": 34,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 2,
+      "pt": 34,
+      "ms": 4289,
+      "out": "23"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 34,
+        "ms": 9247
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 34,
+        "ms": 9600
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 34,
+        "ms": 9915
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 34,
+        "ms": 9613
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 34,
+        "ms": 9833
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 220,
+      "ct": 220,
+      "pt": 1895,
+      "ms": 10462,
+      "basePt": 24,
+      "effective": true,
+      "out": ""
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-5-turbo": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 256,
+      "ct": 256,
+      "pt": 34,
+      "ms": 9748
+    },
+    "basePrompt": 34,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 2,
+      "pt": 34,
+      "ms": 2609,
+      "out": "23"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 34,
+        "ms": 9194
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 34,
+        "ms": 10737
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 34,
+        "ms": 12211
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 34,
+        "ms": 10533
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 34,
+        "ms": 10503
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 220,
+      "ct": 220,
+      "pt": 1895,
+      "ms": 9255,
+      "basePt": 24,
+      "effective": true,
+      "out": ""
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-4.7-flash": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 255,
+      "ct": 256,
+      "pt": 34,
+      "ms": 36592
+    },
+    "basePrompt": 34,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 2,
+      "pt": 34,
+      "ms": 14658,
+      "out": "11"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 256,
+        "ct": 256,
+        "pt": 34,
+        "ms": 29154
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 34,
+        "ms": 22076
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 34,
+        "ms": 7951
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 254,
+        "ct": 256,
+        "pt": 34,
+        "ms": 67159
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 254,
+        "ct": 256,
+        "pt": 34,
+        "ms": 71426
+      }
+    },
+    "webSearch": {
+      "code": "1302",
+      "msg": "您的账户已达到速率限制，请您控制请求频率"
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-4.6v-flash": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 255,
+      "ct": 256,
+      "pt": 35,
+      "ms": 3744
+    },
+    "basePrompt": 35,
+    "thinkOff": {
+      "code": "1305",
+      "msg": "该模型当前访问量过大，请您稍后再试"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 254,
+        "ct": 256,
+        "pt": 35,
+        "ms": 6974
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 35,
+        "ms": 5383
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 35,
+        "ms": 3558
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 35,
+        "ms": 4936
+      },
+      "max": {
+        "ok": 0,
+        "code": "1305",
+        "msg": "该模型当前访问量过大，请您稍后再试"
+      }
+    },
+    "webSearch": {
+      "code": "1305",
+      "msg": "该模型当前访问量过大，请您稍后再试"
+    },
+    "vision": {
+      "ok": 1,
+      "think": 1,
+      "rt": 31,
+      "ct": 32,
+      "pt": 32,
+      "ms": 4300
+    }
+  },
+  "glm-5.3": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 101,
+      "ct": 104,
+      "pt": 41,
+      "ms": 3576
+    },
+    "basePrompt": 41,
+    "thinkOff": {
+      "code": "1210",
+      "msg": "该模型始终思考，不支持关闭思考；请使用 low、high 或 max。"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 16,
+        "ct": 19,
+        "pt": 41,
+        "ms": 1849
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 23,
+        "ct": 26,
+        "pt": 41,
+        "ms": 1778
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 144,
+        "ct": 147,
+        "pt": 41,
+        "ms": 4143
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 130,
+        "ct": 133,
+        "pt": 41,
+        "ms": 4398
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 119,
+        "ct": 124,
+        "pt": 41,
+        "ms": 3848
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 217,
+      "ct": 220,
+      "pt": 1902,
+      "ms": 5869,
+      "basePt": 31,
+      "effective": true,
+      "out": ""
+    },
+    "vision": {
+      "code": "1210",
+      "msg": "messages.content.type 参数非法，取值范围 ['text']"
+    }
+  },
+  "glm-5.3-flash": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 57,
+      "ct": 60,
+      "pt": 41,
+      "ms": 1593
+    },
+    "basePrompt": 41,
+    "thinkOff": {
+      "code": "1210",
+      "msg": "该模型始终思考，不支持关闭思考；请使用 low、high 或 max。"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 16,
+        "ct": 19,
+        "pt": 41,
+        "ms": 918
+      },
+      "high": {
+        "ok": 1,
+        "think": 0,
+        "rt": 0,
+        "ct": 3,
+        "pt": 41,
+        "ms": 1042
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 124,
+        "ct": 127,
+        "pt": 41,
+        "ms": 1751
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 167,
+        "ct": 170,
+        "pt": 41,
+        "ms": 2671
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 145,
+        "ct": 180,
+        "pt": 41,
+        "ms": 2440
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 219,
+      "ct": 220,
+      "pt": 1468,
+      "ms": 5125,
+      "basePt": 31,
+      "effective": true,
+      "out": ""
+    },
+    "vision": {
+      "ok": 1,
+      "think": 1,
+      "rt": 32,
+      "ct": 32,
+      "pt": 38,
+      "ms": 708
+    }
+  },
+  "glm-4.6v-flashx": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 226,
+      "ct": 233,
+      "pt": 35,
+      "ms": 1805
+    },
+    "basePrompt": 35,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 2,
+      "pt": 39,
+      "ms": 174,
+      "out": "17"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 35,
+        "ms": 1962
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 35,
+        "ms": 1824
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 35,
+        "ms": 2007
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 35,
+        "ms": 1955
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 35,
+        "ms": 1968
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 219,
+      "ct": 220,
+      "pt": 25,
+      "ms": 16742,
+      "basePt": 25,
+      "effective": false,
+      "out": ""
+    },
+    "vision": {
+      "ok": 1,
+      "think": 1,
+      "rt": 31,
+      "ct": 32,
+      "pt": 32,
+      "ms": 637
+    }
+  },
+  "glm-4.5v": {
+    "bare": {
+      "ok": 1,
+      "think": 1,
+      "rt": 254,
+      "ct": 256,
+      "pt": 34,
+      "ms": 6649
+    },
+    "basePrompt": 34,
+    "thinkOff": {
+      "ok": 1,
+      "think": 0,
+      "rt": 0,
+      "ct": 2,
+      "pt": 34,
+      "ms": 1409,
+      "out": "23"
+    },
+    "effort": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 234,
+        "ct": 238,
+        "pt": 34,
+        "ms": 5388
+      },
+      "high": {
+        "ok": 1,
+        "think": 1,
+        "rt": 253,
+        "ct": 256,
+        "pt": 34,
+        "ms": 4976
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 255,
+        "ct": 256,
+        "pt": 34,
+        "ms": 13974
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 1,
+        "think": 1,
+        "rt": 244,
+        "ct": 249,
+        "pt": 34,
+        "ms": 6034
+      },
+      "max": {
+        "ok": 1,
+        "think": 1,
+        "rt": 254,
+        "ct": 256,
+        "pt": 34,
+        "ms": 6199
+      }
+    },
+    "webSearch": {
+      "ok": 1,
+      "think": 1,
+      "rt": 220,
+      "ct": 220,
+      "pt": 24,
+      "ms": 5660,
+      "basePt": 24,
+      "effective": false,
+      "out": ""
+    },
+    "vision": {
+      "ok": 1,
+      "think": 1,
+      "rt": 32,
+      "ct": 32,
+      "pt": 31,
+      "ms": 1099
+    }
+  },
+  "glm-ocr": {
+    "bare": {
+      "ok": 0,
+      "code": "1214",
+      "msg": "OCR仅支持PDF、JPG、PNG、JPEG格式；文件大小限制：图片≤10MB、PDF≤50MB；PDF最大100页"
+    },
+    "thinkOff": {
+      "code": "1214",
+      "msg": "OCR仅支持PDF、JPG、PNG、JPEG格式；文件大小限制：图片≤10MB、PDF≤50MB；PDF最大100页"
+    },
+    "effort": {
+      "low": {
+        "ok": 0,
+        "code": "1214",
+        "msg": "OCR仅支持PDF、JPG、PNG、JPEG格式；文件大小限制：图片≤10MB、PDF≤50MB；PDF最大100页"
+      },
+      "high": {
+        "ok": 0,
+        "code": "1214",
+        "msg": "OCR仅支持PDF、JPG、PNG、JPEG格式；文件大小限制：图片≤10MB、PDF≤50MB；PDF最大100页"
+      },
+      "max": {
+        "ok": 0,
+        "code": "1214",
+        "msg": "OCR仅支持PDF、JPG、PNG、JPEG格式；文件大小限制：图片≤10MB、PDF≤50MB；PDF最大100页"
+      }
+    },
+    "levelAlias": {
+      "low": {
+        "ok": 0,
+        "code": "1214",
+        "msg": "OCR仅支持PDF、JPG、PNG、JPEG格式；文件大小限制：图片≤10MB、PDF≤50MB；PDF最大100页"
+      },
+      "max": {
+        "ok": 0,
+        "code": "1214",
+        "msg": "OCR仅支持PDF、JPG、PNG、JPEG格式；文件大小限制：图片≤10MB、PDF≤50MB；PDF最大100页"
+      }
+    },
+    "webSearch": {
+      "code": "1214",
+      "msg": "OCR仅支持PDF、JPG、PNG、JPEG格式；文件大小限制：图片≤10MB、PDF≤50MB；PDF最大100页"
+    },
+    "vision": {
+      "code": "1214",
+      "msg": "OCR仅支持PDF、JPG、PNG、JPEG格式；文件大小限制：图片≤10MB、PDF≤50MB；PDF最大100页"
+    }
+  }
+}
