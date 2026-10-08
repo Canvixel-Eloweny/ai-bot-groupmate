@@ -1,0 +1,2210 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   QQ-BOT-CONTROL v2 · 设计令牌与组件
+   ──────────────────────────────────────────────────────────────────────────
+   视觉主线（唯一一条，不叠加第二种风格）：
+     「安静的仪表盘」—— 中性冷灰底 + 单色强调（蓝），信息靠**层级与留白**分区，
+     不靠装饰性渐变/阴影。所有动效只用于**状态变化**（hover / 载入 / 保存成功），
+     不做进入动画。
+
+   三条硬规则：
+     ① 颜色**只有一处来源**：下面的 `:root` / `html[data-theme=dark]` 令牌。
+        组件里不许写死十六进制（深色主题会自动跟着变；写死的那处不会）。
+     ② 字号/间距只从下面的阶梯里取，不出现 15px / 7px 这种即兴值。
+     ③ 可点区域高度 ≥ 32px（`--h-ctl`），触摸目标另加 `.touch` 类补到 44px。
+
+   ══════════════════════════════════════════════════════════════════════════
+   2026-10-02 · **美化轮**改了什么（只动视觉层，`app.js` / `schema.js` 零改动）
+   ══════════════════════════════════════════════════════════════════════════
+   参考对象与**吸收到的具体元素**（不是"照着抄皮"，每一处都回答一个问题）：
+
+   | 参考 | 吸收什么 | 不抄什么 |
+   |---|---|---|
+   | shadcn/ui | 中性底 + **极轻阴影**（不是重 elevation）· 细描边卡片 · 统一焦点环 | 默认的"近黑主按钮"（控制台需要明确的主行动色） |
+   | Ant Design | **32px 控件高度** · 表格无竖线 + 表头吸顶 · Tabs 下划线导航 · Segmented 分段 | `#1677ff` 直接压白字（对比 3.6:1，不到 AA 的 4.5） |
+   | Arco Design | 中文控制台的**字号/灰阶纪律**（正文 13、次要 12、提示 11） | 2–4px 圆角（中文密集界面里过"硬"） |
+   | MUI | 状态色"色 + 字"双通道，不靠纯色块表意 | Material 的 4px 圆角 + 重阴影（深色下会发脏） |
+   | Nuxt | 大标题的**行高纪律**（标题 1.25 / 正文 1.55） | 落地页式大字号 hero 与大面积渐变（这是控制台不是营销页） |
+
+   **修掉的三处真实缺陷**（都不是审美问题，是"看不到就会一直错下去"的那类）：
+   ① **深色下白字压浅蓝**：`--c-accent` 在深色是 `#7aa2ff`（浅蓝），而 `.btn-primary`
+      / `.sub[aria-selected]` / `.logo` / `.sw .track::after` 都写死 `color:#fff` 或
+      `background:#fff` ⇒ 对比度 ≈ **2.1:1**（AA 要 4.5:1）。现已收进 `--c-on-accent`
+      / `--c-knob` 两个令牌，深色下自动变成深色字压浅蓝底。
+   ② **吸顶偏移写死**：`.nav1 { top: 57px }` / `.nav2wrap { top: 93px }` 与实际高度
+      （顶栏 ≈ 62px + 一级导航 34px）**差 5px** ⇒ 吸顶时导航上沿被顶栏盖掉一条。
+      现改成由 `--h-topbar` + `--h-nav1` **推导**，且顶栏改成定高（胶囊横向滚动而不是换行）
+      —— 高度一旦可预测，两个偏移就不会再漂。
+   ③ **保存条上的 hover 是"死"的**：`.savebar .btn-ghost`（0,2,0）写在 `.btn:hover`
+      （0,2,0）之后，同权重下后者被压掉 ⇒ 悬停「丢弃改动」**零反馈**。
+      现已给保存条内的按钮单独写明 hover / active。
+
+   纪律（可机器核对，别靠"下次注意"）：
+   · **把注释与本文件的令牌声明行都剥掉之后**，剩余的着色代码里色值字面量 = **0**
+     （`#…` / `rgb…` / `rgba…`）。上面这张表里为了说明"吸收什么/不抄什么"写了几个色值，
+     它们只出现在注释里 —— 所以核对时必须先剥注释，否则会自己把自己算成违规。
+   · `:root` 与深色块里的 `--c-*` **名字集合逐个相等**（漏一个 = 半明半暗，且不报错）。
+   · 深色块里**只有** `--c-*` 声明；`color-scheme` 单独一条规则（否则它就不是"另一套令牌"）。
+   · 令牌个数：浅色 84 / 深色 84（2026-10-03 实测；此前这里写的是「51 / 51」——
+     那是 B22 海洋色卡 + B26 流体 + B27 玻璃三轮加令牌之前的数，早就过期了）。
+     ⚠️ 这个数**只当"改完扫一遍"的对照**，不当判据 —— 真正守着"名字集合相等"的是
+     `scripts/check-wb.mjs` §60 的 G1（漏一个深色令牌它会报红）。写死个数只会腐烂。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 令牌：浅色（默认） ───────────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+
+  /* 底与面：从"最深"到"最浅"是同一条中性轴，不再混蓝灰与暖灰。
+     ⚠️⚠️ **这里来回动过两次**（B25换 → B28 批次1 回 → B28 批次3 又换回来），
+        所以必须把三次的理由都记下来，否则下一轮又会"顺手优化"回去：
+        ① B25 换青调底：为了「液态玻璃必须有东西可模糊」——
+           背后是一块平灰时，真折射与 backdrop-filter 都读不出效果（移植时踩过）。
+        ② B28 批次1 回平灰：用户看腻了（"现在这个背景不好看"），
+           **背景单独**回退，六团流体同时移除。
+        ③ B28 批次3 又换回来：**用户看到 B26 那一轮（性能修复轮）的截图后说
+           "这个对话时候的背景我挺喜欢的"**。那一轮就是青调底 + 六团流体 + 织纹。
+           ⇒ 结论：用户喜欢的是**六团流体在动**这件事本身，
+              而不是"平灰 vs 青调"这个选择 —— 这一点在①与②的记录里都没被意识到
+              （两次都以为是底色的问题）。
+        ⚠️ 连带的面/线条令牌与页面底**同属一条中性轴**，必须一起换：
+           只改页面底而留原样的面，卡片会比页面底更"青"/更"灰"，读起来是底色没换干净。
+     ⚠️ 玻璃背板（`body.eg-on::before`，5 色团 + 2 层织纹，z=-1）**独立于**六团流体，
+        两者共存不冲突：流体在 -2 当动态光源，它在 -1 当玻璃的静态背板。 */
+  --c-bg:            #e6f6fc;
+  --c-surface:       #ffffff;
+  --c-surface-2:     #f4fbfd;
+  --c-sunken:        #dfeef5;
+  --c-hover:         #e9f5fa;
+  --c-line:          #d8e6ee;
+  --c-line-soft:     #e5f0f6;
+  --c-line-strong:   #c2d4de;
+
+  /* 字：三级灰阶，都走**级1 #31446C 的四档透明度**而不是中性灰 ——
+     蓝调文字读起来是"墨"，中性灰在青调底上会显脏。
+
+     ⚠️⚠️ 2026-10-03 **修正一处注释与实测不符**：这段原来写"第三级取到 4.5:1"，
+        而实测 `--c-text-3` 是 2.98:1 —— **AA 失败**（#8b95a5 那版是 3.0:1，
+        换到色卡级之后并没有变好，是注释沿用了旧结论）。
+        顺带把text-2 提到 .86 —— 因为两档会顶在一起：单提text-3 到 .76
+        就与原text-2 的 .78 一样，两级文字失去层次。
+        实测（三档重分配后，压青调底 #e6f6fc）：
+           text-1 不透明 → 8.72:1    text-2 .86 → 5.98:1    text-3 .76 → 4.61:1 ✓ AA
+        层次仍在（1.00 > .86 > .76）。
+
+     ⚠️ **如实登记的残留**：卡片正下方叠 2–3 团流体光斑 + 环境色团时，
+        最坏背板约 rgb(167,218,242)，此时 text-2 约 3.97:1、text-3 约 2.65:1，
+        **仍不达 AA**。已实测过"把环境层色团降 15%"这条对冲：3.97 → 4.01，
+        几乎无用 —— ��因为**最坏背板本身很亮**，不是文字色的问题。
+        真正的解是给玻璃态文字加一层极淡文字阴影（本轮不做，见计划），
+        或降低流体光斑在卡片区叠加的量。
+        ⚠️ **方向性纪律**：看到这里对比度不足时，**压背景（--c-eg-bg-*）、
+        或给玻璃态文字加文字阴影**；**不许加厚 --c-eg-surface** ——
+        加厚白纱会把本轮「透亮感」这个目标直接抵消掉。 */
+  --c-text-1:        #31446c;
+  --c-text-2:        rgba(49, 68, 108, .86);
+  --c-text-3:        rgba(49, 68, 108, .76);
+  /* 二级 tab 的选中文字（B29 · 与下划线**分成两个令牌**，因为它们门槛不同）：
+     下划线是**非文本**图形，只要 ≥3；文字要 ≥4.5。
+     ⚠️ 浅色下 `--c-accent` #2f509b 作文字实测 7.40:1 ✓，但它同时是下划线的颜色，
+        一个令牌扛不住两种门槛（若哪天把 accent 调浅到 3.x，文字就跟着塌）。
+        契约 N13 盯这两个令牌的存在。 */
+  --c-sub-on:         #26457f;      /* 实测对二级栏玻璃底 9.05:1 */
+
+  /* 强调：全站一个。取**级2 #2F509B**（Vainny 海洋色卡 · 2026-10-03 从 #2563eb 换过来）。
+     ⚠️ 色值换了，但**当初选它的理由一条没变**：主按钮上的字必须读得清。
+        实测级2 压白字 = **7.66:1**（AA），比原来的 #2563eb（5.17:1）还宽裕 2.5 档。
+        级3 #4574C2 压白字 4.64:1 也过 AA，所以 hover 用它仍然合法。 */
+  --c-accent:        #2f509b;
+  --c-accent-hover:  #4574c2;
+  --c-accent-weak:   rgba(157, 191, 235, .34);
+  --c-accent-line:   #9dbfeb;
+  --c-accent-ring:   #07a0df;
+
+  /* 压在有色底上的字 / 控件（深色下会翻成深色字，见下） */
+  --c-on-accent:     #ffffff;
+  --c-on-danger:     #ffffff;
+  --c-knob:          #ffffff;
+  --c-highlight:     #ffffff26;
+
+  /* 语义四组：fg + bg + line 三件套，一律"色 + 字"双通道 */
+  --c-ok:            #067647;
+  --c-ok-bg:         #ecfdf3;
+  --c-ok-line:       #abefc6;
+
+  --c-warn:          #b54708;
+  --c-warn-bg:       #fffaeb;
+  --c-warn-line:     #fedf89;
+
+  --c-danger:        #b42318;
+  --c-danger-bg:     #fef3f2;
+  --c-danger-line:   #fecdca;
+
+  --c-info:          #026aa2;
+  --c-info-bg:       #f0f9ff;
+  --c-info-line:     #b9e6fe;
+
+  --c-idle:          #98a2b3;
+
+  /* 阴影只有**颜色**在这里，形状（offset/blur）留给组件 —— 这样换主题时
+     阴影跟着一起翻，而"哪一层该多深"是布局决定、不该被令牌锁住
+     ⚠️ 四档都带**级1 #31446C 的色相**而不是纯黑：青调底上纯黑阴影读起来是"灰脏"，
+        蓝调阴影才像"影子落在海水上"。透明度阶梯（.05/.08/.12/.20）沿用原值，只换色相。 */
+  --c-shadow-1:      rgba(49, 68, 108, .05);
+  --c-shadow-2:      rgba(49, 68, 108, .08);
+  --c-shadow-3:      rgba(49, 68, 108, .12);
+  --c-shadow-4:      rgba(49, 68, 108, .20);
+  --c-scrim:         rgba(49, 68, 108, .40);
+  --c-scrim-soft:    rgba(230, 246, 252, .66);
+
+  /* 常驻浮层（保存条）自带一套反色，否则它在两种主题下都得靠 `!important` 救 */
+  --c-bar-bg:        #31446c;
+  --c-bar-fg:        #f2f4f7;
+  --c-bar-line:      rgba(255, 255, 255, .22);
+
+  /* ── 顶部导航「灵动岛」（2026-10-02 · 本轮；2026-10-03 B29 改为跟随主题）──────
+     ⚠️⚠️ **这一组是 2026-10-03 整体重写的**。原设计是"一整块**纯黑**浮岛，两套主题
+        都是黑"（用户当时说"保留英雄栏现有效果不受影响"）—— 用户在 B29 明确要求
+        **改为跟随主题**：「将黑色主题切换栏改为跟随当前主题配色」。
+        记录一下**为什么纯黑不能直接留**，那组数字是实测的：
+          玻璃底 = 青调底 #e6f6fc + 白纱 .82 = rgb(251,253,254)，而纯黑底上的
+          前景色是"为黑挑的浅色"，直接铺到浅玻璃上**全部失效**：
+            --c-nav-fg#8e96a3   对黑 7.04:1 → 对浅玻璃 **2.74:1** ✗
+            --c-nav-fg-hover     对黑 12.51  → **1.54:1** ✗
+            --c-nav-fg-on #ffffff 对黑 21.00  → **1.09:1** ✗（选中字完全看不见）
+            --c-nav-ring #ffffff 对黑 21.00  → **1.09:1** ✗（指示器消失）
+        ⇒ **底色与 7 个前景色必须成对改**，不是改一个 `--c-nav-bg` 就完事。
+
+     2026-10-03 的取值（浅色侧全部实测过，岛底 rgba(255,255,255,.82)⊕青调底 = rgb(251,253,254)）：
+        默认 6.60:1 · 悬停 9.48:1 · 选中 11.04:1 —— 三态**单调递增**（硬要求：
+        悬停必须"弱于选中"），且全部过 AA。
+     ⚠️⚠️ 2026-10-04「通透轮」把岛底从 .82 降到 **.60**（用户原话：「这两个的玻璃效果
+        变得通透一些，可以参考我们最顶部的，但是要有区分」）。**上面那组
+        6.60/9.48/11.04 是按 .82 的固定底算的，降到 .60 后底随背景浮动、不再恒真** ——
+        留着当核对基准会误导下一个人，所以原地标注失效，并给出同一测法的新实测
+        （真浏览器 + 冻结背景 + 在玻璃正后方铺一块 `--c-accent` 深蓝 #2f509b）：
+          · 岛：.82 → 未选中字 #455c85 对合成底 rgb(216,224,243) = **5.08:1**
+                .60 → 对 rgb(164,191,255) = **3.67:1**
+          · 二级栏：.66 → tab 字（--c-text-2 合成 #4e5e81）对底 = **3.71:1**
+                .44 → **2.73:1**
+        ⚠️ **这是"更通透"的固有代价，不是回归** —— 白纱薄一分，滚动内容就多透一分，
+        两者是同一个旋钮。验收锚点因此从"岛上的字恒定过 AA"改成
+        **「浅背景过 AA · 深色穿透 ≥3.5:1（岛）/ ≥2.7:1（二级栏）」**。
+        补偿：同轮给两条吸顶玻璃各加一档 brightness 抬亮
+        （`--c-eg-bright-isle` / `--c-eg-bright-bar`）—— 它把透上来的暗内容整体提亮，
+        既拉回一部分对比度，又让玻璃读成"亮透"而不是"白雾"。
+     ⚠️ `--c-nav-edge` 从白边改成**蓝调深边**：浅色下白边压在近白玻璃底上只有
+        1.03:1，等于没有边界（岛会"化掉"）。纯黑在青调底上"读起来灰脏"
+        （`style.css:144-147` 已登记这条纪律），所以边与投影都改用级 1 蓝调。
+     ⚠️ 这 10 个名字必须在深色块里**逐个出现**（契约 N4 判名字集合相等）——
+        漏一个 = 深色下那处仍是浅色值，且**没有任何东西报错**（这个洞开了两轮）。 */
+  --c-nav-bg:        rgba(255, 255, 255, .60);   /* 岛底：浅色玻璃（通透轮 .82→.60，实测见上） */
+  --c-nav-edge:      rgba(49, 68, 108, .16);    /* 岛的 1px 收边：蓝调深边，白边在近白底上看不见 */
+  --c-nav-fg:        #455c85;      /* 未选中文字：对浅玻璃实测 6.60:1（深色侧仍是 #8e96a3，5.09:1） */
+  --c-nav-fg-hover:  #31466c;      /* 悬停文字：9.48:1，仍"弱于选中" */
+  --c-nav-fg-on:     #263a63;      /* 选中文字：11.04:1 */
+  --c-nav-ring:      #263a63;      /* 选中描边：非文本只要 ≥3，这里 11.04:1 */
+  --c-nav-fill:      rgba(49, 68, 108, .10);    /* 悬停填充：蓝调10%；hover 字压上去实测 8.06:1 */
+  --c-nav-cnt-bg:    rgba(49, 68, 108, .12);    /* 计数胶囊底：合成底 rgb(195,199,209)→(230,233,237) */
+  --c-nav-cnt-fg:    #263a63;      /* 计数胶囊**自己的**墨色 —— 见下方 `.cnt` 那条注释 */
+  --c-nav-shadow:    rgba(49, 68, 108, .22);    /* 岛的投影**颜色**（形状留给组件，同 --c-shadow-* 的分工） */
+
+
+  /* 背景流光的 --c-aurora-* / --aurora-* 令牌已随六团流体整组移除（2026-10-04）。
+     背景改为 canvas 颗粒渐变：颜色是**数据**（shader-bg.js 的 VARIANTS），不进样式表。 */
+
+  /* ── 液态玻璃（2026-10-03 从旧控制台移植；规则区块在文件末尾）───────────────
+     全部挂在 body.eg-on 总闸下（glass.js 的 initGlass 加类）—— JS 不在 = 一条都不生效。
+     ⚠️ 这一组的名字必须在下面的深色块里**逐个出现**（同 §53"名字集合相等"的口径）。
+     ⚠️⚠️ **不许在这里写死个数**（此前写的是"这 18 个名字"，而实测早已是 26 个）——
+        守着这件事的是 `scripts/check-wb.mjs` §60 的 **G1**（漏一个深色令牌它会报红），
+        注释里的数字只会腐烂，且腐烂时**比没有注释更坏**（下一个人会拿它当核对基准）。
+        要数就当场数：`--c-eg-*` 在两块里各有多少。
+     ⚠️ surface 三档的 alpha 是**经验值**（多轮用户反馈调出来的），且**故意不相等**：
+        卡片承载密集表单、控件次之、悬浮条最"透"—— 悬浮条必须比卡片薄
+        （分层名存实亡的形态曾有变异专打它）。白纱每薄一分，透出来的内容就多一分
+        —— 观感上的"通透"就在这一项。 */
+  --c-eg-surface:      rgba(255, 255, 255, .46);   /* 第 2 档：卡片 / 弹窗 / 提示条 */
+  --c-eg-surface-2:    rgba(255, 255, 255, .38);   /* 第 3 档：输入类 */
+  --c-eg-surface-hero: rgba(255, 255, 255, .16);   /* 第 1 档：顶栏（要"透"的那一档） */
+  --c-eg-surface-inv:  rgba(16, 24, 40, .70);      /* 第 1 档反相：保存条（浅色主题下是深条） */
+  /* 第 2 档反相变体 · 弹窗专用（2026-10-03）：.modal-box 背后**多压一层 --c-scrim**
+     (.40半透明)，而卡片背后没有。所以它若沿用卡片的 .46，玻璃会读成灰板 ——
+     这个补偿是光学事实，不是风格偏好。 */
+  --c-eg-surface-modal: rgba(255, 255, 255, .56);
+  /* 边缘：锐档**收**一点、柔档**开**一点 —— 这一对是"消除硬边"的关键：
+     锐档太亮就是一道白线（旧控制台被指"白边过重"），柔档太窄就没有过渡带。
+     终轮把两者往中间收（.55→.48 / .20→.26），边还在，但不再是一条刻出来的线。 */
+  --c-eg-rim-sharp:    rgba(255, 255, 255, .50);   /* 边缘高光·锐（上限 .7：再亮就是一圈白边） */
+  --c-eg-rim-soft:     rgba(255, 255, 255, .24);   /* 边缘高光·柔（过渡带变宽 = 少锯齿感） */
+  /* 描边：1px、极淡。它**不是**装饰 —— backdrop-filter 在圆角处的采样会出现毛刺，
+     一条同色系 1px 描边正好把那一圈压住（这也是"边缘无锯齿"最省的一招，零性能代价）。
+     ⚠️ 与旧控制台那圈 3px + screen 混合的"白环"不是一回事：那是边框，这是压毛刺。 */
+  --c-eg-edge:         rgba(255, 255, 255, .28);
+  --c-eg-vol-top:      rgba(255, 255, 255, .50);   /* 内缘顶部辉光（漫反射） */
+  --c-eg-vol-bottom:   rgba(0, 0, 0, .07);         /* 内缘底部暗角（"厚度"） */
+  /* 织纹三令牌（`--c-eg-weave` / `-weave-2` / `-weave-size`）与网格令牌
+     （`--c-eg-grid`）已于 B28 批次4 **全部删除** —— 用户「斜杠杠什么的都不要」
+     +「背景有一个小方块网格的，那个我也不要」。**四个令牌已零消费者**，所以整组删掉
+     （留着就是本项目反复在清的那类"定义了没人用"）。
+     ⚠️ 下面这五个色团是玻璃背后**仅剩**的可位移形状 —— 它们不许被一起删：
+        平灰底上 backdrop-filter 采样不到任何内部差异，玻璃会读成一张半透明纸。 */
+  --c-eg-bg-a:         rgba(7, 160, 223, .10);     /* 环境层色团 ——
+        背后是"一块平灰"时玻璃没东西可模糊、可位移（旧控制台两轮反馈的共同根因），
+        所以色团是玻璃效果的前提，不许删回"只有网格"。
+        ⚠️ 2026-10-03：五个色值从 #2563eb 那一族换成**海洋色卡**（级4亮青 / 级5浅天蓝）——
+           玻璃的环境层与流层是同一个背景世界，用两套色相会读成"两层不同的光"。 */
+  --c-eg-bg-b:         rgba(49, 68, 108, .04);      /* 级1 深蓝，最淡的一层压底 */
+  --c-eg-bg-c:         rgba(205, 200, 230, .12);    /* 级6 淡紫 */
+  --c-eg-bg-d:         rgba(47, 80, 155, .08);      /* 级2 深蓝 */
+  /* 远景一层（范围更大、更淡、铺在中间）。纵深感的来源不是"更糊"，而是"有近有远"
+     —— 四个近景色团之外再垫一层远的，玻璃后面才有层次，而不是一层贴纸。 */
+  --c-eg-bg-e:         rgba(157, 191, 235, .07);    /* 级5 浅天蓝 */
+  /* 噪点：data-URI 里**不得出现裸 `#`/`;`**（§53⑥ 会把 `#xxx` 读成散落色值）。
+     终轮 .05 → .035：噪点是"材质感"，过强就变成"脏"（色彩纯净度的反面）。 */
+  --c-eg-noise:        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.035 0 0 0 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  /* 模糊与饱和度也做成令牌 —— 不是为了"可调"，是为了**实验室页能复用同一套规则**
+     （A/B 对比时只在某一侧重定义这几个变量，不抄第二份样式）。
+     ⚠️ 改这三个值必须与 glass.js 的 `G_DEFAULTS.blur/saturate` 同步，
+        否则"走折射"和"走磨砂"两条路会糊得不一样，没法归因。 */
+  --c-eg-blur-1:       16px;   /* 第 1 档（悬浮条：离背景最远 → 最糊） */
+  --c-eg-blur-2:       6px;    /* 第 2 档（卡片：贴着背景 → 反而要小） */
+  --c-eg-sat:          140%;
+  /* 跟随高光（B31 · tilt.js 的 `::after` 用）。⚠️ 它是**白光**而不是色卡里的某一级 ——
+     反光的物理事实就是"光源色的镜面反射"，染色反而像贴纸；
+     深色下必须**弱得多**（.20）：暗底上 .50 的白是一块糊住的雾，不是反光。 */
+  /* 第 1 档的内缘光：只有四道**对角**高光 + 一层极淡内暗角，没有任何"一圈均匀的白"
+     —— 人眼把"一圈均匀的亮"读成边框，把"深浅不对称的亮"读成反光。
+     x/y 反号且非零才是对角；写成 inset 0 0 0 1px 就退化成一圈白描边。 */
+  --c-eg-inset:        inset 1.6px -1.6px 1px -1px var(--c-eg-rim-sharp), inset -1.6px 1.6px 1px -1px var(--c-eg-rim-sharp), inset 8px -8px 1.5px -8px var(--c-eg-rim-soft), inset -8px 8px 1.5px -8px var(--c-eg-rim-soft), inset 0 0 2px var(--c-eg-vol-bottom);
+
+  /* ── 吸顶层的三组新增令牌（2026-10-03 B29：二级 tab 栏上移 + 灵动岛跟随主题）────
+     ⚠️ **为什么单开而不是复用第 1 档 / 第 2 档**（三条实测依据）：
+        ① 厚度必须不同 —— 第 1 档 `.16` 白纱对**顶栏背后的浅色页面底**是安全的，
+           但二级栏背后滚过去的是**卡片网格**（含 `--c-accent` 深色按钮 L=0.087）：
+           实测 `.16` 时 tab 默认字压那个按钮只剩 **1.88:1**（按钮滚过时 tab 字消失），
+           `.66` 才回到 4.84:1 ✓。⇒ 通栏要厚、胶囊要透，一个令牌满足不了两者。
+        ② 内缘光形状必须不同 —— `--c-eg-inset` 末尾那层 `inset 0 0 2px vol-bottom`
+           是**四边**厚度暗角。三层上下相邻时每条各留一道下沿暗角 = **两道暗角**，
+           看起来就是"两条玻璃之间有一道脏缝"。
+           ⚠️ 实测接缝的真正来源就是这个（**不是** backdrop-filter 互相采样 ——
+           滤镜只采样自身盒子内的背板，三层盒子垂直相邻、互不重叠）。
+           ⇒ 下面两组末层改成 `inset 0 **-2px** 2px`（y 为负 ⇒ 只压下沿），
+             上沿零暗角 ⇒ 接缝只剩一道，正是用户要的"极淡分界"。
+        ③ `--c-eg-inset` **本体一字不改**（顶栏在用；它上面没有东西相邻，不构成接缝）。 */
+  /* ⚠️⚠️ 2026-10-04「通透轮」：.66→.44 / .82→.60（用户要求这两条参考顶栏变透）。
+     三层各差一档 ⇒ 越靠下越厚，是"离背景越近越实"的同一条纵深逻辑。
+     ⚠️ 上游那条 `.66 才回到 4.84:1` 的实测仍成立，但它是**旧值下的**取舍；
+     新值下的实测与验收锚点写在 `--c-nav-bg` 上方（同一测法，别维护两份）。
+     ⚠️⚠️ 同日**「融合轮」二级栏 .44 → .18**（用户看到成品后的下一条指令：
+     「把这两个统一一下，融合在一起」—— 截图里顶栏透出背景的紫色、二级栏却是一块白牌，
+     读成两样东西）。**白纱是"透出背景色"的那一档**：
+     .44 时二级栏只透出白/浅 ⇒ 与顶栏的紫对不上；.18 与顶栏 .16 基本同档，
+     两层于是透出**同一片背景**，融合才成立。
+     ⇒ 三层现在是 .16 : .18 : .60 —— 顶栏与二级栏是**同一片玻璃**（这才是"统一"），
+       灵动岛仍是最实的胶囊（它是浮岛，需要边界感；用户没要求动它）。 */
+  --c-eg-surface-bar:   rgba(255, 255, 255, .18);   /* 第 1b 档：二级 tab 栏（与顶栏同档 ⇒ 视觉上连成一片） */
+  /* 两条吸顶玻璃各自的**饱和/抬亮**档（通透轮的补偿项，见 --c-nav-bg 上方）。
+     ⚠️ 不复用全局 `--c-eg-sat`：那个是 140%，被顶栏与卡片共用；把吸顶层调到 190%
+     而卡片不动，正是"三层各差一档"在**色彩**上的那一半（白纱差在厚度上）。
+     ⚠️ brightness > 1 是给"透上来的暗内容"抬亮：深色按钮滚过时，字与底的
+     **亮度差**被整体抬高，对比度回来一部分；同时观感从"白雾"变成"亮透"。
+     ⚠️ 深色主题侧数值更小 —— 暗底上抬亮过头会把玻璃读成一层灰雾（同 --c-eg-rim 的纪律）。 */
+  --c-eg-sat-bar:       190%;
+  --c-eg-bright-bar:    1.18;
+  --c-eg-sat-isle:      185%;
+  --c-eg-bright-isle:   1.14;
+  --c-eg-seam:          rgba(49, 68, 108, .14);     /* 极淡分界：对玻璃底 1.256:1（看得见但不抢） */
+  --c-eg-inset-bar:     inset 1.6px -1.6px 1px -1px var(--c-eg-rim-sharp), inset -1.6px 1.6px 1px -1px var(--c-eg-rim-sharp), inset 8px -8px 1.5px -8px var(--c-eg-rim-soft), inset -8px 8px 1.5px -8px var(--c-eg-rim-soft), inset 0 -2px 2px var(--c-eg-vol-bottom);
+  --c-eg-inset-isle:    inset 1.6px -1.6px 1px -1px var(--c-eg-rim-sharp), inset -1.6px 1.6px 1px -1px var(--c-eg-rim-sharp), inset 8px -8px 1.5px -8px var(--c-eg-rim-soft), inset -8px 8px 1.5px -8px var(--c-eg-rim-soft), inset 0 -2px 2px var(--c-eg-vol-bottom);
+
+  /* ── 第 2 档（卡片 / 弹窗）的玻璃阴影 · 2026-10-03 ───────────────────────
+     ⚠️⚠️ **这份清单原先在 `.card` 与 `.modal-box` 两处各手写一遍**，而 `.card` 那份
+        漏了最后一层（厚度暗角）—— 手写复制粘贴的必然产物。现在收成**一个令牌**，
+        两处共用同一份 `var(--c-eg-shade)`，所以"加一层"从此只改这一处。
+        改这一处等于改两处，代价是**它必须是纯 inset 层**：
+        元素自身的外投影仍写在各自的 `box-shadow` 里（box-shadow 是整条替换的，
+        只写玻璃层会把原有投影静默丢掉 —— 表现是"卡片贴在了页面上"）。
+
+     几何为什么是这样（**这是"边缘润化"全部的来源**）：
+       锐档 1.2→2.0px / .8→1.1px   贴边一条明确的反光，负责"边"
+       柔档 6→10px / 1.2→2.4px     往内铺开的弱光，**过渡带宽度 = "润"**
+       vol-top 20px/30px-28px      顶边漫反射，负责"弧"
+       vol-bottom 0 0 1.5px        厚度暗角，负责"重量"（2026-10-03 补上）
+     ⚠️ 卡片是 14px 大圆角的大面积面，**幅度必须按面积缩放**：
+        用顶栏那套 1.6/8px 会读成"边有一道细白线"而不是"整块面在反光"。
+
+     ⚠️⚠️ **x/y 必须反号且都非零** —— 这是"对角成对"的全部机制：
+        对角（左上 + 右下）才模拟出光从一侧打在弧面上；写成 `inset 0 0 0 1px`
+        就退化成一圈均匀白描边，也就是用户原话"白边过重"。
+        **锐柔比必须保持约 2:1**（rim-sharp .50 / rim-soft .24）——
+        两者拉平就同样退化成"一圈均匀的亮"。契约 G9 钉住这个比值。 */
+  --c-eg-shade:
+    inset 2px -2px 1.1px -.8px var(--c-eg-rim-sharp),
+    inset -2px 2px 1.1px -.8px var(--c-eg-rim-sharp),
+    inset 10px -10px 2.4px -6px var(--c-eg-rim-soft),
+    inset -10px 10px 2.4px -6px var(--c-eg-rim-soft),
+    inset 0 20px 30px -28px var(--c-eg-vol-top),
+    inset 0 0 1.5px var(--c-eg-vol-bottom);
+
+  /* 间距阶梯 */
+  --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
+  /* 圆角阶梯：控件 8 / 小控件 6 / 容器 10 / 卡片 14 / 胶囊 */
+  --r-sm: 6px; --r1: 8px; --r2: 10px; --r3: 14px; --r-pill: 999px;
+  /* 字号阶梯（6 档，不出现即兴值） */
+  --t-xs: 11px; --t-sm: 12px; --t-md: 13px; --t-lg: 15px; --t-xl: 19px; --t-2xl: 24px;
+  /* 行高：标题 1.25 / 正文 1.55 / 长文 1.7 */
+  --lh-1: 1.25; --lh-2: 1.55; --lh-3: 1.7;
+  /* 控件高度：一排里不混高度 */
+  --h-ctl: 32px;
+  /* 长列表**展开态**的高度上限（2026-10-04）。折叠态不需要它 ——
+     默认只画前 15 条，卡片自然就短（那才是"长列表封顶"要的效果）。
+     展开是**显式动作**，给它一屏多一点的可滚高度。见 `app.js` 的 `capRows`。 */
+  --h-list: min(56vh, 520px);
+  /* 吸顶带的高度。**吸顶偏移必须从这里推导** —— 写死偏移 = 与真实高度漂。
+     ⚠️ 2026-10-02 灵动岛：一级导航从"通栏色带"变成了"浮在带子里的一块岛"，
+        所以它的高度从 1 个数变成了 3 个数：
+          --h-nav1      岛**本身**的高度（`.nav-inner`）
+          --h-nav-pad   岛上下留白（`.nav1` 的 padding）
+                        ⚠️⚠️ **2026-10-04：这一行已于 B39 删除** —— 原 `--h-nav-pad`（岛上下留白），
+                        B38 把它调到 0（贴住二级栏），B39 又把两层改成**同一行**，
+                        "岛上方留白"这个量**不再存在** ⇒ 失去全部消费者，按纪律删掉
+                        （留着就是本项目反复在清的「定义了没人用」）。
+                        ⚠️ 下面 `--h-nav2` 那条纪律里"由这三者现算"要相应读成"由前两者"。
+          --h-nav-item  岛内一个选项的高度（指示器与它同高，**必须一起变**）
+        `.nav2wrap` 的吸顶偏移要的是"这条带子总共多高"——
+        那由上面这些现算（见 `.nav2wrap` 处），**不另存一个派生令牌**：
+        派生令牌算在 `:root` 上，而这些值会被媒体查询 / `.touch` 在别的元素上改写，
+        那时派生值就是上一套数字（正是本文件开头第 ② 条缺陷的那个形状）。 */
+  --h-topbar: 58px;
+  --h-nav1: 56px;
+  --h-nav-item: 40px;
+  /* ⚠️⚠️ B29 新增 `--h-nav2`（二级 tab 栏整条高）。**它与上面那条"派生值不另存令牌"
+     的纪律看起来相反，其实是那条纪律的例外** —— 原因写在这里，免得下次有人"顺手优化"掉：
+       · 上面禁的是**纯派生**值（`calc(三个令牌)` 那类），它会随媒体查询漂；
+       · 但 B29 把二级栏**定高**了（`height: var(--h-nav2)`，垂直 padding 移进高度），
+         它变成一个**可被媒体查询改写的一等值**，与 `--h-nav1` 同级。
+     ⚠️ **三处媒体查询必须同步改它**（契约 N9 钉着）：
+       `pointer:coarse` 下 `.sub` 被 `min-height:44px` 顶起 ⇒ 二级栏实际变高
+       ⇒ 若令牌不跟着改，`.nav1` 那一行的 `height`/`margin-top` 就对不上
+       ⇒ **灵动岛与二级栏不再齐平，而两级导航看起来都正常**
+       （这个"看起来正常"正是本文件开头第 ② 条缺陷的形状）。
+     ⚠️⚠️ **B39：它现在必须与 `--h-nav1` 相等**（:root 56px / 720px 48px /
+       coarse 60px / .touch 60px）—— 齐平靠的就是这个"相等"，
+       两者不等时灵动岛会比二级栏高（或矮）一截，而**没有任何东西会报红**。
+       下面是判它的地方（契约 N8 判"两处写法都在且都引用令牌"，
+       关系相等那一条目前靠人工，改任何一个值都要同时改另一个）。 */
+  --h-nav2: 56px;
+  /* B30 新增：二级栏右侧**斜角切割**的水平进深（clip-path 用）。
+     ⚠️ 右内边距 = 原值 + 本令牌（见 `.nav2wrap`），两处必须一起改，
+     否则最后一个 tab 会被斜边吃掉一截。 */
+  --nav2-cut: 22px;
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --dur: .16s;
+  --ease: cubic-bezier(.4, 0, .2, 1);
+}
+
+/* ── 令牌：深色 ───────────────────────────────────────────────────────── */
+html[data-theme="dark"] {
+  /* ⚠️ 2026-10-03（B28）随浅色块一起**回退到平灰底**（#0e1218 / #151b23 / #1a2129…），
+     与浅色同一次回退，理由见 :root 那一侧的说明。
+     ⚠️ 深色下这些值带**一点蓝**（#151b23 而非纯黑）：纯黑会让玻璃背后的环境色团
+     像"打在黑板上"而不是"浮在深水里"。玻璃背板（`body.eg-on::before`）仍在，
+     所以深底同样需要那点蓝调来接住光。 */
+  --c-bg:            #0b1226;
+  --c-surface:       #1e2d4e;
+  --c-surface-2:     #243560;
+  --c-sunken:        #0e1a33;
+  --c-hover:         #2a3d6b;
+  --c-line:          rgba(157, 191, 235, .3);
+  --c-line-soft:     rgba(157, 191, 235, .16);
+  --c-line-strong:   rgba(157, 191, 235, .42);
+
+  --c-text-1:        #e2ebf8;
+  --c-text-2:        rgba(198, 214, 238, .68);
+  --c-text-3:        rgba(157, 191, 235, .5);
+  /* 二级 tab 选中文字（名字与 :root 相同 · 契约 N13）。深色下直接用 accent：
+     它在深底上足够亮，实测 6.93:1。 */
+  --c-sub-on:#9dbfeb;
+
+  --c-accent:        #9dbfeb;
+  --c-accent-hover:  #b8d3f2;
+  --c-accent-weak:   rgba(157, 191, 235, .16);
+  --c-accent-line:   rgba(157, 191, 235, .42);
+  --c-accent-ring:   #07a0df;
+
+  /* ⚠️ 这三个是①号缺陷的修复点：深色下强调色是**浅**蓝，压白字读不清，
+     所以"压在强调色上的字"必须翻成深色 */
+  --c-on-accent:     #0b1226;
+  --c-on-danger:     #2a0d0b;
+  --c-knob:          #0b1226;
+  --c-highlight:     #ffffff1a;
+
+  --c-ok:            #5fd39b;
+  --c-ok-bg:         #10261c;
+  --c-ok-line:       #24503c;
+
+  --c-warn:          #e6b86a;
+  --c-warn-bg:       #292012;
+  --c-warn-line:     #4d3d1c;
+
+  --c-danger:        #f08a80;
+  --c-danger-bg:     #2a1616;
+  --c-danger-line:   #552b28;
+
+  --c-info:          #6cc0e8;
+  --c-info-bg:       #0f222c;
+  --c-info-line:     #1f4759;
+
+  --c-idle:          #6b7684;
+
+  --c-shadow-1:      rgba(0, 0, 0, .30);
+  --c-shadow-2:      rgba(0, 0, 0, .40);
+  --c-shadow-3:      rgba(0, 0, 0, .52);
+  --c-shadow-4:      rgba(0, 0, 0, .66);
+  --c-scrim:         rgba(0, 0, 0, .58);
+  --c-scrim-soft:    rgba(11, 18, 38, .66);
+
+  /* 保存条在深色下翻成**浅**色条（沿用原来的反相逻辑，只把底色接到级1 深底上） */
+  --c-bar-bg:        #e2ebf8;
+  --c-bar-fg:        #0b1226;
+  --c-bar-line:      rgba(11, 18, 38, .18);
+
+  /* 灵动岛（名字与 :root 逐个对齐 · 契约 N4 判的就是这一组）。
+     ⚠️⚠️ 2026-10-03 B29：从「两套主题都是纯黑」改为**跟随主题**
+        （用户 B29 明确要求）。⚠️ 改这一块时**浅深两处都要改**——
+        原设计里 `fg`/`fg-hover`/`fg-on`/`ring`/`fill`/`cnt-bg` 六项是**完全同值**的
+        （因为只有一个底色），现在两个底色不同 ⇒ 六项**全部要按各自的底重新取**。
+        旧注释说"深色差异只在收边一层"，那条已随纯黑一起作废。
+     ⚠️ 2026-10-03 的深色侧实测（岛底 rgba(11,18,38,.82) ⊕ 深色底 #0b1226）：
+        默认 5.09:1 · 悬停 7.09:1 · 选中 15.17:1 · 计数胶囊 6.25:1 ——
+        **通透轮把 .82 → .60，这组数同浅色侧一样不再恒真**（理由与新的验收锚点
+        写在 `:root` 的 `--c-nav-bg` 上方，不在这里维护第二份）。 */
+  --c-nav-bg:        rgba(11, 18, 38, .60);
+  --c-nav-edge:      rgba(157, 191, 235, .20);
+  --c-nav-fg:        #8e96a3;      /* 深底"吃光"，这个值在深色下反而更合适，不用动 */
+  --c-nav-fg-hover:  #a9b2c0;      /* 提亮一档，仍"弱于选中" */
+  --c-nav-fg-on:     #ffffff;
+  --c-nav-ring:      #ffffff;
+  --c-nav-fill:      rgba(255, 255, 255, .12);
+  --c-nav-cnt-bg:    rgba(255, 255, 255, .12);
+  --c-nav-cnt-fg:    #c3c8d2;
+  --c-nav-shadow:    rgba(0, 0, 0, .52);
+
+  /* 背景流光令牌：已随六团流体移除（与 :root 侧同批）。
+     背景预设色两主题共用（canvas 自带底色），无令牌可对齐。 */
+
+  /* 液态玻璃（名字与 :root 逐个对齐）。
+     ⚠️ 深底上白纱的观感放大约一倍：浅色档那个 .20 的悬浮条白纱拿到深色下
+        会直接变成一块灰白的板子，所以四个 surface 全部压低；
+        反相档（保存条）深色主题下本来就是**浅**色条（--c-bar-bg 翻白），跟着翻。 */
+  --c-eg-surface:      rgba(21, 27, 35, .40);
+  --c-eg-surface-2:    rgba(255, 255, 255, .035);
+  --c-eg-surface-hero: rgba(255, 255, 255, .035);
+  --c-eg-surface-inv:  rgba(233, 237, 243, .70);
+  /* 同上：深色下弹窗也需补偿（scrim 在深底上是压深，不是压亮） */
+  --c-eg-surface-modal: rgba(21, 27, 35, .52);
+  --c-eg-rim-sharp:    rgba(255, 255, 255, .22);
+  --c-eg-rim-soft:     rgba(255, 255, 255, .095);
+  --c-eg-edge:         rgba(255, 255, 255, .16);
+  --c-eg-vol-top:      rgba(255, 255, 255, .10);
+  --c-eg-vol-bottom:   rgba(0, 0, 0, .28);
+  /* 织纹（名字与 :root 逐个相同 · 契约 G1 判的就是这个）。
+     ⚠️ 深底用级5 浅天蓝（与 --c-eg-bg-e 同色相），alpha 比浅色高 —— 暗底吃光；
+        第二向反过来用**深**线：亮底用暗线、暗底用亮线，两向都靠"与底反相"被看见。 */
+  --c-eg-bg-a:         rgba(7, 160, 223, .10);
+  --c-eg-bg-b:         rgba(0, 0, 0, .18);
+  --c-eg-bg-c:         rgba(205, 200, 230, .10);
+  --c-eg-bg-d:         rgba(47, 80, 155, .08);
+  --c-eg-bg-e:         rgba(157, 191, 235, .06);
+  /* 吸顶层三组（名字与 :root 逐个相同 · 契约 N4/N5 判的就是这一组）。
+     ⚠️ 几何与浅色**完全同形**，只有令牌取深浅两套的值。
+        深色下用深纱而不是白纱：深底本身已经很暗，再叠白纱会"发灰"，
+        深色玻璃的"厚度"靠压暗被读出来（与浅色玻璃靠白度被读出来是同一条原理）。 */
+  /* 通透轮：浅色侧 .66→.44 / .82→.60，深色侧按同一**比例**收 ——
+     .72→.50 / .82→.60（三条玻璃的层次差在两套主题下保持一致，切换主题时"厚度"不跳档）。
+     ⚠️ 融合轮：二级栏 .50 → .12。深色下的"融合"更容易做也更危险 ——
+     顶栏深纱只有 .035，二级栏哪怕只到 .12 就已经在同一档；
+     再厚一点两层就分家（浅色侧 .18 / 顶栏 .16 就是这个量级关系）。 */
+  --c-eg-surface-bar:   rgba(11, 18, 38, .12);
+  /* 与 :root 同名（G1 判名字集合相等）；**值不同**：暗底上抬亮过头会读成一层灰雾，
+     所以深色侧只给浅色侧的 1/2 左右（.18→.10 / .14→.08）。 */
+  --c-eg-sat-bar:       190%;
+  --c-eg-bright-bar:    1.10;
+  --c-eg-sat-isle:      185%;
+  --c-eg-bright-isle:   1.08;
+  --c-eg-seam:          rgba(157, 191, 235, .16);
+  --c-eg-inset-bar:     inset 1.6px -1.6px 1px -1px var(--c-eg-rim-sharp), inset -1.6px 1.6px 1px -1px var(--c-eg-rim-sharp), inset 8px -8px 1.5px -8px var(--c-eg-rim-soft), inset -8px 8px 1.5px -8px var(--c-eg-rim-soft), inset 0 -2px 2px var(--c-eg-vol-bottom);
+  --c-eg-inset-isle:    inset 1.6px -1.6px 1px -1px var(--c-eg-rim-sharp), inset -1.6px 1.6px 1px -1px var(--c-eg-rim-sharp), inset 8px -8px 1.5px -8px var(--c-eg-rim-soft), inset -8px 8px 1.5px -8px var(--c-eg-rim-soft), inset 0 -2px 2px var(--c-eg-vol-bottom);
+  /* 与 :root 同值：模糊/饱和度不随主题变，但**名字必须成对出现**（同 §53 口径） */
+  --c-eg-blur-1:       16px;
+  --c-eg-blur-2:       6px;
+  --c-eg-sat:          140%;
+  /* 名字与 `:root` 逐个相同（§58 G1）—— 值不同：暗底上 .50 的白是一块糊住的雾。 */
+  --c-eg-noise:        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.05 0 0 0 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  --c-eg-inset:        inset 1.6px -1.6px 1px -1px var(--c-eg-rim-sharp), inset -1.6px 1.6px 1px -1px var(--c-eg-rim-sharp), inset 8px -8px 1.5px -8px var(--c-eg-rim-soft), inset -8px 8px 1.5px -8px var(--c-eg-rim-soft), inset 0 0 2px var(--c-eg-vol-bottom);
+  /* 第 2 档玻璃阴影（名字必须与 :root 逐个相同 · 契约 G1）。
+     ⚠️ **几何与浅色完全同形**，只有令牌取深浅两套的值 ——
+        深底"吃光"，rim-sharp 要 .22（比浅色的 .50 暗）而不是更亮：
+        深色玻璃的边缘靠**暗部的厚度**而不是亮部的反光被读出来。
+        这与 `--c-eg-inset` 在深浅两块同形是同一条纪律。 */
+  --c-eg-shade:
+    inset 2px -2px 1.1px -.8px var(--c-eg-rim-sharp),
+    inset -2px 2px 1.1px -.8px var(--c-eg-rim-sharp),
+    inset 10px -10px 2.4px -6px var(--c-eg-rim-soft),
+    inset -10px 10px 2.4px -6px var(--c-eg-rim-soft),
+    inset 0 20px 30px -28px var(--c-eg-vol-top),
+    inset 0 0 1.5px var(--c-eg-vol-bottom);
+}
+
+/* ⚠️ `color-scheme` **单独一条**，不放进上面那个令牌块：令牌块里只有 `--c-*`。
+   混进非令牌声明，这个块就从"另一套令牌"变成"第二张样式表"，
+   而"两套令牌是否对齐"的判据只看令牌名 —— 那种走样不会有任何东西报警。 */
+html[data-theme="dark"] { color-scheme: dark; }
+
+/* ── 基础 ─────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+
+/* ⚠️ 这一行是**必须**的，不是保险。
+   `#busy`（全屏遮罩）与 `.savebar` 都自己声明了 `display:grid / flex` —— 类选择器的
+   优先级高于 UA 样式表里的 `[hidden]{display:none}`，于是 `hidden` **完全失效**：
+   表现是"整页永远蒙着一层灰、中间浮着一个空弹窗框、底部永远挂着保存条"。
+   实测抓到过一次（截图整页发虚，而 DOM 里那三个元素的 hidden 全是 true）。
+   `!important` 在这里是正当的：这条规则要压的是**组件自己的** display，不是业务覆盖。 */
+[hidden] { display: none !important; }
+
+body {
+  background: var(--c-bg);
+  color: var(--c-text-1);
+  font: var(--t-md)/var(--lh-2) var(--font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: 0; line-height: var(--lh-1); }
+b, strong { font-weight: 600; }
+code, .mono { font-family: var(--mono); font-size: .92em; font-variant-numeric: tabular-nums; }
+a { color: var(--c-accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+::selection { background: var(--c-accent-weak); color: var(--c-accent); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--c-line-strong); border-radius: var(--r-pill);
+  border: 3px solid transparent; background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--c-text-3); background-clip: content-box; }
+
+/* 焦点环：唯一一处，键盘与鼠标分开（鼠标点按钮不该留一圈蓝） */
+:focus-visible { outline: 2px solid var(--c-accent-ring); outline-offset: 2px; border-radius: var(--r-sm); }
+*:focus:not(:focus-visible) { outline: none; }
+
+/* 只有"状态变化"用动效；系统开了减少动态就直接关掉 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
+
+/* ── 顶栏 ─────────────────────────────────────────────────────────────── */
+/* ⚠️ **定高**（`--h-topbar`）。原来靠 padding 撑高，而 `.tb-pills` 还会换行 ⇒ 顶栏高度
+   是个变量，下面两级导航的吸顶偏移就必然漂。现在胶囊**横向滚动**不换行，高度恒定。 */
+.topbar {
+  position: sticky; top: 0; z-index: 42;    /* B29: 40 → 42（三层里最高，见下） */
+  display: flex; align-items: center; gap: var(--s4);
+  height: var(--h-topbar); padding: 0 var(--s5);
+  background: color-mix(in srgb, var(--c-surface) 88%, transparent);
+  backdrop-filter: saturate(180%) blur(10px);
+  border-bottom: 1px solid var(--c-line);
+}
+.tb-brand { display: flex; align-items: center; gap: var(--s3); min-width: 0; flex: none; }
+.logo {
+  display: grid; place-items: center; flex: none;
+  width: 32px; height: 32px; border-radius: var(--r1);
+  background: var(--c-accent); color: var(--c-on-accent);
+  font-size: var(--t-sm); font-weight: 700; letter-spacing: .5px;
+  /* 一道极轻的内高光 + 一道投影：不引入渐变，但不再是"一块平贴的色块" */
+  box-shadow: inset 0 1px 0 var(--c-highlight), 0 1px 2px var(--c-shadow-2);
+}
+.tb-titles { display: flex; flex-direction: column; min-width: 0; }
+.tb-titles b { font-size: var(--t-lg); line-height: var(--lh-1); letter-spacing: 0; }
+.tb-sub {
+  color: var(--c-text-3); font-size: var(--t-sm); line-height: 1.4;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw;
+}
+.tb-pills {
+  display: flex; gap: var(--s2); flex: 1; min-width: 0;
+  flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+  padding: 1px 0;               /* 给胶囊的描边留出不被裁掉的一像素 */
+}
+.tb-pills::-webkit-scrollbar { display: none; }
+.tb-actions { display: flex; align-items: center; gap: var(--s2); flex: none; }
+/* 顶栏右侧的分组竖线：左边"看/换"、右边"动"。1px 高 20px，不抢注意力 */
+.tb-sep { flex: none; width: 1px; height: 20px; margin: 0 2px; background: var(--c-line-strong); }
+
+/* ── 圆点状态胶囊 ─────────────────────────────────────────────────────── */
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  height: 26px; padding: 0 10px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-pill);
+  font-size: var(--t-sm); color: var(--c-text-2);
+  white-space: nowrap;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c-idle); flex: none; }
+.pill.on   { border-color: var(--c-ok-line);     background: var(--c-ok-bg);     color: var(--c-ok); }
+.pill.on .dot { background: var(--c-ok); }
+.pill.off  { border-color: var(--c-line-strong); }
+.pill.warn { border-color: var(--c-warn-line);   background: var(--c-warn-bg);   color: var(--c-warn); }
+.pill.warn .dot { background: var(--c-warn); }
+.pill.bad  { border-color: var(--c-danger-line); background: var(--c-danger-bg); color: var(--c-danger); }
+.pill.bad .dot { background: var(--c-danger); }
+
+/* ── 告警条 ───────────────────────────────────────────────────────────── */
+.banners:not(:empty) { display: grid; gap: var(--s2); padding: var(--s3) var(--s5) 0; }
+.banner {
+  display: flex; align-items: center; gap: var(--s3);
+  padding: 10px var(--s4);
+  border: 1px solid var(--c-warn-line); background: var(--c-warn-bg); color: var(--c-warn);
+  border-radius: var(--r2); font-size: var(--t-md); line-height: var(--lh-2);
+}
+.banner.bad { border-color: var(--c-danger-line); background: var(--c-danger-bg); color: var(--c-danger); }
+.banner.ok { border-color: var(--c-ok-line); background: var(--c-ok-bg); color: var(--c-ok); }
+.banner.info { border-color: var(--c-info-line); background: var(--c-info-bg); color: var(--c-info); }
+.banner b { flex: none; }
+.banner .spacer { flex: 1; }
+.banner .btn { flex: none; }
+
+/* ══ 一级导航 · 纯黑「灵动岛」Hero Navbar（2026-10-02 · 本轮）═══════════════
+   三层结构，都在这一个区块里：
+
+     .nav1         吸顶带（**透明**）—— 只负责"贴住顶栏 + 给岛留上下留白"
+       .nav-inner    ① 岛本体（纯黑 · 胶囊圆角 · 投影）
+                     ② **横向滚动容器**（窄屏靠它不换行）
+                     ③ 指示器的定位基准（position:relative）
+         .grp × 8    选项：默认 / 悬停 / 选中 三态
+         .nav-ind    **唯一**的白色描边滑块
+
+   ── 为什么高亮是"一个滑块"而不是"每项自己一段样式" ──────────────────────
+   RareUI 的 GooeyNav（开源公开实现）内核就是这个，**不是**它的 SVG 滤镜：
+   一个浮层承载高亮，位置与宽度由选中项算出来，切换时**过渡**过去。
+   逐项各画一份边框做不到这件事 —— 那只是"旧的消失、新的出现"，
+   中间那段位移（也就"从哪滑到哪"）整个丢了，观感立刻从"连着的"变成"跳的"。
+
+   ── 为什么不把它的 gooey 滤镜一起搬过来 ─────────────────────────────────
+   ① 我们的高亮是**描边**不是实心 blob：`feGaussianBlur + feColorMatrix`
+      先把 alpha 模糊再拉满对比，1.5px 的描边会先被模糊吃掉、再被还原成一坨；
+   ② 要让文字不被一起糊掉，得把每个选项**复制一层 DOM**（8 项 × 2 层），
+      换来的只是一个"粘连"观感 —— 而这是一页本地控制台，主线是"安静的仪表盘"。
+   所以只取它的**过渡**（弹簧位移 + 速度形变），不取它的**滤镜**。
+
+   ── 三态（对应用户要求 1 / 2 / 3）───────────────────────────────────────
+     默认：`--c-nav-fg` 灰白文字，**无边框、无填充**
+     悬停：`--c-nav-fill` 灰底胶囊
+     选中：`.nav-ind` 白色胶囊描边 + `--c-nav-fg-on` 白色实心字 + 字重 600
+
+   ⚠️ 指示器有**两个硬约束**，破了都以"看着像坏了"的形式退化（不报错）：
+     ① **不许被重建**：`renderNav1()` 每次只换按钮，指示器是 index.html 里的静态元素。
+        重建它 = 每次点击都变成"新元素从 0 位置长出来"，滑动感直接没了。
+     ② **必须在滚动容器内部**：窄屏 `.nav-inner` 横向滚动，指示器若挂在外层 `.nav1` 上，
+        它会相对视口静止 —— 一滑就与选中项错位（滑得越远错得越多）。
+   ══════════════════════════════════════════════════════════════════════════ */
+/* ══ 吸顶导航行 · B40 新增（二级栏 + 灵动岛 的共同父容器）═════════════════════
+   ⚠️⚠️ **B42：从 flex 改成 grid `1fr auto 1fr`**（用户原话：「我说的中间是
+      **整个屏幕的中间**，你就把它从蓝色的位置移到红色的位置就行了」）。
+      **flex 做不到这件事**：只要二级栏还占着水平位置，岛就只能"居中于剩余空间" ——
+      实测 1440 宽时岛落在 x=510，而视口居中应该是 x=317，差 190px（用户标了这条）。
+      grid 三列把它变成**结构保证**：
+        · 中间列 `auto` = 灵动岛的内容宽 ⇒ 岛**精确居中于整个视口**；
+        · 左右两列 `1fr` 等宽 ⇒ 二级栏在左列 `justify-self: start` 贴左；
+        · **左列宽 = (视口 − 岛宽) / 2** ⇒ 二级栏被**列宽自动限住**，
+          超出部分由 `.nav2` 横向滚动接住 ⇒ 两者**永远不会重叠**。
+      ⚠️ 这比"flex + `max-width: calc(50% - 403px)`"好在**没有任何经验值**：
+      403 是按实测岛宽 805 算的 —— 改字号或增删一个一级域名就得重算，
+      忘了就会让二级栏右端伸到岛底下（用户已报过一次遮挡）。
+   ⚠️ 吸顶**一处**负责：原先 nav2wrap / nav1 各自 `position: sticky`，
+      文档顺序决定谁在上（B29 记过的那条复杂度）——合并后直接消失。
+   ⚠️ `height: var(--h-nav2)`：二级栏玻璃壳与岛胶囊都取这个高度 ⇒ 上下边齐平（B39 的目标）。
+   ⚠️ 水平内边距仍在 `.nav2wrap` 自己身上（`padding-left: var(--s5)` 与右缘斜角的
+      `--nav2-cut` 都在那里，两处必须一起改）—— 岛居中后**不再需要**右边距。 */
+.navrow {
+  position: sticky; top: var(--h-topbar); z-index: 40;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--s4);
+  height: var(--h-nav2);
+  background: none; border: 0;
+}
+.navrow > .nav2wrap {
+  grid-column: 1; justify-self: start;
+  /* ⚠️ `min-width: 0` 在 **grid** 里同样是必需的（不只 flex）：grid item 默认也是
+     `min-width: auto`（= 内容宽），不写这一条，二级栏会**撑破左列**伸到岛底下 ——
+     与 B40 那次遮挡同一个机制、只是发生在 grid 上。 */
+  min-width: 0;
+}
+.navrow > .nav1 { grid-column: 2; justify-self: center; }
+
+@media (max-width: 1280px) {
+  /* ⚠️ 单列 = 上下两行。断点来历：二级栏实测最宽 ~392px + 岛 ~805px + gap 16
+     + 左右内边距 40 = **1253px**；低于它并排就一定挤（用户实机就在这个区间）。
+     ⚠️ `row-gap: 0`：换行后两行之间**不留缝** —— 那一格若空着，背后滚动的正文
+     会从缝里直接透出来（吸顶区中间裂开一条，与"融合"的要求相反）。 */
+  .navrow { grid-template-columns: 1fr; height: auto; row-gap: 0; }
+  .navrow > .nav2wrap { grid-column: 1; justify-self: stretch; }
+  .navrow > .nav1 { grid-column: 1; justify-self: stretch; }
+}
+
+
+.nav1 {
+  /* ⚠️ B40/B42：`.nav1` **不再自己吸顶、不再管水平位置** —— 两件事都由 `.navrow` 负责
+     （吸顶一处；水平靠 grid 的中间列）。这里只剩"岛的容器"这个职责。
+     ⚠️⚠️ **不要在这里写任何水平/纵向分布的声明**（`justify-content` / `margin-auto` 都算）：
+     B39 写 `space-between` 是**空转**的（`.nav1` 里只有 `.nav-inner` 一个子元素，
+     space-between 对单元素等同 flex-start ⇒ 岛永远贴左，正好压在二级栏上）；
+     B41 写 `margin-inline: auto` 则是"居中于剩余空间"而不是用户要的**视口居中**。
+     ⇒ 两次都白改，根因都是**位置该由父容器决定**。 */
+  display: flex; align-items: center;
+  background: none; border: 0;
+}
+.nav-inner {
+  position: relative;                    /* ← 指示器的定位基准（约束 ②） */
+  display: flex; align-items: center; gap: 2px;
+  height: var(--h-nav1);
+  padding: 0 var(--s2);
+  /* 岛宽 = 内容宽：它是"浮岛"，不是通栏色带。
+     内容比 max-width 宽时被夹住 → 由 overflow 接手横向滚动（这是**唯一**的溢出策略）。 */
+  width: fit-content; max-width: 1560px;   /* 与 .page 同宽，右边缘不越界 */
+  background: var(--c-nav-bg);
+  border: 1px solid var(--c-nav-edge);
+  border-radius: var(--r-pill);
+  box-shadow: 0 10px 26px -14px var(--c-nav-shadow);
+  overflow-x: auto; overflow-y: hidden;   /* 不换行、不溢出 */
+  scrollbar-width: none;
+}
+.nav-inner::-webkit-scrollbar { display: none; }
+
+/* ── 灵动岛 · 液态玻璃（2026-10-03 B29 新增：岛从"纯黑实心"改为跟随主题）────────
+   ⚠️ 为什么放 `body.eg-on` 门控下：JS 没跑 / 抛错 / 被关掉 → 类不在 → 这一整条不生效，
+      岛退回成「无滤镜的纯色块」（页面照常工作）。这与顶栏/卡片那族是同一套机制。
+   ⚠️ 全部走 `var(--c-eg-*)` 令牌，**不得就地写 rgba** ——
+      契约 G5（玻璃区块零就地色值）会当场报红，而就地色值不跟主题走
+      （深色下就原样留在浅色的权重）。
+   ⚠️ 模糊 6px（不是顶栏的 8px）：胶囊是 `fit-content` 的小面积盒子，
+      8px 会把它背后那点流体糊成一块死板；6px 已足够柔化边缘且省 1/4 采样成本。
+   ⚠️ **不进真折射**：`glass.js` 的 `G_LENS_CANDIDATES = ['.topbar','.savebar']`
+      与 `G_MAX_LENS = 2` 都不动 —— 岛的宽度随选中项/内容变（fit-content），
+      折射贴图要按元素尺寸重建，收益不抵成本。 */
+body.eg-on .nav-inner {
+  background-color: var(--c-nav-bg);
+  background-image: var(--c-eg-noise);
+  /* ⚠️ 通透轮：饱和/抬亮换成**岛自己的**两个令牌（不再是全局 --c-eg-sat）——
+     顶栏与卡片仍走 140%，岛走 185%/1.14，这是"三层各差一档"在色彩上的那一半。
+     ⚠️ 模糊 6px **不动**（见下条注释）：改它等于改"岛离背景多远"的知觉，
+     而本轮要动的是**透光度**，两件事分开调才不会互相掩护。 */
+  -webkit-backdrop-filter: saturate(var(--c-eg-sat-isle)) blur(6px) brightness(var(--c-eg-bright-isle));
+          backdrop-filter: saturate(var(--c-eg-sat-isle)) blur(6px) brightness(var(--c-eg-bright-isle));
+  border-color: var(--c-nav-edge);
+  box-shadow: 0 10px 26px -14px var(--c-nav-shadow), var(--c-eg-inset-isle);
+}
+
+.grp {
+  position: relative; flex: none; z-index: 1;   /* 文字压在指示器之上（指示器是 z-index:2 的框） */
+  display: inline-flex; align-items: center;
+  height: var(--h-nav-item); padding: 0 var(--s4);
+  border: 0; background: none; cursor: pointer;
+  color: var(--c-nav-fg); font-size: var(--t-md); font-family: inherit; letter-spacing: 0;
+  border-radius: var(--r-pill);
+  /* ⚠️ 只过渡 background，**不过渡 color**（2026-10-03 B29）。
+     实测：切主题时若color 跟着过渡，文字从浅 `#455c85` 走到深 `#8e96a3`、
+     底从 `rgb(255,255,255)` 走到 `rgb(16,32,55)`，**中途对比度塌到 1.39:1** ——
+     也就是"切主题时闪一下看不清"。
+     而 `backdrop-filter` 本就**不可过渡**（规范明确不可插值），模糊半径在切主题
+     那一帧必须瞬变 ⇒ 底色也瞬变才配得上，两者同帧切换反而最干净。
+     玻璃底的 background 过渡保留：它在两个**都过 AA**的终态之间插值，肉眼读作柔和。 */
+  transition: background var(--dur) var(--ease);
+}
+.grp:hover { background: var(--c-nav-fill); color: var(--c-nav-fg-hover); }
+/* ⚠️ 选中项**不吃**悬停填充：它已经有白色描边，再叠一层灰底就与悬停态分不清了
+   —— 用户要求 3 的原话是"与悬停态清晰区分"。这条必须写在 `:hover` 之后。 */
+.grp[aria-selected="true"] { color: var(--c-nav-fg-on); font-weight: 600; background: none; }
+.grp[aria-selected="true"]:hover { background: none; }
+/* 焦点环：黑底上唯一看得见的一圈。与描边同色是有意的 ——
+   键盘走到哪一项，看起来就该像"那一项被选中了"。 */
+.grp:focus-visible { outline: 2px solid var(--c-nav-ring); outline-offset: 2px; }
+
+.grp .cnt {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 17px; padding: 0 5px; margin-left: 6px;
+  border-radius: var(--r-pill); background: var(--c-nav-cnt-bg);
+  /* ⚠️⚠️ 2026-10-03 B29：**从 `color: inherit` 改成自己的墨色**。
+     原来的注释说"对比度由项那一档保证，不另算一次"—— 那在**纯黑**岛上成立
+     （白 fill 提亮底色，对白字是增益）；但岛底改成浅玻璃后**这条推理反了**：
+     继承来的 `--c-nav-fg` #455c85 压在 chip 底（合成后 rgb(230,233,237)）上
+     实测只有 **3.98:1 ✗**。
+     ⚠️ 解法**不是**把 chip 的 alpha 调淡（要扫到 .04 才勉强 4.5，那样胶囊几乎不可见），
+     而是给胶囊自己的墨色 `--c-nav-cnt-fg`（实测 11.04:1）。契约 N12 钉住这条消费关系——
+     只加令牌不给 `.cnt` 用，是本项目反复在清的「写了没人读」。 */
+  color: var(--c-nav-cnt-fg);
+  font-size: var(--t-xs); font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  transition: background var(--dur) var(--ease);
+}
+.grp[aria-selected="true"] .cnt { background: var(--c-nav-fill); }
+
+/* ── 指示器：全岛唯一的滑块 ──────────────────────────────────────────────
+   `width` 与 `transform` 由 JS 每帧写（`app.js` 的 `applyNavIndicator`），
+   这里只声明**形态**：1.5px 白描边、胶囊圆角、与选项同高。
+   ⚠️ `pointer-events: none` **必须有**：它是盖在按钮上的一层，
+      少了这条就把点击整个吃掉了 —— 表现是"导航点不动"，而看不出为什么。
+   ⚠️ `transform-origin: 50% 50%`：形变（拉伸）以自身中心为轴，
+      否则滑动时它会从左边"甩"出去，而不是"被抻长"。
+   ⚠️ 初始 `opacity: 0` + `.ready` 才显形：首帧它还在 left:0 / width:0 上，
+      不做这一下，每次进页面都能看到左上角闪一下白框。 */
+.nav-ind {
+  position: absolute; left: 0; top: 50%; z-index: 2;
+  height: var(--h-nav-item); width: 0;
+  margin-top: calc(var(--h-nav-item) / -2);
+  border: 1.5px solid var(--c-nav-ring);
+  border-radius: var(--r-pill);
+  pointer-events: none;
+  transform-origin: 50% 50%;
+  will-change: transform, width;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+.nav-ind.ready { opacity: 1; }
+
+/* ── 二级导航（页） · Ant Design Segmented 式分段 ──────────────────────── */
+.nav2wrap {
+  /* ⚠️⚠️ B29 **整条上移**到顶栏正下方（原先在灵动岛之下）。
+     偏移从 `calc(--h-topbar + --h-nav1 + --h-nav-pad*2)` 变成 `--h-topbar`；
+     z-index 34 → 40。**相对次序必须反转**：改造后二级栏在灵动岛**上方**，
+     而原来是 `.nav1(35) > .nav2wrap(34)` —— 不改就会出现"二级栏的玻璃被岛的投影盖住"。
+     契约 N7 钉的是**相对次序**（topbar > nav1 > nav2wrap），不是绝对值：
+     绝对值会随别的层调整而漂，相对次序才是需求本身。
+     ⚠️ **定高**（`--h-nav2`）：原来靠 padding 撑高，而 `.sub` 在 `pointer:coarse` 下
+     被 `min-height:44px` 顶起 ⇒ 高度会漂 ⇒ `.nav1` 的 `top` 就会错位。
+     垂直 padding 移进 `height`，三处媒体查询同步改 `--h-nav2`（契约 N9）。
+     ⚠️⚠️ **B40：这里不再是吸顶层**（吸顶交给父容器 `.navrow`），
+        高度也由 `.navrow` 给（`align-items: center` + 满高）——
+        自己再写一遍 `height: var(--h-nav2)` 就是**两份定义**，改一处会漂。 */
+  display: flex; align-items: center; gap: var(--s3);
+  height: 100%;
+  /* ⚠️⚠️ B30：**不再通栏** —— 玻璃只包住二级选项本身（用户原话：
+     "横条不要太长，只需要模糊玻璃包含二级选项即可…右边那些都不要"）。
+     宽度随内容收缩（fit-content），右缘用 clip-path 切出**斜角**：
+     上边长、下边短（与用户标注的红色斜线同向）。⚠️ clip-path 会连 box-shadow
+     一起裁掉 —— 外阴影本来就近乎不可见，这是可接受的代价，不另找补偿。
+     ⚠️ 右内边距 = 原值 + `--nav2-cut`：给斜边留出空间，最后一个 tab 不被切到。
+     ⚠️ 通栏时代的 `border-bottom` 一体化语义随之弱化：现在它是这条玻璃带自己的
+     下缘描边（只描到斜边为止），顶栏的分界不受影响。
+     ⚠️⚠️ **B40 新增 `min-width: 0`**（写在下面 `.navrow > .nav2wrap` 那条里）：
+        作为 flex item，它默认 `min-width: auto`（= 内容宽），那样**压缩不了** ——
+        空间不够时它会把兄弟（岛）挤出/压住，正是 B39 那个"二级栏被盖住"的根因。
+        `min-width: 0` 才允许它真的被压缩，溢出交给内部的 `.nav2` 横向滚动。 */
+  width: fit-content; max-width: 100%;
+  /* 水平内边距（B30 起）：左侧 s5，右侧多留 `--nav2-cut` 给斜边。 */
+  padding: 0 calc(var(--s5) + var(--nav2-cut)) 0 var(--s5);
+  clip-path: polygon(0 0, 100% 0, calc(100% - var(--nav2-cut)) 100%, 0 100%);
+  /*玻璃材质在 `body.eg-on .nav2wrap` 那边（跟顶栏/卡片同族），
+     这里只给"JS 没跑/ 被关掉"时的普通底色。 */
+  background: color-mix(in srgb, var(--c-bg) 90%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--c-line);
+}
+/* ⚠️ B29 改横向滚动（原先 `flex-wrap: wrap`）：
+   ① 换行会在玻璃中间横一道断线（B30 起玻璃条随内容收缩，断线会更显眼）；
+   ② 720px 断点下换行会让 `--h-nav2` 漂，而 `.nav1` 的 `top` 正引用它；
+   ③ 灵动岛已经用横向滚动解决同类问题（`style.css` 区块注释里记录了
+      "不用换行"的决策）—— **同一页两套溢出策略是本项目反复在清的东西**。
+   ⚠️ `padding: 3px 6px`（横向比原来多 6px）：给 `.sub:focus-visible` 的
+      `outline-offset: 2px` 留呼吸位，否则焦点环会被这层裁掉。 */
+.nav2 {
+  display: flex; gap: 2px; flex-wrap: nowrap;
+  padding: 3px 6px; background: none; border-radius: 0;
+  max-width: 100%; overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
+}
+.nav2::-webkit-scrollbar { display: none; }
+.sub {
+  /* ⚠️⚠️ B29 选中态从「白底色块 + 阴影」改成**下划线**。
+     为什么不用短胶囊：胶囊需要 JS 维护宽度（灵动岛那个 `.nav-ind` 是每帧写
+     `style.width` + `transform` 的），下划线是纯 CSS、可对准、无逐帧成本。
+     ⚠️ 灵动岛那个**不许动** —— `app.js:466` 明确它的坐标基准是 `.nav-inner` 的
+     `offsetLeft`，改结构会让指示器错位。
+     两者**风格同源、实现不同**：同用 `--r-pill` 胶囊端点、同 2px 粗细；
+     那边是描边框（JS 写宽），这里是填充条（CSS `scaleX`）。 */
+  position: relative;                /* ← 下划线的定位基准 */
+  height: 26px; padding: 0 12px;
+  border: 0; background: transparent;
+  color: var(--c-text-2); font-size: var(--t-md); font-family: inherit; letter-spacing: 0;
+  border-radius: var(--r-sm); cursor: pointer;
+  /* ⚠️⚠️ B43：`white-space: nowrap` —— **二级页签不许折行**（2026-10-04 用户实机截图）。
+     症状：标签显示成两行、第二行只露上半截（"模型与线" + 半个"路"）。
+     根因**不是"字太大"**，是**零余量**：`padding: 0 12px` + 5 个汉字 × `--t-md` 13px
+     = 89px，而按钮实测**正好 89px**（`offsetWidth`）—— 一个像素的余量都没有。
+     于是任何亚像素舍入 / 浏览器缩放 / 字体回退都能把最后一个字挤到第二行，
+     而上面 `height: 26px` 是**定高** ⇒ 第二行被裁掉一半。
+     ⚠️ 为什么不用"缩小字号"来治：13px 与一级导航 `.grp` 同级，
+     压到 12px 就变成"二级比一级小"，层级读反了；而真正该让位的是**布局**，不是字号。
+     ⚠️ `flex: none` 是**同一条根因的另一半**（少了它症状会换一种形态出现）：
+        `.sub` 默认 `flex: 0 1 auto`，在 `.navrow` 三列布局里左列被限宽时（实测 1440 宽时
+        左列仅 302px、1300 宽时仅 232px）按钮被压到 **13~42px**、文字挤成多行
+        （`scrollHeight` 最高 90px vs 定高 26px）。
+        写 `flex: none` 之后按钮**保持自身宽度**，装不下的一段交给 `.nav2` 的横向滚动
+        —— 那正是 B40 在 `.nav2wrap` 注释里写明的溢出策略（"超出部分由 `.nav2` 横向滚动
+        接住"），不是新加的机制。⚠️ 两条必须**同时**在：只写 nowrap 不写 flex:none，
+        文字仍会被压成多行；只写 flex:none 不写 nowrap，标签照样在临界宽度折行。 */
+  white-space: nowrap; flex: none;
+  /* ⚠️ 只过渡 color，不过渡 background（同`.grp` 的理由）：
+     切主题时 background 过渡在两个都过 AA 的终态间插值没问题，
+     但下划线的 `::after` 走 transform，不能让它的出现被拖成一长串。 */
+  transition: color var(--dur) var(--ease);
+}
+.sub:hover { background: transparent; color: var(--c-text-1); }
+/* 焦点环（B29 补齐）：`.sub` 原先**没有** focus-visible 样式，而文件开头
+   `:focus:not(:focus-visible){outline:none}` 把它清掉了 ⇒ 键盘用户看不到焦点在哪。
+   `outline-offset: 2px` 画在元素**外**，`.nav2` 的 `overflow` 只裁子元素，不裁它。 */
+.sub:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.sub[aria-selected="true"] { background: transparent; color: var(--c-sub-on); font-weight: 600; }
+/* 下划线：`left/right: 8px` 内缩 ⇒ 宽度**自动跟随按钮宽度**
+   （标签越长下划线越长，正是"短胶囊"的观感），**无需 JS 对准**。 */
+.sub[aria-selected="true"]::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: -3px;
+  height: 2px; border-radius: var(--r-pill); background: var(--c-accent);
+  transform: scaleX(0); transform-origin: 50% 50%;
+  transition: transform var(--dur) var(--ease);
+}
+.sub[aria-selected="true"]::after,
+.sub[aria-selected="true"]:hover::after { transform: scaleX(1); }
+/* B30：`.page-meta`（「即时页 / 点一下立刻生效」）整条删除 —— 节点与填充代码
+   （index.html / app.js renderNav2）同步移除，别让样式留成一个"看不见但还在"的孤儿。 */
+
+/* ── 页面网格与卡片 ───────────────────────────────────────────────────── */
+.page {
+  display: grid; grid-template-columns: repeat(12, 1fr);
+  gap: var(--s4); align-items: start;
+  padding: var(--s5);
+  max-width: 1560px; margin: 0 auto;
+}
+/* 页头：标题 / 一句话说明 / 面包屑。原来这一块没有任何样式（class 存在但没定义） */
+.wrap-head { grid-column: span 12; min-width: 0; }
+.wrap-head h1 { font-size: var(--t-2xl); font-weight: 650; }
+.wrap-head > p.hint { color: var(--c-text-2); line-height: var(--lh-2); }
+/* 面包屑（页头里最后一个 p）压小一档，与说明拉开层级 —— 它只是"我在哪"，不是内容 */
+.wrap-head > p:last-child { color: var(--c-text-3); font-size: var(--t-xs); letter-spacing: 0; }
+
+.card {
+  grid-column: span 12;
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r3);
+  box-shadow: 0 1px 2px var(--c-shadow-1), 0 1px 3px -1px var(--c-shadow-2);
+  overflow: hidden;
+}
+.card.span-6  { grid-column: span 6; }
+.card.span-4  { grid-column: span 4; }
+.card.span-8  { grid-column: span 8; }
+@media (max-width: 1180px) { .card.span-4, .card.span-6, .card.span-8 { grid-column: span 12; } }
+
+/* 卡头**去掉着色底**（Ant Design / shadcn 的 Card 都是"纯底 + 一道分隔线"）。
+   原来那层 `--c-surface-2` 让每张卡看起来像"表格里套表格"，32 页叠起来很吵。 */
+.card-h {
+  display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
+  min-height: 48px; padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--c-line);
+  background: none;
+}
+.card-h h2 { font-size: var(--t-lg); font-weight: 600; }
+.card-h .spacer { flex: 1; }
+.card-d { padding: var(--s3) var(--s4) 0; color: var(--c-text-2); font-size: var(--t-md); line-height: var(--lh-3); }
+.card-b { padding: var(--s4); display: grid; gap: var(--s3); }
+.card-b.tight { gap: var(--s2); }
+
+/* ── 字段 ─────────────────────────────────────────────────────────────── */
+.f { display: grid; gap: 6px; min-width: 0; }
+.f-lb { display: flex; align-items: center; gap: 6px; font-size: var(--t-md); color: var(--c-text-2); min-width: 0; }
+/* `f-lb` 里带 `<b>` 的都是**分组标题**（增强项 / 特殊场景 / 记忆总览），
+   给它们一级文字色：它们不是"这一格的标签"，是"下面这一组的名字"。 */
+.f-lb b { color: var(--c-text-1); }
+.f-lb .spacer { flex: 1; }
+.f-inline { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; min-width: 0; }
+.f-inline > .grow { flex: 1; min-width: 140px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); }
+@media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── 插件板（每个插件一块独立玻璃板 · 2026-10-04）──────────────────────────
+   ⚠️⚠️ **材质不重写**：.pcard 同时挂 card 类，玻璃（底色 / 织纹 / backdrop-filter /
+      边缘高光 / 厚度 inset）、圆角 --r3、阴影、1px 边全部继承 .card 那一档
+      （:where(body.eg-on) .card 在下面第 2 档材质区里）。所以「多个插件板之间
+      视觉统一」是**结构性**的 —— 改一次 .card 材质，所有板一起变；
+      另写一份「看起来像玻璃的」才是两份语义，必然漂。
+
+   ⚠️⚠️ **.pgrid > .pcard 必须显式解除 span 12** —— 这条是实测踩出来的：
+      .card 带着 grid-column: span 12（那是给 .page 那条 12 列栅格用的：卡片占满整行）。
+      .pcard 复用 card 类是为了继承玻璃材质，副作用是把 span 12 一起继承了 ——
+      在 .pgrid 内部它照样 span 12 ⇒ 13 块板被**撑成 13 排单列**。
+      而这类失效**不报错**：板还在、玻璃还在、「等宽」也照样成立（都是整行宽，
+      自然等宽）—— 只有「横向平铺」这件事没了，页面看起来接近改之前的旧形态。
+      verify 的「同排等宽」条在单列下还会**假绿**（rowWidths 过滤掉单元素排后恒为空），
+      所以另立了一条「真的横排多列」的反向自证。 */
+/* 裸容器（bare 通道落地处）：**刻意什么都不给** —— 没有底色、没有边框、
+   没有圆角、没有阴影、没有 backdrop-filter。它只做一件事：占满 .page 那条 12 列
+   栅格的一整行，把内部的板集合直接放到页面背景上。
+   ⚠️ 这里**最怕**手痒加一条 background: transparent 之类的声明 ——
+      那与 none 在这里效果相同，但一旦有人给它加 backdrop-filter，
+      容器就又回来了，而 verify 的「插件板没有 .card 祖先」那条会立刻红。
+      留空本身就是这条纪律。 */
+.bare { grid-column: span 12; min-width: 0; }
+
+.pgrid {
+  display: grid;
+  /* auto-fill minmax(340px,1fr)：每列至少 340px、**列宽由容器均分** ⇒ 同一行里
+     所有板逐像素等宽；放不下就换行。窄屏用同一条查询降到单列。 */
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: var(--s3);                /* 板间间距：与 .grid2/.grid3 同一档，不另定 */
+  align-items: stretch;           /* 同排板**等高**（用户要「尺寸统一」）；
+     高度差由板内 .pcard-b 的 align-content:start 自然吃掉，不在板腰留空白带。 */
+}
+.pgrid > .pcard { grid-column: auto; }
+@media (max-width: 760px) { .pgrid { grid-template-columns: minmax(0, 1fr); } }
+
+/* 板内两段布局。刻意**不用** .card-h / .card-b：那两段带 1px 分隔线与 48px
+   最小高度，是为「大卡片的标题栏」调的；插件板更小，套上去会显得空。 */
+.pcard-h {
+  display: flex; align-items: center; gap: var(--s2);
+  min-width: 0; padding: var(--s3) var(--s3) 0;
+}
+.pcard-h .nm { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pcard-h .spacer { flex: 1; }
+.pcard-b {
+  display: grid; gap: var(--s2); min-width: 0; padding: var(--s3);
+  align-content: start;          /* 配合外层 stretch：板等高，内容仍从顶部起排 */
+}
+/* 板内的 details（设置项多时收起的那层）不要自带左边框 —— 板已经很窄了。 */
+.pcard .det > summary { padding-left: 0; }
+
+/* 输入类：统一 32px 高 / 8px 圆角 / 焦点环只画一圈（内阴影式的 3px 圈，
+   不是又描一道边 —— 两道边在深色下会叠成一条脏线） */
+input[type="text"], input[type="number"], input[type="password"], input[type="date"],
+input[type="time"], textarea, select, .in {
+  width: 100%; min-width: 0;
+  padding: 0 10px; height: var(--h-ctl);
+  border: 1px solid var(--c-line-strong); border-radius: var(--r1);
+  background: var(--c-surface); color: var(--c-text-1);
+  font: inherit; font-size: var(--t-md); letter-spacing: 0;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+textarea { height: auto; min-height: 64px; padding: 7px 10px; resize: vertical; line-height: var(--lh-2); }
+input::placeholder, textarea::placeholder { color: var(--c-text-3); }
+input:hover:not(:disabled), textarea:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--c-text-3); }
+input:focus, textarea:focus, select:focus {
+  border-color: var(--c-accent); outline: none;
+  box-shadow: 0 0 0 3px var(--c-accent-weak);
+}
+/* ⚠️ 上面那条 `outline: none` 会把**键盘焦点**的焦点环一起关掉 ——
+   `input:focus`（特异性 0,1,1）比全局 `:focus-visible`（0,1,0）更具体，所以救不回来。
+   实测后果：用键盘 Tab 到下拉框时**没有任何可见焦点指示**（只剩一圈 --c-accent-weak，
+   它是半透明浅蓝，压在白底上约 1.1:1 ≈ 看不见）。
+   这里给键盘焦点补回与按钮同一条环（--c-accent-ring，对白底约 3:1），
+   鼠标焦点保持原样（只换边框色 + 淡影），两种触发方式互不干扰。 */
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--c-accent-ring);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+input:disabled, textarea:disabled, select:disabled {
+  background: var(--c-sunken); color: var(--c-text-3); cursor: not-allowed; border-color: var(--c-line);
+}
+input[readonly] { background: var(--c-sunken); cursor: default; }
+input[type="file"] { height: auto; padding: 7px 10px; font-size: var(--t-sm); }
+input[type="date"], input[type="time"] { font-variant-numeric: tabular-nums; }
+.hint { font-size: var(--t-sm); color: var(--c-text-3); line-height: var(--lh-2); }
+.hint.warn { color: var(--c-warn); }
+.hint.bad { color: var(--c-danger); }
+.hint.ok { color: var(--c-ok); }
+.hint b, .hint code { color: var(--c-text-2); }
+.hint code { background: var(--c-sunken); padding: 1px 5px; border-radius: var(--r-sm); font-size: .92em; }
+
+/* ── 圆形深浅切换（2026-10-04 · beui ThemeToggle circle-blur 移植）──────
+   视觉 = 参考截图同款：圆形描边 + 居中图标（太阳/月亮），不写字。
+   替换原 #themeSel 下拉（深浅只有两态，"切换器"的形状是按钮不是选择器；
+   原 `.sel` / `.sel-sm` 全站只有它在用，随它一并退役）。
+   揭开动画的规则在文件尾「深浅切换的整页揭开」段。 */
+.theme-btn {
+  flex: none; width: var(--h-ctl); height: var(--h-ctl); padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  /* 静止态描边取**最淡**的一档（--c-line）：用户实测反馈"边缘描线太重"
+     （2026-10-04，当时用的是 --c-line-strong）。hover 再回到 strong 一档，
+     给交互留出反馈梯度。 */
+  border: 1px solid var(--c-line);
+  background: var(--c-surface); color: var(--c-text-2);
+  font: inherit; cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.theme-btn:hover { border-color: var(--c-line-strong); color: var(--c-text-1); }
+/* 焦点环与全局 focus-visible 同一条（--c-accent-ring），别处不再重写 */
+.theme-btn .ico { display: block; }
+
+/* ── 开关 ─────────────────────────────────────────────────────────────── */
+.sw { display: inline-flex; align-items: center; gap: var(--s2); cursor: pointer; user-select: none; min-height: var(--h-ctl); min-width: 0; }
+.sw input { position: absolute; opacity: 0; width: 0; height: 0; }
+.sw .track {
+  position: relative; flex: none; width: 40px; height: 22px;
+  background: var(--c-line-strong); border-radius: var(--r-pill);
+  transition: background var(--dur) var(--ease);
+}
+.sw .track::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px; border-radius: 50%; background: var(--c-knob);
+  box-shadow: 0 1px 2px var(--c-shadow-3);
+  transition: transform var(--dur) var(--ease);
+}
+.sw input:checked + .track { background: var(--c-accent); }
+/* 滑块走到 40 - 2 - 18 - 2 = 18px */
+.sw input:checked + .track::after { transform: translateX(18px); }
+.sw input:focus-visible + .track { box-shadow: 0 0 0 3px var(--c-accent-weak); }
+.sw input:disabled + .track { opacity: .45; cursor: not-allowed; }
+.sw input:disabled ~ .txt { color: var(--c-text-3); }
+.sw .txt { font-size: var(--t-md); color: var(--c-text-1); min-width: 0; }
+.sw.flat { min-height: 26px; }
+
+/* ── 液态开关（渐进增强层· 2026-10-02 UI 升级轮）────────────────────────
+   ⚠️ **原生 checkbox 仍然是唯一事实源** —— 它才是被 change 绑定、被读值的那个。
+      液态层是纯装饰，由 `app.js` 的 `mountLiquidSwitches()` 挂上去，
+      `pointer-events:none` 让点击穿透给原生 input。
+
+   ⚠️ 退回原样的方式：把 `app.js` 的 `LIQUID_ON` 改成 false，
+      或删掉 index.html 里三个 script 标签 —— **功能一行不受影响**。
+
+   本组规则只做三件事：给 .track 一个定位上下文、藏掉原生那颗 CSS 小圆点
+   （液态层自带液滴）、把焦点环转到液态按钮上。**几何全在 liquid-toggle.css 里**，
+   这里不写任何尺寸 —— 一个数两处写就是"两份必须相等的数字"。 */
+.sw.liq-host .track { overflow: visible; }
+/* 藏原生 ::after 小圆点。液态层的液滴盖在同一位置，两者并存会看到"双滑块"。
+   ⚠️ 用 `.liq-on` 这个类来判别，而不是**内联 style 里有没有某个自定义属性**
+   （`[style*="..."]` 匹配的是"字面量里含这段字符串"，而自定义属性是通过
+   `setProperty` 写进 style 属性的，序列化后未必保留你要的那段文本 —— 这种判据
+   会在"看起来该生效却不生效"的地方静默失败）。
+   ⚠️ 也不能直接删掉 `.sw .track::after` 那条规则：同一个类被**没有**液态层的
+   开关（技能/记忆/作息/扩展包）共用，删了它们就没有滑块了。 */
+.sw.liq-host.liq-on .track::after { display: none; }
+/* 焦点环：原生 input 是 focus-visible 的真正来源，环画在它兄弟的液态按钮上 */
+.sw.liq-host:has(input:focus-visible) .liq-toggle .liq-track {
+  box-shadow: 0 0 0 3px var(--c-accent-weak);
+}
+
+/* ── 分段单选 ─────────────────────────────────────────────────────────── */
+.seg {
+  display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px;
+  border: 1px solid var(--c-line-strong); border-radius: var(--r1);
+  background: var(--c-sunken);
+}
+.seg label {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 0 12px; height: calc(var(--h-ctl) - 8px); cursor: pointer;
+  font-size: var(--t-md); color: var(--c-text-2); background: transparent;
+  border-radius: var(--r-sm);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.seg label:hover { color: var(--c-text-1); background: color-mix(in srgb, var(--c-surface) 62%, transparent); }
+.seg input { position: absolute; opacity: 0; width: 0; height: 0; }
+.seg label:has(input:checked) { background: var(--c-surface); box-shadow: 0 1px 2px var(--c-shadow-2); }
+.seg input:checked + span { color: var(--c-accent); font-weight: 600; }
+.seg input:focus-visible + span { outline: 2px solid var(--c-accent-ring); outline-offset: 2px; border-radius: var(--r-sm); }
+
+/* ── 按钮 ─────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: var(--h-ctl); padding: 0 14px;
+  border: 1px solid var(--c-line-strong); border-radius: var(--r1);
+  background: var(--c-surface); color: var(--c-text-1);
+  font: inherit; font-size: var(--t-md); cursor: pointer; letter-spacing: 0;
+  white-space: nowrap;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
+              color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), opacity var(--dur) var(--ease);
+}
+.btn:hover:not(:disabled) { border-color: var(--c-text-3); background: var(--c-surface-2); }
+.btn:active:not(:disabled) { background: var(--c-hover); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary {
+  background: var(--c-accent); border-color: var(--c-accent); color: var(--c-on-accent); font-weight: 500;
+  box-shadow: 0 1px 2px var(--c-shadow-2);
+}
+.btn-primary:hover:not(:disabled) { background: var(--c-accent-hover); border-color: var(--c-accent-hover); }
+.btn-primary:active:not(:disabled) { background: var(--c-accent-hover); box-shadow: none; }
+.btn-danger { background: var(--c-danger-bg); border-color: var(--c-danger-line); color: var(--c-danger); }
+.btn-danger:hover:not(:disabled) { border-color: var(--c-danger); background: var(--c-danger-bg); }
+.btn-ghost { border-color: var(--c-line); color: var(--c-text-2); background: var(--c-surface); }
+.btn-ghost:hover:not(:disabled) { color: var(--c-text-1); }
+.btn.danger-solid { background: var(--c-danger); border-color: var(--c-danger); color: var(--c-on-danger); }
+.btn.danger-solid:hover:not(:disabled) { background: var(--c-danger); filter: brightness(1.06); }
+.btn-sm { height: 26px; padding: 0 10px; font-size: var(--t-sm); border-radius: var(--r-sm); }
+.btn-xs { height: 24px; padding: 0 8px; font-size: var(--t-xs); border-radius: var(--r-sm); }
+.btn-row { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+
+/* 跳转类入口（回旧界面 / 去新界面）。与 `.btn` 同高：一排里不会一高一矮。
+   用 <a> 而不是 <button> —— 它是跳转不是动作，中键与右键手该是好的。 */
+a.jump {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: var(--h-ctl); padding: 0 12px;
+  border: 1px solid var(--c-line-strong); border-radius: var(--r1);
+  background: var(--c-surface); color: var(--c-text-2);
+  font-size: var(--t-md); text-decoration: none; white-space: nowrap;
+  transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+a.jump:hover { border-color: var(--c-accent); color: var(--c-accent); background: var(--c-accent-weak); text-decoration: none; }
+/* 结果列表里的「原文」是 btn-xs 高度，跟着一起收 */
+.row a.jump { height: 24px; padding: 0 8px; font-size: var(--t-xs); border-radius: var(--r-sm); }
+
+/* ── 标签 / 徽标 ──────────────────────────────────────────────────────── */
+.tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 8px;
+  border: 1px solid var(--c-line); border-radius: var(--r-sm);
+  background: var(--c-surface-2); color: var(--c-text-2);
+  font-size: var(--t-xs); white-space: nowrap;
+}
+.tag.ok    { background: var(--c-ok-bg);     border-color: var(--c-ok-line);     color: var(--c-ok); }
+.tag.warn  { background: var(--c-warn-bg);   border-color: var(--c-warn-line);   color: var(--c-warn); }
+.tag.bad   { background: var(--c-danger-bg); border-color: var(--c-danger-line); color: var(--c-danger); }
+.tag.info  { background: var(--c-info-bg);   border-color: var(--c-info-line);   color: var(--c-info); }
+.tag.accent{ background: var(--c-accent-weak); border-color: var(--c-accent-line); color: var(--c-accent); }
+.tag.plain { background: none; border-color: var(--c-line); color: var(--c-text-3); }
+.tag.mono { font-family: var(--mono); }
+
+/* ── 只读读数 ─────────────────────────────────────────────────────────── */
+.ro { display: flex; align-items: baseline; gap: var(--s2); }
+.ro .v { font-size: var(--t-xl); font-weight: 600; font-variant-numeric: tabular-nums; }
+.ro .u { font-size: var(--t-sm); color: var(--c-text-3); }
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: var(--s2); }
+.metric {
+  padding: 11px 13px; border: 1px solid var(--c-line); border-radius: var(--r2);
+  background: var(--c-surface-2); display: grid; gap: 3px; min-width: 0;
+}
+.metric .n { font-size: var(--t-xl); font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.metric .l { font-size: var(--t-xs); color: var(--c-text-3); line-height: 1.4; }
+.metric.hi { background: var(--c-accent-weak); border-color: var(--c-accent-line); }
+.metric.hi .l { color: var(--c-accent); }
+
+/* ── 状态卡组 + 端口三态（2026-10-02 运行总览页重排）────────────────────
+   ⚠️ 存在的理由不是"好看"，是**把判断交给视觉系统**：
+      原来那 6 行是等权两列文本，读者必须**逐行读字**才能找出"哪个坏了"。
+      这里给三态各自一个颜色 + 一枚图标，于是"扫一眼看颜色"就够。
+      ⚠️ 颜色是**冗余**的，不是唯一编码 —— 状态同时写进 `data-st`
+         与图标，读不出来的人仍能靠文案判断。这是无障碍的底线。 */
+.sg {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: var(--s2); margin: 0;
+}
+.sg-cell {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 11px 12px; border: 1px solid var(--c-line);
+  border-radius: var(--r2); background: var(--c-surface-2);
+  min-width: 0; position: relative;
+  /* 状态色只染**左边一条**，不整块染色 ——
+     整块染色在密集中文界面里会变成一片色块，反而更难读。 */
+  border-left: 3px solid var(--c-line-strong);
+}
+.sg-ico { flex: none; color: var(--c-text-3); margin-top: 1px; }
+.sg-body { min-width: 0; display: grid; gap: 1px; }
+.sg-label { font-size: var(--t-xs); color: var(--c-text-3); }
+.sg-value {
+  font-size: var(--t-lg); font-weight: 600; line-height: 1.25;
+  overflow-wrap: anywhere; font-variant-numeric: tabular-nums;
+}
+.sg-sub { font-size: var(--t-xs); color: var(--c-text-3); line-height: 1.35; overflow-wrap: anywhere; }
+
+/* 三态。**只换左边条 + 图标色**，主体文字保持 `--c-text` ——
+   正文对比度不因状态而变（AA 4.5:1 的底线不能为了"看起来有状态"而破）。 */
+.sg-cell[data-st="ok"]   { border-left-color: var(--c-ok); }
+.sg-cell[data-st="ok"]   .sg-ico { color: var(--c-ok); }
+.sg-cell[data-st="warn"] { border-left-color: var(--c-warn); }
+.sg-cell[data-st="warn"] .sg-ico { color: var(--c-warn); }
+.sg-cell[data-st="bad"]  { border-left-color: var(--c-danger); }
+.sg-cell[data-st="bad"]  .sg-ico { color: var(--c-danger); }
+/* off = 不适用/未配置。用中性灰，不要用 danger ——
+   "没配置"不是"坏了"，染成红色会制造假警报。 */
+.sg-cell[data-st="off"]  { border-left-color: var(--c-line-strong); }
+.sg-cell[data-st="off"]  .sg-ico { color: var(--c-idle); }
+/* 坏的那格给一点点底色：扫视时先被这格抓住，然后才去读它写了什么 */
+.sg-cell[data-st="bad"]  { background: var(--c-danger-bg); }
+.sg-cell[data-st="warn"] { background: var(--c-warn-bg); }
+
+/* 端口三态：三条各自独立，一眼看出哪条断了 */
+.ports { display: flex; flex-wrap: wrap; gap: var(--s2); margin: 0; }
+.port {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 10px 6px 9px; border-radius: var(--r-pill);
+  border: 1px solid var(--c-line); background: var(--c-surface-2);
+  font-size: var(--t-sm);
+}
+.port-led {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--c-idle);
+}
+.port[data-on="1"] { border-color: var(--c-ok-line); background: var(--c-ok-bg); }
+.port[data-on="1"] .port-led {
+  background: var(--c-ok);
+  /* 亮着的灯带一点辉光 —— 纯色块在灰底上不够"通" */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-ok) 18%, transparent);
+}
+.port[data-on="0"] { border-color: var(--c-danger-line); background: var(--c-danger-bg); }
+.port[data-on="0"] .port-led { background: var(--c-danger); }
+.port-name { font-weight: 550; }
+.port-st { color: var(--c-text-3); }
+.port[data-on="1"] .port-st { color: var(--c-ok); }
+.port[data-on="0"] .port-st { color: var(--c-danger); }
+
+/* ── 图标 ───────────────────────────────────────────────────────────────
+   统一 `flex:none` —— 图标被 flex 容器压扁是最常见的"图标看起来不对劲"，
+   根因就是没写这一条。 */
+.ico { flex: none; display: block; }
+
+/* 图标按钮：把 morph 变形装进去的容器 */
+.iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--h-ctl); height: var(--h-ctl); padding: 0;
+  border: 1px solid var(--c-line); border-radius: var(--r1);
+  background: var(--c-surface-2); color: var(--c-text-1);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.iconbtn:hover { background: var(--c-hover); }
+
+/* 按钮里的图标：与文字之间留 6px，且**不参与 baseline 对齐**
+   —— `vertical-align: middle` 是必须的，否则 16px 图标会把 13px 文字顶偏。 */
+.btn .btn-ico {
+  margin-right: 6px; vertical-align: middle;
+  /* 图标继承按钮文字色，hover 时自动跟着变—— 不写死色值（沿用纪律①） */
+  color: currentColor;
+}
+.btn { display: inline-flex; align-items: center; }
+
+/* ── 键值表 / 数据表 ─────────────────────────────────────────────────── */
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 7px var(--s4); font-size: var(--t-md); margin: 0; }
+.kv dt { color: var(--c-text-3); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+/* 表格：Ant Design 口径 —— 无竖线、表头吸顶、行 hover、最后一行不留分隔线 */
+table.tbl {
+  width: 100%; table-layout: fixed;
+  border-collapse: separate; border-spacing: 0;
+  font-size: var(--t-md);
+}
+table.tbl th, table.tbl td {
+  padding: 8px 10px; border-bottom: 1px solid var(--c-line-soft);
+  text-align: left; overflow: hidden; text-overflow: ellipsis;
+}
+table.tbl th {
+  position: sticky; top: 0; z-index: 1;
+  color: var(--c-text-3); font-weight: 500; font-size: var(--t-sm);
+  background: var(--c-surface-2);
+  border-bottom-color: var(--c-line);
+}
+table.tbl tbody tr:last-child td { border-bottom: 0; }
+table.tbl tbody tr:hover td { background: var(--c-hover); }
+table.tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll-y {
+  max-height: 300px; overflow: auto;
+  border: 1px solid var(--c-line); border-radius: var(--r2);
+  background: var(--c-surface);
+}
+/* 长列表的**展开态**：限高可滚（折叠态不套这个类 —— 见 `--h-list` 的说明）。
+   ⚠️ 滚动位置**由 `app.js` 的 `keepPageState` / `restorePageState` 跨重绘保住**
+      （2026-10-04 第二轮）：在那之前滚到一半会被 3 秒轮询弹回顶部，现在不会。
+      新增滚动容器要登记进那边的 `KEEP_SEL`，否则它仍然会跳回去。 */
+.rows.scroll-y.capped { max-height: var(--h-list); padding: var(--s2); }
+/* 折叠块（`<details>`）展开后的内容也可能很长（12 条规则 / 一屏设置项 / 候选模型）——
+   一次性给它内部滚动，理由与长列表完全相同：卡片矮下来，倾斜的边缘位移才小。
+   ⚠️ 与上面**共用 `--h-list` 同一个数** —— 限高不许出现第二个值。
+   ⚠️ 这三类都是 `details.det` 的**直接子元素**（上面那条 `details.det > div` 的
+      padding 就是给它们的）。以后若给折叠块内容再包一层容器，这些选择器会**静默落空** ——
+      动结构时要一起看这里。 */
+.det > .rows, .det > .f, .det > .chip-list { max-height: var(--h-list); overflow: auto; }
+
+/* ── 可排序列表（模型优先级线路 · 2026-10-03） ──────────────────────────────
+   引擎在 `sortable.js`；这里只管**长相**与**降级**。
+
+   ⚠️ `.srt` 必须是 `position: relative`：引擎用 `offsetTop` 量布局位置，
+      而 `offsetTop` 的参照物是 `offsetParent` —— 容器不是定位元素时
+      参照物会往上冒，实测会让整列补偿量差一个容器的高度（症状是
+      "松手时全体往下弹一截"）。这一条是**接线**，不是样式偏好。 */
+.srt { position: relative; }
+/* 拖动中的行：抬起来 + 投影 + 压住相邻行。
+   ⚠️ 投影用 `--c-shadow-2/3`（令牌里已有的那几档），**不新造色值** ——
+      深浅两套主题的投影深浅不同，写死 rgba 会在深色下变成"发灰的补丁"。 */
+.srt-item {
+  /* 让位动画写在 transform 上（引擎逐帧写），所以这里**不许**给 transform
+     加 CSS transition —— 判据⑤：每帧写一次 transform + 过渡 = 对每一帧
+     重新插值，弹簧被彻底旁路，看到的是那条缓动曲线。 */
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.srt[data-dragging="1"] .srt-item[data-drag="1"] {
+  position: relative;
+  z-index: 2;
+  background: var(--c-surface);
+  border-color: var(--c-accent-line);
+  box-shadow: 0 6px 18px -6px var(--c-shadow-3), 0 2px 4px -2px var(--c-shadow-2);
+}
+/* 把手：⠿ 字形 + 抓住的光标。
+   ⚠️ **只有它能起拖**（引擎只认这个元素上的 pointerdown）——
+      整行都能拖的话，行内的 × 与 ↑↓ 会被拖拽抢走点击，
+      而那种故障表现为"偶尔点不动"，极难归因。 */
+.srt-grip {
+  flex: none; width: 22px; height: 26px; margin-left: -4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: var(--r-sm); background: none;
+  color: var(--c-text-3); font-size: var(--t-md); line-height: 1;
+  cursor: grab; touch-action: none;   /* ⚠️ 必��：否则触摸拖动会被浏览器当成滚页 */
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.srt-grip:hover { color: var(--c-text-2); background: var(--c-hover); }
+.srt-grip:active { cursor: grabbing; }
+.srt[data-dragging="1"] .srt-grip { cursor: grabbing; }
+/* 播报区：`role=status` 必须真的**看不见**（`clip-path` 版，不是 `display:none`
+   —— 后者会让部分读屏跳过它，于是"位置变化有播报"这条契约假绿）。 */
+.srt-live {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+/* 拖动时禁掉全局选中：否则按住拖会顺带把模型名刷成选中文本，
+   松手后页面上一片高亮 —— 而且它会**抢走 pointerup 的默认行为**。 */
+body.srt-noselect { user-select: none; -webkit-user-select: none; }
+/* ⚠️ 触摸设备：S2 的拖拽降级为「点按即换位」（§8.1）。
+   手指按住拖一条 34px 的行，误触率高于收益 —— 所以把把手放大到 44px
+   触摸目标（与全局 coarse 断点同一条纪律），但**不**在这里禁掉拖拽：
+   线路只有 7 条、纵向空间充裕，拖一把的收益仍然高于误触成本。
+   真正被禁掉的是 §8.1 的另一半「小控件上的 S2」（行内开关），那一处没动过。 */
+@media (pointer: coarse) {
+  .srt-grip { width: 44px; height: 44px; }
+}
+
+/* ── 可重复列表（技能 / 定时消息 / 记忆 ……） ──────────────────────────── */
+.rows { display: grid; gap: var(--s2); min-width: 0; }
+.row {
+  border: 1px solid var(--c-line); border-radius: var(--r2);
+  background: var(--c-surface-2); padding: 10px var(--s3);
+  display: grid; gap: var(--s2); min-width: 0;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+/* 可点的行（会话 / 存档 / 未读）才给 hover —— 纯展示的行不动，免得"看着能点其实不能" */
+.row[data-a]:hover { background: var(--c-hover); border-color: var(--c-line-strong); }
+.row.flat { border: 0; background: none; padding: 0; }
+/* ⚠️ `.row` 是 `display: grid`、`.f-inline` 是 `display: flex` —— 两者**同权重**，
+   而 `.row` 写在后面 ⇒ 写成 `class="row flat f-inline"` 的"单行条目"其实按 grid 排：
+   每个子元素各占一整行。会话 / 存档 / 额度情报 / 定时消息 / 知识包 / 线路 全是这个形状，
+   一条 5 元素的记录会变成 5 行（实测一条会话行高 **102px**），而它看起来"只是行高偏大"。
+   这里把那一类条目的**意图**写明：一行，放不下才换行。 */
+.row.f-inline { display: flex; align-items: center; flex-wrap: wrap; }
+/* 行本身就是 `--c-surface-2`（一道浅浅的面），行里再放 `--c-surface-2` 的折叠块/胶囊
+   会和行底糊成一片、只剩一根线看得见。所以**非扁平行**里的嵌套容器统一换成"面"色。 */
+.row:not(.flat) .det,
+.row:not(.flat) .empty,
+.row:not(.flat) .chip,
+.row:not(.flat) .steps { background: var(--c-surface); }
+.row-h { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+.row-h .spacer { flex: 1; }
+.row-h .nm { font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.row.muted { opacity: .6; }
+.empty {
+  padding: var(--s4); text-align: center; color: var(--c-text-3); font-size: var(--t-md);
+  border: 1px dashed var(--c-line-strong); border-radius: var(--r2);
+  background: var(--c-surface-2); line-height: var(--lh-2);
+}
+.chip-list { display: flex; flex-wrap: wrap; gap: var(--s1); align-items: center; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px;
+  border: 1px solid var(--c-line); border-radius: var(--r-pill); background: var(--c-surface-2);
+  font-size: var(--t-sm); color: var(--c-text-2); max-width: 100%;
+}
+.chip .x {
+  border: 0; background: none; cursor: pointer; color: var(--c-text-3);
+  font-size: var(--t-lg); line-height: 1; padding: 0 1px; border-radius: var(--r-sm);
+}
+.chip .x:hover { color: var(--c-danger); }
+button.chip { cursor: pointer; font-family: inherit; transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+button.chip:hover { border-color: var(--c-accent); color: var(--c-accent); }
+
+/* ── 详情 / 折叠 ─────────────────────────────────────────────────────── */
+details.det { border: 1px solid var(--c-line); border-radius: var(--r2); background: var(--c-surface-2); overflow: hidden; }
+details.det > summary {
+  padding: 9px var(--s3); cursor: pointer; font-size: var(--t-md); color: var(--c-text-2);
+  list-style: none; display: flex; align-items: center; gap: 6px;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+details.det > summary::-webkit-details-marker { display: none; }
+/* 自绘三角：原生 marker 在各浏览器里位置不一，且不能跟着主题变色 */
+details.det > summary::before {
+  content: ""; flex: none; width: 0; height: 0;
+  border-left: 5px solid var(--c-text-3);
+  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  transition: transform var(--dur) var(--ease);
+}
+details.det[open] > summary::before { transform: rotate(90deg); }
+details.det > summary:hover { color: var(--c-text-1); background: var(--c-hover); }
+details.det > div { padding: 0 var(--s3) var(--s3); }
+details.det > div > .f:first-child, details.det > div > .rows:first-child { padding-top: 2px; }
+details.det pre { margin: 0; }
+
+/* ── 过渡态 ───────────────────────────────────────────────────────────── */
+.skeleton {
+  height: 14px; border-radius: var(--r-sm);
+  background: linear-gradient(90deg, var(--c-sunken) 25%, var(--c-surface-2) 37%, var(--c-sunken) 63%);
+  background-size: 400% 100%; animation: sk 1.2s linear infinite;
+}
+@keyframes sk { from { background-position: 100% 0 } to { background-position: 0 0 } }
+/* ── 启动链路（2026-10-02 从纯文本行改成步骤条）────────────────────────
+   ⚠️ 原来是 `display:grid` 的一列 `<div>`（mono 字体），本质是**日志窗口**。
+      改成 `<ol>` + 节点 + 连接线后，"走到第几步 / 卡在哪"由**位置**回答。
+   ⚠️ 保留 `max-height` + `overflow:auto`：链路可能几十行，
+      不封顶会把整张卡撑到比页面还长。 */
+.steps {
+  display: flex; flex-direction: column; gap: 0;
+  list-style: none; margin: 0; padding: 4px 2px;
+  max-height: 168px; overflow: auto;
+  background: var(--c-sunken); border: 1px solid var(--c-line); border-radius: var(--r2);
+}
+.stp {
+  position: relative; display: flex; align-items: flex-start; gap: 10px;
+  padding: 5px 8px 5px 10px;
+  font-family: var(--mono); font-size: var(--t-sm); color: var(--c-text-2);
+  line-height: 1.5;
+}
+/* 连接线：画在节点之间的空隙里。⚠️ 用 `::before` 的 left 值对齐 dot 的中心，
+   差1px 线就会歪 —— 所以中心值写死 5px（= dot 6px 的一半）。 */
+.stp::before {
+  content: ""; position: absolute; left: 5px; top: 0; bottom: 0;
+  width: 2px; background: var(--c-line-strong);
+}
+.stp:first-child::before { top: 12px; }
+.stp:last-child::before { bottom: calc(100% - 12px); }
+.stp-dot {
+  position: relative; z-index: 1; flex: none;
+  width: 12px; height: 12px; margin-top: 4px; border-radius: 50%;
+  background: var(--c-surface); border: 2px solid var(--c-line-strong);
+}
+/* ⚠️⚠️ 2026-10-03 修一处**指向不存在令牌的声明**：
+      原来写 `color: var(--c-text)`（**无编号**），而 `--c-text`（不带数字后缀）
+      在本文件里**根本没有定义** —— 实测 `--c-text:` 匹配数 = 0。
+      CSS 的 `var()` 遇到未定义的自定义属性会让**整条声明失效**（不是回退到初始值），
+      所以这一行此前**什么都没做**：`.stp` 的当前步骤色一直是从父级继承来的。
+      改用 `--c-text-1`（"当前步骤"是主信息，该用最重的一档）。 */
+.stp[data-cur="1"] { color: var(--c-text-1); font-weight: 550; }
+/* 当前那一步：节点实心 + 一圈强调环 —— 视线第一下就落在它上面 */
+.stp[data-cur="1"] .stp-dot {
+  background: var(--c-accent); border-color: var(--c-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-accent) 20%, transparent);
+}
+.stp-tx { min-width: 0; overflow-wrap: anywhere; }
+/* 空态：图标 + 一句话，不要一个孤零零的框 */
+.steps-empty {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px; color: var(--c-text-3); font-family: var(--font);
+  font-size: var(--t-md);
+}
+.steps-empty .ico { color: var(--c-idle); }
+
+/* ── 保存条 / 反馈 ───────────────────────────────────────────────────── */
+.savebar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: var(--s4); z-index: 50;
+  display: flex; align-items: center; gap: var(--s3);
+  min-width: min(720px, calc(100vw - 32px));
+  padding: 10px var(--s4);
+  background: var(--c-bar-bg); color: var(--c-bar-fg);
+  border-radius: var(--r-pill);
+  box-shadow: 0 8px 28px -10px var(--c-shadow-4), 0 2px 6px var(--c-shadow-2);
+}
+.savebar .savebar-txt { font-size: var(--t-md); }
+.savebar .spacer { flex: 1; }
+/* ⚠️ 保存条内的按钮**必须单独写明 hover/active**：`.savebar .btn-ghost` 与 `.btn:hover`
+   同权重（0,2,0），而前者在后面 ⇒ 后者的 hover 被静默压掉（悬停零反馈）。
+   实测的教训：这种"点了/悬了没反应"的写法在两种主题下看起来都正常。 */
+.savebar .btn-ghost {
+  background: transparent; border-color: var(--c-bar-line); color: inherit;
+}
+.savebar .btn-ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--c-bar-fg) 14%, transparent);
+  border-color: color-mix(in srgb, var(--c-bar-fg) 42%, transparent); color: inherit;
+}
+.savebar .btn-ghost:active:not(:disabled) { background: color-mix(in srgb, var(--c-bar-fg) 22%, transparent); }
+.savebar .btn-ghost:focus-visible { outline-color: var(--c-bar-fg); }
+.savebar .btn-primary { background: var(--c-accent); border-color: var(--c-accent); color: var(--c-on-accent); }
+
+.toasts { position: fixed; right: var(--s4); bottom: var(--s4); z-index: 60; display: grid; gap: var(--s2); justify-items: end; }
+.toast {
+  position: relative;
+  display: flex; align-items: center; gap: var(--s2);
+  max-width: 440px; padding: 10px 14px 10px 30px;
+  background: var(--c-surface); border: 1px solid var(--c-line-strong);
+  border-left: 3px solid var(--c-accent);
+  border-radius: var(--r2);
+  box-shadow: 0 4px 12px -4px var(--c-shadow-3), 0 12px 32px -14px var(--c-shadow-3);
+  font-size: var(--t-md); color: var(--c-text-1); line-height: var(--lh-2);
+  animation: tin var(--dur) var(--ease);
+}
+/* 圆点与左侧色条**同一个语义色**：色 + 字两条通道，不靠纯色块表意 */
+.toast::before {
+  content: ""; position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  width: 8px; height: 8px; border-radius: 50%; background: var(--c-accent);
+}
+@keyframes tin { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+.toast.ok   { border-left-color: var(--c-ok); }
+.toast.ok::before { background: var(--c-ok); }
+.toast.warn { border-left-color: var(--c-warn); border-color: var(--c-warn-line); background: var(--c-warn-bg); color: var(--c-warn); }
+.toast.warn::before { background: var(--c-warn); }
+.toast.bad  { border-left-color: var(--c-danger); border-color: var(--c-danger-line); background: var(--c-danger-bg); color: var(--c-danger); }
+.toast.bad::before { background: var(--c-danger); }
+
+.busy {
+  position: fixed; inset: 0; z-index: 70; display: grid; place-items: center;
+  background: var(--c-scrim-soft); backdrop-filter: blur(3px);
+  font-size: var(--t-md); color: var(--c-text-1);
+}
+.busy .spin, .spin {
+  width: 14px; height: 14px; border-radius: 50%; display: inline-block; margin-right: 8px;
+  border: 2px solid var(--c-line-strong); border-top-color: var(--c-accent);
+  animation: sp .7s linear infinite; vertical-align: -2px;
+}
+@keyframes sp { to { transform: rotate(360deg) } }
+
+.modal {
+  position: fixed; inset: 0; z-index: 80; display: grid; place-items: center;
+  background: var(--c-scrim);
+  /* ⚠️⚠️ 这里**故意没有** `backdrop-filter`（2026-10-03 删）。它建立"背景根"：
+     `backdrop-filter` 会让本层成为子元素采样的**根**，于是 `.modal-box` 的
+     backdrop-filter 只看得见 `.modal` 自己那层近乎不透明的 `--c-scrim`(.40)
+     —— 而**它采样的东西本身就是一块平色**，所以弹窗玻璃读出来是"灰板"，
+     怎么调白纱与边缘都救不回来（不是白纱太厚的问题）。
+     那2px 模糊原本只给遮罩边缘一点柔，与弹窗玻璃无关：遮罩仍是半透明的
+     `--c-scrim` 压暗背景，去掉之后视觉损失很小，而玻璃**真正成立**。
+     ⚠️ 别把它加回来：契约 §60 G11 反向钉住这一条 —— 下次有人看到"遮罩边缘
+     有点硬"就会加回来，问题静默复发。 */
+  padding: var(--s4);
+}
+.modal-box {
+  width: min(680px, 100%); max-height: 82vh; overflow: auto;
+  background: var(--c-surface); border: 1px solid var(--c-line);
+  border-radius: var(--r3); padding: var(--s5);
+  box-shadow: 0 24px 60px -20px var(--c-shadow-4);
+}
+.modal-box h3 { font-size: var(--t-xl); margin-bottom: var(--s3); }
+.modal-box .modal-body { max-height: 56vh; overflow: auto; }
+.modal-box pre { white-space: pre-wrap; font-size: var(--t-sm); margin: 0; }
+
+/* ── 页脚 ─────────────────────────────────────────────────────────────── */
+.foot {
+  display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
+  padding: var(--s4) var(--s5) var(--s6);
+  max-width: 1560px; margin: 0 auto;
+  color: var(--c-text-3); font-size: var(--t-sm);
+}
+.foot code { background: var(--c-sunken); padding: 1px 5px; border-radius: var(--r-sm); }
+.foot .foot-stat { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* ── 原型标记 ─────────────────────────────────────────────────────────── */
+.proto-badge { border-color: var(--c-accent-line); background: var(--c-accent-weak); color: var(--c-accent); }
+
+/* ── 窄屏与触摸 ───────────────────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  /* 顶栏在窄屏只留"品牌 + 动作"，状态胶囊仍然在（横滑），但副标题让位 */
+  .tb-sub { display: none; }
+  .tb-pills { gap: 6px; }
+}
+@media (max-width: 900px) {
+  /* ⚠️ `.nav1` **不在**这一组里：它的左右内边距要同时兜住刘海安全区
+     （`max(--s5, env(safe-area-inset-*))`），被这里一句 `padding-*: var(--s4)`
+     覆盖掉，安全区就没了 —— 下面单独给它一条。 */
+  .page, .banners:not(:empty), .foot { padding-left: var(--s4); padding-right: var(--s4); }
+  /* ⚠️ `.nav2wrap` 不在上一组里（B30）：它的右内边距要额外加 `--nav2-cut`
+     （斜角切割的进深），被那句 `padding-*: var(--s4)` 覆盖的话，
+     最后一个 tab 的右端会被斜边吃掉一截 —— 所以单独给它一条。 */
+  .nav2wrap { padding-left: var(--s4); padding-right: calc(var(--s4) + var(--nav2-cut)); }
+  .nav1 { padding-left: max(var(--s4), env(safe-area-inset-left)); padding-right: max(var(--s4), env(safe-area-inset-right)); }
+  .page { gap: var(--s3); padding-top: var(--s4); }
+  .card-b { padding: var(--s3); }
+  .toasts { left: var(--s4); right: var(--s4); justify-items: stretch; }
+  .toast { max-width: none; }
+}
+
+/* 窄屏：岛矮一档、选项矮一档，**换行策略一个字不改**（仍是横向滚动）。
+   为什么不用"换行"来避免溢出：8 个功能域名很长（"记忆与知识"），
+   360px 宽下换行必然分成两三行、且断点落在词中间 —— 那正是用户明确不要的
+   "换行错位"。横向滚动是这里唯一能做到"不溢出也不错位"的策略，
+   而选中项会被 `scrollNavTo` 带进可见区（见 app.js）。 */
+@media (max-width: 720px) {
+  /* ⚠️ B39：这一档 `--h-nav2` 改成 **48px = `--h-nav1`**（原 44px）。
+     B39 起两层是**同一行**，"齐平"靠的就是这两个令牌相等 ——
+     不等时灵动岛比二级栏高 4px，**而两级导航看起来都正常**。
+     ⚠️ 少改这一处同样会退化，只是退化形态从"被压掉一截"变成"没齐平"。 */
+  :root { --h-nav1: 48px; --h-nav-item: 36px; --h-nav2: 48px; }
+  .grp { padding: 0 var(--s3); font-size: var(--t-sm); }
+  .nav-inner { padding: 0 var(--s1); }
+  .sub { height: 24px; padding: 0 var(--s3); }
+}
+
+/* 触摸目标补到 44px。⚠️ 这一条**没有在真机上实测过**（本机只有鼠标），
+   所以它只保证"不违反"，不声称"手感已验"。
+   ⚠️ 岛与选项必须**一起**长：指示器的高度取自 `--h-nav-item`，
+      只把按钮拔高会出现"白框比选项矮一截"（看着像没对齐，且不报错）。
+   ⚠️ B29：`.sub` 被 `min-height:44px` 顶起 ⇒ `.nav2` = 44+6 = 50px
+      ⇒ `--h-nav2` 要给 58px（50 + 上下各 4 的呼吸）。这一处漏改的话
+      二级栏在触摸设备上被**压掉 10px**。 */
+@media (pointer: coarse) {
+  :root { --h-nav1: 60px; --h-nav-item: 44px; --h-nav2: 60px; }
+  .btn, .btn-sm, .btn-xs, a.jump, .sel, select, .sub, .seg label, .chip .x, .sw { min-height: 44px; }
+  .grp { min-height: 44px; }
+  .chip .x, .btn-xs { min-width: 44px; }
+}
+/* 显式给"这一块是触摸区"的用法留的口（与上面的媒体查询是一个目的，两个触发条件）。
+   同样是**改令牌**而不是改 `.grp` 的高度 —— 理由同上。
+   ⚠️ B29：`--h-nav2` 也要一起给（与 `@media (pointer:coarse)` 同一个值），
+      漏了的话手动加 `.touch` 的页面二级栏会被压掉 10px。契约 N9 盯这一处。 */
+.touch { --h-nav1: 60px; --h-nav-item: 44px; --h-nav2: 60px; }
+.touch, .touch .btn, .touch a.jump, .touch .grp, .touch .sub { min-height: 44px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   背景引擎 · 颗粒渐变（2026-10-04 · 接替"背景流光·六团流体"）
+   ══════════════════════════════════════════════════════════════════════════
+   渲染在 <canvas id="shaderBg"> 上：WebGL 片元着色器（fbm 噪声域扭曲 + 胶片颗粒），
+   引擎与预设都在 `shader-bg.js`，本文件只管它的层序与顶栏选择器的形状。
+
+   颜色不住在这里：旧六团那组 --c-aurora-* 令牌已随该层整组移除。
+   预设色是**数据**（shader-bg.js 的 VARIANTS）—— 写进着色器 uniform 与
+   选择器 swatch 的运行时样式，样式表保持"零就地色值"。
+
+   层序分工（与旧流体层一致，判据同为两层）：
+     -2  canvas#shaderBg ── 动态背景（WebGL 每帧重画）
+     -1  body.eg-on::before ── 玻璃背板（静态）
+      0  页面内容
+   ⚠️ canvas 铺满视口：pointer-events:none 必须自己写（DOM 侧已 aria-hidden）。 */
+.shader-bg {
+  position: fixed; inset: 0; z-index: -2;
+  width: 100vw; height: 100vh;
+  display: block;
+  pointer-events: none;
+}
+
+/* ── 顶栏「背景」选择器（仿 beui ColorSelector：swatch + 弹簧选中环）────────
+   swatch 的颜色由 JS 按 VARIANTS 写（数据驱动），这里只管形状与动效：
+   · 选中环 .bg-ring 绝对定位、靠 transform 滑到选中项上；
+     cubic-bezier 过冲 1.56 —— "弹簧"的来处，不引 motion 库。
+   · 环是 box-shadow 描边不是 border：不加宽、不参与布局，正好套住 18px 的 swatch。 */
+.bgpick { display: flex; align-items: center; gap: 6px; flex: none; }
+.bgpick-cap { font-size: var(--t-sm); color: var(--c-text-2); white-space: nowrap; }
+.bgpick-list {
+  position: relative;
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-pill);
+}
+.bg-sw {
+  flex: none; width: 18px; height: 18px; padding: 0;
+  border: none; border-radius: 50%;
+  cursor: pointer;
+}
+.bg-sw:focus-visible { outline: 2px solid var(--c-line-strong); outline-offset: 2px; }
+
+/* ── 动画速度（B33→B36）：顶栏下挂小三角 + 展开式**步进器** ─────────────────
+   B36 用户拍板"算了，用这种按钮效果就可以了"（beui Adaptive Stepper 的形：
+   圆形 − / 椭圆档名 / 圆形 +），滑条那套整体退役。
+   ⚠️ 锚点 left 由 JS 按 bgPick 实测位置写（顶栏右侧内容宽度会漂，写死必错位）；
+      CSS 的 left:50% 只是 JS 没跑时的兜底。
+   ⚠️ 展开动画用独立时长与**过冲**缓动 —— B33 沿用全局 --dur(.16s)
+      被用户判"没有动画"：0.16s + 6px 位移确实看不出来。
+   ⚠️ 零就地色值：全部走令牌（G5 契约）。 */
+.spd {
+  position: fixed; top: var(--h-topbar); left: 50%; transform: translateX(-50%);
+  z-index: 43;
+}
+.spd-tab {
+  display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 16px; padding: 0;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-line); border-top: none;
+  border-radius: 0 0 10px 10px;
+  cursor: pointer;
+}
+.spd-tab:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.spd-tri {
+  width: 0; height: 0;
+  border-left: 5px solid transparent; border-right: 5px solid transparent;
+  border-top: 6px solid var(--c-text-2);
+  transition: transform .22s cubic-bezier(.34, 1.56, .64, 1);
+}
+.spd.open .spd-tri { transform: rotate(180deg); }        /* 开 = 指向上（收回方向） */
+/* B35：外框面板整个去掉（用户原话"只需要里面那一层长椭圆…外面那个方框没必要"）
+   —— `.spd-panel` 退化成纯定位/动画包装，**轨道本体就是那枚椭圆**。 */
+.spd-panel {
+  position: absolute; top: 18px; left: 50%;
+  transform: translateX(-50%) translateY(-10px) scale(.94);
+  transform-origin: top center;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .18s ease, transform .22s ease, visibility 0s .22s;
+}
+.spd.open .spd-panel {
+  opacity: 1; visibility: visible; pointer-events: auto;
+  transform: translateX(-50%) translateY(0) scale(1);
+  transition: opacity .18s ease,
+    transform .28s cubic-bezier(.34, 1.56, .64, 1);      /* 过冲 = "弹出来" */
+}
+/* B36：改步进器（用户拍板"用这种按钮效果就可以了"）—— 滑条那一套
+   （轨道/胶囊/刻度/拇指/绕行）整段删除，别留孤儿样式。 */
+.spd-step { display: flex; align-items: center; gap: 10px; }
+.spd-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; padding: 0;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-line);
+  border-radius: 50%;
+  color: var(--c-text-1); font-size: var(--t-xl); line-height: 1;
+  cursor: pointer;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.spd-btn:hover:not(:disabled) { border-color: var(--c-line-strong); color: var(--c-text-1); }
+.spd-btn:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.spd-btn:disabled { opacity: .35; cursor: default; }     /* 到头就灰（Adaptive Stepper 同款） */
+.spd-gear {
+  display: flex; align-items: center; justify-content: center;
+  min-width: 76px; height: 34px; padding: 0 16px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-pill);
+  color: var(--c-text-1); font-size: var(--t-md);
+}
+/* 换档小弹跳：值滚进档位的"落定"感。 */
+.spd-gear.spd-pop { animation: spd-pop .24s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes spd-pop {
+  0%   { transform: scale(.92); }
+  60%  { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+/* 速度面板（顶栏下挂的小三角展开件）。
+   ⚠️⚠️ 2026-10-04 两处调整，都是"它**不是**吸顶导航的一部分"：
+     ① 它原本复用 `--c-eg-surface-bar`（二级栏那档白纱）。通透轮里那跟着变透还能接受，
+        **融合轮把二级栏压到 .18 之后就不可接受了** —— 面板里是 − / 档名 / + 三枚按钮
+        与一枚三角，底太透等于控件浮在页面上，读不出"这是一块可拖动的板"。
+        ⇒ 改接 `--c-eg-surface`（卡片第 2 档，.46）：它是**浮层**，语义上与卡片同族，
+          复用现成令牌而不是新开一个（"新开一个只服务于单个元素的令牌"是本项目在清的那类）。
+     ② 饱和/抬亮随之回到全局 `--c-eg-sat`：bar 那一组是"吸顶导航的补偿档"，
+        面板不在其中。 */
+body.eg-on .spd-tab {
+  background-color: var(--c-eg-surface);
+  -webkit-backdrop-filter: saturate(var(--c-eg-sat)) blur(8px);
+          backdrop-filter: saturate(var(--c-eg-sat)) blur(8px);
+  border-color: var(--c-eg-seam);
+}
+@media (prefers-reduced-motion: reduce) {
+  .spd-tri, .spd-panel { transition: none; }
+  .spd-gear.spd-pop { animation: none; }                 /* 弹跳也是动效：真停 */
+}
+.bg-ring {
+  position: absolute; top: 3px; left: 0;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--c-text-2);
+  pointer-events: none;
+  transition: transform .45s cubic-bezier(.34, 1.56, .64, 1), width .45s cubic-bezier(.34, 1.56, .64, 1);
+}
+
+/* ── 深底档可读性（html.bg-dark 由 shader-bg.js 按 back 亮度挂/摘）──────────
+   canvas 是不透明的、盖住 --c-bg：选中深底档（落日/极光/余烬…）时，
+   卡片**外**的文字（页面标题 / 面包屑 / 页脚）还是深色墨，深字压深底。
+   这里只翻**颜色**（用反色条令牌 --c-bar-fg，两主题下都是浅色），不动布局；
+   浅底档摘掉类后这些规则全部失活，页面回到原样。 */
+html.bg-dark .wrap-head h1,
+html.bg-dark .wrap-head .hint,
+html.bg-dark .foot { color: var(--c-bar-fg); }
+html.bg-dark .foot { opacity: .78; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   液态玻璃（2026-10-03 从旧控制台移植；引擎 = glass.js）
+   ══════════════════════════════════════════════════════════════════════════
+   三档 + 环境层，**全部**挂在 `body.eg-on` 总闸下（glass.js 的 initGlass 加类）：
+     第 1 档 · 真折射  .topbar / .savebar   （悬浮条；候选与上限在 glass.js 里）
+     第 2 档 · 材质    .card / .modal-box / .toast（纯 CSS —— 动态创建的卡片、弹窗、
+                        提示条**自动生效**，不需要任何 JS 标注，所以 3 秒轮询与它无关）
+     第 3 档 · 轻材质  输入类（只换底色，**不加滤镜**：每页几十个控件，逐帧合成不值）
+
+     第 1b 档 · 吸顶玻璃带  .nav2wrap（B29 新增：整条上移，与顶栏融为同一块玻璃）
+     第 1c 档 · 浮岛玻璃   .nav-inner（B29 新增：**跟随主题**的胶囊岛）
+
+   ⚠️ **灵动岛从"不在任何一档内"变成了第 1c 档**（B29 · 2026-10-03）。
+      旧注释说「不在任何一档内：纯黑是它自己的硬要求，且用户原话是"保留英雄栏现有
+      效果不受影响"」——**这条已作废**：用户 B29 明确要求
+      「将黑色主题切换栏改为跟随当前主题配色」。契约 §60⑧N11 反向钉住它不许再是纯黑。
+      ⚠️ 它仍然**不进真折射**（`glass.js` 的 `G_LENS_CANDIDATES` 不含它），
+      但理由已换成"胶囊宽度随内容变、折射贴图要按尺寸重建，收益不抵成本"，
+      不再是"纯黑"这条已作废的理由。
+   ⚠️ `:where()` 包门控是**必要的，不是风格**：`body.eg-on .card`（0,2,0）会盖过
+      `.toast.warn`（0,2,0）这类**语义底色**；`:where()` 把门控那部分特异性归零，
+      于是"显式声明过底色的变体"按原样胜出，玻璃只负责默认态。
+      （旧控制台踩过同一处：裸写门控把主按钮蓝底、危险按钮红边一起打掉。）
+   ⚠️ 这里**只改背景与阴影，不动** border / 尺寸 / 布局 —— 所以桌面端与窄屏
+      （1100 / 900 / 720 三条媒体查询）表现一致，不会错位。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ① 环境层：玻璃要"有东西可模糊、可位移"，平灰底上看不出效果（两轮反馈的共同根因）。
+    纯 CSS、无 rAF、无 canvas；z-index:-1 垫在内容之下，pointer-events:none 不吃点击。
+
+    ⚠️⚠️ **这一层现在是玻璃背后唯一的背板**（B28 · 2026-10-03 六团流体移除后）。
+       为什么需要它：平灰底上，backdrop-filter 采样到的是一块**没有内部差异**的颜色
+       ⇒ 模糊与位移都算不出任何东西，玻璃读成一张半透明纸（本项目已踩过两次）。
+       为什么它比流体层更适合当背板：它是**静态**的（无 animation / transform）——
+       `backdrop-filter` 采样一个**运动**的背景时，玻璃里透出来的内容会跟着一起抖，
+       那正是用户抱怨的「模糊度太高、看不到底下字的模糊轮廓」里的一半成因。
+
+    ⚠️ **层序（用户 2026-10-03 定的「液态玻璃显示在最上方」）**：
+         z-index:-1  本层玻璃环境色团 + 织纹（**背板**，静态）
+         z-index: 0  页面内容（顶栏 40 / 导航 35,34 / 保存条 50 / 弹窗 80 …）
+       玻璃**本体**（第 1 档顶栏/保存条 + 第 2/3 档卡片控件）本来就是内容层，
+       于是"玻璃显示在最上方"成立，而本层在它背后当背景。
+       ⚠️ 这个 -1 不能改成 0：会盖住卡片文字。
+       ⚠️ 也不许把本层删掉换纯平灰 —— 那就回到"玻璃读成半透明纸"的状态。
+         契约 §60 的 **N2** 钉着它还在。 */
+body.eg-on::before {
+  content: "";
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  /* ⚠️ 这一层**依赖一条冷门规则**才看得见：`html` 没有背景时，`body` 的背景会
+     **传播到画布**、而 body 自身不再绘制 —— 于是负 z-index 的这一层才落在
+     "画布之上、内容之下"。**谁给 `html` 加了 background，色团就会静默消失**
+     （页面照常工作、玻璃还在，只是背后又变成一块平灰 —— 而那条反馈我们听过两次）。 */
+  background-image:
+    /* ⚠️⚠️ **织纹层与两层网格已于 B28 批次4 整组删除**（用户："斜杠杠什么的都不要",
+       "背景有一个小方块网格的，那个我也不要"）。删的是三样：
+         · 两层 72°/162° 的 `repeating-linear-gradient` 织纹（上一轮为"给折射一个
+           可位移的形状"加的）—— 用户明确说"原来是没有这个的"；
+         · `--c-eg-grid` 44px 正交网（玻璃背板上，更密）；
+         · `.aurora-grid` 64px 正交网（流体层，B26 那版就有）。
+       ⚠️ **代价（如实记录）**：删掉网格后，玻璃背后可位移的形状**只剩色团**
+          （软边光斑，没有直边）。折射在边缘仍会弯，但"把直线拉弯"那种可见的
+          效果会弱一些。用户优先要"干净不要网格"，这是明确的取舍。 */
+    /* 四个**近景**色团（有位置、有大小差异 → 模糊后能看出"形"） */
+    radial-gradient(ellipse 58% 46% at 12% 6%,  var(--c-eg-bg-a), transparent 62%),
+    radial-gradient(ellipse 52% 44% at 92% 12%, var(--c-eg-bg-c), transparent 60%),
+    radial-gradient(ellipse 64% 50% at 76% 88%, var(--c-eg-bg-d), transparent 60%),
+    radial-gradient(ellipse 46% 40% at 26% 78%, var(--c-eg-bg-b), transparent 60%),
+    /* 终轮新增：**远景**一层（铺满、更淡）。纵深不是"更糊"，是"有近有远" ——
+       只有四个近景团时，玻璃后面像贴了一层纸；垫上一层远的才有空间。 */
+    radial-gradient(ellipse 120% 90% at 50% 50%, var(--c-eg-bg-e), transparent 70%);
+  /* ⚠️ `background-size` 必须与上面 5 层逐项对应**（改一层就必须加一个尺寸）。
+     多出的层会**静默退回 `auto`** —— 渐变变成"铺满元素"而不是"按周期重复"，
+     **整条声明不报错、契约全绿、页面照常工作**。契约 §60 G8 判的就是"层数 == 尺寸数"
+     （按括号深度切层，不按逗号盲切）。
+     ⚠️ 原来是 **9 层**（织纹 2 + 色团 5 + 网格 2）；B28 批次4 按用户要求
+        「斜杠杠和方格网格都不要」删掉了织纹与网格 ⇒ **5 层**。
+        ⚠️ 删掉网格后**玻璃背后的"可位移形状"只剩色团**（软边光斑，没有直边）——
+        折射的"弯"会变弱。这是用户明确要的取舍，不是疏漏。 */
+  background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+}
+
+/* ② 第 1 档 · 真折射（悬浮条）
+    这里给的是**磨砂兜底**；支持真折射的环境里，glass.js 会把 backdrop-filter 升级成
+    `blur() saturate() brightness() url(#g-lg-N)` 写进行内样式（优先级最高）。
+    ⚠️ 兜底与折射的模糊**必须同量级**（都是 --c-eg-blur-1，当前 16px）：兜底若只有一半，
+       "这台机器走没走真折射"就表现成"糊得不一样"，而不是"有没有弯折" —— 没法归因。 */
+body.eg-on .topbar {
+  background-color: var(--c-eg-surface-hero);
+  background-image: var(--c-eg-noise);
+  -webkit-backdrop-filter: saturate(var(--c-eg-sat)) blur(8px);
+          backdrop-filter: saturate(var(--c-eg-sat)) blur(8px);
+  /* 顶栏与保存条是"离背景最远"的一层 → 就该更糊。与第 2 档（6px）拉开到近 3 倍，
+     纵深感来自这个**层次差**，不是把两个数一起调大。
+     ⚠️ B29: 16px → **8px**（与二级栏同档）。用户要"两层融为一体化"，
+     而**相同的模糊半径是"融合"最强的知觉信号**（顶栏 16 / 二级 8 会被读成两种材质）。
+     ⚠️ 降模糊**不影响顶栏文字对比度** —— 底色由白纱决定，不由模糊决定
+     （实测 tb-titles 8.86:1 / pill 8.67:1），只影响"顶栏背后内容的可辨度"，
+     内容会略清楚一点，那是观感偏好。
+     ⚠️ `--c-eg-blur-1` 令牌**故意不跟着改** —— 它被玻璃背板与织纹推导引用
+     （`--c-eg-blur-1` 现为 16px），改它会牵动那些已验证的推导。 */
+  /* ⚠️⚠️ 2026-10-04 融合轮：下边框**去掉**（`--c-eg-edge` → transparent）。
+     它原来是"顶栏 ↔ 二级栏之间那道分界"，而用户要的正是把两层读成**一片**：
+     白纱同档（.16/.18）只解决"透出同一片背景"，这条线还在的话两块仍然分家。
+     ⚠️ 兜底（非玻璃态）那条 `border-bottom: 1px solid var(--c-line)` **不动** ——
+        JS 没跑 / 玻璃被 `G_ENABLED` 关掉时，那条线是层级信息，不是装饰。 */
+  border-bottom-color: transparent;
+  box-shadow: 0 1px 2px var(--c-shadow-1), var(--c-eg-inset);
+}
+
+/* ── ② 第 1b 档 · 二级tab 栏（B29 新增：整条上移，与顶栏融为同一块玻璃）──────────
+   ⚠️ 白纱 **.66** 而不是顶栏的 .16 —— 这不是"不统一"，是**背板不同**：
+      顶栏背后滚过去的是浅色页面底，`.16` 就够；
+      而二级栏背后是**卡片网格**，含 `--c-accent` 深色按钮（L=0.087）——
+      实测 `.16` 时 tab 默认字压那个按钮只剩 **1.88:1**（按钮滚过时 tab 字消失），
+      `.58` 也只有 3.99 ✗，`.66` 才回到 4.84 ✓（契约 N5钉住 alpha ≥.62）。
+   ⚠️ `border-bottom` 用 `--c-eg-seam`（极淡，1.256:1）—— 用户要"一体化但保留
+      一条极淡分界"，这就是那道分界。上面那条边由顶栏自己的 border-bottom 提供。
+   ⚠️ 末层内缘光用 `--c-eg-inset-bar`（厚度层只压**下**沿）：若沿用 `--c-eg-inset`
+      的 `inset 0 0 2px`（四边暗角），两条相邻玻璃各留一道下沿暗角 = 两道脏缝。 */
+body.eg-on .nav2wrap {
+  background-color: var(--c-eg-surface-bar);
+  background-image: var(--c-eg-noise);
+  /* ⚠️ 通透轮：同岛那条，换用二级栏自己的饱和/抬亮档。
+     ⚠️ 模糊 **仍然是 8px** —— 与顶栏同档是 B29「两层融为一体」的知觉前提
+     （相同的模糊半径是"融合"最强的信号），本轮不该动它：要更透就薄白纱，
+     要区分就用白纱与饱和度的**层次差**，不是把模糊拆开。 */
+  -webkit-backdrop-filter: saturate(var(--c-eg-sat-bar)) blur(8px) brightness(var(--c-eg-bright-bar));
+          backdrop-filter: saturate(var(--c-eg-sat-bar)) blur(8px) brightness(var(--c-eg-bright-bar));
+  /* ⚠️ 融合轮：下边框同样去掉（同顶栏那条，理由见上）。原来是 `--c-eg-seam`
+     —— B29 当初**故意**留的"极淡分界"，现在被用户的新要求覆盖：三层要读成一片。
+     ⚠️ `--c-eg-seam` 令牌**保留**（`.spd-tab` 还在用它），别连带删。 */
+  border-bottom-color: transparent;
+  box-shadow: 0 1px 2px var(--c-shadow-1), var(--c-eg-inset-bar);
+}
+/* 保存条是**反相器件**（浅色主题下深条白字、深色主题下浅条深字），
+   玻璃底跟着走反相那一档；它固定在底部、背后有滚动内容穿过 —— 是折射的好对象。 */
+body.eg-on .savebar {
+  background-color: var(--c-eg-surface-inv);
+  background-image: var(--c-eg-noise);
+  -webkit-backdrop-filter: saturate(var(--c-eg-sat)) blur(var(--c-eg-blur-1));
+          backdrop-filter: saturate(var(--c-eg-sat)) blur(var(--c-eg-blur-1));
+  border: 1px solid var(--c-eg-edge);   /* 胶囊原本没有边框：这条只压圆角毛刺，1px 不改尺寸 */
+  box-shadow: 0 8px 28px -10px var(--c-shadow-4), 0 2px 6px var(--c-shadow-2), var(--c-eg-inset);
+}
+
+/* ③ 第 2 档 · 材质层
+    ⚠️ 阴影里**先抄一遍元素原本的投影**，再追加玻璃层：box-shadow 是整条替换的，
+       只写玻璃那几层会把原有投影静默丢掉（表现是"卡片贴在了页面上"）。
+    ⚠️ 同形但更轻的对角高光（卡片面积大、不该有那么强的边）。 */
+:where(body.eg-on) .card {
+  background-color: var(--c-eg-surface);
+  background-image: var(--c-eg-noise);
+  -webkit-backdrop-filter: saturate(var(--c-eg-sat)) blur(var(--c-eg-blur-2));
+          backdrop-filter: saturate(var(--c-eg-sat)) blur(var(--c-eg-blur-2));
+  /* 卡片是"贴着背景"的一层 → 模糊反而要小（6px）。它离背景近，糊多了就假。
+     ⚠️ **不许往上调到 8px**：模糊越大 → 透出来的背板细节越少 → 越"糊"。
+        高斯残余 = exp(−2π²σ²/p²)，64px 周期在 blur(6) 下残余 0.958，
+        在 blur(16) 下只剩 0.735。"透亮"该加边缘层，不是加模糊。 */
+  border-color: var(--c-eg-edge);
+  box-shadow: 0 1px 2px var(--c-shadow-1), 0 1px 3px -1px var(--c-shadow-2), var(--c-eg-shade);
+}
+/* 弹窗（二维码 / 详情都从这里出）：它是浮在页面上的一层，背后有内容 → 玻璃成立。
+   二维码展示区（用户点名的"图片类区块"本体）就靠这一条拿到玻璃底。 */
+:where(body.eg-on) .modal-box {
+  /* 用 surface-modal 而不是 surface：它背后多压一层 --c-scrim（见该令牌注释） */
+  background-color: var(--c-eg-surface-modal);
+  background-image: var(--c-eg-noise);
+  -webkit-backdrop-filter: saturate(var(--c-eg-sat)) blur(var(--c-eg-blur-2));
+          backdrop-filter: saturate(var(--c-eg-sat)) blur(var(--c-eg-blur-2));
+  border-color: var(--c-eg-edge);
+  box-shadow: 0 24px 60px -20px var(--c-shadow-4), var(--c-eg-shade);
+}
+/* ── 可读性守门：卡片里的密集表格**给不透明底**，白纱与织纹都不参与 ───────────
+   ⚠️ 理由与参考实现同款（那里是「花费明细 7 列密集数字 + 表头吸顶」）：
+      「看错一个数」在这张卡上的代价远高于「少一处质感」。
+   ⚠️ 现状是**只有 th 自带底色、td 是透明的** —— 白纱与织纹都会从下面透上来，
+      数字就压在纹路上。这是本轮之前就存在的口子（白纱已在），不是织纹引入的，
+      但织纹让它更容易被看见，所以在这里封掉。
+   ⚠️ `:where()` 与玻璃区块同一口径：不与 `:where(body.eg-on) .card` 抢特异性，
+      所以表格底**盖在玻璃之上** —— 本就该如此，表格要的是「确定底色」。
+   ⚠️ 这条**不许改成半透明**（契约 §60 G12 反向钉住）：`table.tbl th` 的吸顶
+      若变透明，滚动时会「透出下滚的行」，那是功能问题不只是可读性问题。 */
+:where(body.eg-on) .card table.tbl {
+  background: var(--c-surface-2);
+  border-radius: var(--r1);
+}
+/* 提示条是瞬时件：给它挂一张逐帧 GPU 滤镜不划算，磨砂材质足够。
+   ⚠️ `.toast.warn` / `.toast.bad` 的**语义底色照旧**（:where 归零后它们胜出），
+      只是多了一层磨砂 —— 色 + 字双通道表意没被破坏。 */
+:where(body.eg-on) .toast {
+  background-color: var(--c-eg-surface);
+  background-image: var(--c-eg-noise);
+  -webkit-backdrop-filter: saturate(var(--c-eg-sat)) blur(var(--c-eg-blur-2));
+          backdrop-filter: saturate(var(--c-eg-sat)) blur(var(--c-eg-blur-2));
+  border-color: var(--c-eg-edge);
+}
+
+/* ④ 第 3 档 · 轻材质（输入类）：只换底色，不加 backdrop-filter。
+    ⚠️ 排除 `:disabled`：disabled 靠 `--c-sunken` 的填色表达"这个不用填"，
+       被抹平之后用户看不出它为什么点不动。
+    ⚠️ `.btn` **故意不在**这一档：主按钮蓝底 / 危险按钮红边是**语义色**，
+       半透明化会让"这是主操作"这件事变弱。 */
+:where(body.eg-on) input[type="text"]:not(:disabled),
+:where(body.eg-on) input[type="number"]:not(:disabled),
+:where(body.eg-on) input[type="password"]:not(:disabled),
+:where(body.eg-on) input[type="date"]:not(:disabled),
+:where(body.eg-on) input[type="time"]:not(:disabled),
+:where(body.eg-on) textarea:not(:disabled),
+:where(body.eg-on) select:not(:disabled),
+:where(body.eg-on) .in:not(:disabled) {
+  background-color: var(--c-eg-surface-2);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   卡片的光标微倾（B31 · 2026-10-04 · 引擎 `panel/next/tilt.js`）
+   ─────────────────────────────────────────────────────────────────────────
+   用户两轮反馈后定下的最终形态：**只剩“光标位置 → 微小倾角”这一条**。
+   删掉的东西（都是明确否过的，加回来前先读 tilt.js 头部）：
+     · 跟随高光层 `::after`（“不喜欢鼠标放上去有灯光”）
+     · 它的宝往 `--c-eg-glare`（深浅各一份）
+   两件事只剩下面这三条规则。
+
+   ① `perspective` 写成 **transform 的函数**（不用祖先的 `perspective` 属性）：
+      祖先 perspective 会给整页建一个 3D 渲染上下文，而 `.savebar` / `.modal` 是
+      `position: fixed` —— 它们在 3D 上下文里的**包含块会从视口变成那个祖先**。
+   ② 位移全部走 **CSS 变量**（`--tilt-rx/ry`，由 tilt.js 用弹簧写），
+      **不给 `transform` 加 CSS transition** —— 那会对弹簧的每一帧再插值一次，
+      等于第二套缓动（§51⑥ 的纪律在这里同样成立）。
+   ③ 只动 `transform`（没有第二个属性，因为高光已经删了）。
+   ══════════════════════════════════════════════════════════════════════════ */
+[data-tilt] {
+  position: relative;
+  overflow: hidden;
+  /* ⚠️⚠️ 这里**不许**出现 `transform-style: preserve-3d`（第一版写过，已删）：
+     它的语义是“让子元素也参与同一个 3D 空间”，而 tilt 只旋转卡片自身 ——
+     加了它，卡内的小块会被一起透视（用户报过“里面的小方块也动”）。
+     ⚠️⚠️ 也**不许**出现 `backface-visibility: hidden`：1° 以内它毫无用处，
+     而它唯一可能的副作用是“整张卡被判为背面而消失”—— 那是另一种“翻转”。 */
+  transform:
+    /* ⚠️⚠️ **透视距离必须远**（2400px ≈ 卡片高度的 4 倍以上，接近正交投影）。
+       这个数连改两次、两次都改错方向，所以把话写死在这里：
+         · 第一版 900px → 第二次为了“小角度也要有立体感”缩到 **700px**，
+           而卡片本身可能高 600px ⇒ **观察距离只比卡片高一点，透视畘变被放到最大**，
+           上下边缘的大小差变得明显，读起来就是“卡片在往前倒”
+           —— 这就是用户两次报的“莫名其妙的翻转”。
+         · 现在 2400px：畘变小到看不见，而“微微歪了一点”这件事仍然成立。
+       ⚠️ 想让倾斜更“有感觉”，**不许缩这个数、也不许加 `MAX_DEG`** ——
+          那是把已经走错两次的路再走一遍。要更强的反馈应该换一种交互，不是加角度。 */
+    perspective(var(--tilt-p, 2400px))
+    rotateX(var(--tilt-rx, 0deg))
+    rotateY(var(--tilt-ry, 0deg));
+}
+/* `will-change` 只在倾斜期间设 —— 常开会让**每一张**卡各占一层合成纹理，
+   而这一页有 50+ 张卡（`will-change` 是“提前告诉合成器这块要动”，代价是常驻显存）。 */
+[data-tilt].tilt-on { will-change: transform; }
+
+/* ⚠️ 减弱动效：**关掉倾斜本身**（不是“把时长缩到 0”）——
+   缩时长仍在动，而这一类眩晕来自“画面在倾斜”这件事本身。 */
+@media (prefers-reduced-motion: reduce) {
+  [data-tilt] { transform: none; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   深浅切换的整页揭开（View Transition API · 2026-10-04）
+   ──────────────────────────────────────────────────────────────────────────
+   beui「Theme Toggle」circle-blur 配方的 CSS 侧。JS 侧（app.js toggleTheme）
+   在点击期间给 html 挂 data-vt="circle-blur" 并写 --vt-origin（按钮圆心）；
+   动画结束 JS 把 data-vt 摘掉 —— 下面两条规则只在那一瞬匹配，平时零开销。
+   旧快照钉住（animation:none）让新快照从圆心盖上来；新快照边缘带
+   8px→0 的模糊，这就是 "circle-blur" 与普通圆形揭开的唯一差别。
+   时机取 Material standard curve（0.4,0,0.2,1）/ 700ms：揭开是**对称扩张**，
+   不是单向减速 —— 与 beui 原件一致。
+   不支持 VT 的浏览器根本不会出现 data-vt（JS 已降级），这两条形同虚设。 */
+html[data-vt="circle-blur"]::view-transition-old(root) { animation: none; mix-blend-mode: normal; }
+html[data-vt="circle-blur"]::view-transition-new(root) {
+  mix-blend-mode: normal;
+  animation: vt-circle-blur 700ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes vt-circle-blur {
+  from { clip-path: circle(0% at var(--vt-origin, 50% 100%)); filter: blur(8px); }
+  to   { clip-path: circle(150% at var(--vt-origin, 50% 100%)); filter: blur(0px); }
+}

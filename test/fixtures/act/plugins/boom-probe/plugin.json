@@ -1,0 +1,15 @@
+{
+  "id": "boom-probe",
+  "name": "setup 会抛错",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "setup 故意抛错 —— 宿主应把它记为 failed，并且**只拒它自己**。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "permissions": [],
+  "requires": [],
+  "entry": "index.js",
+  "settings": {}
+}

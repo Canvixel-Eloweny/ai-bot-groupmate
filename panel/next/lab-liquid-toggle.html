@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>动效实验室 · 液态开关（Liquid Toggle）</title>
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  动效实验室 · 页面自带的说明就是交付物的一半
+  ───────────────────────────────────────────────────────────────────────────
+  这不是"demo 集合"，是**判据的可视化**。每张卡片回答一个问题，
+  并且把"改了哪个数会怎样"做成可以直接拖的旋钮。
+
+  方法论来源：bencho.dev 「Liquid toggle」（React + framer-motion）。
+  本页把它落到零构建环境：framer-motion → `motion.js`（原生替身），
+  React → 原生 DOM。**参数与手感刻意保持一致**，所以从 Bencho 抄的其它
+  配方也能原样搬进本项目。
+
+  打开方式：直接双击本文件（零依赖、零构建、零服务）。
+  ⚠️ 不要用 file:// 之外的 http 打开来判断"为什么不动" —— 见页底的排错。
+  ═══════════════════════════════════════════════════════════════════════════
+-->
+<style>
+  /* ── 令牌：直接复用现役面板的语义色，双主题自动跟随 ──────────────────
+     ⚠️ 这里刻意**不**重新发明一套颜色。控制台已经有 42 个语义令牌且
+        浅/深两个块的名字集合逐个相等（style.css 里的既有纪律），
+        再抄一份色值 = 多一个"深色下不一致"的漏点。
+        页面是 file:// 打开的，所以这里内联一份与style.css 相同的声明；
+        接入真面板时删掉本块即可（那里已经加载了 style.css）。 */
+  :root {
+    color-scheme: light;
+    --c-bg: #f5f6f8;   --c-surface: #ffffff;  --c-sunken: #f1f3f6;
+    --c-hover: #f2f4f7; --c-line: #e7eaef;    --c-line-soft: #eef1f5;
+    --c-line-strong: #d3d8e0;
+    --c-text: rgba(0, 0, 0, .88);
+    --c-text-2: rgba(0, 0, 0, .62);
+    --c-text-3: rgba(0, 0, 0, .40);
+    --c-accent: #2563eb; --c-accent-weak: #eff5ff; --c-accent-line: #c3d7fd;
+    --c-on-accent: #ffffff;
+    --c-ok: #067647;   --c-ok-bg: #ecfdf3;   --c-ok-line: #abefc6;
+    --c-warn: #b54708; --c-warn-bg: #fffaeb; --c-warn-line: #fedf89;
+
+    --r-sm: 6px; --r1: 8px; --r2: 10px; --r3: 14px; --r-pill: 999px;
+    --t-xs: 11px; --t-sm: 12px; --t-md: 13px; --t-lg: 15px; --t-xl: 19px;
+    --t-2xl: 24px;
+    --lh-1: 1.25; --lh-2: 1.55; --lh-3: 1.7;
+    --h-ctl: 32px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --c-bg: #0e1218;   --c-surface: #151b23;  --c-sunken: #10161d;
+    --c-hover: #1e262f; --c-line: #262f3a;   --c-line-soft: #1f2731;
+    --c-line-strong: #39434f;
+    --c-text: rgba(255, 255, 255, .88);
+    --c-text-2: rgba(255, 255, 255, .62);
+    --c-text-3: rgba(255, 255, 255, .40);
+    --c-accent: #7aa2ff; --c-accent-weak: #141d2e; --c-accent-line: #2c3d5c;
+    --c-on-accent: #0e1218;
+    --c-ok: #47cd89;   --c-ok-bg: #0d2b1d;   --c-ok-line: #1c5c3c;
+    --c-warn: #fdb022; --c-warn-bg: #291a05; --c-warn-line: #5c3d09;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--c-bg);
+    color: var(--c-text);
+    font: 400 var(--t-md)/var(--lh-3) var(--font);
+    -webkit-font-smoothing: antialiased;
+    padding: 32px 24px 96px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  /* ── 页头 ─────────────────────────────────────────────────────────── */
+  header.hd { margin-bottom: 28px; }
+  .hd h1 {
+    font-size: var(--t-2xl); line-height: var(--lh-1);
+    font-weight: 620; letter-spacing: -.01em; margin: 0 0 6px;
+  }
+  .hd p { margin: 0; color: var(--c-text-2); max-width: 68ch; }
+  .hd code, code {
+    font: 500 var(--t-sm)/1 var(--mono);
+    background: var(--c-sunken); color: var(--c-text);
+    padding: 2px 5px; border-radius: 4px;
+  }
+
+  /* ── 工具条 ───────────────────────────────────────────────────────── */
+  .bar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 0; margin-bottom: 20px;
+    background: var(--c-bg);
+    border-bottom: 1px solid var(--c-line);
+  }
+  .bar .sp { flex: 1; }
+  .btn {
+    height: var(--h-ctl); padding: 0 14px;
+    font: 500 var(--t-md)/1 var(--font); color: var(--c-text);
+    background: var(--c-surface); border: 1px solid var(--c-line);
+    border-radius: var(--r1); cursor: pointer;
+    transition: background var(--dur) var(--ease);
+  }
+  .btn:hover { background: var(--c-hover); }
+  .btn[aria-pressed="true"] {
+    background: var(--c-accent); color: var(--c-on-accent); border-color: var(--c-accent);
+  }
+
+  /* ── 卡片 ─────────────────────────────────────────────────────────── */
+  .card {
+    background: var(--c-surface);
+    border: 1px solid var(--c-line);
+    border-radius: var(--r3);
+    margin-bottom: 20px; overflow: hidden;
+  }
+  .card > header {
+    padding: 16px 20px 0;
+  }
+  .card h2 {
+    font-size: var(--t-lg); font-weight: 600; line-height: var(--lh-1);
+    margin: 0 0 4px; display: flex; align-items: center; gap: 8px;
+  }
+  .card h2 .num {
+    font: 600 var(--t-xs)/1 var(--mono); color: var(--c-on-accent);
+    background: var(--c-accent); border-radius: 4px; padding: 4px 6px;
+  }
+  .card .why { margin: 0; color: var(--c-text-2); }
+  .stage {
+    min-height: 168px; display: grid; place-items: center;
+    background: var(--c-sunken); margin: 16px 0 0;
+    border-block: 1px solid var(--c-line-soft);
+    position: relative; overflow: hidden;
+  }
+  .stage .hint {
+    position: absolute; left: 12px; bottom: 10px;
+    font: 400 var(--t-xs)/1 var(--font); color: var(--c-text-3);
+  }
+
+  /* ── 旋钮 ─────────────────────────────────────────────────────────── */
+  .knobs {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+    gap: 14px 20px; padding: 16px 20px 20px;
+  }
+  .knob { display: grid; gap: 6px; }
+  .knob .lb {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font: 500 var(--t-sm)/1 var(--font);
+  }
+  .knob .lb b { font: 600 var(--t-md)/1 var(--mono); color: var(--c-text); }
+  .knob .hint { font: 400 var(--t-xs)/var(--lh-2) var(--font); color: var(--c-text-3); }
+  .knob input[type=range] {
+    width: 100%; height: 20px; accent-color: var(--c-accent); cursor: pointer;
+  }
+  .knob.stack2 {
+    grid-template-columns: 1fr 1fr; align-items: center; gap: 4px 12px;
+  }
+  .knob.stack2 .hint { grid-column: 1 / -1; }
+  /* 关键：range 的 track 做成"填充一半"的样子，模拟 Bencho 那种标签+数值的行 */
+  .knob.stack2 input[type=range] { grid-column: 1 / -1; }
+
+  /* ── 判据说明块 ───────────────────────────────────────────────────── */
+  .notes { padding: 0 20px 20px; display: grid; gap: 10px; }
+  .note {
+    border-left: 2px solid var(--c-line-strong);
+    padding: 2px 0 2px 12px;
+    font: 400 var(--t-sm)/var(--lh-2) var(--font); color: var(--c-text-2);
+  }
+  .note.key { border-left-color: var(--c-accent); }
+  .note.warn { border-left-color: var(--c-warn); }
+  .note b { color: var(--c-text); font-weight: 600; }
+  .note .tag {
+    display: inline-block; font: 600 var(--t-xs)/1 var(--mono);
+    padding: 3px 5px; border-radius: 4px; margin-right: 6px;
+    background: var(--c-accent-weak); color: var(--c-accent);
+  }
+  .note.warn .tag { background: var(--c-warn-bg); color: var(--c-warn); }
+
+  /* ── 对比网格 ─────────────────────────────────────────────────────── */
+  .cmp { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .cmp > div { padding: 16px 20px; border-right: 1px solid var(--c-line-soft); }
+  .cmp > div:last-child { border-right: 0; }
+  .cmp .t { font: 600 var(--t-sm)/1.3 var(--font); margin-bottom: 2px; }
+  .cmp .d { font: 400 var(--t-xs)/var(--lh-2) var(--font); color: var(--c-text-3); margin-bottom: 12px; }
+  .cmp .box {
+    height: 92px; background: var(--c-sunken); border-radius: var(--r1);
+    display: grid; place-items: center; position: relative; overflow: hidden;
+  }
+
+  /* ── 说明用的小控件（对照组用，静态样式）─────────────────────────── */
+  .mini-sw {
+    position: relative; width: 92px; height: 46px; padding: 0; border: 0;
+    border-radius: var(--r-pill); background: var(--c-sunken);
+  }
+  .mini-sw[data-on="true"] { background: var(--c-text); }
+  .mini-sw i {
+    position: absolute; left: 5px; top: 50%;
+    width: 36px; height: 36px; margin-top: -18px; border-radius: var(--r-pill);
+    background: color-mix(in srgb, var(--c-text) 19%, var(--c-sunken));
+    transition: transform 220ms var(--ease);
+  }
+  .mini-sw[data-on="true"] i { transform: translateX(46px); background: var(--c-surface); }
+  /* 反例：给 transform 加了 CSS 过渡 —— 你看到的会是缓动曲线而不是弹簧 */
+  .mini-sw.bad i { transition: transform 600ms cubic-bezier(.2, 1.6, .4, 1); }
+  /* 反例：半透明填充经过 goo滤镜 = 直接消失 */
+  .mini-goo { filter: url(#lab-goo); }
+  .mini-goo i { background: color-mix(in srgb, var(--c-text) 19%, var(--c-sunken)); }
+  .mini-goo.bad i { opacity: .55; }
+  .mini-goo .d2 {
+    position: absolute; left: 34px; top: 50%;
+    width: 26px; height: 26px; margin-top: -13px; border-radius: var(--r-pill);
+    background: var(--c-text);
+  }
+
+  /* ── 诊断表 ───────────────────────────────────────────────────────── */
+  table.dg { width: 100%; border-collapse: collapse; }
+  table.dg th, table.dg td {
+    text-align: left; padding: 10px 12px; font-size: var(--t-sm);
+    border-bottom: 1px solid var(--c-line-soft); vertical-align: top;
+  }
+  table.dg th { font-weight: 600; color: var(--c-text-2); font-size: var(--t-xs); }
+  table.dg td:first-child { font-family: var(--mono); white-space: nowrap; color: var(--c-text-2); }
+  table.dg tr:last-child td { border-bottom: 0; }
+  .dgwrap { padding: 4px 8px 8px; }
+
+  footer {
+    margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--c-line);
+    color: var(--c-text-3); font-size: var(--t-sm);
+  }
+  footer a { color: var(--c-accent); }
+</style>
+<link rel="stylesheet" href="liquid-toggle.css" />
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hd">
+    <h1>动效实验室 · 液态开关</h1>
+    <p>
+      组件本体是 <code>liquid-toggle.js</code>，动效引擎是 <code>motion.js</code>（零依赖的
+      <code>framer-motion</code> 替身）。每一张卡片回答一个具体问题，并把能调的参数做成旋钮 ——
+      <b>这不是效果图，是判据的可视化</b>。
+    </p>
+    <p style="margin-top:12px;padding:12px 14px;background:var(--c-accent-weak);
+              border:1px solid var(--c-accent-line);border-radius:var(--r2);color:var(--c-text)">
+      <b>想复刻别的动效？</b>在 Bencho 上点右上角 <b>Copy prompt</b>，整段粘给我，
+      再补一句<b>用在哪个控件</b>就能开工。完整委托单见
+      <code>docs/MOTION-BRIEF.md</code>。
+      <br>
+      <span style="color:var(--c-text-2)">
+        <b>最容易漏的是旋钮值</b>（Speed 50 / Stretch 36 这类）—— 只给代码不给旋钮，
+        出来的是「能跑但参数全死」的东西。
+      </span>
+    </p>
+  </header>
+
+  <div class="bar">
+    <button class="btn" id="theme">切换深色</button>
+    <button class="btn" id="auto">自动演示</button>
+    <button class="btn" id="reset">复位</button>
+    <span class="sp"></span>
+    <span style="font:400 var(--t-xs)/1 var(--font);color:var(--c-text-3)"
+          id="rmnote"></span>
+  </div>
+
+  <!-- ═══ 1 · 组件本体 ═══════════════════════════════════════════════════ -->
+  <section class="card">
+    <header>
+      <h2><span class="num">01</span>组件本体：拖它、点它、用键盘操作它</h2>
+      <p class="why">
+        一个位置，两种写法。拖拽时手指直接写，松手时弹簧接管 —— 两者写同一个格子。
+      </p>
+    </header>
+    <div class="stage" id="stage1">
+      <span class="hint">点一下 · 拖过去 · Tab 聚焦后按空格</span>
+    </div>
+    <div class="knobs" id="knobs1"></div>
+    <div class="notes">
+      <div class="note key">
+        <span class="tag">判据 ①</span>
+        <b>拖尾是弹簧跟随，不是延迟。</b>
+        后面那颗小液滴是「弹簧追着主液滴<b>此刻</b>的值跑」，
+        不是「和主液滴同一个目标 + 延迟」。这个区别是整个组件的灵魂：
+        延迟描述的是<em>点击</em> —— 液滴迟一步出发，落到主液滴早已离开的地方；
+        弹簧永远在追当前位置，所以<b>拖得慢两团始终是一个形状，甩得快才在后面拉出细颈</b>。
+      </div>
+      <div class="note key">
+        <span class="tag">判据 ②</span>
+        <b>拉伸要面积守恒。</b>
+        液滴沿运动方向拉长（<code>scaleX</code>）、垂直方向压扁（<code>scaleY</code>），
+        且 <code>scaleY = 1 / scaleX</code>。不守恒就是「鼓起来了 / 变胖了」，一眼假。
+        动一动 <b>Stretch</b> 旋钮就能看见截面变化。
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 2 · 拖尾的两种实现 ═══════════════════════════════════════════ -->
+  <section class="card">
+    <header>
+      <h2><span class="num">02</span>同一个视觉，两种底层机制</h2>
+      <p class="why">
+        两边看起来都是「后面拖一个」。左边是延迟，右边是弹簧跟随。
+        <b>慢拖看两者一样，快甩就分家了</b> —— 这就是为什么这条判据值得单独占一张卡。
+        点顶部<b>「自动演示」</b>对比：偶数次是慢拖，奇数次是快甩。
+      </p>
+    </header>
+    <div class="cmp">
+      <div>
+        <div class="t">✗ 延迟（跟同一个目标 + transition-delay）</div>
+        <div class="d">液滴迟一步出发 → 落点是一个主液滴早已离开的位置。快甩时两者脱开。</div>
+        <div class="box" id="box-delay"></div>
+      </div>
+      <div>
+        <div class="t">✓ 弹簧跟随（追主液滴当前值）</div>
+        <div class="d">永远在追「它此刻在哪」→ 拉伸量恰好等于你的移动速度。</div>
+        <div class="box" id="box-chase"></div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note key">
+        <span class="tag">实测</span>
+        <b>同一次甩动，两组的最大间距（Chromium 逐帧采样）：</b>
+        <table class="dg" style="margin:8px 0 4px">
+          <thead><tr><th>实现</th><th>峰值间距</th><th>形态</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>延迟</td>
+              <td><b style="color:var(--c-warn)">24.3px</b></td>
+              <td>超过液滴直径 36px 的一半 → 两团<b>完全脱开</b>，变成两个孤立的球 + 一段距离</td>
+            </tr>
+            <tr>
+              <td>弹簧跟随</td>
+              <td><b style="color:var(--c-ok)">12.7px</b></td>
+              <td>始终保持重叠 → goo 能拉出细颈，读作<b>一个</b>被抻长的液滴</td>
+            </tr>
+          </tbody>
+        </table>
+        这组数字不是示意：<code>24.3 &gt; 36/2</code> 意味着中间那段"桥"细到撑不住，
+        goo 滤镜会断成两团。<b>液态感的前提是两团始终重叠</b>，这是硬约束，不是审美偏好。
+      </div>
+      <div class="note">
+        <b>怎么自己验：</b>点<b>自动演示</b>两次（偶数次= 慢拖，奇数次 = 快甩）。
+        慢拖时两个实现看起来一样；快甩时左边直接掉队。
+        <b>这一条不实测很难相信，而实测一次就再也忘不掉。</b>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 3 · 三个真实 bug ══════════════════════════════════════════════ -->
+  <section class="card">
+    <header>
+      <h2><span class="num">03</span>三个「看起来能动但其实不对」的反例</h2>
+      <p class="why">
+        这三个都是 Bencho 原作者踩过并修掉的。它们的共同点：
+        <b>代码能跑、回归全绿、肉眼在快速动作下才暴露问题</b>。
+      </p>
+    </header>
+    <div class="cmp">
+      <div>
+        <div class="t">✗ transform 上加 CSS 过渡</div>
+        <div class="d">
+          每帧写 transform + CSS 过渡 = <b>对每一帧重新插值</b>。
+          最后看到的是那条缓动曲线，弹簧被彻底旁路。
+        </div>
+        <div class="box"><span class="mini-sw bad" id="sw-bad"><i></i></span></div>
+      </div>
+      <div>
+        <div class="t">✓ 只让颜色过渡</div>
+        <div class="d">
+          transform 一律不加 transition；只有 <code>background</code> 这类
+          「没有弹簧在管」的属性才过渡。
+        </div>
+        <div class="box"><span class="mini-sw" id="sw-good"><i></i></span></div>
+      </div>
+      <div>
+        <div class="t">✗ 滤镜层上用半透明</div>
+        <div class="d">
+          <code>feColorMatrix</code> 对 alpha 做阈值 → 半透明填充<b>整个消失</b>。
+          要调色就 <code>color-mix</code>，不要 opacity。
+        </div>
+        <div class="box mini-goo bad"><span class="mini-sw"><i></i><span class="d2"></span></span></div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note warn">
+        <span class="tag">排错</span>
+        <b>goo 效果突然不工作</b>，九成是给色块加了 <code>opacity</code> 或换成了
+        <code>rgba()</code>。滤镜要的是<b>不透明</b>，不是"看起来是那个颜色"。
+      </div>
+      <div class="note warn">
+        <span class="tag">排错</span>
+        <b>液滴跑到轨道外面 / 居中跳到中间</b>：忘了写 <code>left: 0</code>。
+        这些是 inline 元素，<code>left:auto</code> 时静态位置由行盒决定，
+        而按钮会把文本居中 → 两个 blob 都被推到轨道正中。
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 4 · 拨盘即物理量 ═════════════════════════════════════════════ -->
+  <section class="card">
+    <header>
+      <h2><span class="num">04</span>两个拨盘 = 一个弹簧的两个属性</h2>
+      <p class="why">
+        <b>Bounce 是阻尼、Speed 是刚度</b>，两个旋钮都是<b>同一个弹簧的属性</b>，
+        而不是两条不同的缓动曲线。所以 UI 上不该给用户"曲线"选项。
+      </p>
+    </header>
+    <div class="cmp">
+      <div>
+        <div class="t">阻尼比 ζ &lt; 1（欠阻尼）</div>
+        <div class="d">有过冲、有回弹。控制台里这是<b>错误</b>的位置 —— 开关不该"啪"一下到位。</div>
+        <div class="box"><canvas id="cv-a" width="440" height="92"></canvas></div>
+      </div>
+      <div>
+        <div class="t">ζ ≈ 0.87（本项目采用）</div>
+        <div class="d">仍带一点弹性暗示，<b>而那点暗示就是全部</b>。到 95% 约 16 帧。</div>
+        <div class="box"><canvas id="cv-b" width="440" height="92"></canvas></div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note key">
+        <span class="tag">判据 ③</span>
+        <b>阻尼写死，不给用户"回弹"旋钮。</b>
+        从死板到活泼的整个范围，区别只在「一个能用的控件」和「一个在表演的控件」之间。
+        <b>Speed 仍然可调</b>，因为"多快"是个真问题；Bounce 不是。
+      </div>
+      <div class="note">
+        <b>临界阻尼 c = 2√(km)</b> 是"最快抵达且完全不过冲"的那一档。
+        本项目 k=170 m=0.9 → 临界 c = 24.7；取 21.5 即 ζ=0.87（欠阻尼一侧一点点）。
+      </div>
+    </div>
+    <div class="dgwrap">
+      <table class="dg">
+        <thead>
+          <tr><th>参数</th><th>值</th><th>决定什么</th><th>可调吗</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>stiffness</td><td>170 − (50−speed)×1.1</td><td>多快抵达（Speed 拨盘）</td><td>✅ 用户可调</td></tr>
+          <tr><td>damping</td><td>21.5（ζ≈0.87）</td><td>有没有回弹、手感软硬</td><td>❌ 写死</td></tr>
+          <tr><td>mass</td><td>0.9</td><td>惯性重量感</td><td>❌ 写死</td></tr>
+          <tr><td>除数（速度→拉伸）</td><td>600</td><td>拉伸的可见程度</td><td>❌ 标定值</td></tr>
+          <tr><td>拉伸上限</td><td>0.4</td><td>留给 Stretch 旋钮的余量</td><td>❌ 标定值</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═══ 5 · 接入 ═════════════════════════════════════════════════════ -->
+  <section class="card">
+    <header>
+      <h2><span class="num">05</span>怎么接进真面板</h2>
+      <p class="why">三行。零构建、零依赖、零服务。</p>
+    </header>
+    <div class="dgwrap">
+      <table class="dg">
+        <thead><tr><th>位置</th><th>加什么</th><th>注意</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>index.html 的 &lt;head&gt;</td>
+            <td><code>&lt;link rel="stylesheet" href="liquid-toggle.css"&gt;</code></td>
+            <td>放在 style.css <b>之后</b>，让组件样式能覆盖令牌默认值</td>
+          </tr>
+          <tr>
+            <td>&lt;body&gt; 末尾</td>
+            <td><code>&lt;script src="motion.js"&gt;</code> 然后
+                <code>&lt;script src="liquid-toggle.js"&gt;</code></td>
+            <td><b>顺序不能反</b>：liquid-toggle 启动时要读 <code>window.Motion</code></td>
+          </tr>
+          <tr>
+            <td>app.js 的渲染处</td>
+            <td><code>LiquidToggle.create({ speed, stretch, on, onChange })</code></td>
+            <td>把返回句柄存起来；<b>元素移除时必须调 destroy()</b>，否则 rAF 泄漏</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="notes">
+      <div class="note key">
+        <span class="tag">纪律</span>
+        <b>一份语义，一份实现。</b>
+        弹簧公式只在 <code>motion.js</code> 里存在一次（<code>springStep</code>）。
+        需要自己控制时钟的组件调它，<b>不要在组件里再抄一份</b> ——
+        抄一份就多一个能悄悄对不上的机会，而且两个副本会各自漂移。
+      </div>
+      <div class="note">
+        <b>关于形态：</b>液态 goo 适合"少量、关键、状态明确"的控件（总开关、模式切换）。
+        面板里<b>不要整页都液體</b> —— 密集中文界面靠层级和留白分区，
+        满屏液态会削弱可读性。<code>style.css</code> 开头那条"安静的仪表盘"主线仍然成立。
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    方法论来源 <a href="https://bencho.dev" target="_blank" rel="noreferrer">bencho.dev</a>「Liquid toggle」，
+    原配方基于 React + framer-motion。本页为零依赖重实现，参数与手感保持一致。
+    <div id="diag" style="margin-top:8px;font-family:var(--mono);font-size:var(--t-xs)"></div>
+  </footer>
+</div>
+
+<!-- 本页专用的对照用滤镜（组件自己有ensureGooFilter，不共用） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <filter id="lab-goo" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="smear" />
+    <feColorMatrix in="smear" type="matrix"
+      values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -10" />
+  </filter>
+</defs></svg>
+
+<script src="motion.js"></script>
+<script src="liquid-toggle.js"></script>
+<script>
+(function () {
+  'use strict';
+  var M = window.Motion;
+
+  /* ── 旋钮工厂：标签 + 数值 + 滑杆 + 一句"改了会怎样" ──────────────
+     Bencho右侧那种面板的核心是「每个旋钮都必须能回答：
+     我拧它，手感会变成什么」。没有这句提示的旋钮等于没有。
+
+     ⚠️ 走oninput 而不是 onchange：onchange 只在**松手**时触发，
+        拖动过程中数字不动 —— 旋钮面板必须是实时反馈的。 */
+  function knob(host, cfg) {
+    var box = document.createElement('div');
+    box.className = 'knob' + (cfg.stack ? ' stack2' : '');
+    var lb = document.createElement('div');
+    lb.className = 'lb';
+    var nm = document.createElement('span');
+    nm.textContent = cfg.label;
+    var val = document.createElement('b');
+    val.textContent = cfg.value;
+    lb.appendChild(nm); lb.appendChild(val);
+    var input = document.createElement('input');
+    input.type = 'range'; input.min = cfg.min; input.max = cfg.max; input.step = cfg.step || 1;
+    input.value = cfg.value;
+    input.setAttribute('aria-label', cfg.label);
+    var hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.textContent = cfg.hint;
+    box.appendChild(lb);
+    if (!cfg.stack) box.appendChild(input);
+    box.appendChild(hint);
+    host.appendChild(box);
+
+    function report() {
+      var v = Number(input.value);
+      val.textContent = v;
+      if (cfg.on) cfg.on(v);
+    }
+    input.addEventListener('input', report);
+
+    return {
+      /** 外部设值。**走一遍 report()**而不是只改显示 ——
+       *  只改 input.value + 数字，组件那侧就还拿着旧参数，
+       *  于是"滑杆显示 50、实际跑的是别的值"，
+       *  而且这种不一致不报错，只在拧回去的瞬间才暴露。
+       *  绕开 on 回调 = 绕过唯一的写入口。 */
+      set: function (v) {
+        input.value = v;
+        report();
+      },
+      on: cfg.on
+    };
+  }
+
+  /* ══ 卡片 01 · 主组件 ══════════════════════════════════════════════════ */
+  var stage1 = document.getElementById('stage1');
+  var main = window.LiquidToggle.create({
+    label: '液态开关示例',
+    on: false,
+    stretch: 36,
+    speed: 50
+  });
+  stage1.appendChild(main.el);
+
+  /* 旋钮句柄存起来：「复位」必须走**同一个**写入口，
+     直接改input.value 会绕过 set()，两处写同一个数字 = 两个能对不上的地方。 */
+  var knobs1 = { speed: null, stretch: null };
+
+  /* 卡片 01 的旋钮用 Bencho 右侧那套：Speed 与 Stretch 是两个物理量 */
+  var k1 = document.getElementById('knobs1');
+  knobs1.speed = knob(k1, {
+    label: 'Speed', value: 50, min: 0, max: 100,
+    hint: '= 刚度。滑块穿越多快。仍可调，因为「多快」是真问题。',
+    on: function (v) { main.setKnobs({ speed: v }); }
+  });
+  knobs1.stretch = knob(k1, {
+    label: 'Stretch', value: 36, min: 0, max: 100,
+    hint: '= 液滴沿运动方向拉长多少。拧到 0 是纯位移，拧到 100 看截面守恒。',
+    on: function (v) { main.setKnobs({ stretch: v }); }
+  });
+
+  /* ══ 卡片 02 · 延迟 vs 弹簧跟随 ══════════════════════════════════════
+     同一段"主液滴运动"，两种拖尾实现，同一个时钟推进 —— 这样对比才公平。 */
+  var TRACK = 92, THUMB = 36, PAD = 5;
+  var SHUT = PAD, OPEN = TRACK - THUMB - PAD;
+  var CHASE_RATIO = 0.66;
+
+  function makePair(hostId, mode) {
+    var host = document.getElementById(hostId);
+    /* ⚠️ 这里的容器是 `.box`（grid + place-items:center）。
+       早先误用了 `.stage` 类并把 min-height 覆盖成 0 ——
+       结果整块塌成 0 高，**DOM 完全正确但屏幕上什么都没有**。
+       这类"元素存在、尺寸为 0"的失败在截图里和"没渲染"无法区分，
+       所以对照组的容器不复用任何已有类，只用自己的定位上下文。 */
+    var boxFrame = document.createElement('div');
+    boxFrame.style.cssText = 'position:relative;width:100%;height:100%';
+    var layer = document.createElement('div');
+    layer.style.cssText = 'position:absolute;left:50%;top:50%;margin:-23px 0 0 -46px;width:92px;height:46px;pointer-events:none';
+    layer.style.filter = 'url(#lab-goo)';
+
+    var mainEl = document.createElement('span');
+    var tailEl = document.createElement('span');
+    [mainEl, tailEl].forEach(function (el) {
+      el.style.cssText = 'position:absolute;left:0;top:50%;border-radius:999px';
+      layer.appendChild(el);
+    });
+    mainEl.style.width = mainEl.style.height = THUMB + 'px';
+    mainEl.style.marginTop = -THUMB / 2 + 'px';
+    mainEl.style.background = 'var(--c-text)';
+    tailEl.style.width = tailEl.style.height = THUMB * CHASE_RATIO + 'px';
+    tailEl.style.marginTop = (-THUMB * CHASE_RATIO / 2) + 'px';
+    tailEl.style.background = 'var(--c-text)';
+    boxFrame.appendChild(layer);
+    host.appendChild(boxFrame);
+
+    /* 两个状态对象：主液滴与拖尾**各自**一套。
+       ⚠️ 早先只有一个 st，main 只在 go() 里被直接赋值 → 主液滴是**瞬移**的，
+          而拖尾在插值 → 两者每帧都"在一起"，对照永远看不出差别。
+          对照要成立，主液滴必须自己走弹簧（真组件里它是手指或落位弹簧在驱动）。 */
+    var mainS = { x: SHUT, v: 0 };
+    var tailS = { x: SHUT, v: 0 };
+    var target = SHUT;
+    var delayUntil = 0;
+    var last = performance.now(), raf = 0;
+    /* 峰值记录：整个飞行过程中主/尾间距的最大绝对值，以及那一刻的坐标。
+       供「定格」按钮使用 —— 见下面 freezePeak。 */
+    var peak = { gap: 0, main: SHUT, tail: SHUT };
+
+    function apply() {
+      mainEl.style.transform = 'translateX(' + mainS.x.toFixed(2) + 'px)';
+      tailEl.style.transform = 'translateX(' + tailS.x.toFixed(2) + 'px)';
+    }
+
+    function tickFrame(now) {
+      var dt = Math.min((now - last) / 1000, 0.04);
+      last = now;
+
+      /* 主液滴：落位弹簧（与组件同参数 ζ≈0.87） */
+      M.springStep(mainS, target, { stiffness: 170, damping: 21.5, mass: 0.9 }, dt);
+
+      if (mode === 'delay') {
+        /* 延迟：拖尾和主液滴**同一目标**，只是等 90ms 才开始追。
+           这是最常见的直觉写法 —— 拖尾"迟一步出发"。
+           后果：它开始追的时候主液滴已经走了一段，落到的是一个**旧位置**，
+           而且追的速率与主液滴无关 ⇒ 快甩时直接脱队成一个孤立的球。 */
+        if (now > delayUntil) {
+          M.springStep(tailS, target, { stiffness: 520, damping: 34, mass: 0.6 }, dt);
+        }
+      } else {
+        /* 弹簧跟随：拖尾只认主液滴**此刻**的值，永远在追当前位置。
+           拉伸量因此恰好等于主液滴此刻的速度。 */
+        M.springStep(tailS, mainS.x, { stiffness: 520, damping: 34, mass: 0.6 }, dt);
+      }
+
+      apply();
+
+      var gap = Math.abs(tailS.x - mainS.x);
+      if (gap > peak.gap) { peak.gap = gap; peak.main = mainS.x; peak.tail = tailS.x; }
+
+      var done = Math.abs(mainS.x - target) < 0.1 && Math.abs(mainS.v) < 1
+              && Math.abs(tailS.x - mainS.x) < 0.4 && Math.abs(tailS.v) < 1;
+      if (done) {
+        raf = 0; mainS.x = target; tailS.x = target; mainS.v = 0; tailS.v = 0;
+        apply(); return;
+      }
+      raf = requestAnimationFrame(tickFrame);
+    }
+
+    function go(to) {
+      target = to;
+      peak.gap = 0;                 // 每次新动作重置峰值
+      if (mode === 'delay') delayUntil = performance.now() + 90;
+      /* 给主液滴一个初速度 = "甩"，而不是从静止慢慢爬 */
+      mainS.v = to > mainS.x ? 260 : -260;
+      if (!raf) { last = performance.now(); raf = requestAnimationFrame(tickFrame); }
+    }
+
+    /** 把两团定格在**本次动作中间距最大**的那一刻。
+     *  ⚠️ 存在的理由：这段动画只有 300ms 上下，而截图/录屏的时延通常比它还长——
+     *    任何"抓一帧飞行画面"的尝试都会抓到动画结束后的静止态，
+     *    两组看上去一模一样，这个对照就等于白做。
+     *    所以让读者自己定格。差异一旦静止下来，反而更容易看清。 */
+    function freezePeak() {
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      mainS.x = peak.main; tailS.x = peak.tail;
+      mainS.v = 0; tailS.v = 0;
+      apply();
+    }
+    apply();
+    return { go: go, freezePeak: freezePeak, el: boxFrame, _peek: function () {
+      return { main: mainS.x, tail: tailS.x, target: target, peak: peak.gap };
+    } };
+  }
+
+  var pairDelay = makePair('box-delay', 'delay');
+  var pairChase = makePair('box-chase', 'chase');
+
+  var autoTimer = 0;
+  function autoOnce() {
+    var to = (pairDelay.el.dataset.on === '1') ? SHUT : OPEN;
+    var nextFlag = to === OPEN ? '1' : '';
+    pairDelay.el.dataset.on = nextFlag;
+    pairChase.el.dataset.on = nextFlag;
+    /* 偶数次 = "慢拖"，奇数次 = "快甩"。
+       慢拖时两个实现看起来一样；快甩时只有弹簧跟随那个不脱队。 */
+    var fast = autoTimer % 2 === 1;
+    var delay = fast ? 60 : 420;
+    setTimeout(function () { pairDelay.go(to); pairChase.go(to); }, delay);
+    autoTimer++;
+  }
+  document.getElementById('auto').addEventListener('click', function () {
+    /* 点「自动演示」= 解冻并继续。定格的按钮是 disabled 的，
+       所以这一句同时承担"从定格状态回到运动"的作用。 */
+    document.querySelectorAll('.cmp .btn[disabled]').forEach(function (b) {
+      b.disabled = false;
+      b.textContent = '定格在最大间距';
+    });
+    autoOnce();
+  });
+  /* 每个对照组加一个「定格在最大间距」的能力。
+     ⚠️ 为什么要这个：动画只有 300ms，而截图/录屏的时延通常大于它 ——
+        任何"抓一帧飞行的画面"都会抓到动画结束后的静止态，
+        两组看起来一模一样，对照就白做了。
+        所以让读者**手动**把两组各自定格在峰值时刻，差异立刻可见。 */
+  function freezeBtn(host, pair) {
+    var b = document.createElement('button');
+    b.className = 'btn';
+    b.style.cssText = 'height:26px;padding:0 10px;font-size:var(--t-xs);margin-top:10px';
+    b.textContent = '定格在最大间距';
+    b.addEventListener('click', function () {
+      pair.freezePeak();
+      b.textContent = '已定格 · 点「自动演示」继续';
+      b.disabled = true;
+    });
+    host.appendChild(b);
+  }
+  freezeBtn(document.getElementById('box-delay').parentElement, pairDelay);
+  freezeBtn(document.getElementById('box-chase').parentElement, pairChase);
+
+  /* ══ 卡片 03 · 反例开关 ══════════════════════════════════════════════ */
+  function cycleMini(id, period) {
+    var el = document.getElementById(id);
+    var on = false;
+    setInterval(function () {
+      on = !on;
+      el.setAttribute('data-on', String(on));
+    }, period || 1800);
+  }
+  cycleMini('sw-bad');
+  cycleMini('sw-good');
+
+  /* ══ 卡片 04 · 两条弹簧曲线（真实数据，不是示意图）══════════════════
+     ⚠️ 这里画的是**用同一个 springStep 跑出来的真实数值**，
+        不是手画的示意曲线 —— 示意图会掩盖过冲的真实幅度。 */
+  function plot(canvasId, stiffness, damping, mass, colorVar) {
+    var cv = document.getElementById(canvasId);
+    if (!cv) return;
+    var dpr = window.devicePixelRatio || 1;
+    var cssW = cv.parentElement.clientWidth, cssH = 92;
+    cv.width = cssW * dpr; cv.height = cssH * dpr;
+    cv.style.width = cssW + 'px'; cv.style.height = cssH + 'px';
+    var g = cv.getContext('2d');
+    g.scale(dpr, dpr);
+
+    var css = getComputedStyle(document.documentElement);
+    var line = css.getPropertyValue('--c-line').trim() || '#e7eaef';
+    var accent = css.getPropertyValue('--c-accent').trim() || '#2563eb';
+
+    var dt = 1 / 60, target = 1, st = { x: 0, v: 0 };
+    var pts = [];
+    var peak = 0;
+    for (var i = 0; i < 90; i++) {
+      M.springStep(st, target, { stiffness: stiffness, damping: damping, mass: mass }, dt);
+      if (st.x > peak) peak = st.x;
+      pts.push(st.x);
+    }
+
+    var padT = 12, padB = 18, padL = 4, padR = 4;
+    var maxY = 1.14;
+    function X(i) { return padL + (i / (pts.length - 1)) * (cssW - padL - padR); }
+    function Y(v) { return padT + (1 - v / maxY) * (cssH - padT - padB); }
+
+    // 目标线
+    g.strokeStyle = line; g.lineWidth = 1;
+    g.setLineDash([3, 3]);
+    g.beginPath(); g.moveTo(padL, Y(target)); g.lineTo(cssW - padR, Y(target)); g.stroke();
+    g.setLineDash([]);
+
+    // 曲线
+    g.strokeStyle = accent; g.lineWidth = 2; g.lineJoin = 'round';
+    g.beginPath();
+    pts.forEach(function (v, i) { var x = X(i), y = Y(v); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.stroke();
+
+    // 95% 到达点
+    var i95 = pts.findIndex(function (v) { return v >= target * 0.95; });
+    if (i95 > 0) {
+      g.fillStyle = accent;
+      g.beginPath(); g.arc(X(i95), Y(pts[i95]), 3, 0, Math.PI * 2); g.fill();
+      g.font = '11px ui-monospace, Menlo, monospace';
+      g.fillStyle = css.getPropertyValue('--c-text-3').trim() || '#98a2b3';
+      g.fillText('95% @ ' + (i95 / 60 * 1000).toFixed(0) + 'ms', X(i95) + 6, Y(pts[i95]) + 4);
+    }
+
+    // 峰值标注
+    if (peak > 1.001) {
+      g.fillStyle = css.getPropertyValue('--c-warn').trim() || '#b54708';
+      g.font = '11px ui-monospace, Menlo, monospace';
+      var pi = pts.indexOf(peak);
+      g.fillText('过冲 ' + ((peak - 1) * 100).toFixed(1) + '%', X(pi) - 4, Y(peak) - 6);
+    }
+  }
+  function drawCurves() {
+    /* 旧值：ζ=0.711 → 4.2% 过冲（"快速 + 末尾可见啪一下"） */
+    plot('cv-a', 220, 20, 0.9);
+    /* 新值：ζ=0.869 → 0.4% 过冲（"还带一点弹性暗示"） */
+    plot('cv-b', 170, 21.5, 0.9);
+  }
+  drawCurves();
+
+  /* ══ 工具条 ══════════════════════════════════════════════════════════ */
+  var themeBtn = document.getElementById('theme');
+  themeBtn.addEventListener('click', function () {
+    var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    document.documentElement.setAttribute('data-theme', dark ? 'light' : 'dark');
+    themeBtn.textContent = dark ? '切换深色' : '切换浅色';
+    drawCurves();          // 曲线用了令牌色，切主题必须重画
+  });
+
+  document.getElementById('reset').addEventListener('click', function () {
+    main.set(false);
+    /* 走旋钮自己的写入口，不要直接改 input.value */
+    knobs1.speed.set(50);
+    knobs1.stretch.set(36);
+  });
+
+  /* ══ 诊断行 ══════════════════════════════════════════════════════════
+     「降级动画」这条信息要在页面上写出来：开了减弱动效时，
+     组件是直接落位而不是在动 —— 不说清楚会被当成"坏了"。 */
+  var diag = document.getElementById('diag');
+  var rmNote = document.getElementById('rmnote');
+  function refreshDiag() {
+    var parts = [
+      'Motion.activeCount = ' + M.activeCount(),
+      'reduced-motion = ' + M.reducedMotion()
+    ];
+    diag.textContent = parts.join('　·　');
+    rmNote.textContent = M.reducedMotion() ? '系统已开启「减弱动效」：组件直接落位，不做动画（这是预期行为）' : '';
+  }
+  refreshDiag();
+  setInterval(refreshDiag, 1000);
+
+  /* 主题切换后尺寸变了，曲线要重画（canvas 是按像素宽画的） */
+  window.addEventListener('resize', drawCurves);
+
+  /* 首屏给两次自动演示：先快甩（分家）再慢拖（合一），
+     让人不必点按钮就能看到「延迟 vs 弹簧跟随」的差别。 */
+  setTimeout(function () { main.set(true); }, 600);
+  setTimeout(function () { autoOnce(); }, 1100);
+})();
+</script>
+</body>
+</html>

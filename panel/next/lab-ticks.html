@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>档位刻度 · 自检页（不依赖 ES module）</title>
+<!--
+  ═══════════════════════════════════════════════════════════════════════
+  档位刻度的**独立自检页**
+  ───────────────────────────────────────────────────────────────────────────
+  为什么需要它：`app.js` 是 `type="module"`，而 **ES module 在 `file://` 下会被
+  CORS 拦住**（浏览器硬限制，任何绕法都没有）。所以本仓库的 `index.html`
+  用 `file://` 打不开，而面板未重启时新登记的资产又404
+  （`NEXT_ASSETS` 是**启动时 import** 的，页面资产才是每请求读盘）——
+  两条路都堵着时，本页用**普通 script**复刻同一套渲染与交互逻辑，
+  用来真实验证：指针拖动 / 键盘 / 无障碍 / 深浅两套主题。
+
+  ⚠️ 它是**验证用的副本**，不是产品页。改产品的 `ticks` 渲染逻辑后，
+     这里的副本要跟着改（或者更好的做法：让产品把这段逻辑收进一个普通
+     script，届时本文件只需引它）。
+  ═══════════════════════════════════════════════════════════════════════
+-->
+<style>
+  /* 与产品同一份令牌（浅色）—— 深色在下方第二段 */
+  :root {
+    color-scheme: light;
+    --c-bg: #f5f6f8; --c-surface: #ffffff; --c-surface-2: #fafbfc;
+    --c-sunken: #f1f3f6; --c-line: #e7eaef; --c-line-strong: #d3d8e0;
+    --c-text-1: #101828; --c-text-2: #6b7280; --c-text-3: #98a2b3;
+    --c-accent: #2563eb; --c-ok: #067647;
+    --t-xs: 11px; --t-sm: 12px; --t-lg: 15px; --t-2xl: 24px;
+    --dur: .16s; --r-sm: 6px; --s1: 4px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 22px 80px;
+    background: var(--c-bg); color: var(--c-text-1);
+    font: 400 var(--t-sm)/1.6 -apple-system, "PingFang SC", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  .sub { color: var(--c-text-2); margin: 0 0 20px; }
+  .card {
+    background: var(--c-surface); border: 1px solid var(--c-line);
+    border-radius: 14px; padding: 18px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: var(--t-lg); margin: 0 0 3px; }
+  .card .d { color: var(--c-text-3); margin: 0 0 14px; }
+  .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .btn {
+    height: 32px; padding: 0 12px; font: inherit; font-size: var(--t-sm);
+    color: var(--c-text-1); background: var(--c-surface);
+    border: 1px solid var(--c-line); border-radius: 8px; cursor: pointer;
+  }
+  .btn[aria-pressed="true"] { background: var(--c-accent); color: #fff; border-color: var(--c-accent); }
+  .out {
+    font: 11px/1.6 ui-monospace, Menlo, monospace; color: var(--c-text-3);
+    background: var(--c-sunken); border: 1px solid var(--c-line);
+    border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; margin: 0;
+  }
+
+  /* ↓↓↓ 下面这段是从 style.css 的 ticks.css 原样搬来的，
+        真实产品里由<link href="ticks.css"> 提供。 */
+  .tkx {
+    --tkx-lit: var(--c-accent, #2563eb);
+    --tkx-dim: var(--c-line-strong, #d3d8e0);
+    display: grid; gap: 10px; min-width: 0;
+  }
+  .tkx-head { display: flex; align-items: baseline; gap: 8px; }
+  .tkx-fig {
+    font-size: var(--t-2xl, 24px); font-weight: 600; line-height: 1.1;
+    letter-spacing: -.02em; color: var(--c-text-1, #101828);
+    font-variant-numeric: tabular-nums;
+  }
+  .tkx-fig i { font-style: normal; font-size: .62em; margin-left: 1px; opacity: .45; }
+  .tkx-name {
+    font-size: var(--t-sm, 12px); color: var(--c-text-2, #6b7280);
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tkx-delta {
+    margin-left: auto; font-size: var(--t-xs, 11px);
+    font-variant-numeric: tabular-nums; color: var(--c-text-3, #98a2b3);
+    opacity: 0; transition: opacity var(--dur, .16s) ease;
+  }
+  .tkx[data-scrub="1"] .tkx-delta { opacity: 1; }
+  .tkx-delta[data-up="true"] { color: var(--c-ok, #067647); }
+  .tkx-row {
+    position: relative; display: flex; align-items: flex-end;
+    justify-content: flex-start; gap: 4px;
+    height: 56px; touch-action: pan-x; cursor: pointer;
+    border-radius: var(--r-sm, 6px);
+  }
+  .tkx-tick {
+    /* 定宽不铺满 —— 铺满时 5 档每格 130px，读作"条形图"而不是"刻度" */
+    flex: 0 0 22px; max-width: 22px; background: var(--tkx-dim); border-radius: 2px;
+    transition: background 160ms ease, height 300ms cubic-bezier(.22, 1, .36, 1);
+  }
+  .tkx-tick[data-on="true"] { background: color-mix(in srgb, var(--tkx-lit) 62%, transparent); }
+  .tkx-tick[data-near="true"] { background: var(--tkx-lit); }
+  .tkx-tick[data-cursor="true"] { background: var(--c-accent, #2563eb); }
+  .tkx-row:focus-visible { outline: 2px solid var(--c-accent, #2563eb); outline-offset: 3px; }
+  /* 标签与刻度**同宽同起点** —— 标签比刻度宽会让"这个名字属于这一格"消失 */
+  .tkx-legend {
+    display: flex; justify-content: flex-start; gap: 4px; margin-top: 5px;
+    font-size: var(--t-xs, 11px); color: var(--c-text-3);
+  }
+  .tkx-legend > span {
+    flex: 0 0 22px; max-width: 22px; text-align: center;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tkx-native {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+    left: -9999px; top: auto; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  .tkx-native:focus-within {
+    position: static; width: auto; height: auto; margin: 0; left: auto;
+    overflow: visible; clip-path: none; display: flex; flex-wrap: wrap; gap: 4px;
+    font-size: var(--t-xs, 11px);
+  }
+  .tkx-native label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+  .tkx-native input { accent-color: var(--c-accent, #2563eb); }
+  /* ↑↑↑ 搬来的那段到此为止 */
+
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --c-bg: #0e1218; --c-surface: #151b23; --c-surface-2: #1a2129;
+    --c-sunken: #10161d; --c-line: #262f3a; --c-line-strong: #39434f;
+    --c-text-1: #e7eaf0; --c-text-2: #a9b2c1; --c-text-3: #7b8698;
+    --c-accent: #7aa2ff; --c-ok: #47cd89;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>档位刻度 · 自检</h1>
+  <p class="sub">
+    指针拖一行 · <kbd>Tab</kbd> 聚焦后按 <kbd>←</kbd> <kbd>→</kbd> 换档 ·
+    再 <kbd>Tab</kbd> 一次会显出原生 radio（验证它仍在无障碍树里）
+  </p>
+
+  <div class="bar">
+    <button class="btn" id="theme">切换深色</button>
+    <button class="btn" id="n2">2 档（应退回 seg）</button>
+    <button class="btn" id="n3">3 档</button>
+    <button class="btn" id="n5">5 档</button>
+  </div>
+
+  <div class="card">
+    <h2>有刻度的形态</h2>
+    <p class="d">数字 + 一排刻度。没有标题、状态标签、鼓励语 —— 原注释的判据：
+      「一个需要配文才显得完整的组件，是一个还没做完的组件」。</p>
+    <div id="host"></div>
+  </div>
+
+  <div class="card">
+    <h2>退回 seg 的形态（&lt; 3 档）</h2>
+    <p class="d">2 档时"一根亮一根暗"和"两个等宽按钮"信息量完全相同，
+      刻度白占一行高度与一套指针逻辑。</p>
+    <div class="seg" id="segdemo" style="display:inline-flex;border:1px solid var(--c-line);border-radius:8px;overflow:hidden">
+      <label style="padding:6px 14px;background:var(--c-accent);color:#fff">开</label>
+      <label style="padding:6px 14px;color:var(--c-text-2)">关</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>行为记录</h2>
+    <p class="d">自动化验证读这个。</p>
+    <pre class="out" id="out">—</pre>
+  </div>
+</div>
+
+<script>
+/* ══ 被验证的两段逻辑：从 app.js 原样搬来（非 module 版）══════════════
+   ��意：产品里这两段在 app.js（ES module）。这里用普通 script 复刻，
+   是因为 file:// 下 module 被 CORS 拦 —— 见文件头的说明。 */
+(function () {
+  'use strict';
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  /* ── 渲染（app.js 的 RENDER.ticks 的同构版）───────────────────────────
+     少于 3 档退回 seg —— 这条守卫是**按实际档数**判的，不是写死"至少 3"。 */
+  function renderTicks(host, id, opts, cur) {
+    if (opts.length < 3) {
+      host.innerHTML = '<div class="seg" style="display:inline-flex;border:1px solid var(--c-line);border-radius:8px;overflow:hidden">'
+        + opts.map((o) => '<label style="padding:6px 14px;' + (o.v === cur
+          ? 'background:var(--c-accent);color:#fff' : 'color:var(--c-text-2)') + '">'
+          + esc(o.l) + '</label>').join('') + '</div>';
+      return { seg: true };
+    }
+    const n = opts.length;
+    const idx = Math.max(0, opts.findIndex((o) => String(o.v) === String(cur)));
+    const pct = Math.round((idx / (n - 1)) * 100);
+    const wave = (i) => 52 + Math.round(Math.sin(i / 1.9) * 12) + (i <= idx ? 26 : 0);
+    const ticks = opts.map((o, i) =>
+      '<span class="tkx-tick" data-on="' + (i <= idx) + '" data-near="' + (i === idx) +
+      '" style="height:' + wave(i) + '%"></span>').join('');
+    const legend = opts.map((o, i) =>
+      '<span' + (i === idx ? ' style="color:var(--c-text-2)"' : '') + '>' + esc(o.l) + '</span>').join('');
+
+    host.innerHTML =
+      '<div class="tkx" data-tk="' + esc(id) + '" data-scrub="0" data-n="' + n + '">' +
+        '<div class="tkx-head">' +
+          '<span class="tkx-fig">' + pct + '<i>%</i></span>' +
+          '<span class="tkx-name">' + esc(opts[idx].l) + '</span>' +
+          '<span class="tkx-delta" data-show="0"></span>' +
+        '</div>' +
+        '<div class="tkx-row" data-tk-row role="slider" tabindex="0" aria-label="档位"' +
+          ' aria-valuemin="0" aria-valuemax="' + (n - 1) + '" aria-valuenow="' + idx +
+          '" aria-valuetext="' + esc(opts[idx].l) + '">' + ticks + '</div>' +
+        '<div class="tkx-legend">' + legend + '</div>' +
+        '<div class="tkx-native">' + opts.map((o) =>
+          '<label><input type="radio" name="' + esc(id) + '" value="' + esc(o.v) + '"' +
+          (String(o.v) === String(cur) ? ' checked' : '') + '><span>' + esc(o.l) + '</span></label>'
+        ).join('') + '</div>' +
+      '</div>';
+    return { seg: false };
+  }
+
+  /* ── 交互（app.js 的 mountTicks 的同构版）────────────────────────────
+     ⚠️ **整行一个 handler**：每格各挂 pointerenter 是最顺手的写法，
+        而它**只对鼠标有效** —— 触摸会被起手那一格捕获，
+        手指划过整行时其余格永远收不到 enter，刻度尺**卡住不动**。 */
+  function mountTicks(box, onCommit) {
+    const row = box.querySelector('[data-tk-row]');
+    const native = box.querySelector('.tkx-native');
+    const radios = native ? [...native.querySelectorAll('input[type=radio]')] : [];
+    if (!row || !radios.length) return;
+    const n = radios.length;
+
+    /* 客户端坐标 → 档位下标。
+       ⚠️ 两个坑：
+       ① 不能用 offsetLeft —— 可能在 transform: scale() 的容器里，差一个缩放倍数。
+       ② **不能用整行宽度均分** —— 刻度是**定宽 22px + 起点对齐**（不铺满），
+          均分会"点击右侧空白 = 选中最后一档"，而视觉上那里什么都没有。
+          ⇒ 按刻度实际排布反查中点。 */
+    const at = (clientX) => {
+      const row2 = row.getBoundingClientRect();
+      if (!row2 || !row2.width) return null;
+      const ticks = row.children;
+      if (!ticks.length) return null;
+      for (let i = 0; i < ticks.length; i++) {
+        const r = ticks[i].getBoundingClientRect();
+        if (clientX < r.left + r.width / 2) return i;
+      }
+      return ticks.length - 1;
+    };
+
+    let cur = null;
+    const labelOf = (i) => {
+      const s = radios[i] && radios[i].parentElement?.querySelector('span');
+      return s ? s.textContent : '';
+    };
+    const paintCursor = (i) => {
+      const ticks = row.children;
+      for (let k = 0; k < ticks.length; k++) {
+        if (i === k) ticks[k].setAttribute('data-cursor', 'true');
+        else ticks[k].removeAttribute('data-cursor');
+      }
+      box.setAttribute('data-scrub', i == null ? '0' : '1');
+      const fig = box.querySelector('.tkx-fig');
+      const name = box.querySelector('.tkx-name');
+      const delta = box.querySelector('.tkx-delta');
+      if (i == null) { if (delta) delta.setAttribute('data-show', '0'); return; }
+      const base = radios.findIndex((r) => r.checked);
+      const pct = Math.round((i / Math.max(1, n - 1)) * 100);
+      if (fig) fig.innerHTML = pct + '<i>%</i>';
+      if (name) name.textContent = labelOf(i);
+      if (delta) {
+        const d = pct - Math.round((base / Math.max(1, n - 1)) * 100);
+        if (d !== 0) {
+          delta.textContent = (d > 0 ? '+' : '') + d;
+          delta.setAttribute('data-show', '1');
+          delta.setAttribute('data-up', d > 0 ? 'true' : 'false');
+        } else delta.setAttribute('data-show', '0');
+      }
+      cur = i;
+    };
+
+    /* 真正提交：**点原生 radio**，让它去跑既有 change 绑定。
+       ⚠️ 刻度层**自己不改值** —— 那样就多了一条写值的路。
+       ⚠️ 提交后必须**同步 aria-valuenow/valuetext**：
+         实测漏了这一步 ⇒ 读屏念出的仍是旧档位（值与视觉不一致）。
+         视觉那一半由"重新渲染"负责，而重渲染发生在下一次paintPage ——
+         **当前这一次的 ARIA 不会自己更新**，所以要在这里补。 */
+    const commit = (i) => {
+      if (i == null) return;
+      const r = radios[i];
+      if (r && !r.checked) r.click();
+      row.setAttribute('aria-valuenow', String(i));
+      row.setAttribute('aria-valuetext', labelOf(i));
+      if (onCommit) onCommit(i, r ? r.value : null);
+    };
+
+    let down = false;
+    const onDown = (e) => {
+      down = true;
+      try { row.setPointerCapture(e.pointerId); } catch { /* 非活动指针 */ }
+      paintCursor(at(e.clientX));
+    };
+    const onMove = (e) => {
+      /* 鼠标悬停就跟随；触摸必须按住 —— 否则手指在滚动时路过也会跳档 */
+      if (e.pointerType !== 'mouse' && !down) return;
+      paintCursor(at(e.clientX));
+    };
+    const onUp = (e) => {
+      try { row.releasePointerCapture(e.pointerId); } catch { /* 从未捕获 */ }
+      if (down) commit(cur);
+      down = false;
+      paintCursor(null);
+    };
+    const onLeave = () => { if (!down) paintCursor(null); };
+    const onKey = (e) => {
+      const base = radios.findIndex((r) => r.checked);
+      const i = (e.key === 'ArrowRight' || e.key === 'ArrowUp') ? base + 1
+        : (e.key === 'ArrowLeft' || e.key === 'ArrowDown') ? base - 1 : null;
+      if (i == null) return;
+      e.preventDefault();
+      commit(Math.min(n - 1, Math.max(0, i)));
+    };
+
+    row.addEventListener('pointerdown', onDown);
+    row.addEventListener('pointermove', onMove);
+    row.addEventListener('pointerup', onUp);
+    row.addEventListener('pointercancel', onUp);
+    row.addEventListener('pointerleave', onLeave);
+    row.addEventListener('keydown', onKey);
+  }
+
+  /* ══ 页面装配 ════════════════════════════════════════════════════════ */
+  /* ⚠️ 值的取法：`v` 必须与第二项（当前值）**同源**。
+     最初 `v` 取的是 `l.split(' ')[0]`（即"短"），而当前值写的是 `'normal'`
+     ⇒ 谁都匹配不上，`checkedIdx` 是 -1，而刻度却仍显示第 0 档 ——
+     **一个"看起来对、实际没有任何 radio 处于选中态"的控件**。
+     这类错只有在真的去读 `input.checked` 时才暴露。 */
+  var SETS = {
+    n2: [{ v: 'off', l: '关' }, { v: 'on', l: '开' }],
+    n3: [{ v: 'short', l: '短' }, { v: 'normal', l: '中等' }, { v: 'long', l: '长' }],
+    n5: [{ v: 'lvl1', l: '1 · 仅艾特' }, { v: 'lvl2', l: '2 · +关键词' },
+         { v: 'lvl3', l: '3 · +随机' }, { v: 'lvl4', l: '4 · 全档位' },
+         { v: 'lvl5', l: '5 · 极活跃' }]
+  };
+  var CURRENT = { n2: 'off', n3: 'normal', n5: 'lvl3' };
+
+  var host = document.getElementById('host');
+  var out = document.getElementById('out');
+  var lines = [];
+  function log(k, v) { lines.push(k.padEnd(26) + ' ' + v); out.textContent = lines.join('\n'); }
+
+  function build(key) {
+    var opts = SETS[key];
+    var r = renderTicks(host, 'tk', opts, CURRENT[key]);
+    var box = host.querySelector('.tkx');
+    if (box) mountTicks(box, function (i, v) { log('提交', 'index=' + i + ' value=' + v); });
+    log('档数', String(opts.length) + ' → 形态: ' + (r.seg ? '退回 seg' : '刻度'));
+    log('刻度数', String(host.querySelectorAll('.tkx-tick').length));
+    var row = host.querySelector('[data-tk-row]');
+    log('role', row ? row.getAttribute('role') : '—');
+    log('aria-valuenow', row ? row.getAttribute('aria-valuenow') : '—');
+    log('原生 radio 数', String(host.querySelectorAll('.tkx-native input').length));
+    log('原生 radio 可聚焦', String(host.querySelector('.tkx-native input') ? '是（未用 display:none）' : '否'));
+    window.__probe = function () {
+      var b = host.querySelector('.tkx');
+      var rw = b ? b.querySelector('[data-tk-row]') : null;
+      return {
+        ticks: host.querySelectorAll('.tkx-tick').length,
+        heights: [...host.querySelectorAll('.tkx-tick')].map(function (t) { return t.style.height; }),
+        on: [...host.querySelectorAll('.tkx-tick')].map(function (t) { return t.getAttribute('data-on'); }),
+        near: [...host.querySelectorAll('.tkx-tick')].map(function (t) { return t.getAttribute('data-near'); }),
+        role: rw ? rw.getAttribute('role') : null,
+        valuenow: rw ? rw.getAttribute('aria-valuenow') : null,
+        figText: host.querySelector('.tkx-fig')?.textContent,
+        nameText: host.querySelector('.tkx-name')?.textContent,
+        radioCount: host.querySelectorAll('.tkx-native input').length,
+        checkedIdx: [...host.querySelectorAll('.tkx-native input')].findIndex(function (r) { return r.checked; }),
+        segFallback: !!host.querySelector('.seg')
+      };
+    };
+  }
+
+  build('n3');
+  document.getElementById('n2').addEventListener('click', function () { build('n2'); });
+  document.getElementById('n3').addEventListener('click', function () { build('n3'); });
+  document.getElementById('n5').addEventListener('click', function () { build('n5'); });
+  document.getElementById('theme').addEventListener('click', function () {
+    var d = document.documentElement.getAttribute('data-theme') === 'dark';
+    document.documentElement.setAttribute('data-theme', d ? 'light' : 'dark');
+    log('主题', d ? '浅色' : '深色');
+  });
+})();
+</script>
+</body>
+</html>

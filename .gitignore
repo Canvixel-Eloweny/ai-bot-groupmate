@@ -1,0 +1,280 @@
+# 依赖
+node_modules/
+
+# 真实配置（含 API Key，入库即泄露）
+config.json
+
+# 本机专有变量（docker compose 自动读）：当前装着**机器人 QQ 号** `ACCOUNT`。
+# ⚠️ 它为什么必须存在：`docker-compose.yml` 只保留占位符默认值，真实号由这里提供 ——
+#    2026-09-26 D8 定位到「每次重建容器都要重新扫码」的根因就是
+#    「去标识把真实号换成占位符之后没人填回去」（提交 `1662737`）。
+# ⚠️ 三件套：这里 + `test/sandbox.sh` 的 `--exclude '/.env'` +
+#    `scripts/publish-audit.mjs` 的 `MUST_NOT_TRACK` 已含 `/^\.env/`。
+.env
+
+# ── 常见敏感形态的兜底（2026-10-05 · 第 10 轮 · 开源前审查 H-05）───────────────
+#
+# 为什么单立一段：上面那条 `.env` 是**精确匹配** —— `.env.local` / `.env.production` /
+# `.env.bak` 一个都没被挡住，而它们装的通常是同一样东西的**更脏的副本**。
+# 实测（逐条 `git check-ignore -v`）：本段列出的形态此前**全部未被忽略**。
+#
+# ⚠️ 判据是**功能**的，不是"文件里有没有这几行"：`check-wb` 拿
+#    `git check-ignore --no-index` 对一组样本路径逐个试，必须命中。
+#
+# ⚠️ **`.env` 系列一律忽略，含 `.env.example` —— 这是刻意的，别加 `!` 例外。**
+#    `scripts/publish-audit.mjs` 的 MUST_NOT_TRACK 里有一条 `/^\.env/`：
+#    任何以 `.env` 开头的**被跟踪**路径都是**最高级别阻断项**。在这里放行 `.env.example`
+#    等于同一次提交里既开闸又关闸（谁先跑谁说话）—— 而本项目对"两侧口径必须同源"
+#    的要求写在 `plugins/` 那一段上（`plugin-allowlist.mjs` 与这里逐条对齐）。
+#    真要放行它，得先把那条判据收窄成 `^\.env$` 或 `^\.env\.(?!example)` ——
+#    那是**改安全闸门**，属需要单独裁决的事（已登记为待裁决项，不在这里偷偷做）。
+.env.*
+.npmrc
+id_rsa*
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+credentials.json
+secrets.json
+*.db
+*.sqlite
+# 编辑器 / 工具的私有状态：里面是本机路径与个人偏好，与仓库无关
+.vscode/
+.idea/
+# 覆盖率与构建产物。⚠️ 故意**不带前导斜杠**（与 `/plugins/` 那几条相反）：
+# 这里要的就是"任意层级的 coverage/ 都不入库"，而不是只锚仓库根那一个。
+coverage/
+dist/
+# 根级的 JSONL：上面那条 `panel/*.jsonl` 只锚了 panel 的直接子文件，
+# 这里兜住"随手在仓库根 / 别处落一份日志"（当前被跟踪的 .jsonl 为 0 个）。
+*.jsonl
+
+# 运行时数据：机器人与面板进程自己写的，每次启动都在变，提交它们只会淹没真正的改动。
+# 注意「不入库」不等于「清掉」——这些文件一直留在磁盘上，尤其是 usage.jsonl（花费账本）
+# 明确要求永久保留、不截断，它只是不受版本控制而已。
+panel/*.jsonl
+# 会话存档（B10d · O-SESSION）：里面是**真实聊天内容**，不入库
+panel/session-archive.json
+# 提示词命中率的长期留档（第 37 轮 · O-CACHESTAT）。
+# ⚠️ 它**不是**"精简到可以入库"的：它记的是"这一轮提示词与上一轮的公共前缀占比"，
+#    是**本机真实运行**的产物（换台机器、换份配置，数字就该不一样）。入库等于把
+#    "别人环境的性能数字"混进仓库，还会每次对话都产生 diff 淹没真正的代码改动。
+#    要的是它**不被截断**（长期留档），不是它被版本控制。
+panel/prompt-stats.json
+# 说话风格画像（ATI-2 · 第 4 轮）：本机统计出来的**真实群友**说话习惯，换台机器就该不一样。
+# 与 prompt-stats 同性质 —— 要的是它长期累积，不是它被版本控制。
+# ⚠️ 三件套的另一半：`src/style-profile.js` 的 `QQBOT_STYLE_PROFILE` env 覆盖 +
+#    `test/sandbox.sh` 的 rsync 排除。
+panel/style-profile.json
+# 结构化记忆（ATI-3 · 第 5 轮）：带来源与状态的记忆条目，同样是本机运行产物。
+# ⚠️ 三件套的另一半：`src/memory.js` 的 `QQBOT_MEMORY_RECORDS` env 覆盖 + `test/sandbox.sh` 的排除。
+panel/memory-records.json
+panel/effective.json
+panel/.thinking.json
+panel/.bridge.pid
+# 机器人进程侧的实例互斥锁（D19 · E19）。它记的是"此刻哪个 pid 在跑"（含心跳），
+# 属运行时数据。三件套的另一半：`src/index.js` / `panel/lib/paths.js` 的
+# `QQBOT_BRIDGE_LOCK_FILE` env 覆盖 + `test/sandbox.sh` 的 rsync 排除。
+# ⚠️ 另一半（`panel/bridge-journal.log`）**已被本文件末尾的 `*.log` 覆盖** —— 别再加一行。
+# [W1] 用 `*` 结尾：独占提交与接管会临时产生 `panel/.bridge.lock.<pid>.<hex>.tmp`
+#      （沿用 atomic-write 的命名形状，因此清扫自动管它）与固定的 `.bridge.lock.reclaim`
+#      回收令牌 —— 两个都得被这一条盖住，别再各加一行。
+panel/.bridge.lock*
+panel/.debug
+# 面板 → 机器人 的命令文件（D6b · Q7 裁决①「命令文件轮询」）。
+# ⚠️ 它记的是"本机某次点击"与它的执行结果（含会话 key），属运行时数据；
+#    三件套的另一半：`src/index.js` / `panel/lib/paths.js` 的 `QQBOT_CONTROL_FILE` env 覆盖
+#    + `test/sandbox.sh` 的 rsync 排除。漏掉任一件都不报错。
+panel/.bridge-cmd.json
+# 提醒的运行时状态（D17 · E9）：哪条提醒今天发过了 / 错过了 / 这天不排。
+# ⚠️ 它**故意不进 config.json** —— `custom` 是用户资产，机器人高频写它迟早与面板互覆
+#    （D11a 的教训）。三件套的另一半：`src/index.js` 的 `QQBOT_REMINDER_FILE` env 覆盖
+#    + `test/sandbox.sh` 的 rsync 排除。
+panel/reminder-state.json
+# 面板 token（B9c · AUTH-PANEL）：写操作的凭据。进程自己生成，**入库即等于把写权限提交出去**
+panel/.token
+panel/*.tmp
+# 原子写的中间态（第 48 轮 B12e-4 · EX-TEMPSWEEP）：形状 `.<目标名>.<pid>.<8位hex>.tmp`。
+# 正常情况下它存在的时间是毫秒级；只有进程在 write 与 rename 之间**被强杀**时才会留下。
+# → 代码侧已加"启动时清扫"（`src/atomic-write.js` 的 `sweepStaleTemps`，机器人与面板各扫一次），
+#   这里再忽略一道是**纵深**：万一清扫没跑（比如有人直接 `node test/smoke.js`），
+#   它也不该出现在 `git status` 里污染真正的改动。
+# ⚠️ `*` 不跨 `/`，所以这条只锚在 `panel/` 的直接子文件上，不会误伤别处。
+*.log
+
+# 协议端数据：napcat/ 下是 QQ 登录态 + WebUI token（205MB 且含凭据），绝不入库
+#
+# ⚠️ **前导斜杠不能省**（与下面 /plugins/ /skills/ /data/ 同一条纪律）：
+#    不带斜杠的 `napcat/` 会匹配**任意层级**，实测把 `docker/napcat/` 整个吃掉 ——
+#    13 个构建文件（Dockerfile / entrypoint.sh / fetch-*.sh / templates/*.json）**从未
+#    进过版本控制**（`git log --all --name-only -- 'docker/*'` 返回空），
+#    而 `docker-compose.yml` 的 `build.context: ./docker/napcat` 指的就是它
+#    ⇒ 别人 clone 下来 `docker compose up` 必然 `unable to prepare context`。
+#    2026-10-05 开源前审查（S-06）发现并修掉；由 `check-wb.mjs` §67 盯着。
+/napcat/
+
+# 扩展包（第 44 轮 B12d · EX-PLUGIN）：plugins/ 与 skills/ 下放的是**用户自己装的**第三方
+# 扩展包，与 napcat/ 同性质 —— 别人的代码、可能带凭据、随时会被换掉，不入库。
+# ⚠️ 「不入库」不等于「不读」：宿主照常扫描并校验它，只是不受版本控制。
+# ⚠️ 将来若要有随仓库分发的示例扩展，放 `test/fixtures/` 下 —— 那是测试资产，
+#    不进用户目录（否则"用户的 plugins/ 里为什么莫名其妙多了一个包"会很难解释）。
+# ⚠️ **前导斜杠不能省**：gitignore 里不带 `/` 的 pattern 匹配**任意层级**，
+#    写成 `plugins/` 会把 `test/fixtures/ext/plugins/` 一起忽略掉 ——
+#    而那是**测试资产**，必须入库（它是扩展包契约的扫描对象，没有它那条契约
+#    就是对着空集合跑，属"假全绿"）。带 `/` 表示"只锚定仓库根"。
+# ⚠️ 写 `/*` 而不是 `/`：Q9 要给自用包开例外，而 **git 不允许"父目录被排除之后再
+#    把子文件捞回来"**（`git check-ignore` 实测：写了 `!/plugins/本体情绪/` 仍然命中第 80 行）。
+#    改成"忽略目录里的**条目**、但不忽略目录本身"，例外才成立（两者对外表现一致）。
+/plugins/*
+/skills/*
+
+# ── Q9 裁决①（2026-10-02）：给**本项目自用的**扩展包开一条例外 ──────────────
+#
+# 为什么必须开：`plugins/本体情绪/` 是本项目**自己魔改过的自用包**（D12a 的主体改动就落在
+# 它上面，源码里带着本仓的纪律注释）。整块 `/plugins/` 被忽略的后果是：
+#   ① 它的改动**没有版本、没有回滚**（改坏了只能靠 `~/Desktop/外包/我自己/` 的手工备份）；
+#   ② `check-wb` / `smoke` 已有 **3 条判据 + §38 + T233–T241 都依赖它** ——
+#      去掉 `plugins/` 的镜像上，这些门的输入集合为空并 fail-closed（别人 clone 下来直接红）。
+#
+# ⚠️ 只开这一个包：**逐条点名**，不开通配 —— 其余几个仍是用户自装的第三方包
+#    （别人的代码、可能带凭据），维持不入库。
+# ⚠️ 两条都要写：第一条把**目录**捞回来，第二条把它的内容捞回来
+#    （只写第一条时目录里的文件仍被上面那条 `/*` 命中 —— 实测确认过）。
+!/plugins/本体情绪/
+!/plugins/本体情绪/**
+
+# ── 2026-10-07 裁决（用户）：本仓自写的扩展包与技能**随仓库分发** ──────────────
+#
+# 上面第 118–131 行那条规矩（"用户自装的第三方包不入库"）**仍然成立**；
+# 变的是适用范围：下面这些不是第三方包，而是**本项目自己写的**
+# （收藏表情 / 联网底座 / 记忆管理 等改动就落在它们身上，源码里带着本仓的纪律注释）。
+# 用户裁决要对外发布它们 —— 否则别人 clone 下来只剩 1/13 的能力，而那 1 个
+# （本体情绪）反而不是最有代表性的那个。
+#
+# ⚠️ 仍然**逐条点名、不开通配**（与 Q9 那条同一条纪律）：
+#    新包想进发布面必须显式加两行。"自动入库"会让某个带凭据的包在某天悄悄跟着出去。
+# ⚠️ 两条都要写（目录 + 内容），只写第一条时里面的文件仍被上面那条 `/*` 命中。
+# ⚠️ `/skills/` 已同步改成 `/skills/*`：git 不允许"父目录被排除后再把子文件捞回来"。
+!/plugins/复读拦截/
+!/plugins/复读拦截/**
+!/plugins/定时文案推送/
+!/plugins/定时文案推送/**
+!/plugins/角色卡工具同步/
+!/plugins/角色卡工具同步/**
+!/plugins/远程价格表/
+!/plugins/远程价格表/**
+!/skills/AI额度情报/
+!/skills/AI额度情报/**
+!/skills/B站视频解析/
+!/skills/B站视频解析/**
+!/skills/百科查询/
+!/skills/百科查询/**
+!/skills/合并转发发送/
+!/skills/合并转发发送/**
+!/skills/群友印象/
+!/skills/群友印象/**
+!/skills/自定义图库/
+!/skills/自定义图库/**
+!/skills/自我印象/
+!/skills/自我印象/**
+!/skills/记忆管理/
+!/skills/记忆管理/**
+
+# 扩展包的数据目录（第 47 轮 B12e-3 · EX-DATADIR）：`src/config.js` 的 `DATA_DIR` 指向它。
+# ⚠️ 为什么与 `panel/` 分开：`panel/` 是被 git 跟踪的目录，扩展包往里写会污染仓库；
+#    而这里放的是**外来代码自己决定写什么**的长期数据（bot-state.json、图库、印象档…），
+#    内容不可预期、且来自用户装的第三方包 —— 与 plugins/ 同性质，不入库。
+# ⚠️ **前导斜杠不能省**（同上一段的理由）：写成 `data/` 会匹配任意层级，
+#    把 `test/fixtures/**/data/` 之类的测试资产一起忽略掉。
+# ⚠️ 三件套的另一半在 `src/config.js`（QQBOT_DATA_DIR env 覆盖）与
+#    `test/sandbox.sh`（rsync 排除）—— 三处由 check-wb 的契约一起盯着。
+/data/
+
+# Docker 构建素材：deb/zip 加起来 226MB，由 docker/napcat/fetch-*.sh 可重新获取，
+# 入库只会让仓库膨胀且无法用 diff 看清变化。脚本本身要入库。
+docker/napcat/linuxqq.deb
+docker/napcat/NapCat.Shell.zip
+
+# NapCat-Docker 的**上游构件**（2026-10-05 开源前审查 · S-06）：
+# `entrypoint.sh` 与 `templates/*.json` 由 `docker/napcat/fetch-docker-assets.sh` 拉取。
+# ⚠️ 不入库的理由**不是体积**，是**许可** —— NapCat 的 Limited Redistribution License
+#    禁止未经授权的分发，且"修改后的代码不得公开发布"；而 THIRD-PARTY-NOTICES.md
+#    声明的边界是「不复制它的任何代码」。提交它们会让那份声明变成伪陈述。
+#    同一个目录里的 Dockerfile / fetch-*.sh / .dockerignore 是本项目自写的，照常入库。
+docker/napcat/entrypoint.sh
+docker/napcat/templates/
+
+# 手工备份与快照：git 之后改由提交历史承担回滚，这里只留最近几代应急
+.backup/
+
+state/
+.DS_Store
+
+# ── 2026-10-04 审查轮 C-4 / m-2 / m-3：把「按设计就持有真值」的东西挡在版本控制外 ──
+#
+# 为什么现在才加：此前这三处的安全完全押在「发布脚本的排除清单」上 —— 而那份清单
+# 要求**人记得走发布流程**。实测反例是本项目自己的历史（早期发布脚本按路径名排除，
+# **漏过 `.env` 等 21 个**）。把边界从「流程正确」挪回「规则本身」才是结构性的：
+# 不在版本控制里的东西，`git add -A` / `git push` 都带不走。
+#
+# ① 项目记忆（含真实 QQ 号 / 群号 / 昵称 / 聊天原文）
+#    只**移出版本控制**，磁盘文件照常读写（记忆系统不依赖 git）。
+#    `scripts/make-publish-copy.mjs` 的排除清单里那条 `.workbuddy/` **保留** ——
+#    它是另一层纵深，且 `check-wb.mjs` 有契约盯着它。
+/.workbuddy/
+
+# ② 手工快照 / 回滚应急备份（含 config-before.json、会话存档、风格画像等真实数据）
+#    ⚠️ 「不入库」不等于「清掉」—— 它是应急备份，一律留在磁盘上。
+/_archive/
+
+# ③ 面板交付截图（单张 200KB–2MB，19 张约 13 MB）
+#    它们是**轮次交付的一次性证据**，不是产品资产：入库只让仓库膨胀、且无法用 diff 看清变化。
+#    与 `docker/napcat/*.deb|zip` 同性质。正文 HTML 报告不受影响（要留的是报告本身）。
+/docs/*.png
+
+# ── 含真值的两份 `docs/` 件：**明确不入库**（R11-d3 / R11-d4 裁决 · 第 14 轮）──────
+#
+# 这两份此前都只是"未跟踪"状态 —— 靠"没人 `git add` 它"天然不进库。
+# 而那正是本项目反复在消灭的那类边界：**写在文档里的边界不会自动执行**
+# （本仓已因此漏过 `.env`，见 `make-publish-copy.mjs` 文件头）。
+# 现在写进这里：谁来 `git add docs/` 都捎不上它们。
+#
+#   · `OPENSOURCE-REVIEW-1005.md`：原始审查报告，**实测含真值 12 处**
+#     （它是判据证据，但证据不等于该进版本控制 —— 真值表本身已搬到仓库外，见 S-01）。
+#   · `persona-apply-whalegirl.html`：**命中 2 处机器人显示昵称**。
+#
+# ⚠️ 与发布面的关系：`make-publish-copy.mjs` **以 `git ls-files` 为准**，
+#    所以"不入库"与"不会进对外拷贝"在这里是同一件事，不是两件。
+docs/OPENSOURCE-REVIEW-1005.md
+docs/persona-apply-whalegirl.html
+
+# ── 变异清单的「入库」边界（2026-10-04 · 代码审查轮）─────────────────────────
+#
+# `test/mutations/` 里的清单**分两类**：
+#   · 本项目自己的批次（`b*` / `d*` / `q*` / `mem-*` / `cleanup-*`）→ **入库**
+#   · 外包交付件的随附清单（`t*`）与评审件（部分 `review-*`）→ **不入库**
+# 后者写着外包侧的任务编号与内部复查过程；而 **`test/mutations/` 不在
+# `make-publish-copy.mjs` 的排除清单里**，它以 `git ls-files` 为准 ——
+# 所以"入库"与"会不会进对外拷贝"是同一件事，不是两件。
+#
+# ⚠️ 这条边界此前**只写在 `test/mutations/README.md` 的表格里**，靠人搬东西时记得。
+#    实测两次都不灵：2026-10-01 误收过一次（D18 提交，已 `git rm --cached` 退回）；
+#    **2026-10-04 又误收一次**（代码审查轮用了 `git add -A`）。
+#    ⇒ 结论与本仓别处同一条：**写在文档里的边界不会自动执行**。
+#      现在写进这里 —— 谁来搬都捎不上它。
+#
+# ⚠️ `.gitignore` **不影响已跟踪的文件**：所以这条规则不会动下面两个例外
+#    （它们照旧被跟踪）。写 `!` 是为了**将来新增同名文件**时也能入库。
+test/mutations/t*.mjs
+test/mutations/review-*.mjs
+
+# ── 例外：README 的「入库」列标 ✅ 的两个 ─────────────────────────────────
+!test/mutations/t2v3-hardening.mjs
+!test/mutations/review-1001.mjs
+# 开源前审查批次（2026-10-05 · 本仓自留，不是外包评审件）—— 配套的**变异清单**入库。
+# ⚠️ R11-d3（第 14 轮）：配套的**报告** `docs/OPENSOURCE-REVIEW-1005.md` 已裁决为
+#    **不入库**（实测含真值 12 处），见上面那份 `docs/` 规则 —— 本行只管变异清单，
+#    与报告的去向是两件事，别再把它们绑成一条理由。
+!test/mutations/review-1005.mjs

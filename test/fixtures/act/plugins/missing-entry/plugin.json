@@ -1,0 +1,15 @@
+{
+  "id": "missing-entry",
+  "name": "入口文件不存在",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "entry 指向一个不存在的文件 —— 第 44 轮只是警告，第 46 轮起必须记为 failed。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "permissions": [],
+  "requires": [],
+  "entry": "nope.js",
+  "settings": {}
+}

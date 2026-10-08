@@ -1,0 +1,79 @@
+# 四层门禁（2026-10-05 开源前审查 · S-11）
+#
+# 为什么必须有它：此前四层（check-wb / smoke / presets / panel）**只能靠人在本机跑**，
+# `CONTRIBUTING.md` 也是这么写的。于是"真实凭据被 `git add -A` 带进仓库"这类事故
+# 没有任何机器门槛拦着 —— 本仓已发生过两次（`.gitignore:154-155` 有记录）。
+# ⇒ 把边界从「人记得跑」挪回「机器会跑」，与本项目别处同一条纪律。
+#
+# ⚠️ `publish-audit` 那一步是**真值闸门**：它按 `scripts/known-real.mjs`（**加载器**）扫
+#    `git ls-files`，命中真实 QQ 号 / 群号 / 本机路径即非零退出。
+#    真值一旦进仓库，这一步会红 —— 补的是"人眼会漏"的那一半。
+#
+# ⚠️ **2026-10-05（S-01）之后这一档在 CI 里是"降级"的，必须知道**：
+#    真值表本体**不在仓库里**（住 `~/.qqbot/known-real.local.mjs`），所以 runner 上
+#    加载不到 → 表为空 → 脚本会打印一条**显眼告警**并按"无阻断项"退出 0。
+#    ⇒ CI 这一步实际只查**凭据形态**（`credential-shapes.mjs`）与**敏感路径/必需文件**；
+#      "已知真实标识符"那一类**在 CI 上永远扫不出东西**，它只在维护者本机有效。
+#      想恢复完整闸门：给 CI 注入 `QQBOT_KNOWN_REAL` 指向一份 secret（**不要**提交表本体）。
+#    本仓的完整真值体检仍然只能在维护者机器上跑 —— 这条如实写在这里，不假装 CI 全覆盖。
+#
+# ⚠️ 跑测试一律 `NODE_OPTIONS=`（R39）：shell 注入的 node-language-shim 会把
+#    `err.code` 改写成 `CODEBUDDY_BROKER_DENY`，不带前缀会出现假红。
+
+name: 四层门禁
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  contracts:
+    name: 契约（check-wb）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      # 契约里有一条断言「`.git/hooks/pre-commit` 在位」（第 21 轮 §86 那一族的配套判据）。
+      # ⚠️ 钩子**不入库**，所以全新 clone 上必然没有它 —— 2026-10-06 首次真跑 CI 时正是这里红。
+      # 跑一遍它自己给出的装法（`--install`）：既让那条断言的语义成立，
+      # 也**顺带证明在干净 clone 上装得起来**（那条断言的原话就是"换机器或重新 clone 后要重装"）。
+      # 钩子在本 job 里永远不会被触发（runner 上没有人 commit），所以这里只验"装得上"。
+      - run: bash scripts/pre-commit.sh --install
+      - run: NODE_OPTIONS= node scripts/check-wb.mjs
+
+  smoke:
+    name: 行为回归（smoke）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      # `T334` 要**真跑** `pgrep` + `lsof` 去验「真机探针路径」。runner 上 pgrep 自带（procps），
+      # `lsof` 不保证在 —— 装上它，这条用例在 Linux 上才是**真验**，而不是落到显式 SKIP。
+      # （这条用例正是 2026-10-06 首次真跑 CI 时逮出 `/usr/sbin/lsof` 写死缺陷的那一条：
+      #   lsof 在 macOS 住 /usr/sbin、在 Debian/Ubuntu 住 /usr/bin。装上再跑才验得动。）
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq lsof
+      - run: NODE_OPTIONS= node test/smoke.js
+
+  # 真值闸门：别让真实 QQ 号 / 群号 / 本机用户名 / API Key 进仓库
+  publish-audit:
+    name: 发布审计（真值闸门）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # ⚠️ 2026-10-06：这个脚本**按设计不随发布拷贝出去**（它在 `make-publish-copy.mjs` 的 EXCLUDE
+      #    清单里，理由与那条 S-01 裁决绑定，被变异 `sec-s01-1005` 钉着）。
+      #    于是**公开仓里这一步会被跳过**、本仓（开发仓）里照常跑 —— 用一个**步骤条件**而不是删 job：
+      #    `hashFiles` 要在 checkout 之后求值，所以只能放步骤级、不能放 job 级
+      #    （放 job 级会连开发仓也一起跳过，那道真值闸就静默失效了）。
+      - if: ${{ hashFiles('scripts/publish-audit.mjs') != '' }}
+        run: node scripts/publish-audit.mjs

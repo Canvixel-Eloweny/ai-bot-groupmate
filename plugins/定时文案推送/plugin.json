@@ -1,0 +1,53 @@
+{
+  "id": "scheduled-announcer",
+  "name": "定时文案推送",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "按时刻表用 LLM 写一段文案并直发到指定群（如每周四疯狂星期四）。不走人设提示词。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "weekdays": [4],
+    "times": ["07:00", "13:00", "19:00"],
+    "groupIds": [],
+    "theme": "疯狂星期四 V 我 50 玩梗文案",
+    "minChars": 80,
+    "maxChars": 220
+  },
+  "configSchema": {
+    "weekdays": {
+      "type": "internal",
+      "label": "星期几触发（0=周日…6=周六）",
+      "description": "数组，默认 [4] 表示每周四。"
+    },
+    "times": {
+      "type": "internal",
+      "label": "触发时刻 HH:MM",
+      "description": "数组，如 [\"07:00\",\"13:00\",\"19:00\"]。"
+    },
+    "groupIds": {
+      "type": "internal",
+      "label": "目标群号列表",
+      "description": "数组；空数组则不发送。"
+    },
+    "theme": {
+      "type": "string",
+      "label": "文案主题",
+      "description": "给 LLM 的写作主题提示。"
+    },
+    "minChars": {
+      "type": "number",
+      "label": "最短字数",
+      "description": "过短则跳过发送。"
+    },
+    "maxChars": {
+      "type": "number",
+      "label": "最长字数",
+      "description": "默认 220。"
+    }
+  }
+}

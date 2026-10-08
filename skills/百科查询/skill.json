@@ -1,0 +1,45 @@
+{
+  "id": "wiki-search",
+  "name": "百科查询",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "description": "多源 MediaWiki/百科查询。设定查外部百科，不进本地梗库。需要网络。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "permissions": ["web_fetch"],
+  "settings": {
+    "defaultSource": "https://zh.wikipedia.org/api/rest_v1",
+    "sources": [],
+    "limitChars": 1200
+  },
+  "configSchema": {
+    "defaultSource": {
+      "type": "string",
+      "label": "默认百科",
+      "description": "MediaWiki REST 或 API 基址，如 https://zh.wikipedia.org/api/rest_v1"
+    },
+    "sources": {
+      "type": "internal",
+      "label": "额外源列表",
+      "description": "数组：[{id,label,baseUrl}]，留空只用默认源。"
+    },
+    "limitChars": {
+      "type": "number",
+      "label": "摘要截断长度",
+      "description": "返回正文最多多少字，默认 1200。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "wiki-when",
+        "title": "百科",
+        "priority": 34,
+        "content": "有人问百科/设定/人物出处，且本地知识库没有时，用 wiki_lookup。不要编造条目。查不到就直说。"
+      }
+    ]
+  }
+}

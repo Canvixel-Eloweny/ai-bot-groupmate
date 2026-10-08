@@ -1,0 +1,32 @@
+{
+  "id": "memory-admin",
+  "name": "记忆管理",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "description": "列出/搜索全局群友档案、合并整理、查变更审计。配合 people-memory 与 conversation-memory 使用。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "requires": [],
+  "settings": {
+    "maxList": 30
+  },
+  "configSchema": {
+    "maxList": {
+      "type": "number",
+      "label": "列表最多返回人数",
+      "description": "默认 30。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "memory-admin-note",
+        "title": "记忆管理",
+        "priority": 45,
+        "content": "需要批量看群友档案、搜印象或查谁改了记忆时用 memory_admin。普通记印象用 memory_append/query。"
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "demo-plugin",
+  "name": "示例插件",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "宿主自检用的最小样本：中文目录名 + 英文 id（真实扩展包就是这个形状）。",
+  "author": "QQ-BOT-Creative",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "permissions": [],
+  "requires": [],
+  "settings": {},
+  "configSchema": {}
+}

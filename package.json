@@ -1,0 +1,30 @@
+{
+  "name": "ai-bot-groupmate",
+  "version": "0.1.1",
+  "private": true,
+  "description": "QQ 群 AI 仿真群友桥接层：OneBot v11 <-> OpenAI 兼容模型",
+  "license": "Apache-2.0",
+  "author": "QQ-BOT-Creative contributors",
+  "homepage": "https://github.com/Canvixel-Eloweny/ai-bot-groupmate",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Canvixel-Eloweny/ai-bot-groupmate.git"
+  },
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node test/smoke.js",
+    "test:panel": "bash test/sandbox.sh --run",
+    "panel:boot": "node test/panel-boot.mjs",
+    "verify": "node scripts/check-wb.mjs && node test/smoke.js && bash test/sandbox.sh --run && node test/panel-boot.mjs",
+    "publish:audit": "node scripts/publish-audit.mjs",
+    "config:example": "node scripts/make-config-example.mjs"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
