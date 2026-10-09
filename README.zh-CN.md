@@ -32,10 +32,13 @@ OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建�
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="最后提交" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
 </p>
 
-<p>
-  <img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-light.jpg" alt="控制台（浅色主题）—— 运行状态、模型、容器与内存在一屏内" width="420">
-  <img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-dark.jpg" alt="同一个控制台（深色主题）" width="420">
-</p>
+<hr>
+
+<p><sub><b>控制台预览画面</b> · Console preview —— 同一个控制台的浅色 / 深色两套主题</sub></p>
+
+<p><img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-themes.jpg" alt="控制台的浅色主题与深色主题，左右并排" width="880"></p>
+
+<hr>
 
 <p><sub>仓库默认展示的是<b>英文版</b>（<a href="./README.md">README.md</a>）；
 <b>本文件是中文版，两版不一致时以本文件为准</b>。<br>

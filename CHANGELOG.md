@@ -62,15 +62,19 @@ type**, and that the top of the page showed no evidence of what the thing looks 
   words people actually type, and `topics` went from 12 to 19 (`apache-license` was noise).
   Crowded terms stay out of reach either way — `napcat` has 1178 repositories — so what this
   buys is *findability on the right words*, not rank.
-- **Two console screenshots, light and dark, below the badges.** The first screen had no
-  evidence that this is a finished program. They sit **under** the status badges rather than
-  above them: the badges answer "is it alive", the screenshots answer "what does it look like",
-  and leading with a large image pushed the title and its one-line explanation too far down.
-  ⚠️ Both images show an account nickname in the top bar and on the account card. The project's
+- **One console preview figure — light and dark side by side — below the badges.** The first
+  screen had no evidence that this is a finished program. It sits **under** the status badges
+  rather than above them (the badges answer "is it alive", the figure answers "what does it look
+  like"), with a caption and a rule above and below so it reads as its own band instead of
+  trailing off the hero. The two themes are composed into **one image on purpose**: two
+  `width="420"` tags exceeded the README column (~830px) and silently wrapped onto separate
+  lines, and no pair of fixed widths is safe at every viewport — one image cannot wrap.
+  ⚠️ Both halves show an account nickname, in the top bar and on the account card. The project's
   sentinel table records that nickname as a **real** value, so it was replaced with `小鱼` —
-  the same placeholder the sanitiser already uses in `config.example.json` — before either
-  image was committed, and the replacement was verified by asserting that zero ink pixels
-  remain in the filled region.
+  the same placeholder the sanitiser already uses in `config.example.json` — before either half
+  was committed, and the replacement was verified by asserting that zero ink pixels remain in
+  the filled region (the dark half needed a **reversed** test: its text is brighter than its
+  background).
 - **A three-step quick start on the first screen**, because the previous first screen asked a
   visitor to read an architecture diagram before telling them how to run anything.
 

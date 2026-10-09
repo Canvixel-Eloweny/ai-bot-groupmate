@@ -32,10 +32,13 @@ OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
 </p>
 
-<p>
-  <img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-light.jpg" alt="The console in light theme — runtime status, model, container and memory on one screen" width="420">
-  <img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-dark.jpg" alt="The same console in dark theme" width="420">
-</p>
+<hr>
+
+<p><sub><b>Console preview</b> · 控制台预览画面 — the same console in light and dark</sub></p>
+
+<p><img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-themes.jpg" alt="The console in light theme and dark theme, side by side" width="880"></p>
+
+<hr>
 
 </div>
 
