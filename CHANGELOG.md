@@ -49,25 +49,35 @@ on both platforms.
 
 ### 2026-10-09 · The repository's own front door: what a search engine sees
 
-The project could not be found. It was not a quality problem — both READMEs are already long
-and precise. It was that **the words a visitor actually types appeared nowhere near the top**,
-and that the top of the page showed no evidence of what the thing looks like.
+The project could not be found, and the cause was not quality — both READMEs were already long
+and precise. It was that the repository's **own indexable fields carried nothing a visitor would
+type**, and that the top of the page showed no evidence of what the thing looks like.
 
-- **The title now carries the search terms.** GitHub repository search matches *name /
-  description / topics / owner* and gives a README's body very little weight. The old `<h1>`
-  was the project's own invented brand `QQ-BOT-Creative` — so **searching that exact name
-  returned zero results**. Both READMEs now lead with a description of the thing
-  (`QQ Group AI Member Bot` / `QQ 群 AI 群友机器人`), and the brand name moved into the
-  repository description, where it is actually indexed.
-- **A real screenshot, above the badges.** The first screen was a logo, a title and a row of
-  status shields; the console — the part that makes the project look finished — was nowhere on
-  the page. `assets/panel-overview.png` is a screenshot of the real console, and the badges
-  moved below it. The screenshot's account nickname was replaced with `小鱼`, the same
-  placeholder the sanitiser already uses in `config.example.json`. The project's own sentinel
-  table records that nickname as a **real** value, so it must not appear in an image any more
-  than in a file.
+- **The description was the lever — the README body is not searched at all.** Measured rather
+  than assumed: searching this repository's own brand name returned **zero results** before the
+  change and **one** after, because GitHub repository search matches *name / description /
+  topics / owner*. Two probes settled the README question: a phrase that exists only in this
+  README's text (`chimes in, picks up running jokes`) returns 0 repositories, and so does a
+  phrase that exists only in its `<h1>`. The description now carries the brand name and the
+  words people actually type, and `topics` went from 12 to 19 (`apache-license` was noise).
+  Crowded terms stay out of reach either way — `napcat` has 1178 repositories — so what this
+  buys is *findability on the right words*, not rank.
+- **Two console screenshots, light and dark, below the badges.** The first screen had no
+  evidence that this is a finished program. They sit **under** the status badges rather than
+  above them: the badges answer "is it alive", the screenshots answer "what does it look like",
+  and leading with a large image pushed the title and its one-line explanation too far down.
+  ⚠️ Both images show an account nickname in the top bar and on the account card. The project's
+  sentinel table records that nickname as a **real** value, so it was replaced with `小鱼` —
+  the same placeholder the sanitiser already uses in `config.example.json` — before either
+  image was committed, and the replacement was verified by asserting that zero ink pixels
+  remain in the filled region.
 - **A three-step quick start on the first screen**, because the previous first screen asked a
   visitor to read an architecture diagram before telling them how to run anything.
+
+> **Why the `<h1>` is just the brand name.** An invented brand in the title is not a
+> discoverability problem *by itself* — the searchable words belong in the description — and
+> both READMEs explain what the thing is in the line directly underneath. A keyword-bearing
+> title was tried and reverted once the measurements above showed it bought nothing.
 - **The release has an artifact.** `v0.1.1` was published with a tag, release notes and
   **zero downloadable assets**. The packaged Windows zip is attached to it now — after being
   re-scanned against the project's sentinel table, zero hits.

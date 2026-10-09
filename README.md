@@ -2,7 +2,7 @@
 
 <img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/logo-v2.png" alt="QQ-BOT-Creative" width="140">
 
-# QQ Group AI Member Bot · QQ-BOT-Creative
+# QQ-BOT-Creative
 
 **Turn a spare QQ account into an AI group member.**
 It chimes in, picks up running jokes, lurks, and occasionally speaks up on its own.
@@ -12,8 +12,6 @@ OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build
 <p>
   <b>English</b> · <a href="./README.zh-CN.md">简体中文</a>
 </p>
-
-<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-overview.png" alt="The console: runtime overview, model status and container health on one screen" width="880">
 
 <p>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/actions/workflows/ci.yml"><img alt="Four-layer gates" src="https://img.shields.io/github/actions/workflow/status/Canvixel-Eloweny/ai-bot-groupmate/ci.yml?branch=main&label=four-layer%20gates&logo=githubactions&logoColor=white&style=for-the-badge"></a>
@@ -32,6 +30,11 @@ OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build
   <a href="./README.md#3-four-brain-presets"><img alt="AI" src="https://img.shields.io/badge/AI-OpenAI--compatible-6f42c1?style=for-the-badge"></a>
   <a href="./CHANGELOG.md"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.1-e05d44?style=for-the-badge"></a>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
+</p>
+
+<p>
+  <img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-light.jpg" alt="The console in light theme — runtime status, model, container and memory on one screen" width="420">
+  <img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-dark.jpg" alt="The same console in dark theme" width="420">
 </p>
 
 </div>

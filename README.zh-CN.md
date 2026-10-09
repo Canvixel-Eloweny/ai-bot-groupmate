@@ -2,7 +2,7 @@
 
 <img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/logo-v2.png" alt="QQ-BOT-Creative" width="140">
 
-# QQ 群 AI 群友机器人 · QQ-BOT-Creative
+# QQ-BOT-Creative
 
 **把 QQ 小号变成一个有脾气的群友。**
 它会插话、接梗、潜水，也会偶尔自己冒个泡。
@@ -12,8 +12,6 @@ OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建�
 <p>
   <a href="./README.md">English</a> · <b>简体中文</b>
 </p>
-
-<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-overview.png" alt="控制台：运行总览、模型状态与容器健康在一屏内" width="880">
 
 <p>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/actions/workflows/ci.yml"><img alt="四层门禁" src="https://img.shields.io/github/actions/workflow/status/Canvixel-Eloweny/ai-bot-groupmate/ci.yml?branch=main&label=%E5%9B%9B%E5%B1%82%E9%97%A8%E7%A6%81&logo=githubactions&logoColor=white&style=for-the-badge"></a>
@@ -32,6 +30,11 @@ OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建�
   <a href="./README.zh-CN.md#3-四套大脑预设与切换"><img alt="AI" src="https://img.shields.io/badge/AI-OpenAI--compatible-6f42c1?style=for-the-badge"></a>
   <a href="./CHANGELOG.md"><img alt="版本" src="https://img.shields.io/badge/release-v0.1.1-e05d44?style=for-the-badge"></a>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="最后提交" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
+</p>
+
+<p>
+  <img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-light.jpg" alt="控制台（浅色主题）—— 运行状态、模型、容器与内存在一屏内" width="420">
+  <img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-dark.jpg" alt="同一个控制台（深色主题）" width="420">
 </p>
 
 <p><sub>仓库默认展示的是<b>英文版</b>（<a href="./README.md">README.md</a>）；
