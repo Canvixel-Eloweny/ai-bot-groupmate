@@ -44,6 +44,21 @@ const j = (s, p, d) => p.reduce((o, k) => (o == null ? undefined : o[k]), s) ?? 
 const activePreset = (s) => j(s, ['config', 'activePreset'], 'zhipu');
 const metric = (label, calc, hi = false) => ({ n: calc, l: label, hi });
 const kv = (k, calc) => [k, calc];
+/**
+ * 「健康与占用」的一格内存读数（2026-10-09 · 第 53 轮 · B2）。
+ *
+ * ⚠️ **拿不到数据时返回 `null`**（前端渲染成"暂不支持"），**绝不许返回 0**：
+ *    `readMemory()` 在 Windows 上如实返回 `null`（那边没有 `vm_stat`/`sysctl`/`ps -Ao`），
+ *    而这一格原来写的是 `j(s, ['memory','procs','bridgeMB'], 0)` —— 于是整张卡片
+ *    显示成一片 `0 MB` / `0%`。那是**谎话**：读的人会以为"它几乎不占内存"，
+ *    而不可能想到"这个数字根本没采到"。
+ *    「失败伪装成成功」是本项目反复在清的那一类，所以这里统一走这个辅助。
+ */
+const memCell = (label, path, unit, hi = false) =>
+  metric(label, (s) => {
+    const v = j(s, path);
+    return v == null ? null : `${v}${unit}`;
+  }, hi);
 /* ⚠️ `ico` / `icoTo` 是 2026-10-02 加的两个可选参数（图标变形）：
      `ico`    静态图标名
      `icoTo`  变形目标（**可以是函数**，按状态算）。给了它，
@@ -85,10 +100,21 @@ export const GROUPS = [
                   value: (s) => `${j(s, ['bridge', 'instances'], 0)} 个`,
                   sub: () => '面板只认自己的入口进程',
                   st: (s) => (j(s, ['bridge', 'instances'], 0) > 1 ? 'warn' : 'ok') },
+                /* ⚠️ 第 53 轮（B2）：Windows 便携版走**原生 NapCat**、不装 Docker ⇒
+                   "容器没跑"在那边是一句**假警报**（用户会去查一个根本不存在的容器）。
+                   所以先看 `applicable`：false 时这格说"原生 NapCat"、状态给 ok。
+                   ⚠️ 判据在**后端**（`container.applicable`），前端不自己按平台猜 ——
+                      "这台机器走没走容器"是事实，不该由页面重算一遍。 */
                 { ico: 'container', label: '容器',
-                  value: (s) => (j(s, ['container', 'line'], '') || '—'),
-                  sub: () => 'NapCat（QQ 协议端）',
-                  st: (s) => (j(s, ['container', 'line']) ? 'ok' : 'bad') },
+                  value: (s) => (j(s, ['container', 'applicable']) === false
+                    ? '原生 NapCat'
+                    : (j(s, ['container', 'line'], '') || '—')),
+                  sub: (s) => (j(s, ['container', 'applicable']) === false
+                    ? '不走 Docker（Windows 原生安装）'
+                    : 'NapCat（QQ 协议端）'),
+                  st: (s) => (j(s, ['container', 'applicable']) === false
+                    ? 'ok'
+                    : (j(s, ['container', 'line']) ? 'ok' : 'bad')) },
                 { ico: 'monitor', label: '面板',
                   value: (s) => `pid ${j(s, ['panel', 'pid'], '—')}`,
                   sub: (s) => `已运行 ${fmtDur(j(s, ['panel', 'uptimeMs'], 0))}`,
@@ -100,11 +126,14 @@ export const GROUPS = [
               ] },
               /* 端口**拆成三格**而不是拼成一行 `HTTP 通 · WS 通 · WebUI 通` ——
                  三条各自独立（HTTP 通但 WS 断是真实故障），
-                 拼一行时坏的那个要被逐字读出来，拆开它自己会变红。 */
+                 拼一行时坏的那个要被逐字读出来，拆开它自己会变红。
+                 ⚠️ 第 53 轮（B2）：名字里带上**探的是哪个端口** ——
+                 端口现在跟着配置的 `onebot.wsUrl` 走，而"端口对不上"的表现就是"断"，
+                 把号摆在名字里，用户一眼能核对（原生 NapCat 的端口是自己配的）。 */
               { t: 'ports', label: '协议端端口', items: [
-                { label: 'HTTP', get: (s) => j(s, ['ports', 'onebotHttp']) },
-                { label: 'WS', get: (s) => j(s, ['ports', 'onebotWs']) },
-                { label: 'WebUI', get: (s) => j(s, ['ports', 'webui']) },
+                { label: (s) => `HTTP ${j(s, ['ports', 'onebot', 'http'], '')}`.trim(), get: (s) => j(s, ['ports', 'onebotHttp']) },
+                { label: (s) => `WS ${j(s, ['ports', 'onebot', 'ws'], '')}`.trim(), get: (s) => j(s, ['ports', 'onebotWs']) },
+                { label: 'WebUI 6099', get: (s) => j(s, ['ports', 'webui']) },
               ] },
               { t: 'note', text: '睡眠那一行是**只读**的：改作息在「发言与时机 → 睡眠作息」页，手动让它睡 / 叫它醒走的是控制通道（不改配置）。' },
               { t: 'sleepLine', label: '作息' },
@@ -148,12 +177,12 @@ export const GROUPS = [
             desc: '内存吃紧时本机模型 + Docker 会很挤 —— 与其被系统悄悄杀掉，不如提前看见。',
             ctrls: [
               { t: 'metrics', items: [
-                metric('内存占用率', (s) => `${j(s, ['memory', 'pressure'], 0)}%`, true),
-                metric('空闲内存', (s) => `${j(s, ['memory', 'freeGB'], '—')} GB`),
-                metric('机器人进程', (s) => `${j(s, ['memory', 'procs', 'bridgeMB'], 0)} MB`),
-                metric('本机模型', (s) => `${j(s, ['memory', 'procs', 'localModelMB'], 0)} MB`),
-                metric('Docker', (s) => `${j(s, ['memory', 'procs', 'dockerMB'], 0)} MB`),
-                metric('面板自身', (s) => `${j(s, ['memory', 'procs', 'panelMB'], 0)} MB`),
+                memCell('内存占用率', ['memory', 'pressure'], '%', true),
+                memCell('空闲内存', ['memory', 'freeGB'], ' GB'),
+                memCell('机器人进程', ['memory', 'procs', 'bridgeMB'], ' MB'),
+                memCell('本机模型', ['memory', 'procs', 'localModelMB'], ' MB'),
+                memCell('Docker', ['memory', 'procs', 'dockerMB'], ' MB'),
+                memCell('面板自身', ['memory', 'procs', 'panelMB'], ' MB'),
               ] },
               { t: 'kv', rows: (s) => [
                 kv('实例锁', () => (j(s, ['bridge', 'lock']) ? `被 pid ${s.bridge.lock.pid} 持有` : '无')),
@@ -239,7 +268,12 @@ export const GROUPS = [
             ctrls: [
               { t: 'modebar', calc: (s) => brainModeOf(s) },
               { t: 'buttons', label: '', items: [
-                act('用本机模型（免费·不联网）', 'switch.local', 'btn-ghost'),
+                /* ⚠️ 第 53 轮（B6）：本机模型那套是 Apple Silicon 专用（MLX + QwenChat），
+                   Windows 上**根本不存在实现** ⇒ 这个按钮在那边点了必然失败。
+                   本项目对"给一条走不通的路"有过教训（M7：手册让 Windows 用户点的按钮
+                   第一步就 400），所以直接**不显示**，改用下面那张说明卡指路。 */
+                { ...act('用本机模型（免费·不联网）', 'switch.local', 'btn-ghost'),
+                  when: (s) => j(s, ['localModel', 'supported']) !== false },
                 act('用 DeepSeek 云端', 'switch.cloud', 'btn-ghost'),
                 act('用智谱免费云端', 'switch.zhipu', 'btn-ghost'),
                 act('用千问免费云端', 'switch.qwen', 'btn-ghost'),
@@ -255,7 +289,14 @@ export const GROUPS = [
           },
           {
             id: 'local', title: '本机模型', span: 4,
-            when: (s) => j(s, ['effective', 'isLocal']) === true,
+            /* ⚠️ 两个条件都成立才显示（第 53 轮 · B6）：
+               `isLocal` —— 当前大脑就是本机模型那套；
+               `supported` —— **这个平台上真有这套实现**。
+               第二个条件是新增的：Windows 上 MLX / QwenChat 一个都不存在，
+               而它原来照样显示一整张死控件（状态恒"没在跑"、启动按钮点了必然失败）。
+               用户的真实反应（实测截图）是去「自定义模型」里填 llama.cpp 的目录路径。 */
+            when: (s) => j(s, ['effective', 'isLocal']) === true
+              && j(s, ['localModel', 'supported']) !== false,
             ctrls: [
               { t: 'kv', rows: (s) => [
                 kv('状态', () => (j(s, ['localModel', 'running']) ? '在跑' : (j(s, ['localModel', 'starting']) ? '启动中…' : '没在跑'))),
@@ -277,6 +318,19 @@ export const GROUPS = [
                 act('停止本机模型', 'local.stop', 'btn-danger'),
                 act('打开 QwenChat 界面', 'open.qwenchat'),
               ] },
+            ],
+          },
+          {
+            /* ⚠️ 与上面那张**互斥**（第 53 轮 · B6）：Windows 上本机模型那套实现
+               （MLX 模型格式 + mlx_lm.server / QwenChat）**根本不存在**，
+               所以这里一个控件都不摆 —— 只给一句**能照着做**的替代方案。
+               摆一堆点了必然失败的按钮，比不显示更坏（M7 那条教训）。
+               ⚠️ 文案来自**后端**（`localModel.unsupportedWhy`）：前端不自存一份，
+                  否则两处会慢慢说不一样的话（"一份数据维护两遍"那条纪律的镜像）。 */
+            id: 'local-unsupported', title: '本机模型（此平台不适用）', span: 4,
+            when: (s) => j(s, ['localModel', 'supported']) === false,
+            ctrls: [
+              { t: 'note', text: (s) => j(s, ['localModel', 'unsupportedWhy'], '') },
             ],
           },
           {
@@ -482,6 +536,12 @@ export const GROUPS = [
               options: (s) => Object.entries(j(s, ['customMeta', 'replyLengths'], {})).map(([v, o]) => ({ v, l: o.label, title: o.hint })) },
             { t: 'switch', id: 'r.multi', label: '允许一件事拆成几条发', bind: 'replyStyle.multiMessage',
               hint: '关掉就不管内容多长都合并成一条长消息。' },
+            /* 分条标记（第 53 轮 · B4）。它以前**只有直接编辑 config.json 才能改** ——
+               于是它被脱敏器清成空串时，用户既看不见也改不了，只能在群里看到自己被逐字刷屏。
+               bindSys 走顶层字段，写入路径在 panel/lib/config-route.js（空串会被忽略）。 */
+            { t: 'text', id: 'r.tok', label: '分条标记', bindSys: 'splitToken', ph: '默认 ||',
+              hint: '模型用它把一件事拆成几条发（如「今天天气不错 || 出去走走」）。默认 ||；'
+                + '清空会被忽略 —— 空标记会让分条正则逐字符匹配，回复会被一个字一个字地发出去。' },
             { t: 'switch', id: 'r.at', label: '回复时 @ 上说话的人', bind: 'replyStyle.mentionAt' },
             { t: 'number', id: 'r.cool', label: '连续回复的最小间隔（秒）', bind: 'replyStyle.cooldownSec',
               bounds: 'cooldownSec',

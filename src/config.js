@@ -63,6 +63,31 @@ function idList(v, field) {
 }
 
 /**
+ * `reply.splitToken` 的归一化（2026-10-09 · 第 53 轮 · B4）。
+ *
+ * ⚠️ 这里**不能**写成 `raw.reply?.splitToken ?? '||'` —— `??` 只对 `null`/`undefined` 生效，
+ *    而真正会出问题的那一形态是**空串**，它会原样通过。
+ *    空串进 `brain.parseReply` 的 `text.split(new RegExp('|\\n+'))` 会**逐字符**切开整段回复
+ *    （本机实测：`"今天天气"` → `["今","天","天","气"]`）——
+ *    群里的表现就是「**一个字一个字地发**」。
+ *
+ * 空串有**真实来路**，不是假想：
+ *   `scripts/sanitize-config.mjs` 的凭据判据（`…|token|…$`）曾把 `splitToken` 当成密钥清空，
+ *   于是 `config.example.json` 里写着 `"splitToken": ""`；而**全新安装必然走模板**
+ *   （`loadConfig` 找不到 `config.json` 时直接用模板；便携包 `tools/setup.mjs` 也从模板生成）
+ *   ⇒ 每个新用户都会拿到它。脱敏器那侧已修（见 `isCredentialKey` 的例外表），
+ *   但**老用户盘上的 config.json / 旧模板仍然是空串**，所以兜底这一层不能省。
+ *
+ * 纯函数、零依赖 —— smoke 可以直接喂各种形态（见 §98）。
+ * 想禁用分条请用 `maxChunks: 1` 或 `replyStyle.multiMessage: false`，**不要**用空 token：
+ * 那在实现上等价于"每个字符之间都断开"，是个陷阱不是开关。
+ */
+export function normalizeSplitToken(v) {
+  const s = typeof v === 'string' ? v : '';
+  return s.trim() ? s : '||';
+}
+
+/**
  * 解析「可能是环境变量引用」的密钥值（B9 · K-ENV）。
  *
  * 写法：整个值写成 `"env:ZHIPU_API_KEY"` → 取 `process.env.ZHIPU_API_KEY`。
@@ -385,7 +410,7 @@ export function loadConfig(overridePath) {
       bareGraceMs: Math.max(0, asInt(raw.trigger?.bareGraceMs, 300000)),
     },
     reply: {
-      splitToken: String(raw.reply?.splitToken ?? '||'),
+      splitToken: normalizeSplitToken(raw.reply?.splitToken),
       sendDelayMs: asInt(raw.reply?.sendDelayMs, 700),
       /**
        * 出站节奏（B8 · S-GAP）。

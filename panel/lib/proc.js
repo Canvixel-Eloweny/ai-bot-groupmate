@@ -41,11 +41,25 @@ import { state } from './runtime-state.js';
  *   - 命令失败了（Docker 没装、没权限…）→ 返回 ok:false，绝不能抛
  *   - spawn 同步抛异常（沙箱 / 系统策略禁止起子进程）→ 同样吞掉
  * 否则一次命令失败就会让 /api/state 整个 500，面板直接白屏。
+ *
+ * ⚠️⚠️ `windowsHide: true` 是**必需**的，不是可选的清洁工作（2026-10-09 · 第 53 轮）：
+ *   Windows 上「**没有控制台**的父进程」启动**控制台子系统程序**（powershell.exe /
+ *   docker.exe / taskkill.exe…）时，系统会**新建一个控制台窗口**，命令一结束窗口就关 ——
+ *   用户看到的就是"命令提示符一直跳，闪一下就关了"。
+ *   而本面板**正好就是**这样一个父进程：`scripts/win-launcher.mjs` 用
+ *   `detached + windowsHide` 起它，它自己没有控制台。
+ *   ⇒ 漏掉它，`/api/state` 轮询链上每 9~15 秒就会闪一个黑窗（powershell 列进程 15s TTL、
+ *     docker info 8s TTL），**而 macOS 上永远复现不出来**（那边没有控制台窗口这个概念）。
+ *
+ *   这里与 `shBuffer()` 是**全项目所有外部命令的唯一出口**，所以这两处补上就覆盖了大半；
+ *   剩下的 spawn/execFile 调用点（server.js 起机器人 / 起本机模型 / 看门狗 / taskkill 等）
+ *   各自补 —— 判据见 `check-wb` §97（它按"该文件真的 import 了 node:child_process"来判，
+ *   所以不会把注入进来的回调（如 `src/control-channel.js` 的 `exec`）误伤成漏写）。
  */
 export function sh(cmd, args, timeoutMs = 15000) {
   return new Promise((resolve) => {
     try {
-      execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
         resolve({ ok: !err, stdout: stdout || '', stderr: stderr || '', err });
       });
     } catch (err) {
@@ -57,7 +71,7 @@ export function sh(cmd, args, timeoutMs = 15000) {
 export function shBuffer(cmd, args, timeoutMs = 8000) {
   return new Promise((resolve) => {
     try {
-      execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, encoding: 'buffer' }, (err, stdout) => {
+      execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, encoding: 'buffer', windowsHide: true }, (err, stdout) => {
         resolve({ ok: !err, buf: stdout || Buffer.alloc(0), err });
       });
     } catch (err) {
@@ -156,10 +170,11 @@ export async function ensureDocker(waitMs = 150000, onProgress) {
   //    "正在等 Docker" 就把自己挂住，所以 Windows 这一支 detached + unref。
   if (IS_WIN) {
     try {
-      spawn(DOCKER_APP, [], { detached: true, stdio: 'ignore' }).unref();
+      // windowsHide 同上（第 53 轮）：面板没有控制台，不隐藏就会多弹一个 Docker Desktop 的黑窗。
+      spawn(DOCKER_APP, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     } catch { /* 起不来就交给下面的轮询超时，让它如实报"等不到" */ }
   } else {
-    execFile('/usr/bin/open', ['-a', 'Docker'], () => {});
+    execFile('/usr/bin/open', ['-a', 'Docker'], { windowsHide: true }, () => {});
   }
 
   const t0 = Date.now();
@@ -187,16 +202,82 @@ function sumRssKb(psOut, re) {
 }
 
 /**
+ * 从 Windows 的「一次快照」算出「健康与占用」那一份数据（2026-10-09 · 第 53 轮 · B2）。
+ *
+ * **纯函数** —— 快照由调用方取来（`panel/server.js` 的 `winMemorySnapshot()`，
+ * 经 `makeStateCollector` 的注入参数进来）。
+ *
+ * 为什么取数与算数要分开：
+ *   ① Windows 上没有 `vm_stat`/`sysctl`/`ps -Ao`（那些是 macOS 专有），取数只能起
+ *      PowerShell —— 那是 IO，要缓存、要限频；
+ *   ② 而**口径换算**是纯逻辑，分开之后能在本机（macOS）被直接喂数据断言，
+ *      不用非等一台 Windows 才能验（这一批最缺的就是"能在本机验的部分"）。
+ *
+ * ⚠️ 口径必须写清楚，否则数字会被读成别的东西：
+ *    · `totalGB` / `usedGB` / `freeGB` / `pressure` 是**整机物理内存**口径
+ *      （`Win32_OperatingSystem` 的 TotalVisibleMemorySize / FreePhysicalMemory，单位 KB）
+ *      —— **不是"本项目占用"**。macOS 那一支算的是 active+wired+compressed，
+ *      两边口径不同，界面上不能把它们当成同一个数来比。
+ *    · `procs.*` 才是**按进程**的口径（WorkingSetSize 求和），也就是"谁在吃内存"。
+ *
+ * @param {{os?:object, procs?:object|Array}} snapshot
+ * @returns {object|null} `null` = 快照不可用（界面显示"暂不支持"，**绝不显示 0**）
+ */
+export function winMemoryOf(snapshot) {
+  const osInfo = snapshot?.os;
+  const list = Array.isArray(snapshot?.procs)
+    ? snapshot.procs
+    : (snapshot?.procs ? [snapshot.procs] : []);
+
+  const totalKb = Number(osInfo?.TotalVisibleMemorySize);
+  const freeKb = Number(osInfo?.FreePhysicalMemory);
+  if (!Number.isFinite(totalKb) || totalKb <= 0) return null;
+
+  const free = Number.isFinite(freeKb) && freeKb >= 0 ? freeKb : 0;
+  const usedKb = Math.max(0, totalKb - free);
+  const GB = (kb) => Math.round((kb / 1048576) * 10) / 10;
+
+  // ⚠️ 按 **CommandLine** 分类，不能只按进程名：面板和机器人**都是 node.exe**，
+  //    只有命令行里那个入口能把它们分开（这也是 Windows 上唯一的线索）。
+  const rows = list.map((p) => ({
+    name: String(p?.Name ?? ''),
+    cmd: String(p?.CommandLine ?? ''),
+    mb: Math.round(Number(p?.WorkingSetSize || 0) / 1048576),
+  }));
+  const sumOf = (re) => rows
+    .filter((r) => re.test(r.cmd) || re.test(r.name))
+    .reduce((n, r) => n + r.mb, 0);
+
+  return {
+    totalGB: GB(totalKb),
+    usedGB: GB(usedKb),
+    freeGB: GB(free),
+    // Windows 上不区分"可回收的缓存"，如实给 0（这两个字段在那边没有对应读数，
+    // 与 macOS 的 `inactive` 不是一回事 —— 别拿它去比）。
+    cachedGB: 0,
+    swapGB: 0,
+    pressure: Math.round((usedKb / totalKb) * 100),
+    procs: {
+      bridgeMB: sumOf(/src[\\/]index\.js/),
+      panelMB: sumOf(/panel[\\/]server\.js/),
+      // 本机模型的进程名随后端变（llama-server / ollama / koboldcpp / python…），
+      // 所以再给一条"命令行里出现模型文件"的兜底 —— 宁可宽一点，也别漏报成 0。
+      localModelMB: sumOf(/llama-server|llama\.exe|ollama|koboldcpp|mlx_lm\.server|\.gguf/i),
+      dockerMB: sumOf(/docker|com\.docker|vmmem/i),
+    },
+  };
+}
+
+/**
  * 内存总览。16GB 机器上本机模型(约 2.9G) + Docker(约 2-3G) 就已经很挤了，
  * 挤到极限 macOS 会直接把 Docker 虚拟机杀掉 —— 表现就是「容器凭空消失」。
  * 这里把占用摆到明面上，用户才知道该关哪个。
+ *
+ * ⚠️ Windows 上这一整段走不了（`vm_stat`/`sysctl`/`ps -Ao` 一个都不存在），
+ *    所以**如实返回 null**，由调用方用 `winMemoryOf()` 那份快照顶上（B2）。
+ *    不在这里起 PowerShell：那个是"取数"，有缓存与限频的需求，归 L3 的 server.js 管。
  */
 async function readMemory() {
-  // ⚠️ Windows（2026-10-08）：这一整段是 macOS 专有的（`vm_stat` / `sysctl` / `ps -Ao`），
-  //    Windows 上一个都没有。这里**如实返回 null**（内存卡片显示"暂不支持"），
-  //    不去造一个假的数字、也不去 spawn PowerShell —— 它每 5 秒被调一次，
-  //    为了一张卡片起一次进程，成本不对等。
-  //    调用方本来就支持 null（命令跑不起来时也是这条路），所以这里是**降级**不是报错。
   if (IS_WIN) return null;
 
   const [vm, psOut, memsize, swap] = await Promise.all([

@@ -1,15 +1,19 @@
 <div align="center">
 
-<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/logo-v2.png" alt="QQ-BOT-Creative" width="200">
+<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/logo-v2.png" alt="QQ-BOT-Creative" width="140">
 
-# QQ-BOT-Creative
+# QQ 群 AI 群友机器人 · QQ-BOT-Creative
 
 **把 QQ 小号变成一个有脾气的群友。**
 它会插话、接梗、潜水，也会偶尔自己冒个泡。
 
+OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建网页控制台
+
 <p>
   <a href="./README.md">English</a> · <b>简体中文</b>
 </p>
+
+<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-overview.png" alt="控制台：运行总览、模型状态与容器健康在一屏内" width="880">
 
 <p>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/actions/workflows/ci.yml"><img alt="四层门禁" src="https://img.shields.io/github/actions/workflow/status/Canvixel-Eloweny/ai-bot-groupmate/ci.yml?branch=main&label=%E5%9B%9B%E5%B1%82%E9%97%A8%E7%A6%81&logo=githubactions&logoColor=white&style=for-the-badge"></a>
@@ -35,6 +39,25 @@
 The English README is what the repository shows by default; this Chinese edition is authoritative when the two differ.</sub></p>
 
 </div>
+
+## 三步跑起来
+
+两条路线，终点都是同一个控制台（`127.0.0.1:8788`）。
+
+**macOS / Linux —— Docker**（macOS 上推荐）。NapCat 跑在容器里，**你自己的 QQ 客户端完全不动**：
+
+```bash
+bash scripts/bootstrap.sh      # 检查环境 → 起容器 → 打印 WebUI 登录地址
+node scripts/check-onebot.js   # 确认协议端活着，并列出你已加入的群
+npm start                      # 跑机器人
+```
+
+**Windows —— 完全不需要 Docker。** 从 [Releases](../../releases/latest) 下载打包好的压缩包，
+解压后依次运行 `1-SETUP.bat` → `3-START-NAPCAT.bat` → `2-START.bat`。
+
+有两样东西永远要你自己准备：一个 **OneBot v11 协议端**（实际用 NapCatQQ）和一个**模型**
+（本机跑，或一个 API Key）。逐步操作、以及每一步失败怎么办，见
+[`USER-GUIDE.zh-CN.md`](./USER-GUIDE.zh-CN.md)。
 
 ---
 

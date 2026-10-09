@@ -18,7 +18,7 @@ say() { printf "\033[1m%s\033[0m\n" "$1"; }
 # 先取总长度
 TOTAL="$(curl -sIL --max-time 30 "$URL" 2>/dev/null | grep -i '^content-length' | tail -1 | tr -dc '0-9')"
 if [ -z "$TOTAL" ]; then
-  echo "✗ 拿不到文件长度，检查网络或版本号（当前 $VERSION）"
+  echo "✗ 拿不到文件长度，检查网络或版本号（当前 ${VERSION}）"
   exit 1
 fi
 say "目标 ${OUT}  ${VERSION}  $((TOTAL / 1048576)) MB  分 ${CHUNKS} 段并行"
@@ -59,7 +59,7 @@ rm -f .dlpart.*
 
 GOT=$(stat -f%z "$OUT" 2>/dev/null || echo 0)
 if [ "$GOT" -ne "$TOTAL" ]; then
-  echo "✗ 大小不符：拿到 $GOT，期望 $TOTAL"
+  echo "✗ 大小不符：拿到 ${GOT}，期望 $TOTAL"
   exit 1
 fi
 

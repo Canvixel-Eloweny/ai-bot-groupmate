@@ -47,7 +47,7 @@ import {
 // function 型工具只在 provider 非 local 时才进请求体，而 mock 必然是本机地址。
 // ⚠️ 判据只认生产模块那一份：在测试里再写一遍 `/bigmodel\.cn/` 就等于把
 //    "地址属于哪家"这件事抄了第二份（B11c 收敛掉的正是这类东西）。
-import { providerOf, isLocalBase, providerHostOk, consoleHostReject } from '../src/net-rules.js';
+import { providerOf, isLocalBase, providerHostOk, consoleHostReject, onebotEndpointOf } from '../src/net-rules.js';
 // 「这笔花不花钱」的唯一判据（2026-10-07 · 接千问时收敛进 src）。T381 直接喂它反例。
 import { quotaOf, QUOTA_KIND } from '../src/free-quota.js';
 import { recordUsage, usageFilePath, usageLevelOf, usageGateOf, sumUsageOf, USAGE_LIMITS, tokenTotalOf } from '../src/usage.js';
@@ -116,10 +116,14 @@ import { GATE_ERROR_KIND, scanRules, kindOf, isBlocking } from '../src/gate-scan
 //    在这里**改指**到本模块的同形入口上。
 import { NEXT_ENTRY, resolveNextAsset, readNextAsset } from '../panel/lib/next-page.js';
 import { NEXT_DIR } from '../panel/lib/paths.js';
+// 第 53 轮 B2：Windows 上「健康与占用」那几个读数的**换算**是纯函数（取数在 server.js，
+// 那是 IO）。把它 import 进来，就能在 macOS 上把 Windows 形态的数据直接喂进去断言 ——
+// 这一批最缺的正是"能在本机验的那部分"。
+import { winMemoryOf } from '../panel/lib/proc.js';
 // D21：上传通道（原样收字节）—— 与面板服务端**同一个实现**，不在测试里另抄一份。
 import { readBodyBuffer } from '../panel/lib/http-io.js';
 // 升级总进度（第 43 轮 B14 · PROG-BAR）。**从生产模块 import**，不在测试里另写一份判据。
-import { loadConfig, resolveSecret, plaintextFallbackNotice } from '../src/config.js';
+import { loadConfig, resolveSecret, plaintextFallbackNotice, normalizeSplitToken } from '../src/config.js';
 // Q11：入睡前那句晚安的判据、目标挑选与文案默认值（只认生产模块那一份）
 import { readSleep, goodnightOf, goodnightTargetOf, GOODNIGHT_DEFAULT } from '../src/sleep.js';
 // 第 8 轮（开源前审查）：剥注释器本身的行为要能被断言（字符串感知 + 收口守卫）。
@@ -10604,6 +10608,118 @@ const fs = require('node:fs');
           + '未知服务商不猜 · 档位 low/medium/xhigh（无 high，最高档映射到 xhigh）· functions 保守取 false',
         bad381.length === 0,
         bad381.length ? bad381.join(' | ') : '五组全过'
+      );
+    }
+
+    // ── 第 53 轮 · Windows 适配（B4：群里"一个字一个字地发"）────────────────────────
+    // 这一批的缺陷全都是「**在那个平台上不会报错**」，所以能在本机（macOS）验的只有两个方向：
+    //   ① **纯函数**：喂 Windows / 坏配置形态的数据（就是这一组）；
+    //   ② **静态形状**：该有的分支在不在、有没有第二份判据（`check-wb` §96/§97/§98）。
+    // 本组打的是**根因那一环**：`reply.splitToken` 是空串时，`new RegExp('|\\n+')`
+    // 会在**每个字符之间**都匹配 ⇒ `split` 把整段回复切成一串单字 ⇒ 群里一个字一个字地发。
+    // ⚠️ 判据必须看**条数**（1 段）而不是"没抛异常" —— 逐字发送本身不抛任何东西，
+    //    这正是它能在四层回归全绿的情况下活到今天的原因（夹具全把 splitToken 写死成 '||'）。
+    {
+      const bad383 = [];
+      const ck383 = (cond, msg) => { if (!cond) bad383.push(msg); };
+
+      // ① 归一化层（src/config.js）：空/空白/非字符串一律回落 '||'，自定义标记原样保留
+      ck383(normalizeSplitToken('') === '||', "空串没有回落到 '||'");
+      ck383(normalizeSplitToken('   ') === '||', "全空白没有回落到 '||'");
+      ck383(normalizeSplitToken(undefined) === '||', "undefined 没有回落到 '||'");
+      ck383(normalizeSplitToken(null) === '||', "null 没有回落到 '||'");
+      ck383(normalizeSplitToken('##') === '##', '自定义标记被改掉了');
+      ck383(normalizeSplitToken('||') === '||', "'||' 被动了");
+
+      // ② 守门层（src/brain.js）：即使有人绕过归一化把空串递进来，也不许逐字切分
+      const cfgWin53 = loadConfig();
+      const brainOf53 = (tok) => {
+        const c = { ...cfgWin53, reply: { ...cfgWin53.reply, splitToken: tok } };
+        return new Brain(c, new SessionStore(c));
+      };
+      const oneText53 = '今天天气真不错啊，要不出去走走';
+      const emptyChunks53 = brainOf53('').parseReply(oneText53).chunks;
+      ck383(emptyChunks53.length === 1,
+        `空 splitToken 时切成了 ${emptyChunks53.length} 段（应为 1 段 —— 逐字发送就是从这里来的）`);
+      ck383(emptyChunks53[0] === oneText53, '空 splitToken 时正文被改动了');
+      const tokChunks53 = brainOf53('||').parseReply('今天||明天').chunks;
+      ck383(tokChunks53.length === 2 && tokChunks53[0] === '今天' && tokChunks53[1] === '明天',
+        `正常 splitToken 的分条坏了：${JSON.stringify(tokChunks53)}`);
+      // 反向：空 token 也不该把换行分条一起弄丢（"只按换行分条"是它的语义）
+      const nlChunks53 = brainOf53('').parseReply('第一句\n第二句').chunks;
+      ck383(nlChunks53.length === 2, `空 splitToken 时换行分条丢了：${JSON.stringify(nlChunks53)}`);
+
+      check(
+        'T383 ★ Windows 适配（2026-10-09 · 第 53 轮 B4）：分条标记的三层防御 —— '
+          + '归一化（空/空白/非字符串 → ||，自定义标记原样）· 守门（空 token 不逐字切、换行分条仍在）· '
+          + '正常分条不受影响。这一条打的就是"群里一个字一个字地发"的根因',
+        bad383.length === 0,
+        bad383.length ? bad383.join(' | ') : '两组全过'
+      );
+    }
+
+    // ── 第 53 轮 · Windows 适配（B2：占用全是 0 / 端口恒"断"）────────────────────
+    // 打两个**纯函数**（取数在别处，因此能在本机验）：
+    //   · `winMemoryOf`      —— Windows 快照 → 「健康与占用」那一份数据（口径换算）
+    //   · `onebotEndpointOf` —— 配置里的 onebot 段 → 面板该去探的协议端地址
+    // ⚠️ 造数据时必须用**真实的 Windows 命令行形态（单反斜杠）** ——
+    //    本轮我自己第一版就写成了双反斜杠，于是 `bridgeMB`/`panelMB` 恒 0 却"看着像过了"
+    //    （它只是安静地算成 0，不抛任何东西）。这正是要把它钉进断言的理由：
+    //    **判据不许靠"我记得路径长什么样"**。
+    {
+      const bad384 = [];
+      const ck384 = (cond, msg) => { if (!cond) bad384.push(msg); };
+      const MB = 1048576;
+      const winCmd = (entry) => `"C:\\Program Files\\nodejs\\node.exe" --max-old-space-size=384 ${entry}`;
+
+      // ① 正常快照：整机口径 + 按进程口径都要对
+      const snap384 = {
+        os: { TotalVisibleMemorySize: 16777216, FreePhysicalMemory: 4194304 }, // 16G / 4G 空闲
+        procs: [
+          { Name: 'node.exe', CommandLine: winCmd('src\\index.js'), WorkingSetSize: 200 * MB },
+          { Name: 'node.exe', CommandLine: winCmd('panel\\server.js'), WorkingSetSize: 100 * MB },
+          { Name: 'llama-server.exe', CommandLine: 'llama-server -m qwen3-4b.gguf', WorkingSetSize: 300 * MB },
+          { Name: 'Docker Desktop.exe', CommandLine: '', WorkingSetSize: 500 * MB },
+        ],
+      };
+      const m384 = winMemoryOf(snap384);
+      ck384(!!m384, '正常快照算出 null 了');
+      if (m384) {
+        ck384(m384.totalGB === 16, `总内存算成 ${m384.totalGB}（应 16）`);
+        ck384(m384.freeGB === 4, `空闲内存算成 ${m384.freeGB}（应 4）`);
+        ck384(m384.usedGB === 12, `已用内存算成 ${m384.usedGB}（应 12）`);
+        ck384(m384.pressure === 75, `压力算成 ${m384.pressure}%（应 75）`);
+        ck384(m384.procs.bridgeMB === 200, `机器人占用算成 ${m384.procs.bridgeMB} MB（应 200）—— 注意命令行是**单反斜杠**`);
+        ck384(m384.procs.panelMB === 100, `面板占用算成 ${m384.procs.panelMB} MB（应 100）`);
+        ck384(m384.procs.localModelMB === 300, `本机模型占用算成 ${m384.procs.localModelMB} MB（应 300）`);
+        ck384(m384.procs.dockerMB === 500, `Docker 占用算成 ${m384.procs.dockerMB} MB（应 500）`);
+      }
+      // ② 单进程时 ConvertTo-Json 不套数组（PowerShell 的老毛病）—— 必须照样能算
+      const one384 = winMemoryOf({ os: snap384.os, procs: snap384.procs[0] });
+      ck384(one384 && one384.procs.bridgeMB === 200, '单个进程（非数组）那一支没处理 —— 刚启动时面板会漏报');
+      // ③ **采不到就是 null**，绝不许编一个 0（前端据此显示"暂不支持"）
+      ck384(winMemoryOf(null) === null && winMemoryOf({}) === null && winMemoryOf({ os: {} }) === null,
+        '采不到时没有返回 null —— 那会让界面显示成 0（"它不占内存"是谎话）');
+
+      // ④ 协议端地址：端口必须**跟着配置走**（第 53 轮之前是写死的 3000/3001）
+      const e384a = onebotEndpointOf({ wsUrl: 'ws://127.0.0.1:3001' });
+      ck384(e384a.wsPort === 3001 && e384a.wsConfigured, '默认 wsUrl 解析错了');
+      const e384b = onebotEndpointOf({ wsUrl: 'ws://192.168.1.9:9090' });
+      ck384(e384b.wsHost === '192.168.1.9' && e384b.wsPort === 9090,
+        '换了端口的 wsUrl 没跟上 —— Windows 上原生 NapCat 的端口就是用户自己配的，写死就等于连探都不探');
+      const e384c = onebotEndpointOf({});
+      ck384(!e384c.wsConfigured && e384c.wsPort === 3001 && e384c.httpIsDefault,
+        '空配置时的回落不对（应：未配置 + 默认 3001 + http 标记为默认值）');
+      const e384d = onebotEndpointOf({ wsUrl: 'ws://h:4000', httpUrl: 'http://h:4001' });
+      ck384(e384d.httpPort === 4001 && e384d.httpIsDefault === false,
+        '显式给的 httpUrl 没被采用（回落仍是默认端口）');
+
+      check(
+        'T384 ★ Windows 适配（2026-10-09 · 第 53 轮 B2）：内存快照换算（整机口径 + 按进程口径，'
+          + '单进程非数组那一支 · 采不到一律 null 不许编 0）· 协议端地址跟着配置走'
+          + '（换端口/默认回落/显式 httpUrl 三态）',
+        bad384.length === 0,
+        bad384.length ? bad384.join(' | ') : '四组全过'
       );
     }
 

@@ -69,6 +69,21 @@ token 的注入落点**只有这一处**（`injectPanelToken`，只替换 `<meta
   - `allow` / `deny` / `trigger`、`persona`、`custom`（工作台 8 分区）
   - `usage`（用量，**按账本文件签名 + 当天日期缓存**，逐文件解析结果也各自缓存）、`localChannel`（本机两条通道互斥状态）
   - `panel`（pid/bootedAt/codeMtime/codeMtimeNow/**stale**）—— 用于检测「面板进程跑旧代码」
+  - **第 53 轮（Windows 适配）新增 / 改动的几项**（2026-10-09）：
+    · `container.applicable` —— **这台机器走没走"容器"这条路**。`false` = 原生 NapCat
+      （Windows 便携版不装 Docker）⇒ 页面**不许**把"容器没跑"当故障显示（那是假警报，
+      用户会去查一个不存在的容器）。判据在后端，前端不按平台自己猜。
+    · `ports.onebot`（`http` / `ws` / `wsConfigured` / `httpIsDefault`）—— 面板**探的是哪两个端口**。
+      端口取自 `config.onebot.wsUrl`（**不再写死 3000/3001**，那两个数字只是 macOS 的
+      Docker 路线"容器端口映射"的巧合）；下发这四个数字是为了让用户能一眼核对。
+    · `localModel.supported` / `localModel.unsupportedWhy` —— 本机模型那套（MLX + QwenChat）
+      是 **Apple Silicon 专用**的。Windows 上 `supported: false`，页面据此**整块隐藏并指路**
+      （而不是摆一堆点了必然失败的控件 —— 这条是本项目 M7 那条教训的直接应用）。
+    · `config.splitToken` —— `reply.splitToken` 从此**面板可改**（见第 10 节 `POST /api/config`，
+      **空串会被忽略、保持原值**）。它以前只有直接编辑 `config.json` 才能改，而**空串**会让
+      回复被**逐字**发出去（分隔正则退化成"每个字符之间都匹配"）。
+    · `memory` 可能是 **`null`**（Windows 上采不到、或命令失败）—— 页面渲染成**「暂不支持」**，
+      **绝不许**兜成 `0`：`0 MB` 会被读成"它不占内存"，那是撒谎。
   - `emotion` / `people` / `gallery` / `apiDeals`（2026-10-02 新增）—— **插件写的数据**，
     由 `panel/lib/bot-data.js` **直接读盘**后白名单投影：`data/bot-state.json`（本体情绪）·
     `data/memory/people/*.json`（群友印象）· `data/images-lib/index.json`（自定义图库，只报张数）·

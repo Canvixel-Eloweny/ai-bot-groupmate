@@ -86,7 +86,7 @@ rm -f .qpart.*
 
 GOT=$(stat -f%z "${OUT}.part" 2>/dev/null || echo 0)
 if [ "$GOT" -ne "$TOTAL" ]; then
-  echo "✗ 大小不符：拿到 $GOT，期望 $TOTAL"
+  echo "✗ 大小不符：拿到 ${GOT}，期望 $TOTAL"
   exit 1
 fi
 mv "${OUT}.part" "$OUT"

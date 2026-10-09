@@ -60,6 +60,28 @@ const log = scoped('brain');
 
 const SILENT = '[SILENT]';
 
+/**
+ * 「`reply.splitToken` 是空串」**只警告一次**（2026-10-09 · 第 53 轮 · B4）。
+ *
+ * 为什么要有这条守门（而不是只靠 `src/config.js` 的归一化）：
+ *   归一化只管**从 config.json 装载**这一条路。而 `brain.parseReply` 拿到的 `cfg`
+ *   也可能是测试夹具、脚本直接构造的对象、或将来新加的配置来源 —— 空串在那里
+ *   就是"每个字符之间都断开"，一条完整回复会被**逐字**发到群里。
+ *   所以两层都要有：归一化是兜底，这里是**守门**（不依赖任何调用方的自觉）。
+ *
+ * 为什么只警告一次：它每来一条群消息都会被算到，每次都打会把真正的告警冲掉
+ *   （本项目在别的扫描器上踩过这个形状）。但**绝不能不打** ——
+ *   "为什么没分条"必须留下可查的线索，否则又是一次静默降级。
+ */
+let splitTokenWarned = false;
+function warnSplitTokenOnce() {
+  if (splitTokenWarned) return;
+  splitTokenWarned = true;
+  log.warn('reply.splitToken 是空串 —— 已按「只按换行分条」处理。'
+    + '空串会让分隔正则逐字符匹配，把一条回复切成单字发出去；'
+    + '请在 config.json 的 reply.splitToken 填回 "||"');
+}
+
 
 export class SessionStore {
   constructor(cfg) {
@@ -707,8 +729,15 @@ export class Brain {
 
     const { splitToken, maxChunks, maxCharsPerChunk } = this.cfg.reply;
     const safety = this.cfg.custom?.safety || {};
+    // ⚠️ 空 token **绝不能**进正则（2026-10-09 · 第 53 轮 · B4）：
+    //    `new RegExp('|\\n+')` 会在**每个字符之间**都匹配 ⇒ `split` 把整段回复切成单字
+    //    （实测 `"今天天气"` → `["今","天","天","气"]`），群里的表现是「一个字一个字地发」。
+    //    空 token 的语义定为「只按换行分条」—— 不丢功能，只是少一个分隔符。
+    const token = typeof splitToken === 'string' ? splitToken : '';
+    if (!token.trim()) warnSplitTokenOnce();
+    const splitter = token.trim() ? new RegExp(`${escapeRe(token)}|\\n+`) : /\n+/;
     let chunks = text
-      .split(new RegExp(`${escapeRe(splitToken)}|\\n+`))
+      .split(splitter)
       .map((s) => s.trim().replace(/^["“”']|["“”']$/g, '').trim())
       // 小模型经常把 [SILENT] 混在中间某一段里输出，混进来就整段丢掉，
       // 否则群里会真的冒出一句「[SILENT] 上班被骂确实烦…」

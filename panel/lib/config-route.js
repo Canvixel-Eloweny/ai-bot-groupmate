@@ -189,6 +189,18 @@ export function makeConfigRoute(deps) {
       cfg.persona.name = body.personaName.trim();
     }
 
+    // ── 回复分段（2026-10-09 · 第 53 轮 · B4）──
+    // `reply.splitToken` 此前**只有配置文件能改**（面板上没有任何入口），而它恰好是最容易
+    // 坏的一个字段：脱敏器曾把它当凭据清空、写进了 `config.example.json`，于是全新安装的
+    // 用户拿到的就是一份"一条回复会被逐字切开发出去"的配置
+    // （详见 `src/config.js` 的 `normalizeSplitToken` 注释）。
+    // 现在补上写入路径，并**当场判空**：空串在这里被丢掉（保持原值），
+    // 界面点不出坏配置，好过让用户在群里被逐字刷屏之后才发现。
+    cfg.reply = cfg.reply || {};
+    if (typeof body.splitToken === 'string' && body.splitToken.trim()) {
+      cfg.reply.splitToken = body.splitToken.trim();
+    }
+
     // ── 自定义工作台那一整块 ──
     // 走 patchCustom 而不是整份替换：工作台有八个分区，前端每次只提交它自己那块，
     // 直接替换会把没提交的字段冲回默认值（"我只改了安全设置，人格怎么没了"）。

@@ -1,15 +1,19 @@
 <div align="center">
 
-<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/logo-v2.png" alt="QQ-BOT-Creative" width="200">
+<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/logo-v2.png" alt="QQ-BOT-Creative" width="140">
 
-# QQ-BOT-Creative
+# QQ Group AI Member Bot · QQ-BOT-Creative
 
 **Turn a spare QQ account into an AI group member.**
 It chimes in, picks up running jokes, lurks, and occasionally speaks up on its own.
 
+OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build web console
+
 <p>
   <b>English</b> · <a href="./README.zh-CN.md">简体中文</a>
 </p>
+
+<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-overview.png" alt="The console: runtime overview, model status and container health on one screen" width="880">
 
 <p>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/actions/workflows/ci.yml"><img alt="Four-layer gates" src="https://img.shields.io/github/actions/workflow/status/Canvixel-Eloweny/ai-bot-groupmate/ci.yml?branch=main&label=four-layer%20gates&logo=githubactions&logoColor=white&style=for-the-badge"></a>
@@ -31,6 +35,26 @@ It chimes in, picks up running jokes, lurks, and occasionally speaks up on its o
 </p>
 
 </div>
+
+## Quick start
+
+Two supported routes. Both end at the same console, on `127.0.0.1:8788`.
+
+**macOS / Linux — Docker** (the recommended route on macOS). NapCat runs in a container, so **your own
+QQ client is never touched**:
+
+```bash
+bash scripts/bootstrap.sh      # check the environment, start the container, print the WebUI login URL
+node scripts/check-onebot.js   # confirm the protocol side is alive and list the groups you are in
+npm start                      # run the bot
+```
+
+**Windows — no Docker at all.** Download the packaged build from
+[Releases](../../releases/latest), unzip it, then run `1-SETUP.bat` → `3-START-NAPCAT.bat` → `2-START.bat`.
+
+Two things you always supply yourself: an **OneBot v11 implementation** (in practice NapCatQQ) and a
+**model** — a local one, or an API key. Step-by-step instructions, including what to do when a step
+fails: [`USER-GUIDE.md`](./USER-GUIDE.md).
 
 ---
 

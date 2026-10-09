@@ -64,7 +64,7 @@ console.log = (first, ...rest) => {
  * ⚠️ `MIN_CONTRACTS` 是**下限**，只许增；唯一合法的下降是"被断言的对象真被删了"
  *    （那时两数同向各减 1 + 在提交信息里写理由）。
  */
-const MIN_CONTRACTS = 101;
+const MIN_CONTRACTS = 104;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -14237,14 +14237,334 @@ const LIB_SRC_ALLOW = [
   }
   subHit('跨平台分支');
 
+  // ⑦ 面板起机器人必须用**绝对入口**（2026-10-09 · 第 53 轮）。
+  //
+  //    为什么这条要在静态层钉住：Windows 上"读别的进程的工作目录"没有公开手段
+  //    （`Win32_Process` 就没这个字段），所以 `isOurBridge` 退到 `absEntryInRoot()`
+  //    —— 那条判据**只认绝对入口**（`src/bridge-proc.js`）。
+  //    面板却一直是用相对入口起的（`spawn(NODE, […, 'src/index.js'], { cwd: ROOT })`）⇒
+  //    它**认不出自己刚启动的机器人** ⇒「实例数」恒 0、孤儿清理也看不见它，
+  //    而且**一个字都不报**（这是本项目最贵的一类）。
+  //
+  //    ⚠️ 这件事在 `bridge-proc.js` 里被写成"用 `npm start`（相对入口）起的认不出来"，
+  //       读起来像是边角情况 —— **而面板点按钮走的正是相对入口**，那条"已知限制"
+  //       实际盖住的是主路径。所以判据必须钉在**启动处**，不能只在注释里留一句。
+  const srvSrc53 = read('../panel/server.js');
+  const entryAbs = /const entry = path\.join\(ROOT, 'src', 'index\.js'\);/.test(srvSrc53);
+  const entryRel = /spawn\(NODE, \[`--max-old-space-size=\$\{BRIDGE_MAX_OLD_SPACE_MB\}`, 'src\/index\.js'\]/.test(srvSrc53);
+  if (!entryAbs) {
+    problems.push("panel/server.js 的 startBridge 没有把入口算成绝对路径（应有一句 `const entry = path.join(ROOT, 'src', 'index.js')`）"
+      + ' —— Windows 上绝对入口是**唯一**能把它认成本项目机器人的凭据');
+  }
+  if (entryRel) {
+    problems.push("panel/server.js 的 startBridge 又写回了相对入口字面量 'src/index.js' —— "
+      + '那样 Windows 一侧的 absEntryInRoot 会判"不是我们的"⇒「实例数」恒 0（且不报错）');
+  }
+  subHit('跨平台分支');
+
+  // ⑧ 协议端地址**只有一个来源**，且探测不许被"容器"门住（2026-10-09 · 第 53 轮 · B2）。
+  //
+  //    `state-collector.js` 里曾经写死 `3000` / `3001` —— 那两个数字是 macOS 那条
+  //    Docker 路线「容器端口映射」的巧合，**不是协议端的定义**。Windows 便携版跑的是
+  //    **原生 NapCat**，端口由用户在自己的 NapCat 里配 ⇒ 写死的后果不是报错，而是
+  //    面板**连探都不探**：屏幕上「协议端端口」永远"断"、「登录账号」永远"未登录"，
+  //    而机器人其实连着、消息流一直有记录（这是用户报上来的原话）。
+  //    同一个坑的第二半：那三行探测还被 `containerRunning ? … : Promise.resolve(false)`
+  //    门住 —— 容器只是 macOS 的实现细节，**协议端活不活只有一个判据：问它本人**。
+  const scSrc53 = read('../panel/lib/state-collector.js');
+  if (/\b(httpGet|wsProbe|portOpen)\(\s*(3000|3001|6099)\b/.test(scSrc53)) {
+    problems.push('state-collector.js 里还在用写死的 3000/3001/6099 探协议端 —— '
+      + '端口必须来自配置（`onebotEndpointOf(cfg.onebot)`），否则换了端口的部署面板连探都不探');
+  }
+  if (/containerRunning\s*\?\s*(httpGet|wsProbe|Promise\.resolve)/.test(scSrc53)) {
+    problems.push('state-collector.js 的协议端探测又被「容器在不在跑」门住了 —— '
+      + '容器只是 macOS 那条部署路线的实现细节（Windows 上用原生 NapCat，那边根本没有容器）');
+  }
+  if (!/onebotEndpointOf\(/.test(scSrc53)) {
+    problems.push('state-collector.js 没有用 onebotEndpointOf —— 协议端地址的来源不唯一');
+  }
+  subHit('跨平台分支');
+
+  // ⑨ 内存读数**不许撒谎**（2026-10-09 · 第 53 轮 · B2）。
+  //    Windows 上 `readMemory()` 如实返回 `null`（那边没有 vm_stat/sysctl/ps -Ao），
+  //    而 `panel/next/schema.js` 曾经给每一项兜一个 `0` ⇒ 整张「健康与占用」
+  //    显示成一片 `0 MB / 0%`。那不是"占用很低"，是"**根本没采到**"——
+  //    读的人不可能想到这一点（本项目最忌的"失败伪装成成功"）。
+  //    ⇒ 判据钉在前端：内存那几个读数必须走 memCell（无数据时返 null → 渲染"暂不支持"）。
+  const schSrc53 = read('../panel/next/schema.js');
+  if (!/const memCell = /.test(schSrc53)) {
+    problems.push('panel/next/schema.js 没有 memCell —— 内存读数缺一个统一的"采不到"出口');
+  }
+  if (/j\(s,\s*\['memory'[^\]]*\],\s*0\)/.test(schSrc53)) {
+    problems.push("panel/next/schema.js 里还有 `j(s, ['memory', …], 0)` —— "
+      + '那是拿 0 冒充"采不到"（Windows 上会显示成一片 0，读的人只会以为"它不占内存"）');
+  }
+  subHit('跨平台分支');
+
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
     console.log('✓ 跨平台分支（Windows 适配 · 2026-10-08）：平台判据**唯一声明**（paths.js 的 IS_WIN）且被消费 · '
       + 'Docker 两个住址按平台分支 · proc.js 三处守卫齐（killTree→taskkill / socket 快路径 / readMemory 如实返 null）· '
       + 'findBridgeProcesses 分派到 Windows 实现且**复用同一个 isOurBridge**（未写第二份判据）· '
       + 'osascript 与重启看门狗都有平台分支 + psQuote 防插值 · '
+      + 'startBridge 用**绝对入口**（Windows 上唯一的认领凭据，第 53 轮补）· '
+      + '协议端端口**来自配置**（onebotEndpointOf）且探测不再被容器门住 · '
+      + '内存读数不许拿 0 冒充"采不到"（memCell）· '
       + `.bat 为纯 ASCII / 零 CRLF / 无 label·括号块·for 且真的调用启动器 · `
       + `win-launcher.mjs 在位（语义与 .app 对齐）· 子判据 ${subCountOf('跨平台分支')} 条（§51 核下限）`);
+  }
+}
+
+// 97) 子进程窗口（Windows · 2026-10-09 · 第 53 轮 · B1）。
+//
+// 为什么值得一整段：这一族的形态是「**在那个平台上不会报错，只会多一个黑窗**」——
+//   Windows 上「**没有控制台**的父进程」启动**控制台子系统程序**（powershell.exe /
+//   docker.exe / taskkill.exe…）时，系统会新建一个控制台窗口，命令一结束窗口就关。
+//   用户看到的是「命令提示符一直跳，闪一下就关了」。
+//   而**本面板正好就是**这样一个父进程：`scripts/win-launcher.mjs` 用
+//   `detached + windowsHide` 起它 ⇒ 它自己没有控制台 ⇒ 它起的每个控制台程序都新建窗口。
+//   `/api/state` 轮询链上每 9~15 秒就会命中一次（powershell 列进程 15s TTL、
+//   docker info 8s TTL），所以是"一秒钟闪一次"的观感。
+//   ⚠️ **macOS 上永远复现不出来** —— 那边没有"控制台窗口"这个概念。
+//
+// ⚠️ 判据刻意按「该文件**真的 import 了** `node:child_process`」来筛，而不是直接
+//    grep `spawn(`。两个理由都不是洁癖：
+//      · 直接 grep 会误伤**注入进来的回调** —— `src/control-channel.js` 里那句
+//        `result = (await exec(rec.cmd))` 的 `exec` 是**函数参数**，不是 child_process。
+//        （实测：第 53 轮那份只读诊断脚本用宽正则扫，在仓库里误报 127 条。）
+//      · 只判 `panel/lib/proc.js` 一处又会漏掉 `server.js` 的六处与 `src/` 的调用点。
+//
+// ⚠️ 本段**不判**"Windows 上到底还闪不闪" —— 那只有真机能证明（用户手册如实写了）。
+//    它判的是"**该显式的地方都显式了**，且没有第二份判据"。
+{
+  const problems = [];
+  subHit('子进程窗口');
+
+  const CHILD_IMPORT = /from\s+['"]node:child_process['"]/;
+  const CALL_RE = /(?<![.\w$])(spawn|spawnSync|execFile|execFileSync|fork)\s*\(/;
+  // 极少数几行会连着两个调用点（如 `exec(cb)`），`spawn|execFile` 这族不会，所以只认这四个名字：
+  // ⚠️ `exec` **故意不在这张名单里** —— 它在 `src/control-channel.js` 是注入的回调，
+  //    而真正用 child_process.exec 的地方本项目一处都没有。要加回来必须先确认这一点。
+  const WIN_LINES = 8; // options 对象最深的那一处（server.js 的 startBridge）在第 5 行
+
+  /**
+   * 剥注释，但**保住行数**（每行一一对应）。
+   *
+   * ⚠️ 为什么不能用 `stripComments()`（本轮第一版就是用它，当场踩了）：
+   *    那个是给"内容判定"用的，它会把块注释**整段压掉** ⇒ 行数变了 ⇒
+   *    报出来的行号指到别处。实测：proc.js 真实第 48 行的一处漏写被报成 **第 16 行**
+   *    （文件头那段 30 行的块注释被压没了）。
+   *    **判据报错却指错地方，读的人照着找不到 —— 比不报还坏**（与"改了不报错"同族）。
+   *
+   * 实现：块注释的**非换行字符换成空格**（空行仍在，行号不动）；整行的 `//` 同样处理。
+   * 行尾注释**不删** —— 删了会把同一行后面的真代码一起吃掉（那是**假绿**方向，最危险）；
+   * 留着最多是"注释里写了一句旧写法"而多报一次，那是**假红**方向，安全。
+   */
+  const maskKeepLines = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/^[ \t]*\/\/[^\n]*/gm, (m) => m.replace(/[^\n]/g, ' '));
+
+  const procSrc = maskKeepLines(fs.readFileSync(path.join(REPO, 'panel', 'lib', 'proc.js'), 'utf8'));
+  // ① 唯一出口：`sh()` / `shBuffer()` —— 全项目的外部命令几乎都从这两处走。
+  //    判据取**函数体**而不是整个文件：整个文件里任何一处有 windowsHide 都会让判据假绿。
+  const shBody = (procSrc.match(/\nexport function sh\([\s\S]*?\n\}/) || [''])[0];
+  const shBufBody = (procSrc.match(/\nexport function shBuffer\([\s\S]*?\n\}/) || [''])[0];
+  if (!shBody) problems.push('抽不出 panel/lib/proc.js 的 sh() 函数体 —— 本段契约失效（抽取失败当失败）');
+  else if (!/windowsHide: true/.test(shBody)) {
+    problems.push('panel/lib/proc.js 的 sh() 没有 windowsHide: true —— Windows 上每次调用都会新建一个控制台窗口（用户看到"命令提示符一直跳"），而 macOS 上永远复现不出来');
+  }
+  if (!shBufBody) problems.push('抽不出 panel/lib/proc.js 的 shBuffer() 函数体 —— 本段契约失效（抽取失败当失败）');
+  else if (!/windowsHide: true/.test(shBufBody)) {
+    problems.push('panel/lib/proc.js 的 shBuffer() 没有 windowsHide: true —— 同 sh()，二维码那张图每拉一次就闪一个黑窗');
+  }
+  subHit('子进程窗口');
+
+  // ②③ `panel/`（不含 `next/`）与 `src/` 下**每一处**子进程调用点都要显式写 windowsHide。
+  //    ⚠️ `panel/next/` 是**浏览器**页面源码，跑在用户浏览器里（`verify.mjs` 是开发期脚本）——
+  //       它不属于面板后端运行期，混进来只会让"该看的文件"被稀释。
+  const found = [];
+  for (const bucket of ['panel', 'src']) {
+    const files = walkInto(path.join(REPO, bucket), [], {
+      skip: (n) => n === 'node_modules' || n.startsWith('.') || n === 'next',
+      keep: (n) => /\.(js|mjs)$/.test(n),
+    });
+    let sites = 0;
+    for (const f of files) {
+      const src = maskKeepLines(fs.readFileSync(f, 'utf8'));
+      if (!CHILD_IMPORT.test(src)) continue; // 没 import ⇒ 这里的 `exec(` 是注入的回调
+      const rel = path.relative(REPO, f).replace(/\\/g, '/');
+      const lines = src.split('\n');
+      lines.forEach((ln, i) => {
+        if (!CALL_RE.test(ln)) return;
+        sites += 1;
+        const hit = { rel, line: i + 1, has: /windowsHide/.test(lines.slice(i, i + WIN_LINES).join('\n')) };
+        found.push(hit);
+        if (!hit.has) {
+          problems.push(`${rel}:${hit.line} 起了子进程却没写 windowsHide —— `
+            + '面板自己没有控制台，Windows 上这一处会弹一个黑窗（`windowsHide: true` 隐藏，故意要窗口则显式写 false 并注明理由）');
+        }
+      });
+    }
+    // 自证：某个桶一个调用点都没扫到，说明输入集合不对（本段等于没查）
+    if (!sites && bucket === 'panel') {
+      problems.push('panel/ 下一个子进程调用点都没扫到 —— 输入集合不像真的（本段等于没查）');
+    }
+    subHit('子进程窗口');
+  }
+
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else {
+    console.log('✓ 子进程窗口（Windows · 2026-10-09 第 53 轮）：proc.js 的 sh()/shBuffer() 两处'
+      + `唯一出口都带 windowsHide · panel/ 与 src/ 下 ${found.length} 处子进程调用点全部**显式**了`
+      + ' windowsHide（按"该文件真的 import 了 node:child_process"筛，不误伤注入的回调）· '
+      + `子判据 ${subCountOf('子进程窗口')} 条（§51 核下限）`);
+  }
+}
+
+// 98) 配置模板可运行性（2026-10-09 · 第 53 轮 · B4）。
+//
+// 为什么值得一整段：`config.example.json` 是**全新安装的唯一配置来源** ——
+//   ① `src/config.js` 在找不到 `config.json` 时直接用模板；
+//   ② 便携包的 `tools/setup.mjs` 也是「从模板生成 config.json」。
+//   所以模板里任何一个坏字段，都会**被每一个新用户拿到**，而且不会有任何报错。
+//
+// 这一段的由来是一次真实事故：脱敏器的凭据判据（`/(?:…|token|…)$/i`，结尾锚定）
+//   把 `reply.splitToken` 当成密钥**清成了空串**、写进了模板。空串进
+//   `new RegExp('|\\n+')` 会在**每个字符之间**匹配 ⇒ 一条完整回复被切成单字发出去 ⇒
+//   群里的表现是「机器人一个字一个字地发」。
+//   ⚠️ 四层回归**一条都不响**：`test/` 的夹具全把 `splitToken` 写死成 `'||'`，
+//      而本段之前没有任何一条断言看过这个文件。
+//
+// ⚠️ 本段判的是"**该有的防线都在**"，行为断言在 `test/smoke.js` 的 `T383`（纯函数喂坏形态）。
+{
+  const problems = [];
+  subHit('配置模板可运行');
+
+  // ① 模板本身：分条标记**必须非空**
+  let ex = null;
+  try { ex = JSON.parse(fs.readFileSync(new URL('../config.example.json', import.meta.url), 'utf8')); } catch { /* 下面报 */ }
+  if (!ex) {
+    problems.push('config.example.json 读不出来 —— 它是全新安装唯一的配置来源（`config.js` 找不到 config.json 时就用它）');
+  } else {
+    const t = ex?.reply?.splitToken;
+    if (typeof t !== 'string' || !t.trim()) {
+      problems.push(`config.example.json 的 reply.splitToken 是 ${JSON.stringify(t)} —— `
+        + '空标记会让分条正则**逐字符**匹配，每个从模板起步的新用户**一开口就是一个字一个字地发**');
+    }
+  }
+  subHit('配置模板可运行');
+
+  // ② 脱敏器：例外表 + 唯一判定入口（不许两处各写一遍）
+  const sanSrc = read('../scripts/sanitize-config.mjs');
+  if (!/const NON_CREDENTIAL_KEYS = new Set\(\[[\s\S]{0,200}?'splitToken'/.test(sanSrc)) {
+    problems.push("scripts/sanitize-config.mjs 没有把 splitToken 列进「不是凭据」的例外表 —— "
+      + '凭据正则以 `token` 结尾锚定，会把它清空（这正是第 53 轮那起事故）');
+  }
+  if (!/export function isCredentialKey\(/.test(sanSrc)) {
+    problems.push('sanitize-config.mjs 没有唯一的凭据判定入口 isCredentialKey —— 两处消费点各写一遍，加例外时必然只改一处');
+  }
+  const rawCredCalls = (sanSrc.match(/CREDENTIAL_KEY\.test\(/g) || []).length;
+  if (rawCredCalls > 1) {
+    problems.push(`sanitize-config.mjs 里还有 ${rawCredCalls} 处直接调 CREDENTIAL_KEY.test —— `
+      + '判定必须只走 isCredentialKey（否则"加一个例外"要改两处，而漏掉的那处不报错）');
+  }
+  subHit('配置模板可运行');
+
+  // ③ 归一化：`??` 是**不够**的（它只认 null/undefined，空串会原样通过）
+  const cfgSrc53 = read('../src/config.js');
+  if (!/splitToken: normalizeSplitToken\(/.test(cfgSrc53)) {
+    problems.push('src/config.js 的 reply.splitToken 没有走 normalizeSplitToken —— 兜底那一层没了');
+  }
+  if (/splitToken: String\(raw\.reply\?\.splitToken \?\?/.test(cfgSrc53)) {
+    problems.push("src/config.js 又把 splitToken 写回了 `?? '||'` —— `??` 只对 null/undefined 生效，"
+      + '**空串会原样通过**（第 53 轮"逐字发送"的根因之一）');
+  }
+  if (!/export function normalizeSplitToken\(/.test(cfgSrc53)) {
+    problems.push('src/config.js 里没有 normalizeSplitToken —— 空串的归一化没有唯一实现');
+  }
+  subHit('配置模板可运行');
+
+  // ④ 守门：brain.js 不许把 splitToken 直接塞进正则，且必须有一次性告警
+  const brainSrc53 = read('../src/brain.js');
+  if (/split\(new RegExp\(`\$\{escapeRe\(splitToken\)\}/.test(brainSrc53)) {
+    problems.push('src/brain.js 的分条又把 splitToken 直接塞进正则了 —— 空串会在**每个字符之间**匹配，'
+      + '一条回复被切成单字发出去（守门那一层没了）');
+  }
+  if (!/warnSplitTokenOnce\(\)/.test(brainSrc53)) {
+    problems.push('src/brain.js 没有「空 splitToken」的一次性告警 —— 那会让"为什么没分条"变成查不出的静默降级');
+  }
+  subHit('配置模板可运行');
+
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else {
+    console.log('✓ 配置模板可运行性（2026-10-09 第 53 轮）：config.example.json 的分条标记非空 · '
+      + '脱敏器有「不是凭据」的**例外表**且判定只有 isCredentialKey 一个入口 · '
+      + 'config.js 走 normalizeSplitToken（不再用兜不住空串的 `??`）· '
+      + 'brain.js 的分条有守门 + 一次性告警 · '
+      + `行为断言见 smoke 的 T383 · 子判据 ${subCountOf('配置模板可运行')} 条（§51 核下限）`);
+  }
+}
+
+// 99) 表情 id 表（2026-10-09 · 第 53 轮 · B5）。
+//
+// 为什么值得一整段：`FACE_PRESETS` 是「id → 人看的名字」那张表，而它**配错了 11/15**——
+//   面板与导出清单上写着发一个「狗头」，群里显示的是「OK」；写「抓狂」的 id 在表里**根本不存在**。
+//   用户报的「**乱发表情包**」有一半来自这里。
+//
+// 这个错的形态最难查，值得写下来：
+//   · id 是**直传**的（`faceSegment(id)` 不做任何校验）⇒ 发出去的东西**一直是合法的 QQ 表情**，
+//     只是**不是你以为的那个**；
+//   · 不报错、不变形、不空白 —— 只有**看群的人**才知道不对，而写代码的人看不到；
+//   · 没有任何断言看着这张表（本段之前查过了：零命中）。
+//
+// ⚠️ 本段**判不了**"名字配得对不对" —— 那要读 NapCat 的 `face_config.json`，
+//    而 `napcat/` **不入库**（含登录态与凭据，见 `.gitignore`），CI 上没有那份文件。
+//    所以本段做两件能做的事：
+//      ① 判**形状**（id 唯一 / 名字唯一 / 都是像样的 face id）—— 挡"复制粘贴时改漏一个"；
+//      ② 判**注释里写了核对方法** —— 那是唯一能让下一个人不去猜的手段。
+//        （`scripts/win-diag.mjs` 的「表情 id 对照」一节就是照这段注释做的事。）
+{
+  const problems = [];
+  subHit('表情表');
+
+  const ccRaw99 = fs.readFileSync(new URL('../src/custom-config.js', import.meta.url), 'utf8');
+  const body99 = ccRaw99.match(/export const FACE_PRESETS = \[([\s\S]*?)\n\];/);
+  if (!body99) {
+    problems.push('抽不出 src/custom-config.js 的 FACE_PRESETS —— 本段契约失效（抽取失败当失败）');
+  } else {
+    const rows = [...body99[1].matchAll(/\[(\d+),\s*'([^']*)'\]/g)].map((x) => [Number(x[1]), x[2]]);
+    if (rows.length < 8) {
+      problems.push(`FACE_PRESETS 只解析出 ${rows.length} 项（应 ≥8）—— 输入集合不像真的，本段等于没查`);
+    }
+    const ids = rows.map((r) => r[0]);
+    const names = rows.map((r) => r[1]);
+    if (new Set(ids).size !== ids.length) {
+      problems.push('FACE_PRESETS 里有**重复的 id** —— 同一个表情在随机池里出现两次，权重被悄悄改了');
+    }
+    if (new Set(names).size !== names.length) {
+      problems.push('FACE_PRESETS 里有**重复的名字** —— 导出的清单里会出现两行一样的');
+    }
+    const badIds = ids.filter((i) => !Number.isInteger(i) || i < 1 || i > 999);
+    if (badIds.length) problems.push(`FACE_PRESETS 里有不像 QQ face id 的值：${badIds.join(', ')}`);
+    if (names.some((n) => !n.trim())) problems.push('FACE_PRESETS 里有空名字');
+  }
+  subHit('表情表');
+
+  // 核对方法必须留在注释里：`napcat/` 不入库，谁都没有第二份可查的真相源。
+  // ⚠️ 这一条必须读**原文**（`read()` 会剥注释，用它等于永远查不到）。
+  if (!/face_config\.json/.test(ccRaw99) || !/QSid/.test(ccRaw99)) {
+    problems.push('custom-config.js 的 FACE_PRESETS 附近没有写「怎么核对名字」（应提到 NapCat 的 '
+      + 'face_config.json 与它的 QSid 字段）—— napcat/ 不入库，不写清核对方法的下场就是'
+      + '这张表再漂一次，而**没有任何人能发现**（第 53 轮实测：曾经漂了 11/15）');
+  }
+  subHit('表情表');
+
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else {
+    console.log('✓ 表情 id 表（2026-10-09 第 53 轮）：FACE_PRESETS 的形状齐（id/名字都不重复、'
+      + '都是像样的 face id）· 注释里写了**核对方法**（NapCat 的 face_config.json / QSid —— '
+      + '`napcat/` 不入库，这是唯一的真相源）· '
+      + `子判据 ${subCountOf('表情表')} 条（§51 核下限）`);
   }
 }
 
@@ -14362,7 +14682,19 @@ const LIB_SRC_ALLOW = [
 //       ⑤osascript 与看门狗 + ⑤b 一键启动的容器阶段 + check-onebot 提示分流 +
 //       ⑥.bat 与启动器）。取**精确值** 8（同 `H10路由表` 的先例）——
 //       本桶只由这一段贡献，删任一处都该红。
-const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 18], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 3], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 8]];
+//    ⚠️ **第 53 轮改** `['跨平台分支', 8]` → `11`：§96 新增三条子判据
+//       （⑦ startBridge 必须用**绝对入口** —— 否则 Windows 上「实例数」恒 0 且不报错；
+//        ⑧ 协议端端口必须来自配置且探测不被容器门住；
+//        ⑨ 内存读数不许拿 0 冒充"采不到"）。精确值跟着实到 11。
+//    ⚠️ **第 53 轮新增** `['子进程窗口', 4]`：§97 一段里恰四处 subHit（段入口 +
+//       ①proc.js 的 sh/shBuffer 唯一出口 + ②panel/ 全量调用点 + ③src/ 全量调用点）。
+//       取**精确值** 4（同 `H10路由表` 的先例）—— 本桶只由这一段贡献，删任一处都该红。
+//    ⚠️ **第 53 轮新增** `['配置模板可运行', 5]`：§98 一段里恰五处 subHit（段入口 +
+//       ①模板非空 + ②脱敏器例外表 + ③config.js 归一化 + ④brain.js 守门）。
+//       同样取精确值 —— 本桶只由这一段贡献，删任一处都该红。
+//    ⚠️ **第 53 轮新增** `['表情表', 3]`：§99 一段里恰三处 subHit（段入口 + 形状 + 注释里
+//       写了核对方法）。取精确值 3 —— 本桶只由这一段贡献，删任一处都该红。
+const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 18], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 3], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 11], ['子进程窗口', 4], ['配置模板可运行', 5], ['表情表', 3]];
   for (const [bucket, min] of HEAVY_SUB_MIN) {
     const c = subCountOf(bucket);
     if (c < min) {

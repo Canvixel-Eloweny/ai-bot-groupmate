@@ -83,7 +83,13 @@ function journal(kind, msg) {
 
 function runQuiet(cmd, args) {
   try {
-    return { ok: true, out: String(execFileSync(cmd, args, { encoding: 'utf8', timeout: 4000 })) };
+    // windowsHide（2026-10-09 · 第 53 轮）：机器人进程在 Windows 上也是面板
+    // detached+windowsHide 起的 —— 它同样**没有控制台**，所以这里起
+    // pgrep / lsof（或 Windows 上必然 ENOENT 的裸名）都可能闪一个黑窗。
+    // ⚠️ 在 Windows 上这条探针本来就跑不到（`PGREP`/`LSOF` 解析不到真路径 ⇒
+    //    裸命令名 ⇒ CreateProcess 失败，不产生窗口），但**判据一个字都不许靠"跑不到"**
+    //    —— 那是"改了不报错"的写法。显式写上。
+    return { ok: true, out: String(execFileSync(cmd, args, { encoding: 'utf8', timeout: 4000, windowsHide: true })) };
   } catch (e) {
     if (e && e.status === 1) return { ok: true, out: String(e.stdout || '') };
     return { ok: false, out: '' };

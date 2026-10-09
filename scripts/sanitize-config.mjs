@@ -45,6 +45,41 @@ import { providerOf } from '../src/net-rules.js';
  */
 const CREDENTIAL_KEY = /(?:key|keys|token|secret|password|passwd|pwd)$/i;
 
+/**
+ * **不是凭据**、但名字长得像凭据的**有效配置字段**（2026-10-09 · 第 53 轮）。
+ *
+ * 为什么需要一张显式的例外表 —— 这条教训值得记全：
+ *   上一轮把判据从「不锚定」改成「结尾锚定」，只解决了 `maxTokens` 那**一个**反例
+ *   （注释里写得很清楚：`maxTokens` 结尾是 `okens`，不匹配）。可是
+ *   「以 `token` 结尾的**有效配置字段**」本来就不止一个 —— `reply.splitToken` 同样中招，
+ *   被清成空串后写进了 `config.example.json`。
+ *
+ *   后果不是"少一个字段"，而是**群里一个字一个字地发**：
+ *   空串进 `split(new RegExp('|\\n+'))` 会**逐字符**把整段回复切开
+ *   （`brain.js` 的 parseReply），一条完整的回复变成一串单字消息。
+ *   而且它**每个新用户都会踩**（全新安装必走模板：`config.js` 找不到 config.json 时
+ *   直接用模板；便携包的 `tools/setup.mjs` 也是从模板生成），
+ *   四层回归却一条都不响（`test/` 里的夹具全把 splitToken 写死成 `'||'`）。
+ *
+ *   ⇒ **判据形状对不代表集合对。** 凡是靠"名字长得像"来判的，都必须配一张
+ *     显式的例外表（这正是本项目「一份数据维护两遍」那条纪律的镜像：
+ *     名字是启发式，例外表才是事实）。
+ */
+const NON_CREDENTIAL_KEYS = new Set([
+  'splitToken', // reply.splitToken：模型用来分隔多条消息的标记，不是密钥
+]);
+
+/**
+ * 这个键是不是凭据。**唯一的判定入口** —— 两处消费点（sanitizeConfig / findLeaks）
+ * 都走它，不许再各写一遍 `CREDENTIAL_KEY.test(k) || parent === …`
+ * （两份判定在"加例外"时会只改一处，而那正是这张例外表要防的事）。
+ */
+export function isCredentialKey(k, parent = '') {
+  if (parent === CREDENTIAL_CONTAINER) return true;
+  if (NON_CREDENTIAL_KEYS.has(k)) return false;
+  return CREDENTIAL_KEY.test(k);
+}
+
 /** 一看就是本工具造出来的假凭据，自检时不算泄漏（真 Key 不会以它开头） */
 export const FAKE_CREDENTIAL_PREFIX = 'SANDBOX-FAKE-';
 
@@ -132,7 +167,7 @@ export function sanitizeConfig(cfg, { blankGroups = false, dropDeadKeys = false,
       for (const [k, v] of Object.entries(node)) {
         // DROP_KEYS 先判：死字段应当**剔除**，而不是被当成凭据置空（那会留下一个空键）
         if (dropDeadKeys && DROP_KEYS.has(k)) continue;
-        const isCred = CREDENTIAL_KEY.test(k) || parent === CREDENTIAL_CONTAINER;
+        const isCred = isCredentialKey(k, parent);
         if (isCred && !isObj(v) && !Array.isArray(v)) {
           out[k] = credentialValue(credentials, k, parent, activeHint);
         } else if (isCred && isObj(v)) {
@@ -170,7 +205,7 @@ export function findLeaks(cfg) {
     if (!isObj(node)) return;
     for (const [k, v] of Object.entries(node)) {
       const here = trail ? `${trail}.${k}` : k;
-      const isCred = CREDENTIAL_KEY.test(k) || parent === CREDENTIAL_CONTAINER;
+      const isCred = isCredentialKey(k, parent);
       if (isCred && !isObj(v) && !Array.isArray(v)) {
         const clean = v === '' || v === null || v === undefined || String(v).startsWith(FAKE_CREDENTIAL_PREFIX);
         if (!clean) bad.push(`${here} = ${JSON.stringify(String(v)).slice(0, 12)}…`);

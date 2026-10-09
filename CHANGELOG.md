@@ -3,6 +3,91 @@
 本项目在 `main` 上持续迭代，每个对外可见的版本打一个 tag。以下按**批次**记录对外可见的变化。
 内部批次台账（含未交付项与裁决记录）是**内部件，不随公开仓库发布**。
 
+## Unreleased — 2026-10-09
+
+### 2026-10-09 · Windows: the five things the first real runs turned up
+
+The Windows route shipped in 0.1.1 and had never been run on a real machine. The first runs
+turned up five defects — and four of them were **the same defect wearing different hats**:
+the console still assumed *"macOS + a Docker container"*, while the Windows route runs a
+native NapCat and has no container at all.
+
+- **A console window flashed every few seconds.** The panel is started detached and hidden —
+  it has no console of its own — so every `powershell` / `docker` / `taskkill` it spawned got
+  a brand-new console window that closed the moment the command finished. `sh()` is the single
+  exit for external commands, and it was missing `windowsHide`. Fixed there and at every other
+  spawn site. §97 pins it, and it deliberately does **not** fire on injected callbacks merely
+  *named* `exec` — a naive grep for `exec(` matched 127 of those instead.
+- **"Connected" never showed, and every memory reading was 0.** The port probes were gated on
+  "is the container running" — a container is an implementation detail of the macOS route —
+  and the ports themselves were hard-coded to 3000 / 3001. Both are gone: the endpoint now
+  comes from `onebot.wsUrl`, the same address the bot dials. Memory readings on Windows come
+  from one PowerShell call, and when they cannot be read the console says **"not supported"**
+  instead of printing `0`: a `0 MB` that means "not measured" is a lie, and this project treats
+  failure-disguised-as-success as its most expensive class of defect.
+- **"Instances: 0".** The bot was started with a *relative* entry point while the Windows
+  identity check only accepts an **absolute** one — so the console could not recognise the bot
+  it had just started, and said nothing. Fixed; §96⑦ pins the absolute entry.
+- **Messages arrived one character at a time.** The sanitiser's credential rule (`…|token|…$`)
+  matched `reply.splitToken` and blanked it in `config.example.json`. An empty split token
+  makes `split(new RegExp('|\\n+'))` match *between every character*, so a reply went out as a
+  string of single characters — and every fresh install read that template. Four layers now:
+  an explicit exception list in the sanitiser, a regenerated template, a `normalizeSplitToken`
+  fallback (a `??` default never protected against the empty string), and a guard inside
+  `parseReply`. §98 pins all four.
+- **Faces were not the faces anyone expected.** 11 of the 15 entries in `FACE_PRESETS` had the
+  wrong name for their id (the one labelled "doge"/狗头 is really `/OK`), and ids are passed
+  through unvalidated — so the bot kept posting perfectly valid QQ faces, just not the ones the
+  console claimed. Corrected against NapCat's own `face_config.json`; §99 pins the shape and
+  requires the verification recipe to stay in the comments (`napcat/` is not tracked, so there
+  is no second source of truth to check against).
+
+Also: the Windows "local model" card no longer renders buttons whose only possible outcome is
+failure. That stack is Apple Silicon only (MLX + QwenChat); on Windows it now says so and
+points at **custom brains** with an OpenAI-compatible endpoint — the route that actually works
+on both platforms.
+
+### 2026-10-09 · The repository's own front door: what a search engine sees
+
+The project could not be found. It was not a quality problem — both READMEs are already long
+and precise. It was that **the words a visitor actually types appeared nowhere near the top**,
+and that the top of the page showed no evidence of what the thing looks like.
+
+- **The title now carries the search terms.** GitHub repository search matches *name /
+  description / topics / owner* and gives a README's body very little weight. The old `<h1>`
+  was the project's own invented brand `QQ-BOT-Creative` — so **searching that exact name
+  returned zero results**. Both READMEs now lead with a description of the thing
+  (`QQ Group AI Member Bot` / `QQ 群 AI 群友机器人`), and the brand name moved into the
+  repository description, where it is actually indexed.
+- **A real screenshot, above the badges.** The first screen was a logo, a title and a row of
+  status shields; the console — the part that makes the project look finished — was nowhere on
+  the page. `assets/panel-overview.png` is a screenshot of the real console, and the badges
+  moved below it. The screenshot's account nickname was replaced with `小鱼`, the same
+  placeholder the sanitiser already uses in `config.example.json`. The project's own sentinel
+  table records that nickname as a **real** value, so it must not appear in an image any more
+  than in a file.
+- **A three-step quick start on the first screen**, because the previous first screen asked a
+  visitor to read an architecture diagram before telling them how to run anything.
+- **The release has an artifact.** `v0.1.1` was published with a tag, release notes and
+  **zero downloadable assets**. The packaged Windows zip is attached to it now — after being
+  re-scanned against the project's sentinel table, zero hits.
+
+The publish checklist (a held-back internal document, not part of this repository) was brought
+back in line with what actually runs: it still described the push as `git push -u origin main`
+and carried a `git push --force` note, while the real path has been the Git Data API append
+since 2026-10-08. A checklist describing a mechanism nobody uses is the same class of defect as
+two implementations of one rule.
+
+### 2026-10-09 · Two download scripts could only report a failure wrongly
+
+`docker/napcat/fetch-linuxqq.sh` and `fetch-napcat.sh` both run under `set -u`, and both print
+their size check with `$GOT` or `$VERSION` followed **directly** by a full-width character. Bash
+reads those multi-byte bytes as part of the variable name, so the message meant to explain the
+failure instead killed the script with `unbound variable` — exit 127, and the real reason never
+printed. A failure that reports the wrong reason is worse than one that reports nothing: it sends
+the reader after the wrong thing (a download problem that looks like a shell problem). The
+variables are braced now, and every `.sh` in the repository passes `bash -n`.
+
 ## 0.1.1 — 2026-10-08
 
 ### 2026-10-08 · Route C gets the same install shortcut as route A

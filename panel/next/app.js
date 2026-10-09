@@ -553,15 +553,30 @@ async function installZip(file) {
 function paintTop() {
   const s = S.state || DEMO;
   const dst = j(s, ['docker', 'daemon']), dapp = j(s, ['docker', 'app']);
-  const cp = j(s, ['memory', 'pressure'], 0);
+  const cp = j(s, ['memory', 'pressure']);
   const set = (id, text, cls) => { const el = $id(id); el.className = `pill ${cls || ''}`; el.innerHTML = `<span class="dot"></span>${esc(text)}`; };
   set('pillMode', S.online ? (j(s, ['panel', 'stale']) ? '面板跑着旧代码' : '已连接') : '演示模式（未连后端）',
     S.online ? (j(s, ['panel', 'stale']) ? 'warn' : 'on') : 'warn');
   set('pillBridge', j(s, ['bridge', 'running']) ? `机器人在跑 · ${fmtDur(j(s, ['bridge', 'uptimeMs'], 0))}` : '机器人没在跑', j(s, ['bridge', 'running']) ? 'on' : 'off');
-  set('pillContainer', j(s, ['container', 'running']) ? (j(s, ['container', 'loggedIn']) ? '容器已登录' : '容器在跑 · 未登录') : (dapp ? 'Docker 在跑 · 容器没起' : 'Docker 没跑'),
-    j(s, ['container', 'running']) ? (j(s, ['container', 'loggedIn']) ? 'on' : 'warn') : (dst ? 'warn' : 'off'));
+  /* ⚠️ 第 53 轮（B2）：`container.applicable === false` 表示**这台机器根本没走容器这条路**
+     （Windows 便携版用原生 NapCat、不装 Docker）⇒ 不许再说"Docker 没跑"——
+     那是一句假警报，用户会去查一个不存在的容器。灰（off）= "这条路线不适用"，
+     不是失败也不是等待。判据来自后端，页面不按平台自己猜。 */
+  set('pillContainer',
+    j(s, ['container', 'running'])
+      ? (j(s, ['container', 'loggedIn']) ? '容器已登录' : '容器在跑 · 未登录')
+      : (j(s, ['container', 'applicable']) === false
+        ? '原生 NapCat（不用容器）'
+        : (dapp ? 'Docker 在跑 · 容器没起' : 'Docker 没跑')),
+    j(s, ['container', 'running'])
+      ? (j(s, ['container', 'loggedIn']) ? 'on' : 'warn')
+      : (j(s, ['container', 'applicable']) === false ? 'off' : (dst ? 'warn' : 'off')));
   set('pillLocal', j(s, ['localModel', 'running']) ? '本机模型在跑' : '本机模型没跑', j(s, ['localModel', 'running']) ? 'on' : 'off');
-  set('pillMem', `内存 ${cp}%`, cp >= 90 ? 'bad' : cp >= 75 ? 'warn' : 'on');
+  // ⚠️ 内存读数可能是 **null**（Windows 上采不到、后端如实降级）——
+  //    那时这颗药丸必须说"暂不支持"，**不许**显示「内存 0%」
+  //    （第 53 轮 B2：那会让"采不到"看起来像"很空"，是谎话）。
+  if (cp == null) set('pillMem', '内存 暂不支持', 'off');
+  else set('pillMem', `内存 ${cp}%`, cp >= 90 ? 'bad' : cp >= 75 ? 'warn' : 'on');
   const sub = j(s, ['account', 'nickname']);
   $id('subline').textContent = S.online
     ? `${j(s, ['config', 'provider'], '?')} · ${j(s, ['effective', 'model'], '—')}${sub ? ` · ${sub}` : ''} · 面板 pid ${j(s, ['panel', 'pid'], '—')}`
@@ -917,7 +932,15 @@ function capChips(items, chipFn) {
 
 const RENDER = {
   /* ── 只读展示 ── */
-  note: (x) => noteHtml(x.text, x.kind),
+  /* `text` 允许是**函数**（按状态算），与 `hint` / `metric` / `ports.label` 同款
+     （2026-10-09 · 第 53 轮 B6）：那段"Windows 上本机模型为什么不存在、该走哪条路"
+     的文案由**后端下发**（`localModel.unsupportedWhy`），前端不自存一份 ——
+     抄一份就会在两处慢慢说不一样的话（本项目在"一份数据维护两遍"上踩过多次）。 */
+  note: (x) => {
+    let t = x.text;
+    try { if (typeof t === 'function') t = t(S.state || DEMO); } catch { t = ''; }
+    return noteHtml(t, x.kind);
+  },
   // ⚠️ **一律 esc()**（2026-10-05 开源前审查 · S-07）。
   //    这里原本有一条 `val.includes('<') ? val : esc(val)` —— 意思是"看着像 HTML 就原样插"。
   //    它是全仓唯一绕过转义的地方，而它读的是**服务端下发的值**：
@@ -933,8 +956,15 @@ const RENDER = {
     return `<dt>${esc(k)}</dt><dd>${esc(val)}</dd>`;
   }).join('')}</dl>`,
   metrics: (x) => `<div class="metrics">${x.items.map((m) => {
-    let v; try { v = m.n(S.state || DEMO); } catch { v = '—'; }
-    return `<div class="metric ${m.hi ? 'hi' : ''}"><div class="n">${esc(v)}</div><div class="l">${esc(m.l)}</div></div>`;
+    let v; try { v = m.n(S.state || DEMO); } catch { v = null; }
+    /* ⚠️ `null` / `undefined` = 「**这项采不到**」，与"值是 0"是两件事
+       （2026-10-09 · 第 53 轮 B2）。Windows 上内存那几项后端如实返回 null，
+       而这里以前把它渲染成 `0`/`—` —— 屏幕上是一片"0 MB / 0%"，读的人只会
+       理解成"它几乎不占内存"，不可能想到"这个数根本没采到"。
+       本项目最忌「失败伪装成成功」，所以无数据要**明说**。 */
+    const nodata = v === null || v === undefined;
+    return `<div class="metric ${m.hi ? 'hi' : ''}${nodata ? ' nodata' : ''}">`
+      + `<div class="n">${esc(nodata ? '暂不支持' : v)}</div><div class="l">${esc(m.l)}</div></div>`;
   }).join('')}</div>`,
   /* ── 启动链路 ──
      ⚠️ 原来是 `<div>` 堆叠的纯文本行 —— 一列句子，读者要逐句读才知道走到哪一步。
@@ -1014,9 +1044,15 @@ const RENDER = {
     const cells = x.items.map((p) => {
       let on = false;
       try { on = typeof p.get === 'function' ? !!p.get(s) : !!p.get; } catch { on = false; }
+      /* 「这一格探的是**哪个端口**」要能看见（2026-10-09 · 第 53 轮 B2）：
+         端口现在来自配置（`onebot.wsUrl`），而"端口对不上"的表现恰好就是"断" ——
+         把端口号摆在名字里，用户一眼能核对"面板探的是不是我在 NapCat 里配的那个"，
+         不用去猜。与 `hint` / `metric` 同款：`label` 允许是函数（按状态算）。 */
+      let lbl = p.label;
+      try { if (typeof lbl === 'function') lbl = lbl(s); } catch { lbl = ''; }
       return `<div class="port" data-on="${on ? '1' : '0'}">
         <span class="port-led"></span>
-        <span class="port-name">${esc(p.label)}</span>
+        <span class="port-name">${esc(lbl)}</span>
         <span class="port-st">${on ? '通' : '断'}</span>
       </div>`;
     }).join('');
@@ -1050,7 +1086,7 @@ const RENDER = {
   },
   buttons: (x) => `<div class="f">${x.label ? lb(x) : ''}
       ${x.hint ? `<span class="hint">${mdBold(x.hint)}</span>` : ''}
-      <div class="btn-row">${x.items.map((it) => ctrlHtml(it)).join('')}</div></div>`,
+      <div class="btn-row">${(x.items || []).filter((it) => !it.when || it.when(S.state || DEMO)).map((it) => ctrlHtml(it)).join('')}</div></div>`,
 
   /* ── 输入类 ── */
   text: (x) => fieldInput(x, 'text'),

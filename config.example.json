@@ -174,7 +174,7 @@
     "interjectColdFactor": 0.4
   },
   "reply": {
-    "splitToken": "",
+    "splitToken": "||",
     "sendDelayMs": 700,
     "pace": {
       "enabled": true,

@@ -189,3 +189,63 @@ export function providerHostOk(base) {
   try { host = new URL(String(base)).hostname; } catch { return false; }
   return re.test(host);
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+//  协议端（OneBot）地址 · 2026-10-09 · 第 53 轮 B2
+// ══════════════════════════════════════════════════════════════════════════
+/**
+ * NapCat 的两个**默认**端口（正向 WS / 正向 HTTP）。
+ *
+ * ⚠️ 它们只在这里出现一次 —— 面板要探协议端，不许在别处再写一个 3000/3001 字面量。
+ *    （在此之前，`panel/lib/state-collector.js` 里就是写死的。那两个数字是
+ *      macOS 那条 Docker 路线"容器端口映射"的巧合，不是协议端的定义。）
+ * ⚠️ **不 export**：只有本文件的 `onebotEndpointOf()` 用它们。要验默认值，
+ *    走 `onebotEndpointOf({})` 的返回值 —— 那才是它们的语义，而不是这两个数字本身。
+ */
+const ONE_BOT_DEFAULT_WS_PORT = 3001;
+const ONE_BOT_DEFAULT_HTTP_PORT = 3000;
+
+/** `ws://host:port/path` → `{host, port}`；解析不出来一律空（由调用方回落默认） */
+function splitUrl(u) {
+  try {
+    const x = new URL(String(u || ''));
+    return { host: x.hostname, port: Number(x.port) || 0 };
+  } catch {
+    return { host: '', port: 0 };
+  }
+}
+
+/**
+ * 从配置的 `onebot` 段解析出**协议端**的两条通道地址。
+ *
+ * ⚠️ 为什么必须这么做（第 53 轮的真实缺陷）：面板把 `3000`/`3001` **写死**，
+ *    而 Windows 便携版走的是**原生 NapCat** —— 端口由用户在自己的 NapCat 里配。
+ *    端口对不上时面板不是报错，而是**连探都不探**：屏幕上「协议端端口」三项永远显示"断"、
+ *    「登录账号」永远显示"未登录"，**而机器人其实连着、消息流一直有记录**。
+ *    这正是"平台差异不报错、只静默走错分支"那一类。
+ *
+ * 判据只有一个来源：**机器人连的就是 `onebot.wsUrl`，面板要探的也必须是它。**
+ * 用户换了 NapCat 的端口，只改这一处，两侧同时跟上。
+ *
+ * ⚠️ HTTP 那条**没有**可靠的推导关系（NapCat 把正向 HTTP 与正向 WS 当成两个独立项，
+ *    默认分别是 3000 / 3001）。所以：配置里写了 `onebot.httpUrl` 就用它；
+ *    没写就回落 NapCat 默认的 3000，并在返回值里**如实标出这是回落**
+ *    （`httpIsDefault: true`），让界面可以说"按默认端口探的"，而不是假装确定。
+ *
+ * @param {{wsUrl?:string, httpUrl?:string}} [onebot] `config.onebot`
+ */
+export function onebotEndpointOf(onebot = {}) {
+  const ws = splitUrl(onebot?.wsUrl);
+  const http = splitUrl(onebot?.httpUrl);
+  const wsHost = ws.host || '127.0.0.1';
+  return {
+    wsHost,
+    wsPort: ws.port || ONE_BOT_DEFAULT_WS_PORT,
+    /** 配置里到底有没有写 wsUrl（没有 = 界面要提示"机器人还没接过协议端"） */
+    wsConfigured: !!ws.host,
+    httpHost: http.host || wsHost,
+    httpPort: http.port || ONE_BOT_DEFAULT_HTTP_PORT,
+    /** true = httpPort 是 NapCat 的默认值，不是配置里写的（界面据此措辞） */
+    httpIsDefault: !http.port,
+  };
+}

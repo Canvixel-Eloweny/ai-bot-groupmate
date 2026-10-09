@@ -10,7 +10,7 @@ import {
 import { FEATURE_LABEL, ZHIPU_MODEL_META } from '../../src/model-caps.js';
 import { LOCK_REFUSE_EXIT_CODE } from '../../src/bridge-lock.js';
 import { fieldMeta } from '../../src/field-schema.js';
-import { isLocalBase, providerOf } from '../../src/net-rules.js';
+import { isLocalBase, onebotEndpointOf, providerOf } from '../../src/net-rules.js';
 // 「这家的免费额度长什么样」（额度类型 / 能不能查实时余额 / 该去哪个页面看）。
 // 唯一实现住 src/free-quota.js —— 面板**不要**自己再写一份文案：
 // 千问那句"用完即停开关默认是关的"是**真会让人被扣钱**的提醒，抄一份就多一处会腐烂的地方。
@@ -20,14 +20,15 @@ import { activeBrainOf, brainListOf, visibleFeatureKeysOf } from '../../src/cust
 import { listAutoMemory } from '../../src/memory-store.js';
 import { readHistory } from '../../src/config-history.js';
 import {
-  DOCKER, DOCKER_APP, HISTORY_FILE, MLX_PY, QWENCHAT_SERVER, QWEN_SERVER,
+  DOCKER, DOCKER_APP, HISTORY_FILE, IS_WIN, MLX_PY, NAPCAT_WEBUI_PORT, QWENCHAT_SERVER, QWEN_SERVER,
 } from './paths.js';
 import {
-  LOCAL_CHANNELS, LOCAL_MODELS, MODEL_LABELS, ZHIPU_DEFAULT_CHAIN, buildModelCaps,
+  LOCAL_CHANNELS, LOCAL_MODELS, LOCAL_MODEL_SUPPORTED, LOCAL_MODEL_UNSUPPORTED_WHY,
+  MODEL_LABELS, ZHIPU_DEFAULT_CHAIN, buildModelCaps,
   localChannelOf, localKeyOf, localModelExists, normalizeThinking, readPresets,
   resolveLocalKey, PRESET_KEYS,
 } from './models.js';
-import { cachedDockerPs, cachedDockerUp, cachedMemory, httpGet, portOpen, sh, wsProbe } from './proc.js';
+import { cachedDockerPs, cachedDockerUp, cachedMemory, httpGet, portOpen, sh, winMemoryOf, wsProbe } from './proc.js';
 import { CONTROL_LABELS, controlStateOf } from './control.js';
 import { extensionsOf } from './extensions.js';
 import { readBotData } from './bot-data.js';
@@ -59,7 +60,7 @@ export function makeStateCollector(deps) {
   const {
     IMPORTABLE_KEYS, bridgeRunning, countBridgeInstances, memoryRecordsOf,
     napcatToken, panelInfo, readBridgeLock, readDebugFlag, readEffective,
-    readThinking, readUsage,
+    readThinking, readUsage, winMemory,
   } = deps;
 
   return async function collectState() {
@@ -69,12 +70,28 @@ export function makeStateCollector(deps) {
     const daemonUp = await cachedDockerUp();
     const containerLine = await cachedDockerPs();
     const containerRunning = /Up/i.test(containerLine);
+    // 这台机器上「容器」这条部署路线适不适用（第 53 轮 · B2）。
+    // ⚠️ 判据**不是平台**，而是"有没有在走这条路"：
+    //    容器在跑 / daemon 在跑 / Docker Desktop 装着 —— 三者有其一即适用。
+    //    Windows 便携版用**原生 NapCat**、不装 Docker ⇒ 三项全否 ⇒ 不适用。
+    //    此时界面不该把"容器没跑"当故障报（那是个**假警报**，用户会去查一个不存在的容器）。
+    const containerApplicable = containerRunning || daemonUp || (!!DOCKER_APP && fs.existsSync(DOCKER_APP));
 
-    // 真问一次协议端，而不是只看端口
+    // ── 协议端地址：**只有一个来源**（配置里机器人连的那条）─────────────────────
+    // ⚠️ 这两个端口以前是写死的 `3000` / `3001`。它们只是 macOS 那条 Docker 路线
+    //    "容器端口映射"的巧合，**不是协议端的定义**：Windows 便携版跑的是原生 NapCat，
+    //    端口由用户在自己的 NapCat 里配。写死的后果不是报错，而是面板**连探都不探** ——
+    //    屏幕上「协议端端口」永远"断"、「登录账号」永远"未登录"，
+    //    而机器人其实连着、消息流一直有记录。判据见 `src/net-rules.js` 的 onebotEndpointOf。
+    const onebot = onebotEndpointOf(cfg?.onebot);
+
+    // 真问一次协议端，而不是只看端口。
+    // ⚠️ 这一步**不再以"容器在不在跑"为前提**：容器只是 macOS 那条部署路线的实现细节，
+    //    协议端在不在，只有一个正确的判据 —— 问它本人。
     const [infoRes, wsRes, p6099] = await Promise.all([
-      containerRunning ? httpGet(3000, '/get_login_info') : Promise.resolve({ ok: false, status: 0, body: '' }),
-      containerRunning ? wsProbe(3001) : Promise.resolve({ ok: false, status: 0 }),
-      portOpen(6099),
+      httpGet(onebot.httpPort, '/get_login_info'),
+      wsProbe(onebot.wsPort),
+      portOpen(NAPCAT_WEBUI_PORT),
     ]);
 
     let account = null;
@@ -90,28 +107,35 @@ export function makeStateCollector(deps) {
       } catch { /* 不是 JSON 就当没连上 */ }
     }
 
+    // ── 登录状态（第 53 轮 · B2：整段从"容器在跑"这个前提里解出来）──────────
+    // 原来整段包在 `if (containerRunning)` 里 ⇒ Windows 上恒为 false ⇒
+    // 无论协议端多健康，界面都显示"未登录 / 容器没在运行"。
     let loggedIn = false;
-    let loginHint = '容器没在运行';
+    let loginHint = '';
     let qrDecodeUrl = '';
 
-    if (containerRunning) {
-      if (account) {
-        loggedIn = true;
-        loginHint = `已登录：${account.nickname}（${account.userId}）`;
+    if (account) {
+      loggedIn = true;
+      loginHint = `已登录：${account.nickname}（${account.userId}）`;
+    } else if (infoRes.ok) {
+      // 协议端答了、只是没给账号信息 ⇒ 它是活的、还没登录
+      loginHint = '协议端在跑，但还没登录（要扫码）';
+    } else if (containerRunning) {
+      // **只有这一支**才需要翻容器日志找原因（原来是无条件翻，白跑 docker logs）
+      const lg = await sh(DOCKER, ['logs', '--tail', '150', 'napcat']);
+      const all = lg.stdout + lg.stderr;
+      if (/二维码|qrcode/i.test(all)) {
+        loginHint = '等待扫码';
+        const m = all.match(/二维码解码URL:\s*(\S+)/g);
+        if (m && m.length) qrDecodeUrl = m[m.length - 1].replace(/^二维码解码URL:\s*/, '');
+      } else if (/快速登录错误|登录态已失效/.test(all)) {
+        loginHint = '登录态已失效，需要重新扫码';
       } else {
-        // 没连上才去翻日志找原因，正常情况省一次 docker 调用
-        const lg = await sh(DOCKER, ['logs', '--tail', '150', 'napcat']);
-        const all = lg.stdout + lg.stderr;
-        if (/二维码|qrcode/i.test(all)) {
-          loginHint = '等待扫码';
-          const m = all.match(/二维码解码URL:\s*(\S+)/g);
-          if (m && m.length) qrDecodeUrl = m[m.length - 1].replace(/^二维码解码URL:\s*/, '');
-        } else if (/快速登录错误|登录态已失效/.test(all)) {
-          loginHint = '登录态已失效，需要重新扫码';
-        } else {
-          loginHint = '正在启动 / 等待登录';
-        }
+        loginHint = '正在启动 / 等待登录';
       }
+    } else {
+      loginHint = `协议端没有响应（${onebot.httpHost}:${onebot.httpPort}）—— `
+        + '没启动，或它的端口与配置里 onebot.wsUrl 写的对不上';
     }
 
     const llmKey = cfg?.llm?.apiKey || process.env[cfg?.llm?.apiKeyEnv || ''] || '';
@@ -170,15 +194,53 @@ export function makeStateCollector(deps) {
     // "页面上显示已启用、机器人却不认"这种没法复现的差异（本项目最怕的形状）。
     const custom = readCustom(cfg);
 
+    // ── 内存那一段（2026-10-09 · 第 53 轮 · B2）─────────────────────────────
+    // macOS：`cachedMemory()` 走 `vm_stat` / `sysctl` / `ps -Ao`。
+    // Windows：那三个命令一个都没有（所以 `readMemory()` 如实返回 null）⇒
+    //          改走注入进来的快照 → `winMemoryOf()` 换算（快照由 L3 的 server.js
+    //          用一次 PowerShell 取回，带 15 秒缓存）。
+    // ⚠️ **两条路都可能给 null**（采不到），而前端把 null 渲染成"暂不支持"——
+    //    这是刻意的：显示 `0 MB` 等于撒谎（读的人只会理解成"它几乎不占内存"，
+    //    不可能想到"这个数根本没采到"）。
+    const memory = (await cachedMemory())
+      ?? (IS_WIN && winMemory ? winMemoryOf(await winMemory()) : null);
+
     return {
       // 面板自己的版本自检（页面据此判断"是不是在跟一个跑着旧代码的后端说话"）
       panel: panelInfo(),
-      container: { running: containerRunning, line: containerLine, loggedIn, loginHint, qrDecodeUrl },
-      docker: { daemon: daemonUp, app: fs.existsSync(DOCKER_APP) },
-      memory: await cachedMemory(),
-      ports: { onebotHttp: infoRes.ok, onebotWs: wsRes.ok, webui: p6099 },
+      container: {
+        running: containerRunning,
+        line: containerLine,
+        loggedIn,
+        loginHint,
+        qrDecodeUrl,
+        // 「容器」这条部署路线在**这台机器上**适不适用（第 53 轮 · B2）。
+        // false = 用户走的是原生 NapCat（Windows 便携版不装 Docker）⇒ 界面不该把
+        // "容器没跑"当故障显示 —— 那会让用户去查一个**根本不存在的容器**。
+        applicable: containerApplicable,
+      },
+      docker: { daemon: daemonUp, app: !!DOCKER_APP && fs.existsSync(DOCKER_APP) },
+      memory,
+      ports: {
+        onebotHttp: infoRes.ok,
+        onebotWs: wsRes.ok,
+        webui: p6099,
+        // 探的是哪两个端口（第 53 轮：端口改从配置解析，界面要能核对"我探的是不是它"）。
+        // ⚠️ 下发这四个数字是为了**排错**：端口对不上时，用户一眼能看出面板在探哪儿。
+        onebot: {
+          http: onebot.httpPort,
+          ws: onebot.wsPort,
+          wsConfigured: onebot.wsConfigured,
+          httpIsDefault: onebot.httpIsDefault,
+        },
+      },
       account,
       localModel: {
+        // 这一整套（MLX 模型 + 两条通道 + 启动命令）**在这个平台上成不成立**（第 53 轮 · B6）。
+        // false = Windows（那边是 Apple Silicon 专用的实现，一个都不存在）⇒
+        // 面板据此把这一块**整块隐藏并指路**，而不是摆一堆点了必然失败的控件。
+        supported: LOCAL_MODEL_SUPPORTED,
+        unsupportedWhy: LOCAL_MODEL_UNSUPPORTED_WHY,
         running: !!liveChannel,
         channel: liveChannel,            // 实际活着的那条通道（空 = 没在跑）
         wantChannel,                     // 配置里希望用的通道
@@ -305,6 +367,10 @@ export function makeStateCollector(deps) {
         aliases: cfg?.trigger?.aliases || [],
         interjectChance: cfg?.trigger?.interjectChance ?? 0,
         personaName: cfg?.persona?.name || '',
+        // 分段标记（第 53 轮 · B4）：以前面板上一个入口都没有，于是它坏掉（空串）时
+        // 用户**看不见也改不了** —— 而空串的后果是"一条回复被逐字发出去"。
+        // 下发给页面是 `""` 时界面按"要用默认值"提示（后端 normalizeSplitToken 已兜底）。
+        splitToken: cfg?.reply?.splitToken || '',
       },
       // 「自定义工作台」那一整块。归一化逻辑在 src/custom-config.js（与机器人共用一份），
       // 面板只负责渲染 —— 不自己写默认值，才不会出现"面板上填了、机器人没读"。

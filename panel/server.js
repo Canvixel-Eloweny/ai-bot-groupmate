@@ -121,7 +121,8 @@ import { readConfig, writeConfig } from './lib/config-io.js';
 // 导出一堆没人读的名字，只是把"依赖面"这个信息糊掉。
 // ⚠️ `LOCAL_MODEL_PORT` / `QWENCHAT_PORT` 随这一节一起搬走了，主文件不再需要它们。
 import {
-  LOCAL_MODELS, LOCAL_CHANNELS, localChannelOf, localChannelUrl, localKeyOf,
+  LOCAL_MODELS, LOCAL_CHANNELS, LOCAL_MODEL_SUPPORTED, LOCAL_MODEL_UNSUPPORTED_WHY,
+  localChannelOf, localChannelUrl, localKeyOf,
   localModelExists, resolveLocalKey, mergeModelList, modelProviderMismatch,
   ZHIPU_DEFAULT_CHAIN, MAX_CHAIN_LEN, CLOUD_PRESETS, BUILTIN_MODELS, PRESET_KEYS,
   MODEL_LABELS,
@@ -887,6 +888,11 @@ const collectState = makeStateCollector({
   IMPORTABLE_KEYS, bridgeRunning, countBridgeInstances, memoryRecordsOf,
   napcatToken, panelInfo, readBridgeLock, readDebugFlag, readEffective,
   readThinking, readUsage,
+  // B2（第 53 轮）：Windows 上没有 `vm_stat`/`sysctl`/`ps -Ao` ⇒「健康与占用」那张卡片
+  // 在那边整张是 0。这份快照就是补它的。**注入而不是搬进 collector** 的理由与
+  // `readUsage` / `countBridgeInstances` 同款：取数要 IO 与缓存（起 PowerShell、限频），
+  // 而 collector 只该拿现成的数据去算。
+  winMemory: winMemorySnapshot,
 });
 
 // `buildModelCaps()` / `normalizeThinking()` 搬去 `lib/models.js`（B11b-2）。
@@ -1017,6 +1023,45 @@ async function findBridgeProcesses(exceptPids = []) {
  *      也就是"实例数"看不到它、「停止机器人」停不掉它。多实例保护不受影响 ——
  *      那由机器人自己的 `.bridge.lock`（按 pid）兜着。这一条写进了用户手册。
  */
+/**
+ * Windows 上「整机内存 + 进程表」的**一次**快照（2026-10-09 · 第 53 轮 · B2）。
+ *
+ * 为什么要有它：Windows 上没有 `vm_stat` / `sysctl` / `ps -Ao`（那些是 macOS 专有），
+ * 于是「健康与占用」那张卡片在那边**整张都是 0** —— 那不是"占用很低"，是"根本没采到"。
+ * 这个模块把它从"没采到"变成"真的采到"，而且**不新增一次进程枚举**：一次 PowerShell
+ * 同时取回整机内存与按进程的内存，两处读数共用同一份（本项目"一份数据不许维护两遍"）。
+ *
+ * 四条纪律：
+ *   · **15 秒 TTL 缓存**（与 `countBridgeInstances` 同一量级；前端 3 秒轮询会命中缓存）；
+ *   · `-EncodedCommand`（与进程枚举同一套理由：没有任何字符需要转义）；
+ *   · 走 `sh()` ⇒ 自动带 `windowsHide`（§97）—— 否则每取一次就闪一个黑窗；
+ *   · 拿不到就返回 `null`，**绝不编一个 0 出来**（"采不到"与"占得少"是两件事）。
+ *
+ * ⚠️ 口径：`os` 那两个数是**整机物理内存**（TotalVisibleMemorySize / FreePhysicalMemory，
+ *    单位 KB），`procs` 是**按进程**的工作集。换算与分类都在 `panel/lib/proc.js` 的
+ *    `winMemoryOf()` 里（纯函数，能在 macOS 上被直接断言）。
+ */
+let winSnapCache = { at: 0, data: null };
+async function winMemorySnapshot(maxAgeMs = 15000) {
+  if (!IS_WIN) return null;
+  const now = Date.now();
+  if (winSnapCache.data && now - winSnapCache.at < maxAgeMs) return winSnapCache.data;
+
+  const ps = '$os = Get-CimInstance Win32_OperatingSystem '
+    + '| Select-Object TotalVisibleMemorySize,FreePhysicalMemory; '
+    + '$ps = Get-CimInstance Win32_Process '
+    + '| Select-Object Name,CommandLine,WorkingSetSize; '
+    + '[pscustomobject]@{ os = $os; procs = $ps } | ConvertTo-Json -Compress -Depth 4';
+
+  const r = await sh(POWERSHELL, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePwshCommand(ps)], 15000);
+  let data = null;
+  if (r.ok) {
+    try { data = JSON.parse(r.stdout.trim() || 'null'); } catch { data = null; }
+  }
+  winSnapCache = { at: now, data };
+  return data;
+}
+
 async function findBridgeProcessesWin(exceptPids = []) {
   const r = await sh(POWERSHELL, winNodeListArgs(), 12000);
   const out = [];
@@ -1165,9 +1210,24 @@ async function startBridge() {
 
   let child;
   try {
-    child = spawn(NODE, [`--max-old-space-size=${BRIDGE_MAX_OLD_SPACE_MB}`, 'src/index.js'], {
+    // ⚠️ 这一行的两个选项各自都有理由，别只看见一个（2026-10-09 · 第 53 轮）：
+    //
+    //   ① 入口必须是**绝对路径**（B3）。Windows 上拿不到别的进程的 cwd
+    //      （`Win32_Process` 没有这个字段），于是认领判据只剩
+    //      `absEntryInRoot()`（`src/bridge-proc.js`），而它**只认绝对入口**。
+    //      用相对入口的后果是"面板认不出自己刚起的机器人"⇒「实例数」恒 0、
+    //      孤儿清理也看不见它 —— 而且**一个字都不报**。
+    //      ⚠️ 这件事以前写在 bridge-proc.js 的注释里，措辞是「用 `npm start`（相对入口）
+    //         起的机器人面板认不出来」—— 但**面板点按钮走的正是相对入口**，
+    //         所以那条"已知限制"实际盖住的是**主路径**，不是边角情况。
+    //
+    //   ② `windowsHide: true`（B1）。面板自己没有控制台（win-launcher 用
+    //      `detached + windowsHide` 起它），不隐藏就会为机器人**多弹一个常驻黑窗**。
+    const entry = path.join(ROOT, 'src', 'index.js');
+    child = spawn(NODE, [`--max-old-space-size=${BRIDGE_MAX_OLD_SPACE_MB}`, entry], {
       cwd: ROOT,
       detached: true, // 脱离控制台，控制台关掉了它也能活
+      windowsHide: true,
       env: {
         ...process.env,
         FORCE_COLOR: '0',
@@ -1440,6 +1500,14 @@ async function stopAnyLocalModel(say) {
  * @param {(m:string)=>void} [onSay] 想把进度也显示到面板的「切换步骤」里就传它
  */
 async function startLocalModel(key, channel, onSay) {
+  // ⚠️ 平台守卫**只写在这一处**（2026-10-09 · 第 53 轮 · B6）：本机模型那套是
+  //    Apple Silicon 专用的（MLX 模型格式 + mlx_lm.server / QwenChat），
+  //    Windows 上没有对应实现。这个函数是**唯一的启动入口**（一键启动 / 切换大脑 /
+  //    `/api/local-model/start` 三条路都汇到这里），所以守在这儿一处就够 ——
+  //    在三个调用点各判一次，迟早会出现"新加了一条路、忘了判"。
+  //    返回的是一句**能照着做**的话（去自定义大脑接 OpenAI 兼容端点），不是"不支持"。
+  if (!LOCAL_MODEL_SUPPORTED) return { ok: false, msg: LOCAL_MODEL_UNSUPPORTED_WHY };
+
   const ch = localChannelOf(channel);
   const port = LOCAL_CHANNELS[ch].port;
   const k = resolveLocalKey(key);
@@ -1548,6 +1616,7 @@ async function startLocalModel(key, channel, onSay) {
     child = spawn(cmd, args, {
       cwd: path.join(HOME, 'models'),
       detached: true,
+      windowsHide: true, // 同 startBridge：面板没有控制台，不隐藏就会多弹一个黑窗
       stdio: ['ignore', fd, fd],
       env,
     });
@@ -2293,8 +2362,8 @@ async function apiOnekeyStop(req, res, url) {
       // 页面上「Docker」那一项会自己变灰，比一句"处理中"直观得多。
       // ⚠️ 平台分支（2026-10-08）：Windows 上没有 `osascript`。那边 Docker Desktop
       //    是个 exe，按镜像名收掉它（`/T` 连它拉起的子进程一起）。
-      if (IS_WIN) execFile('taskkill', ['/IM', 'Docker Desktop.exe', '/T'], () => {});
-      else execFile('/usr/bin/osascript', ['-e', 'tell application "Docker" to quit'], () => {});
+      if (IS_WIN) execFile('taskkill', ['/IM', 'Docker Desktop.exe', '/T'], { windowsHide: true }, () => {});
+      else execFile('/usr/bin/osascript', ['-e', 'tell application "Docker" to quit'], { windowsHide: true }, () => {});
       state.dockerQuitAt = Date.now(); // 给「一键启动」留个记号：它正在退出，别撞上去
       say('· 已让 Docker Desktop 退出（后台进行，约 10–20 秒，不用等它 —— 上面那项会自己变灰）');
     }
@@ -3011,12 +3080,12 @@ function restartPanel() {
       const ps = `Wait-Process -Id ${BOOT.pid} -ErrorAction SilentlyContinue; `
         + `Set-Location -LiteralPath ${psQuote(ROOT)}; `
         + `& ${psQuote(NODE)} ${psQuote(PANEL_FILE)} *>> ${psQuote(log)}`;
-      spawn(POWERSHELL, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePwshCommand(ps)], { detached: true, stdio: 'ignore' }).unref();
+      spawn(POWERSHELL, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePwshCommand(ps)], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     } else {
       const cmd = `while kill -0 ${BOOT.pid} 2>/dev/null; do sleep 0.2; done; `
         + `cd ${JSON.stringify(ROOT)} && exec ${JSON.stringify(NODE)} ${JSON.stringify(PANEL_FILE)} `
         + `>> ${JSON.stringify(log)} 2>&1`;
-      spawn('/bin/sh', ['-c', cmd], { detached: true, stdio: 'ignore' }).unref();
+      spawn('/bin/sh', ['-c', cmd], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     }
   } catch (e) {
     restarting = false;

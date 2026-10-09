@@ -39,7 +39,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { HOME, LOCAL_MODEL_PORT, QWENCHAT_PORT } from './paths.js';
+import { HOME, IS_WIN, LOCAL_MODEL_PORT, QWENCHAT_PORT } from './paths.js';
 import { readConfig } from './config-io.js';
 import { ZHIPU_MODEL_META, QWEN_MODEL_META, capabilitiesOf } from '../../src/model-caps.js';
 // ⚠️ 「这笔花不花钱」的判据（`FREE_CLOUD_MODELS` / `CREDIT_CLOUD_MODELS` / `isZhipuModel`）
@@ -62,6 +62,35 @@ import { isLocalBase, providerOf } from '../../src/net-rules.js';
 export const LOCAL_MODELS = {
   '4b': { path: path.join(HOME, 'models', 'Qwen3.5-4B-MLX-4bit'), label: 'Qwen3.5-4B（2.9G，回复快）' },
 };
+
+/**
+ * 本机模型（MLX / QwenChat）这套东西**在哪些平台上成立**（2026-10-09 · 第 53 轮 · B6）。
+ *
+ * 判据不是"好不好用"，而是"**这套实现存不存在**"：`LOCAL_MODELS` 是 MLX 格式的模型目录、
+ * `LOCAL_CHANNELS.mlx` 跑的是 `mlx_lm.server`（Apple 的 MLX 框架）、`paths.js` 的
+ * `QWEN_SERVER` / `MLX_PY` 也都是 macOS 路径。**三样全是 Apple Silicon 专属**。
+ *
+ * Windows 上它们一个都不成立 ⇒ 那块 UI 是**死控件**：状态恒"没在跑"、端口恒空、
+ * 「启动本机模型」点了必然失败。而它照样占着一整张卡片，用户的真实反应（实测截图）
+ * 是把 llama.cpp 的模型**目录路径**填进「自定义模型」里 —— 因为面板没给他别的路。
+ *
+ * ⇒ 这一批的结论是**不当它存在**（隐藏 + 指路），而不是摆一堆点了会失败的东西：
+ *    这正是本项目在 M7 那条上吃过教训的形状 ——「**给用户一条走不通的路，
+ *    比不给更坏**」（那次是手册让 Windows 用户点的按钮第一步就 400 失败）。
+ *
+ * 想在 Windows 上跑本机模型，走**跨平台**且已经能用的那条：「大脑 → 自定义大脑」，
+ * 地址填本地服务的 OpenAI 兼容端点（llama.cpp / LM Studio / Ollama 都提供）。
+ */
+export const LOCAL_MODEL_SUPPORTED = !IS_WIN;
+
+/** 不支持时给用户看的话（要能**照着做**，不是一句"不支持"）。macOS 上是空串。 */
+export const LOCAL_MODEL_UNSUPPORTED_WHY = LOCAL_MODEL_SUPPORTED
+  ? ''
+  : '本机模型这一套是 **Apple Silicon 专用**的（MLX 模型格式 + mlx_lm.server / QwenChat），'
+    + 'Windows 上没有对应实现，所以这里不显示它 —— 摆一堆点了必然失败的按钮，比不显示更糟。'
+    + 'Windows 上想用本机模型：到「大脑 → 自定义大脑」新建一套，'
+    + '接口地址填你本地服务的 OpenAI 兼容地址（llama.cpp / LM Studio / Ollama 都提供，'
+    + '例如 http://127.0.0.1:8080/v1），模型名填它返回的那个 id。';
 
 /** 第一个可用的规格名，用于「配置里指的模型没了」时兜底 */
 function firstLocalKey() {
