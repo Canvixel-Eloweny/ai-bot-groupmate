@@ -84,13 +84,20 @@ export default [
   },
   {
     id: 'M2',
+    // ⚠️ 第 57 轮：锚点跟着**实现**搬（不是退役）。第 54 轮真机首跑后 `consoleHostReject()`
+    //    从「`if (!CONSOLE_HOST_RE.test(host)) return '';` 提前返回」改写成
+    //    「`if (CONSOLE_HOST_RE.test(u.hostname)) {` 正向分支」（同一个判断，另一处写法），
+    //    并且多了一条 `CONSOLE_PATH_RE`（已知厂商域名 + 控制台**路径**）。
+    //    被打的判断**还在**，只是换了形状 ⇒ 按纪律搬锚点，不退役。
     file: 'src/net-rules.js',
-    anchor: /if \(!CONSOLE_HOST_RE\.test\(host\)\) return '';/,
+    anchor: /if \(CONSOLE_HOST_RE\.test\(u\.hostname\)\) \{/,
     count: 1,
-    apply: (src) => src.replace('!CONSOLE_HOST_RE.test(host)', 'false'),
+    apply: (src) => src.replace('if (CONSOLE_HOST_RE.test(u.hostname)) {', 'if (false) {'),
     layer: 'smoke',
     expect: 'BLOCKED',
-    note: '控制台拦截失效 ⇒ 用户照浏览器地址栏填的控制台域名被原样存下，然后每条请求都失败（而防钓鱼那道闸对它恒放行）',
+    note: '控制台拦截失效 ⇒ 用户照浏览器地址栏填的控制台域名被原样存下，然后每条请求都失败（而防钓鱼那道闸对它恒放行）。'
+      + '（第 57 轮：实现改写成正向分支后锚点跟着搬 —— 若哪天这条真的被删，才是退役，'
+      + '退役要写"两数同向 + 逐条理由"，见 `scripts/mutate-lint.mjs` 的口径）',
   },
   {
     id: 'M3',

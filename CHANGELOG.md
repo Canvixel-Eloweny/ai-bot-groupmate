@@ -5,6 +5,52 @@
 
 ## Unreleased — 2026-10-09
 
+### 2026-10-09 · Windows: the first run that could never have worked
+
+The portable Windows package had never been run on a real machine. It was reported against a
+build dated the same day and, in that build, **no machine could have started it at all** — not a
+configuration problem, three independent defects stacked so that each one hid the next.
+
+- **`spawn EINVAL` on the very first step.** The portable package ships its own Node (v22.x) and
+  hands the NapCat batch launcher to `spawn` directly. Since the fix for CVE-2024-27980
+  (18.20.2 / 20.12.2 / 21.7.3 onward) Node **refuses** to spawn a `.bat` without a shell —
+  `errno -4071`. Bundling the runtime is what guaranteed it fired on every machine. The launcher
+  is now invoked as an explicit `cmd.exe /d /s /c <launcher>` argv — deliberately *not*
+  `shell: true`, which concatenates the command and truncates a package path at its first space
+  (the report's own machine hit `'D:\…\AI_Boot' is not recognized`, and "unzip to a path without
+  spaces" is advice we give, not something we can enforce).
+- **The bot could die silently while the console reported success.** `startBridge()` could only
+  see *whether the process was created*, never *whether it survived*. An empty allowlist makes
+  `config.js` fail closed on startup — on purpose — and that carefully worded Chinese error went
+  only to `bridge.log`, so the console showed "started, pid 1234" while the user waited for a
+  reply that was never coming. The console now confirms survival after startup and hands the
+  reason straight back to the UI. It does **not** pre-validate by calling `loadConfig()` in the
+  panel: `src/config.js` is a heavy module and the panel layer may only import zero-dependency
+  leaves, and a pre-check would have covered exactly one way to die where reading the log covers
+  all of them — without restating a single business rule. `/api/onekey/start` no longer answers
+  `ok: true` when the protocol side or the bot did not come up.
+- **Custom brains skipped a check that was already written.** `modelProviderMismatch()` exists
+  and `/api/config` uses it; the custom-brain route didn't, so
+  `baseUrl=https://platform.deepseek.com/usage` + `model=DS` was stored verbatim and activated.
+  Same gate now, restricted to the three cloud providers: for `local` the function demands an MLX
+  model directory, which would have rejected the very route the Windows docs point at.
+  `consoleHostReject()` also recognises console **paths** (`/usage`, `/dashboard`, `/login` …) on
+  a known provider's domain — a per-vendor table of console hostnames rots, the paths don't.
+- **Two helper defects behind the same symptom.** The launcher candidate regex matched four
+  files in the official package and `find()` returned whichever `readdir` produced first; the
+  non-`-user` variants check for admin rights and relaunch themselves elevated before exiting, so
+  the original window flashes away and the QR code appears elsewhere — fixed by preferring
+  `*-user.bat` and sorting. And `check-env.mjs` looked for QQ only in four fixed `Program Files`
+  paths while the launcher reads the `Uninstall\QQ` registry key: with QQ installed off the C:
+  drive, the self-check said "QQ NT not found" while the launcher found it and worked. Both now
+  share one `findQQExe()`.
+- **Two platform facts the docs omitted, now written down:** quit the desktop QQ before scanning
+  (QQ NT is single-instance and NapCat works by injection), and keep the process that runs NapCat
+  alive afterwards (signing the main account back in kicks the spare off).
+- Also improved: the "empty allowlist" error now names the console field a user can actually
+  find, since the panel surfaces that same text; and `/api/bridge/start` returns the reason in
+  `error`, because the page reads `data.error` on non-2xx and would otherwise show `HTTP 400`.
+
 ### 2026-10-09 · Windows: the five things the first real runs turned up
 
 The Windows route shipped in 0.1.1 and had never been run on a real machine. The first runs

@@ -163,14 +163,46 @@ const PROVIDER_HOST_END_RE = {
  */
 const CONSOLE_HOST_RE = /(^|\.)(platform\.qianwenai\.com|bailian\.console\.aliyun\.com)$/i;
 
+/**
+ * 「已知厂商域名上的**控制台路径**」—— 补 `CONSOLE_HOST_RE` 漏掉的那一类。
+ *
+ * 为什么需要（2026-10-09 · 第 54 轮 · 真机首跑）：用户把
+ * `https://platform.deepseek.com/usage`（**用量报表网页**）当成接口地址填进了「自定义大脑」，
+ * 而且一路存了下来。这道闸当时拦不住它，原因不在"没想到"，在两个结构性的事实：
+ *   ① `providerHostOk()` 是**结尾**匹配（`(^|\.)deepseek\.com$`），`platform.deepseek.com`
+ *      恰好命中 ⇒ 防钓鱼那道闸对它**放行**；
+ *   ② `CONSOLE_HOST_RE` 是一张**逐家手写的域名表**，收录 DeepSeek 控制台要再写一个域名 ——
+ *      而每家都有好几个控制台域名且会改，这条路必然腐烂。
+ *
+ * 而控制台页面的**路径**是稳定的（`/usage` `/dashboard` `/login` `/billing` …），
+ * 且 API 地址从不长这样（`/v1` `/api/paas/v4` `/compatible-mode/v1` 都对不上）。
+ *
+ * ⚠️ **只对已知厂商生效**（`PROVIDER_HOST_END_RE` 里有官方域名的那些）：自建 / 中转网关
+ *    的路径长什么样不该由我们猜 —— 那一类是被**刻意放行**的（见上文 ③），
+ *    在这里拦错一次就是"正常配置填不进去"，比漏拦更坏。
+ */
+const CONSOLE_PATH_RE =
+  /^\/(usage|dashboard|console|login|sign-?in|sign-?up|register|billing|payments?|apikeys?|account|profile|user-?center|workspace|settings)(\/|$)/i;
+
 export function consoleHostReject(base) {
-  let host;
-  try { host = new URL(String(base)).hostname; } catch { return ''; }
-  if (!CONSOLE_HOST_RE.test(host)) return '';
-  return '这是千问的**控制台网页**地址（你浏览器里那个），不是接口地址。'
-    + '机器人的请求会发不出去。请改填官方的 OpenAI 兼容地址：'
-    + 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-    + '（新加坡地域是 dashscope-intl，美国是 dashscope-us —— 三个地域的密钥不通用）。';
+  const text = String(base);
+  let u;
+  try { u = new URL(text); } catch { return ''; }
+  if (CONSOLE_HOST_RE.test(u.hostname)) {
+    return '这是千问的**控制台网页**地址（你浏览器里那个），不是接口地址。'
+      + '机器人的请求会发不出去。请改填官方的 OpenAI 兼容地址：'
+      + 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+      + '（新加坡地域是 dashscope-intl，美国是 dashscope-us —— 三个地域的密钥不通用）。';
+  }
+  // ② 已知厂商域名 + 控制台路径 ⇒ 同一个结论、另一条判据（见上面 CONSOLE_PATH_RE 的理由）
+  const provider = providerOf(text);
+  if (!Object.hasOwn(PROVIDER_HOST_END_RE, provider)) return '';
+  if (!CONSOLE_PATH_RE.test(u.pathname)) return '';
+  return `这看起来是**控制台网页**（${u.hostname}${u.pathname}），不是接口地址 —— `
+    + '机器人的请求会打到那个页面上，发不出去。请到该服务商的「API 文档 / 接口地址」那一页复制：'
+    + 'DeepSeek 是 https://api.deepseek.com/v1；智谱是 https://open.bigmodel.cn/api/paas/v4'
+    + '（⚠️ 是 open. 开头，不是 bigmodel.cn 首页）；'
+    + '千问是 https://dashscope.aliyuncs.com/compatible-mode/v1。';
 }
 
 /**

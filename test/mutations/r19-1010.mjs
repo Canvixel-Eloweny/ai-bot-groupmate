@@ -61,10 +61,13 @@ const M2 = {
   anchor: /const collectState = makeStateCollector\(\{/,
   count: 1,
   file: SRV,
-  apply: (s) => s.replace(
-    /readThinking, readUsage,\n\}\);/,
-    'readThinking,\n});'
-  ),
+  // ⚠️ 第 57 轮：`apply` 跟着**注入块的新形状**改（不是退役）。
+  //    原正则要求 `readUsage,` 后面紧跟 `});` —— 第 53 轮在它后面加了一项
+  //    `winMemory: winMemorySnapshot`（Windows 内存快照，注入理由与 readUsage 同款），
+  //    于是原正则失配 ⇒ 这条变成**惰性**（施加后内容未变，`mutate.mjs` 会报 INVALID）。
+  //    被打的判据（"工厂接线少注入 readUsage"）**还在**，只是行尾不再是 `});`。
+  //    ⇒ 改成只锚住 `readUsage,` 那一行本身，不再假设它后面是什么。
+  apply: (s) => s.replace(/  readThinking, readUsage,\n/, '  readThinking,\n'),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };

@@ -220,10 +220,17 @@ export function loadConfig(overridePath) {
 
   if (allow.private.length === 0 && allow.groups.length === 0) {
     if (!allow.allowAllWhenEmpty) {
+      // ⚠️ 这段文案会**同时**出现在两个地方：机器人启动日志，以及面板的失败提示
+      //    （第 54 轮起 `startBridge()` 会把"启动即死"的原因原样回给界面）。
+      //    所以它必须能**照着做** —— 只说 `allow.groups` 的话，Windows 便携版用户
+      //    在界面上找不到那个词（面板管它叫「放行的群号」）。
       throw new Error(
-        '白名单为空且 allow.allowAllWhenEmpty 不为 true。\n' +
-          '  请填写 allow.private / allow.groups，或显式把 allow.allowAllWhenEmpty 设为 true。\n' +
-          '  ⚠️ 后者等于把 QQ 账号控制权交给模型，强烈不建议。'
+        '白名单为空，且 allow.allowAllWhenEmpty 不为 true —— 它不知道该听谁的，所以不会启动。\n' +
+          '  怎么办（两条路，第二条强烈不建议）：\n' +
+          '    ① 填白名单：控制台里是「机器人设置 → 放行的群号」（私聊白名单同理，叫 allow.private）；\n' +
+          '       也可以直接编辑 app/config.json 的 allow.groups —— 群号写**纯数字**，多个用逗号隔开。\n' +
+          '    ② 显式把 allow.allowAllWhenEmpty 设为 true。\n' +
+          '       ⚠️ 那等于把 QQ 账号的控制权交给任何人和任何群，别这么干。'
       );
     }
     log.warn('白名单为空且 allowAllWhenEmpty=true —— 任何人和任何群都能指挥这个账号，请确认这是你要的');

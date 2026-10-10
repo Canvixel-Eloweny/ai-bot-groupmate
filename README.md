@@ -130,9 +130,9 @@ npm install
 copy config.example.json config.json
 ```
 
-Installing NapCat, opening the two channels, the **five platform differences** (no local model /
-memory card / instance count / the Docker step / the console window), and what to report back from
-your first real-machine run:
+Installing NapCat, opening the two channels, the **nine platform differences** (quit the desktop QQ
+before scanning / keep the NapCat window alive / no local model / memory card / instance count /
+the Docker step / the console window), and what to report back from your first real-machine run:
 
 👉 **Full install steps: [`USER-GUIDE.md` · section 9](./USER-GUIDE.md#9-windows-users)**
 

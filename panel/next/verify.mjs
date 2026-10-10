@@ -72,6 +72,22 @@ async function waitFor(fn, ms = 20000, step = 300) {
 
 const results = [];
 const check = (name, ok, extra = '') => { results.push({ name, ok: !!ok, extra }); console.log(`${ok ? '✓' : '✗'} ${name}${extra ? ` — ${extra}` : ''}`); };
+/**
+ * **显式跳过**（第 57 轮 B1+ · 与文件头"没有 Chromium 就 SKIP"同一条纪律）。
+ *
+ * 什么时候该用它：**断言的前提在这个环境里根本不成立**，而不是"这次碰巧没数据"。
+ * 本文件的用法只有一处 —— 插件板那 5 条要求「≥1 块板」，而沙箱
+ * （`test/sandbox.sh:121` `--exclude '/plugins/' --exclude '/skills/'`，第 44 轮 B12d 起）
+ * 里 `state.extensions.items` 恒为 0 ⇒ 那 5 条**在这个路径上永远不可能成立**。
+ *
+ * 为什么不用"让它红着"：常驻假红 = 训练人忽略红，而本项目在别处明确反对这件事。
+ * 为什么**不许**把它算成通过：那正是本项目最贵的那一类 —— "真空里通过"打出来
+ * 和真通过一模一样，下一个人会以为这 5 条验过了。所以它单独计数、单独打印。
+ *
+ * ⚠️ 代价要如实写：这 5 条在沙箱路径上**从此不再被验**。它们只在**真机**
+ * （仓库里有 `plugins/`）跑本脚本时才真的生效 —— 想恢复，改沙箱的排除清单。
+ */
+const skip = (name, reason) => { results.push({ name, ok: true, skipped: true, extra: reason }); console.log(`⏭ ${name} — **跳过**：${reason}`); };
 
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -1409,26 +1425,53 @@ const plug = await evalJs(`return (() => {
     legacy: (document.getElementById('page').textContent || '').match(/扩展包|拓展|扩展功能/g) || [],
   };
 })()`);
-check('插件板数 = 插件数（一个插件一块独立板，没被合并进大容器）',
-  plug.declared > 0 && plug.boards === plug.declared,
-  `声明 ${plug.declared} 个 · 画出 ${plug.boards} 块板`);
+/* ⚠️ **这 5 条的前提是「至少有 1 块板」** —— 板上量出来的东西（列数 / 间隙 / 材质 /
+ *   外层有没有 .card）在 0 块板时**没有样本可量**，判据会给出和"排版坏了"一模一样的
+ *   输出（实测 `outerCard` 取到哨兵 `'no-grid'`、gap 恒 -1）。这不是"排版坏了"。
+ *
+ *   沙箱**刻意**不带插件：`test/sandbox.sh:121` `--exclude '/plugins/' --exclude '/skills/'`
+ *   （第 44 轮 B12d · EX-PLUGIN 起的决定）⇒ `state.extensions.items` 恒为 0
+ *   ⇒ `declared === 0` ⇒ 这 5 条在该路径上**永远不成立**。
+ *
+ *   第 57 轮之前它们是 5 条**常驻假红**。现在的处理是显式 SKIP（不是算通过）。
+ *   代价如实写：此路径上这 5 条不再被验；想让它们真跑，改沙箱的排除清单，
+ *   或在本机（`plugins/` 在位）直接跑 `node panel/next/verify.mjs --url …`。
+ */
+const plugNoSample = plug.declared === 0;
+const PLUG_SKIP_REASON = `沙箱里 state.extensions.items = ${plug.declared} 个（test/sandbox.sh:121 排除 /plugins/ 与 /skills/）`
+  + ` ⇒ 0 块板，这 5 条没有样本可量；真机（plugins/ 在位）跑本脚本才会真验`;
+
+if (plugNoSample) {
+  console.log(`\n⏭ 插件板 5 条**显式跳过**：${PLUG_SKIP_REASON}\n`);
+  skip('插件板数 = 插件数（一个插件一块独立板，没被合并进大容器）', PLUG_SKIP_REASON);
+  skip('插件板真的**横排多列**（`span 12` 没有被 `.card` 带进 `.pgrid`）', PLUG_SKIP_REASON);
+  skip('插件板横向网格平铺（gap 来自 CSS，两轴同值且非零）', PLUG_SKIP_REASON);
+  skip('插件板玻璃材质真的落地（backdrop-filter 在计算样式上，且圆角继承 .card）', PLUG_SKIP_REASON);
+  skip('**插件板没有 .card 祖先**（外层大玻璃板已脱掉，板直接浮在背景上）', PLUG_SKIP_REASON);
+} else {
+  check('插件板数 = 插件数（一个插件一块独立板，没被合并进大容器）',
+    plug.declared > 0 && plug.boards === plug.declared,
+    `声明 ${plug.declared} 个 · 画出 ${plug.boards} 块板`);
+  check('插件板真的**横排多列**（`span 12` 没有被 `.card` 带进 `.pgrid`）',
+    plug.cols >= plug.minCols, `${plug.boards} 块板排成 ${plug.rows} 排 × 最多 ${plug.cols} 列（下界 ${plug.minCols}）`);
+  check('插件板横向网格平铺（gap 来自 CSS，两轴同值且非零）',
+    plug.gapX > 0 && plug.gapY > 0 && Math.abs(plug.gapX - plug.gapY) < 2,
+    `${plug.cols} 列 × ${plug.rows} 排 · 水平间隙 ${plug.gapX}px（${plug.gapXN} 对）` +
+    ` · 垂直间隙 ${plug.gapY}px（${plug.gapYN} 对）`);
+  check('插件板玻璃材质真的落地（backdrop-filter 在计算样式上，且圆角继承 .card）',
+    plug.hasFilter === true && /px/.test(plug.radius || ''), `border-radius=${plug.radius}`);
+  check('**插件板没有 .card 祖先**（外层大玻璃板已脱掉，板直接浮在背景上）',
+    plug.outerCard === '' && plug.bareExists === true,
+    plug.outerCard
+      ? `网格仍被 .card（id=${plug.outerCard}）包着 —— 看到的还是「一块大玻璃板里切了 N 块」`
+      : (plug.bareExists ? '裸容器 .bare 在位，网格直接落在页面栅格上' : '⚠️ 找不到 .bare，插件网格这一页结构可能变了'));
+}
+/* 下面两条**不依赖"有没有板"**，照常判（0 块板时它们是真空绿，但判据本身不撒谎：
+ *   不等宽的排数为 0、开关数等于板数，这两件事在 0 块板时本来就该成立）。 */
 check('插件板同排等宽（`1fr` 弹性列真的在均分，不是 auto/max-content）',
   plug.uneven === 0, plug.rows > 0
     ? `${plug.rows} 排 × 最多 ${plug.cols} 列 · 不等宽的排 ${plug.uneven} 处 · 行间距 ${plug.gapY}px`
     : `板宽实测 ${JSON.stringify(plug)}`);
-check('插件板真的**横排多列**（`span 12` 没有被 `.card` 带进 `.pgrid`）',
-  plug.cols >= plug.minCols, `${plug.boards} 块板排成 ${plug.rows} 排 × 最多 ${plug.cols} 列（下界 ${plug.minCols}）`);
-check('插件板横向网格平铺（gap 来自 CSS，两轴同值且非零）',
-  plug.gapX > 0 && plug.gapY > 0 && Math.abs(plug.gapX - plug.gapY) < 2,
-  `${plug.cols} 列 × ${plug.rows} 排 · 水平间隙 ${plug.gapX}px（${plug.gapXN} 对）` +
-  ` · 垂直间隙 ${plug.gapY}px（${plug.gapYN} 对）`);
-check('插件板玻璃材质真的落地（backdrop-filter 在计算样式上，且圆角继承 .card）',
-  plug.hasFilter === true && /px/.test(plug.radius || ''), `border-radius=${plug.radius}`);
-check('**插件板没有 .card 祖先**（外层大玻璃板已脱掉，板直接浮在背景上）',
-  plug.outerCard === '' && plug.bareExists === true,
-  plug.outerCard
-    ? `网格仍被 .card（id=${plug.outerCard}）包着 —— 看到的还是「一块大玻璃板里切了 N 块」`
-    : (plug.bareExists ? '裸容器 .bare 在位，网格直接落在页面栅格上' : '⚠️ 找不到 .bare，插件网格这一页结构可能变了'));
 check('每个插件板都保留启用开关（改名后 data-a 已跟到 plugin.toggle）',
   plug.toggleCount === plug.boards, `开关 ${plug.toggleCount} 个 / 板 ${plug.boards} 块`);
 check('界面上不再出现「扩展包 / 拓展」字样（命名已统一为插件）',
@@ -1636,9 +1679,14 @@ const shot2 = await maybeShot('02-persona-enhance', 2, 1);
 const shot3 = await maybeShot('03-plugins', 6, 0);
 
 /* ── 汇总 ───────────────────────────────────────────────────────────── */
-const pass = results.filter((r) => r.ok).length;
-console.log(`\n结果：${pass}/${results.length} 通过`);
+const pass = results.filter((r) => r.ok && !r.skipped).length;
+const skippedN = results.filter((r) => r.skipped).length;
+// ⚠️ **跳过必须看得见，且不计入"通过"**：把 skip 算成 pass 就是"真空里通过"那一类 ——
+//    它和真通过打出来一模一样，而下一个人会以为这 5 条**验过了**。
+//    所以：总数（results.length）不变、通过数不含 skip，且单独打出跳过的条数与原因。
+console.log(`\n结果：${pass}/${results.length} 通过`
+  + (skippedN ? `（另有 ${skippedN} 条**显式跳过**：既非通过也非失败，见上面 ⏭ 行）` : ''));
 console.log(`截图：${shot1}\n      ${shot2}\n      ${shot3}`);
 console.log(`规模：${groupCount} 个域 · ${pagesChecked} 个页面 · ${cardsTotal} 张卡`);
 ws.close(); cleanup();
-process.exit(pass === results.length ? 0 : 1);
+process.exit(pass + skippedN === results.length ? 0 : 1);

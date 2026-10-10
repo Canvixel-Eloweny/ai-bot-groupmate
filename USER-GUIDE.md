@@ -42,7 +42,7 @@ QQ alt ──►  NapCat (Docker container · Linux QQ)   NapCat (native Windows
 | §4 Configuration checklist | Group IDs / model / persona — **identical on both** | **Both** |
 | §5 Start · §6 Did it work · §7 Day-to-day | Where to click, what to watch | **Both** |
 | §8 Troubleshooting · §10 Security · §11 Uninstall | — | **Both** |
-| **§9** | Install NapCat (native) → one-click start → the **five platform differences** | **Windows** |
+| **§9** | Install NapCat (native) → one-click start → the **nine platform differences** | **Windows** |
 | [`INSTALL-DOCKER.md`](./INSTALL-DOCKER.md) | The **detailed macOS install manual**: installing Docker Desktop, mirror fallback, daily ops, rollback | **macOS** |
 
 > ⚠️ The command examples in §1–§8 are **written for macOS** (`bash scripts/…`, `chmod`,
@@ -387,10 +387,12 @@ So the Windows route is shorter — **no Docker, no WSL2, no Linux subsystem.**
 > Those ports aren't a coincidence: the bridge connects to `3001`/`3000` by default, and that is
 > **the same on both platforms**.
 
-### Five ways Windows **differs** from macOS (read this first, so you don't think it's broken)
+### Nine ways Windows **differs** from macOS (read this first, so you don't think it's broken)
 
 | What you'll see | Why | Is it a bug? |
 |---|---|---|
+| **Quit the desktop QQ before scanning** (added in round 54) | NapCat works by **injecting into** the QQ NT client process, and QQ NT is **single-instance** per machine: a desktop QQ that's already signed in owns that instance, so the injected instance can't open a login window. The symptom is "I double-clicked `3-START-NAPCAT.bat` and no QR code ever appears". Quit the desktop QQ completely (including the **tray icon**) first | Not a bug — that's how NapCat works |
+| **After scanning, the window/process running NapCat must stay alive** (added in round 54) | From the moment you scan, that QQ process on this machine belongs to the spare account. **Signing the desktop QQ (your main account) back in kicks the spare off** ⇒ NapCat drops, the console shows "not signed in"; closing that window or pressing `Ctrl+C` kills it too. For everyday use run `2-START.bat` (it pushes the protocol side into the background); keep `3-START-NAPCAT.bat` for the first scan and for troubleshooting | Not a bug, but it's the most common cause of "it worked yesterday and now it doesn't" |
 | **The built-in "local model" entry doesn't apply on Windows** | It exists to automate **our own** stack (MLX / QwenChat, including launching the model process) and is macOS-only — nobody else's machine needs it. **To run a local model, use "Custom model"**: just give it an OpenAI-compatible URL (Ollama / LM Studio / a vLLM box on your LAN). `127.0.0.1`, `localhost`, `192.168.x` and `10.x` are all recognised as local ⇒ **billed as free** | Not a bug — a division of labour |
 | **The memory / resources card is empty** | That section reads macOS's `vm_stat` / `sysctl`; Windows has no equivalent. It **stays honestly blank rather than inventing a number** | No, by design |
 | "End this run" doesn't shut Docker down | There is no Docker in the Windows route | No |
@@ -408,6 +410,9 @@ on your first run, **don't assume it's you** — check it against this table fir
 
 | Where it sticks | Run this |
 |---|---|
+| **Double-clicking `3-START-NAPCAT.bat` never shows a QR code** | 1. **Quit the desktop QQ completely first** (single instance — see the table above). 2. If the window shows `Error: spawn EINVAL`, that's a build from before round 54 (fixed — grab the new package). 3. Run `runtime\node\node.exe tools\check-env.mjs` and read the "QQ 协议端" / "QQ 客户端" lines |
+| **"One-click start" reports success but the bot never replies in a group** | From round 54 there is **no more "false success"**: if the bot exits right after starting, the console surfaces the reason directly and points at `app\panel\bridge.log`. On an older build, check "instances" on the Run page and read `app\panel\bridge.log` |
+| **After signing in it flips back to "not signed in"** | Most likely you (or the desktop QQ) signed the main account back in — a single QQ NT instance means the main account kicks the spare one off. See the second row of the table above |
 | The `.bat` window flashes and vanishes | Open a terminal in the project directory and run `node scripts\win-launcher.mjs` by hand to see what it prints |
 | The console page won't open | Run `node panel\server.js` in the foreground to see the error, or read `panel\panel.log` |
 | The page opens but "One-click start" fails | `node scripts\check-onebot.js` — it tells you whether NapCat's 3001 is reachable |

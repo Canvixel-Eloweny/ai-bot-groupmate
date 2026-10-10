@@ -961,6 +961,21 @@ setInterval(() => {
 }, 700);
 
 /**
+ * 读一个日志文件的**最后 n 行**（同步、读不到就给空串）。
+ *
+ * 唯一用途：`startBridge()` 的"存活确认"要把"为什么一启动就死"随响应回给界面
+ * —— 而那段原因此刻**只存在于 bridge.log 里**。返回原文，脱敏交给调用方
+ * （出口只有一处需要脱，放在这里等于把"谁负责脱敏"这件事打散）。
+ */
+function readLogTail(file, n = 8) {
+  try {
+    return fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()).slice(-n).join('\n').slice(0, 900);
+  } catch {
+    return '';
+  }
+}
+
+/**
  * 扫出系统里在跑的机器人进程（排除自己）。
  *
  * pidfile 只记录"我们启动的那一个"。控制台被强杀、或 pidfile 没来得及写时，
@@ -1182,6 +1197,18 @@ async function countBridgeInstances(maxAgeMs = 15000) {
  */
 const BRIDGE_MAX_OLD_SPACE_MB = 384;
 
+/**
+ * 「起完等一会儿，再回看它死没死」的窗口（ms）。
+ *
+ * 为什么需要这个窗口：面板**看得见进程起没起来、看不见它有没有活下来**。
+ * 而"起来之后立刻死掉"恰恰是配置类错误最典型的形态（白名单为空、Key 没填、
+ * 端口被占），并且它是**静默**的 —— 界面报成功、群里永远没有回复。
+ *
+ * 1200 是**经验值**：真机上从启动到 `config.js` 抛错约 200~600ms，1.2 秒足够盖住
+ * "启动即死"的全部形态，又不至于让「启动」按钮明显变卡。调大只会让失败更晚被发现。
+ */
+const BRIDGE_ALIVE_PROBE_MS = 1200;
+
 async function startBridge() {
   // 沙箱里任何「启动机器人」的入口（一键启动 / /api/bridge/start / 调试重启）一律禁掉，
   // 免得拉起一个连着真实 QQ 的假机器人，在群里重复刷屏。
@@ -1266,10 +1293,43 @@ async function startBridge() {
   });
   child.on('error', (e) => {
     pushLog(`✗ 启动失败: ${e.message}`);
+    // 也给 lastExit 留一份：下面那道"存活确认"读的就是它，两个失败路径不必各判一次。
+    state.lastExit = { code: null, signal: null, at: Date.now(), error: e.message };
     state.bridge = null;
     state.bridgePid = null;
     try { fs.unlinkSync(PIDFILE); } catch {}
   });
+
+  // ── 存活确认（2026-10-09 · 第 54 轮 · 真机首跑 P0）───────────────────────────
+  //
+  // 上面那些只证明"进程被起出来了"。`src/config.js` 有一道 fail-closed 的白名单校验
+  // （白名单为空且没显式开 allowAllWhenEmpty ⇒ **启动瞬间 throw**，这是有意保留的正确行为），
+  // 而它抛出的那段中文错误只会落进 `bridge.log` —— 界面显示「已启动，pid 1234」，
+  // 用户去群里等一个永远不来的回复。真机首跑就是这么被卡住的。
+  //
+  // ⚠️ 为什么是「**等一小会儿再回看日志**」而不是「spawn 之前先 loadConfig() 预检一遍」
+  //    （报告里给的第一条建议就是预检，这里刻意没照做，两个理由都写下来）：
+  //      ① **分层**：`src/config.js` 是重型模块（读 env、拼整份配置、引 logger→egress），
+  //         而 `panel/` 这一层只许引零依赖叶子（见 `lib/paths.js` 的说明）。
+  //         真引进来等于把整份配置拖进面板进程，还破了这条分层。
+  //      ② **覆盖面**：预检只盖得住"白名单"一种死法；事后读日志盖的是**全部**死法
+  //         （缺依赖 / 端口被占 / 代码抛错），而且**不必在面板里复写任何一条业务规则**
+  //         —— 复制一份白名单判据，就一定会与机器人那一份漂开。
+  await new Promise((s) => setTimeout(s, BRIDGE_ALIVE_PROBE_MS));
+  const died = state.lastExit || (!pidAlive(child.pid) ? { code: null, signal: null } : null);
+  if (died) {
+    const detail = maskSecrets([died.error, readLogTail(BRIDGE_LOG, 8)].filter(Boolean).join('\n'));
+    const how = died.error
+      ? '机器人没能起来'
+      : `机器人启动后立刻退出（${died.code === null || died.code === undefined ? '被信号结束' : `退出码 ${died.code}`}）`;
+    pushLog(`✗ ${how} —— 这次不报"成功"了，原因随响应一起回给界面`);
+    return {
+      ok: false,
+      msg: detail
+        ? `${how}，原因：\n${detail}`
+        : `${how}，而日志里没有更多线索 —— 请检查 app\\config.json 是否填全了。`,
+    };
+  }
 
   return { ok: true, msg: `已启动，pid ${child.pid}` };
 }
@@ -1867,7 +1927,10 @@ async function apiGroups(req, res, url) {
 
 async function apiBridgeStart(req, res, url) {
   const r = await startBridge();
-  return sendJson(res, r, r.ok ? 200 : 400);
+  // ⚠️ 非 2xx 时页面读的是 **`data.error`**（见 `panel/next/app.js` 的 `api()`）——
+  //    只回 `msg` 会当场退化成一句「HTTP 400」，那正是我们要消掉的那种"看不出原因"
+  //    （第 54 轮：startBridge 现在会把"为什么一启动就死"写在 msg 里，别在最后一步丢掉它）。
+  return sendJson(res, r.ok ? r : { ...r, error: r.msg }, r.ok ? 200 : 400);
 }
 
 async function apiBridgeStop(req, res, url) {
@@ -2114,6 +2177,28 @@ async function apiCustomBrainSave(req, res, url) {
     return sendJson(res, { ok: false, error: '模型名不能为空' }, 400);
   }
 
+  // ── 模型名与服务商要对得上（2026-10-09 · 第 54 轮 · 真机首跑 P1）─────────────
+  //
+  // 这道闸早就写好了（`lib/models.js` 的 `modelProviderMismatch()`，中文理由很清楚），
+  // `/api/config` 那条路一直在用。**自定义大脑走的是另一条独立路由，把它漏了** ——
+  // 于是用户可以把 `baseUrl=https://platform.deepseek.com/usage` + `model=DS`
+  // 原样存进 config.json 并激活，之后每次请求都失败，而界面上看不出任何异常。
+  //
+  // ⚠️ **只对云端那三家生效**（`deepseek` / `zhipu` / `qwen`），`local` / `other` 一律放行。
+  //    为什么 `local` 必须放行：自定义大脑**正是** Windows 用户接本机模型的唯一通道
+  //    （llama.cpp / LM Studio / Ollama 的 OpenAI 兼容地址，模型名是它们自己返回的 id，
+  //    不带目录斜杠）；而 `modelProviderMismatch()` 的 `local` 那一支要求"填 MLX 模型目录路径"
+  //    —— 那是 macOS 专有语义，照搬过来会把用户手册指的那条路当场拒掉，理由还是一句无关的话。
+  //    判据本身复用 `PRESET_KEYS`（后端认的预设名单，唯一一份），不新开一张表。
+  const provider = providerOf(baseUrl);
+  if (provider !== 'local' && PRESET_KEYS.includes(provider)) {
+    const mismatch = modelProviderMismatch(model, provider);
+    if (mismatch) {
+      pushLog(`✗ 拒绝了不匹配的模型：${model}（自定义大脑，服务商 ${provider}）`);
+      return sendJson(res, { ok: false, error: mismatch, reason: 'model-provider-mismatch', provider }, 400);
+    }
+  }
+
   const name = String(body.name ?? '').trim() || editing?.name || '自定义模型';
   const features = {};
   for (const k of CUSTOM_FEATURE_KEYS) {
@@ -2288,7 +2373,7 @@ async function apiOnekeyStart(req, res, url) {
       return ok;
     });
 
-  await Promise.all([
+  const [onebotReady, localReady] = await Promise.all([
     onebotTask,
     needLocal ? ensureLocalModelReady(cfg, say) : Promise.resolve(false),
   ]);
@@ -2298,14 +2383,38 @@ async function apiOnekeyStart(req, res, url) {
     if (await stopAnyLocalModel(say)) say('✔ 已关掉本机模型，省内存');
   }
 
+  let bridge = { ok: true, msg: '机器人已在运行' };
   if (bridgeRunning()) {
     say('· 机器人已在运行');
   } else {
-    const r = await startBridge();
-    say(r.ok ? `✔ ${r.msg}` : `✗ ${r.msg}`);
+    bridge = await startBridge();
+    say(bridge.ok ? `✔ ${bridge.msg}` : `✗ ${bridge.msg}`);
   }
 
   invalidateDockerCache();
+
+  // ── 回执必须**如实**反映子步骤（2026-10-09 · 第 54 轮 · 真机首跑 P0）──────────
+  //
+  // 以前这里无论协议端连没连上、机器人起没起来，一律回
+  // `{ ok: true, msg: '一键启动完成' }` —— 于是"协议端没起来"和"机器人没起来"
+  // 在界面上都是**完成**，用户只能去群里干等一个永远不来的回复。
+  // 这是"失败只写在文件里"的另一种形态：**接口回 200，而业务从没成立过**。
+  //
+  // ⚠️ 用 200 + `ok:false`（而不是 400）：这条响应里带着 `steps`（失败的**那一步**在哪，
+  //    对非技术用户比错误类型有用得多），而前端只在**非 2xx** 时抛异常、把 `steps` 丢掉。
+  //    前端据 `ok` 决定提示颜色（见 `panel/next/app.js` 的 `onekey.start`）。
+  const failed = [];
+  if (!onebotReady) {
+    failed.push(IS_WIN
+      ? '协议端没响应 —— 请先启动 NapCat 并扫码登录（它是个单独的窗口，不在容器里）'
+      : '协议端没响应（可能要扫码登录，看左侧状态）');
+  }
+  if (needLocal && !localReady) failed.push('本机模型没起来');
+  if (!bridge.ok) failed.push(bridge.msg);
+
+  if (failed.length) {
+    return sendJson(res, { ok: false, steps, msg: `没能完全启动 —— ${failed.join('；')}` });
+  }
   return sendJson(res, { ok: true, steps, msg: '一键启动完成' });
 }
 

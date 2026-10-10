@@ -173,7 +173,8 @@ npm install
 copy config.example.json config.json
 ```
 
-装 NapCat、开两条通道、以及**五处平台差异**（没有本机模型 / 内存卡片 / 实例数 / Docker 那一环 / 黑窗口）
+装 NapCat、开两条通道、以及**九处平台差异**（扫码前须退出电脑端 QQ / 扫码后 NapCat 那个进程要常驻 /
+没有本机模型 / 内存卡片 / 实例数 / Docker 那一环 / 黑窗口）
 与「真机第一次跑该回报什么」，那一节里逐条都写了。
 
 ---

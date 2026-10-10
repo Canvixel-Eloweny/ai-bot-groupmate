@@ -246,7 +246,7 @@ const post = (url, body) => api(url, { method: 'POST', body });
 const DEMO_BLOCK = () => { toast('演示模式：这一页没有连上后端，写操作不会发送', 'warn'); };
 
 const ACTIONS = {
-  'onekey.start': async () => { busy(true, '一键启动中…'); try { const r = await post('/api/onekey/start'); stepsOf(r); toast(r.msg || '已启动', 'ok'); await refresh(true); } catch (e) { toast(`启动失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'onekey.start': async () => { busy(true, '一键启动中…'); try { const r = await post('/api/onekey/start'); stepsOf(r); toast(r.msg || '已启动', r && r.ok === false ? 'bad' : 'ok'); await refresh(true); } catch (e) { toast(`启动失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'onekey.stop': async () => { if (!confirm('结束本次运行？机器人 + 本机模型 + 容器一起停。')) return; busy(true, '结束中…'); try { const r = await post('/api/onekey/stop'); stepsOf(r); toast(r.msg || '已结束', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'bridge.start': async () => { busy(true, '启动机器人…'); try { const r = await post('/api/bridge/start'); toast(r.msg || '已启动', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'bridge.stop': async () => { if (!confirm('停止机器人？')) return; busy(true, '停止中…'); try { const r = await post('/api/bridge/stop'); toast(r.msg || '已停止', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },

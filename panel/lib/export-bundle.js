@@ -13,6 +13,13 @@
  *
  * @returns {object} 可直接 JSON.stringify 的导出包
  */
+// ⚠️ `path` / `fs` 是**本模块自己**要用的：下面 :38 拼人格文件的绝对路径、:216 读运行日志。
+//    第 19 轮把它从 `server.js` 搬出来时漏带了这两行（`server.js` 顶层本来有），于是
+//    **每个** `/api/custom/export` 都在第一处 `path.join` 抛 `ReferenceError: path is not defined`
+//    ⇒ HTTP 500、导出 100% 不可用。而 `check-wb` 是静态扫描器，"该 import 的有没有 import"
+//    它查不到 ⇒ 只有运行期那一层（`sandbox --run`）能抓到。第 57 轮 B1 补回。
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   SCENES, REPLY_LENGTHS, ENHANCE, ENHANCE_KEYS, PLAY_RULES, SKILL_IN_PROMPT, FACE_PRESETS, readCustom,
 } from '../../src/custom-config.js';
