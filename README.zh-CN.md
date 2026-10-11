@@ -28,7 +28,7 @@ OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建�
 
 <p>
   <a href="./README.zh-CN.md#3-四套大脑预设与切换"><img alt="AI" src="https://img.shields.io/badge/AI-OpenAI--compatible-6f42c1?style=for-the-badge"></a>
-  <a href="./CHANGELOG.md"><img alt="版本" src="https://img.shields.io/badge/release-v0.1.2-e05d44?style=for-the-badge"></a>
+  <a href="./CHANGELOG.md"><img alt="版本" src="https://img.shields.io/badge/release-v0.1.1-e05d44?style=for-the-badge"></a>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="最后提交" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
 </p>
 
