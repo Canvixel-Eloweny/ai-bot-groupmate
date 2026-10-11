@@ -28,12 +28,19 @@
 # 按 .app 自身的位置推（放在项目里时，改项目文件夹名也不会失效）；
 # 推不出来（比如把 .app 单独拷到桌面/应用程序里）就回落到已知路径。
 #
-# ⚠️ 回落路径**必须认两个目录名**（2026-10-11 · 改名 Estrella Bot）：
+# ⚠️ 这个回落表**必须同时认新名与旧名**（2026-10-11 · 改名 Estrella Bot）：
 #    `USER-GUIDE` 现在教用户 clone 成 `estrella-bot`，而 2026-10-11 之前的 clone
-#    仍叫旧名。只认一个的话，把 .app 单独拷出去的旧用户当场找不到项目目录。
-#    新名先试、旧名兜底 —— 顺序有意义：新装的人命中第一个，老 clone 落到第二个。
+#    仍叫 `QQ-BOT-Creative`。只认一个的话，把 .app 单独拷出去的那一半用户
+#    当场找不到项目目录 —— 而根因是我们自己的文档改动。
+#    顺序有意义：新名先试、旧名兜底。
+# ⚠️ 它是**尽力而为**的搜索，不可能覆盖所有人：文档让用户 clone 到任意位置，
+#    所以真正可靠的路径永远只有"`.app` 就在项目里"那一条（下面的 SELF_DIR）。
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-KNOWN_DIRS=("$HOME/WorkBuddy/WB/estrella-bot" "$HOME/WorkBuddy/WB/QQ-BOT-Creative")
+KNOWN_DIRS=(
+  "$HOME/Documents/estrella-bot"        # 维护者位置（2026-10-11 起）
+  "$HOME/WorkBuddy/WB/estrella-bot"     # 2026-10-11 短暂用过，留着无害
+  "$HOME/WorkBuddy/WB/QQ-BOT-Creative"  # 改名前的旧目录名：老 clone 兜底
+)
 if [ -f "$SELF_DIR/panel/server.js" ]; then
   DIR="$SELF_DIR"
 else
