@@ -43,9 +43,17 @@ import { authDecision, presentedToken, newToken, injectPanelToken, TOKEN_ENV } f
 // 只有 lsof 探测在这里 —— 于是"会不会误杀"这件事能被 smoke 直接断言。
 import {
   isOurBridge, parsePgrepLine, firstPathOf, PGREP, LSOF, PGREP_LIST_FLAGS,
-  // Windows（2026-10-08）：那边没有 pgrep / lsof。这三个是"**提名**"那一半的新工具；
+  // Windows（2026-10-08）：那边没有 pgrep / lsof。这两个是"**提名**"那一半的新工具；
   // "**核验**"仍然是同一个 `isOurBridge()` —— 换的只是怎么找到候选，判据一条没动。
-  POWERSHELL, winNodeListArgs, parseWinNodeProcesses, encodePwshCommand,
+  // ⚠️ 第 58 轮：原先还有一个 `winNodeListArgs`（只筛 `node.exe` 的那条查询）。
+  //    真机实测 `powershell` 光启动就约 1030 ms，而本文件的进程快照**已经带回同样的字段** ⇒
+  //    两个消费者改用同一次调用（见 `winProcessSnapshot`）。那条查询仍留在
+  //    `src/bridge-proc.js` 并被 smoke 直接断言，只是 `/api/state` 不再走它。
+  // ⚠️ 第 59 轮：`parseWinNodeProcesses`（吃 PowerShell 原始输出）换成
+  //    `winProcFromRow` + `winRowsOf`（吃**已经反序列化好的行**）—— 快照那份本来就是对象，
+  //    先前为了复用解析而 `JSON.stringify` 再 `JSON.parse` 绕一圈，纯属白烧 CPU；
+  //    "字段怎么读"仍然只有 `winProcFromRow` 那一份（它也被 parseWinNodeProcesses 用着）。
+  POWERSHELL, winRowsOf, winProcFromRow, encodePwshCommand,
 } from '../src/bridge-proc.js';
 // D19 · 机器人进程侧的实例锁。**只读**：判据（"锁长什么样"）用 `src/bridge-lock.js`
 // 的 `parseLock`，退出码也从那儿取 —— 面板不许再写一份"锁的格式"或再抄一个 3。
@@ -892,7 +900,9 @@ const collectState = makeStateCollector({
   // 在那边整张是 0。这份快照就是补它的。**注入而不是搬进 collector** 的理由与
   // `readUsage` / `countBridgeInstances` 同款：取数要 IO 与缓存（起 PowerShell、限频），
   // 而 collector 只该拿现成的数据去算。
-  winMemory: winMemorySnapshot,
+  // ⚠️ 第 58 轮：函数名从 `winMemorySnapshot` 改成 `winProcessSnapshot` —— 它现在**不止是内存**，
+  //    还是「实例数」（`findBridgeProcessesWin`）的唯一取数口。两个消费者共用一次调用。
+  winMemory: winProcessSnapshot,
 });
 
 // `buildModelCaps()` / `normalizeThinking()` 搬去 `lib/models.js`（B11b-2）。
@@ -1039,12 +1049,25 @@ async function findBridgeProcesses(exceptPids = []) {
  *      那由机器人自己的 `.bridge.lock`（按 pid）兜着。这一条写进了用户手册。
  */
 /**
- * Windows 上「整机内存 + 进程表」的**一次**快照（2026-10-09 · 第 53 轮 · B2）。
+ * Windows 上「整机内存 + 全量进程表」的**唯一一份**快照（第 53 轮 B2 立 · 第 58 轮改成一份供两处用）。
  *
  * 为什么要有它：Windows 上没有 `vm_stat` / `sysctl` / `ps -Ao`（那些是 macOS 专有），
  * 于是「健康与占用」那张卡片在那边**整张都是 0** —— 那不是"占用很低"，是"根本没采到"。
- * 这个模块把它从"没采到"变成"真的采到"，而且**不新增一次进程枚举**：一次 PowerShell
- * 同时取回整机内存与按进程的内存，两处读数共用同一份（本项目"一份数据不许维护两遍"）。
+ *
+ * ⚠️ **第 58 轮 · 真机实测后的一处改正**（Windows 11 ARM64 + UTM，数据见 §5-A）：
+ *    以前这里与「实例数」**各起一次 `powershell`**，而真机量到的数是
+ *    **`powershell -NoProfile -Command "exit 0"` 光启动就要约 1030 ms** ——
+ *    两次调用 ≈ 2 秒是白花的。而这份快照**本来就枚举了全量进程、并且带 `CommandLine`**，
+ *    识别机器人要的字段（PID / 可执行路径 / 命令行）它一个不缺。
+ *    ⇒ 改成**一次调用同时供两个消费者**：
+ *      · 「健康与占用」→ `winMemoryOf(snapshot)`（`panel/lib/state-collector.js`）；
+ *      · 「实例数」    → `snapshot.procs` 里筛 `node.exe`，再交给**同一个**
+ *        `winProcFromRow`（识别判据仍然只有那一份；第 59 轮把"字段怎么读"从
+ *        `parseWinNodeProcesses` 里抽出来，两条路共用同一份）。
+ *    收益：`/api/state` 从「两次 PS」降到「一次 PS」，并额外省掉一次"只筛 node.exe"的查询。
+ *
+ * ⚠️ **单飞（`winSnapInflight`）是必需的，不是保险**：一次 `/api/state` 会**同时**要这两份读数，
+ *    若只有 TTL 缓存，两个并发调用会双双 miss、双双起 powershell —— 正好把上面省的又花回去。
  *
  * 四条纪律：
  *   · **15 秒 TTL 缓存**（与 `countBridgeInstances` 同一量级；前端 3 秒轮询会命中缓存）；
@@ -1057,30 +1080,69 @@ async function findBridgeProcesses(exceptPids = []) {
  *    `winMemoryOf()` 里（纯函数，能在 macOS 上被直接断言）。
  */
 let winSnapCache = { at: 0, data: null };
-async function winMemorySnapshot(maxAgeMs = 15000) {
+let winSnapInflight = null;
+/** 快照的**世代号**：`invalidateBridgeInstances()` 每次 +1，用来作废"在飞的那一趟"（见那里）。 */
+let winSnapGen = 0;
+async function winProcessSnapshot(maxAgeMs = 15000) {
   if (!IS_WIN) return null;
-  const now = Date.now();
-  if (winSnapCache.data && now - winSnapCache.at < maxAgeMs) return winSnapCache.data;
+  if (winSnapCache.data && Date.now() - winSnapCache.at < maxAgeMs) return winSnapCache.data;
+  if (winSnapInflight) return winSnapInflight;
 
-  const ps = '$os = Get-CimInstance Win32_OperatingSystem '
-    + '| Select-Object TotalVisibleMemorySize,FreePhysicalMemory; '
-    + '$ps = Get-CimInstance Win32_Process '
-    + '| Select-Object Name,CommandLine,WorkingSetSize; '
-    + '[pscustomobject]@{ os = $os; procs = $ps } | ConvertTo-Json -Compress -Depth 4';
-
-  const r = await sh(POWERSHELL, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePwshCommand(ps)], 15000);
-  let data = null;
-  if (r.ok) {
-    try { data = JSON.parse(r.stdout.trim() || 'null'); } catch { data = null; }
+  const gen = winSnapGen; // 起飞时的代号；落地时若已被作废就不许写缓存
+  const flight = (async () => {
+    // `ProcessId` / `ExecutablePath` 是为「实例数」那一侧加的：`isOurBridge` 的三条判据
+    // 都要它们，而原来那份只筛 node.exe 的查询正是为了拿这两个字段。
+    const ps = '$os = Get-CimInstance Win32_OperatingSystem '
+      + '| Select-Object TotalVisibleMemorySize,FreePhysicalMemory; '
+      + '$ps = Get-CimInstance Win32_Process '
+      + '| Select-Object ProcessId,Name,ExecutablePath,CommandLine,WorkingSetSize; '
+      + '[pscustomobject]@{ os = $os; procs = $ps } | ConvertTo-Json -Compress -Depth 4';
+    let data = null;
+    try {
+      const r = await sh(POWERSHELL, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePwshCommand(ps)], 15000);
+      if (r.ok) {
+        try { data = JSON.parse(r.stdout.trim() || 'null'); } catch { data = null; }
+      }
+    } catch {
+      data = null; // 起不来就报"采不到"，不猜
+    }
+    // ⚠️ 只有"这一趟还没被作废"才准写缓存 —— 否则它会把刚被 `invalidateBridgeInstances()`
+    //    清掉的缓存又写回去（那正是"刚起好机器人、实例数却还是 0"的另一条路）。
+    if (gen === winSnapGen) winSnapCache = { at: Date.now(), data };
+    return data;
+  })();
+  winSnapInflight = flight;
+  try {
+    return await flight;
+  } finally {
+    // ⚠️ **必须清，而且必须在 finally 里清**（第 59 轮补的一处真缺陷）：
+    //    上面那句 `winSnapInflight = null` 原先写在 IIFE 内部、且**不在 finally 里** ——
+    //    一旦 `sh()` 抛的是 try/catch 没接住的东西（或将来有人在里面加了会抛的代码），
+    //    `winSnapInflight` 就会**永久停在那个 rejected promise 上**，
+    //    于是 Windows 上之后每一次 `/api/state` 都直接失败、"健康与占用"永远采不到，
+    //    而界面上看不出这是"卡住了"还是"真的没数据"。
+    //    ⚠️ 只清"自己还是当前那一飞"的那一个 —— 并发下别把别人那一飞清掉。
+    if (winSnapInflight === flight) winSnapInflight = null;
   }
-  winSnapCache = { at: now, data };
-  return data;
 }
 
 async function findBridgeProcessesWin(exceptPids = []) {
-  const r = await sh(POWERSHELL, winNodeListArgs(), 12000);
+  // ⚠️ 第 58 轮：**不再单独起一次 PowerShell**。真机实测 `powershell` 光启动就约 1030 ms，
+  //    而这里要的三个字段（PID / 可执行路径 / 命令行）内存快照那一次**已经全带回来了** ⇒
+  //    两个消费者共用同一份（见 `winProcessSnapshot` 的注释与那里的实测数据）。
+  //    ⚠️ 解析仍然交给**同一个** `winProcFromRow`：换平台时最容易犯的错就是
+  //    "顺手再写一份解析/判据"，那会让"核验严"这道防线多出第二套语义（本项目头号纪律）。
+  // ⚠️ 第 59 轮：这里原先是 `parseWinNodeProcesses(JSON.stringify(nodeRows))` ——
+  //    为了复用那份解析，先把已经反序列化好的行**序列化回字符串**再让对方解析一遍。
+  //    整张进程表（Windows 上常 200+ 行）每 15 秒白烧一次 stringify + parse。
+  //    现在直接对行做映射，"字段怎么读"仍然是同一个 `winProcFromRow`。
+  const snap = await winProcessSnapshot();
+  const nodeProcs = winRowsOf(snap?.procs)
+    .filter((row) => String(row?.Name ?? '').toLowerCase() === 'node.exe')
+    .map(winProcFromRow)
+    .filter(Boolean);
   const out = [];
-  for (const proc of parseWinNodeProcesses(r.stdout)) {
+  for (const proc of nodeProcs) {
     if (proc.pid === process.pid || exceptPids.includes(proc.pid)) continue;
 
     const verdict = isOurBridge({ cmd: proc.cmd, cwd: '', execPath: proc.execPath, root: ROOT });
@@ -1168,6 +1230,22 @@ function bridgeRunning() {
 let bridgeInstCache = { at: 0, n: null };
 function invalidateBridgeInstances() {
   bridgeInstCache = { at: 0, n: null };
+  // ⚠️ 第 58 轮：**必须连进程快照一起失效**。
+  //    「实例数」现在从 `winProcessSnapshot()` 那份 15 秒 TTL 的快照里数（见那里的注释），
+  //    而本函数正是"机器人刚起 / 刚停"那一刻被调用的（本文件 3 处 start、2 处 stop）。
+  //    只失效 `bridgeInstCache` 的话，下一次 `/api/state` 会拿**起停之前**那张进程表去数 ——
+  //    真机实测（Windows 11 ARM64）：面板刚起好机器人，`instances` 却一直报 0，
+  //    直到 15 秒后快照自然过期才变 1。这正是本条要挡的那个"读数慢一拍"。
+  winSnapCache = { at: 0, data: null };
+  // ⚠️ 第 59 轮：**只清缓存还不够，还得让"在飞的那一趟"作废**。
+  //    真机实测 `powershell` 光启动就约 1030 ms —— 也就是说起/停那一刻，
+  //    很可能有一趟快照**正在飞**。它的结果是按"起飞时"的进程表采的，
+  //    而它降落时会**照写 `winSnapCache`** ⇒ 上面那句"清缓存"当场被它覆盖回去，
+  //    于是第 58 轮修掉的"刚起好机器人、instances 却报 0"又从另一条路回来了
+  //    （只是这次只持续到那一趟落地，比 15 秒短、更难复现）。
+  //    ⇒ 用**世代号**：失效 +1，在飞的那趟记下自己起飞时的代号，
+  //      落地时只有代号没变才准它写缓存。
+  winSnapGen += 1;
 }
 async function countBridgeInstances(maxAgeMs = 15000) {
   if (SANDBOX) return null;
@@ -3110,6 +3188,13 @@ server.on('error', (e) => {
 });
 
 server.listen(PORT, '127.0.0.1', async () => {
+  // 第 58 轮 · **预热 Windows 进程快照**。
+  // 真机实测：`powershell` 光启动就约 1030 ms，而窗口刚起来时用户正好会点开页面 ⇒
+  // 不预热的话那一次 `/api/state` 要把整条冷路径走完，观感就是"面板卡住了"。
+  // 这里**刻意不 await**：让它与下面的清扫 / 接管并发跑；15 秒 TTL 足够覆盖"打完枪 → 用户点开"。
+  // 失败无害 —— `winProcessSnapshot` 自己吞异常并返回 null，只是退回原来的冷启动。
+  if (IS_WIN) winProcessSnapshot().catch(() => {});
+
   // 清扫"属主已死"的原子写临时文件（第 48 轮 B12e-4 · EX-TEMPSWEEP）。
   // 机器人与面板**各扫一次是刻意的**：两个进程都可能被杀，谁先起来谁先清干净。
   // 判据（"不是我的 && 够旧"）保证不会删掉另一个**活着**进程正在写的那一份。

@@ -118,12 +118,27 @@ async function api(path, { method = 'GET', body = null, raw = false, timeout = 1
 async function refresh(silent = false) {
   try {
     S.state = await api('/api/state');
-    if (!S.online) { S.online = true; renderBanners(); }
+    if (!S.online) S.online = true;
   } catch (e) {
     if (S.online) { S.online = false; toast(`与后端断开：${e.message}`, 'bad'); }
     if (!S.state) S.state = DEMO;
-    renderBanners();
   }
+  // ⚠️⚠️ 第 58 轮 · 真机截图抓到的缺陷：**告警条以前永远不会消失。**
+  //
+  //    原来 `renderBanners()` 只挂在两个地方 —— 「离线 → 在线」那一瞬（上面那个 if），
+  //    以及 catch 分支。**成功刷新的路径上根本没有它**，而 `paintTop()` / `softPaint()`
+  //    每次都会跑 ⇒ 结果是：
+  //      · 顶栏与页面内容**实时更新**；
+  //      · 告警条**冻结在页面首次连上那一帧**，之后再也不变。
+  //    用户看到的就是"同一页自相矛盾"：条子说「实例锁被占着、pid 9996、面板没在跑机器人」，
+  //    而下面的卡片同时显示「机器人 在跑 pid 7920」。
+  //
+  //    受影响的不止实例锁那一条 —— 「内存很紧」（pressure≥90）一旦亮起，
+  //    就算内存降下来也不会消失；「面板服务端是旧代码」「没拿到 token」同理。
+  //
+  //    所以它必须和 paintTop / softPaint 一样，**每次拿到新状态都重绘**。
+  //    （告警条里没有输入框，不受 `busyTyping()` 那条"别打断打字"的约束。）
+  renderBanners();
   paintTop();
   softPaint();
   if (!silent && !S.online) return;
@@ -356,17 +371,63 @@ function brainById(id) {
   return (j(S.state, ['config', 'customBrains'], []) || []).find((b) => b.id === id) || null;
 }
 
+/**
+ * 已知服务商的「接口地址 → 默认模型」，给自定义大脑表单做一键填入。
+ *
+ * ⚠️ 值**一律来自 `state.config.presets`** —— 那是服务端 `panel/lib/models.js` 的
+ *    `CLOUD_PRESETS` 经 `readPresets()` 下发的。前端**不抄第二份地址或模型名**：
+ *    那张表改了，这里自动跟着改（本项目"唯一实现"那条纪律的直接应用）。
+ *
+ * 存在的理由（2026-10-10 · 真机翻车记录）：用户报「群里 @ 了机器人不回」。
+ * 根因是他把 **DeepSeek 控制台的密钥管理网页** `https://platform.deepseek.com/api_keys`
+ * 当成接口地址填了进来 ⇒ 每条消息 `HTTP 405 Method Not Allowed`。
+ * 表单原来只写了一句「要填 API 地址，不是控制台网页」——**说了不是什么，没说是什么**，
+ * 用户照样不知道该复制哪个。所以这里把每家的正确地址直接摆出来 + 一点即填。
+ */
+function brainPresetRows() {
+  const presets = j(S.state, ['config', 'presets'], {}) || {};
+  return Object.entries(presets)
+    .filter(([, p]) => p && String(p.baseUrl || ''))
+    .map(([key, p]) => ({
+      key,
+      label: String(p.label || key),
+      baseUrl: String(p.baseUrl),
+      model: String(p.model || ''),
+    }));
+}
+
 function brainForm(id) {
   const b = brainById(id);
   const f = b?.features || {};
   const chk = (k, label, hint) => `<label class="row flat f-inline" style="gap:8px;">
       <input type="checkbox" data-bf="${k}" ${f[k] === true ? 'checked' : ''}>
       <span class="grow">${label}</span><span class="hint">${hint}</span></label>`;
+
+  // 「接口地址 → 默认模型」的一键填入清单。
+  // ⚠️ 值全部来自 `state.config.presets`（服务端 `panel/lib/models.js` 的 CLOUD_PRESETS 下发的那份），
+  //    前端不抄第二份地址 / 模型名 —— 那张表改了这里自动跟着改（理由见 brainPresetRows 的注释）。
+  const rows = brainPresetRows();
+  const fillHint = rows.length ? `<div class="hint" style="margin-top:8px;">
+      常见服务商（点「填入」= <b>接口地址与默认模型一起写好</b>，模型可以再改）：
+      <div style="margin-top:4px;">${rows.map((r) => `<div class="row flat" style="gap:8px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-ghost btn-sm" data-bf-fill="${esc(r.key)}">填入</button>
+          <code>${esc(r.baseUrl)}</code>${r.model ? `<span class="hint"> → ${esc(r.model)}</span>` : ''}
+        </div>`).join('')}</div>
+      <div style="margin-top:6px;">
+        ⚠️ 要的是<b>接口地址</b>，不是控制台网页 —— 浏览器地址栏里那种
+        <code>platform.…/api_keys</code> <code>…/usage</code> <code>…/dashboard</code> 都不是接口地址。
+        <b>填错的表现</b>：群里 @ 它不回，日志里写 <code>模型调用失败 … HTTP 405 / 404</code>
+        （日志在 <code>app\\panel\\bridge.log</code>）。
+        自建 / 中转网关填你自己的地址，不受这张表约束。
+      </div>
+    </div>` : '';
+
   const html = `<div class="f">
     <input type="text" data-bf="name" value="${esc(b?.name || '')}" placeholder="名字，例如「公司网关」" />
     <input type="text" data-bf="baseUrl" value="${esc(b?.baseUrl || '')}" placeholder="接口地址 https://…（要填 API 地址，不是控制台网页）" />
     <input type="password" data-bf="apiKey" value="" placeholder="${b?.hasKey ? '已保存过，留空则不改' : 'API Key'}" />
     <input type="text" data-bf="model" value="${esc(b?.model || '')}" placeholder="模型名，例如 gpt-4o-mini" />
+    ${fillHint}
     <div class="hint" style="margin-top:6px;">它能做什么（勾了才生效，界面上也<b>只显示勾过的</b>）：</div>
     ${chk('vision', '能看图', '勾了才会把群里的图片发给它')}
     ${chk('thinking', '能思考', '勾了才带思考参数；服务端不认会自动去掉重发，不会卡住')}
@@ -584,6 +645,19 @@ function paintTop() {
   $id('footStat').textContent = `一级域 ${GROUPS.length} · 页面 ${GROUPS.reduce((n, g) => n + g.subs.length, 0)} · 控件类型 ${CTRL_KINDS.length}`;
 }
 
+/**
+ * 告警条上一次画出来的 HTML。
+ *
+ * ⚠️ 存在的理由（第 59 轮）：第 58 轮把 `renderBanners()` 挪到**每次刷新都跑**
+ *   （原来只在「离线→在线」与 catch 里跑，于是条子冻结在首帧、与页面内容自相矛盾）。
+ *   但 `refresh()` 是 3 秒一轮的 ⇒ 这函数也就变成 3 秒一次 **`innerHTML =`**。
+ *   而告警条里**有一颗按钮**（「重启面板」）—— 整块被替换的那一瞬点下去，
+ *   这一次点击就丢了，表现正是本项目记录过多次的"**点了没反应**"。
+ *   ⇒ 只在**内容真的变了**时才写 DOM：既保住第 58 轮"条子要跟着状态变"的修复，
+ *     又不再每 3 秒无谓地重建一块带按钮的 DOM（顺带省掉一次重排）。
+ */
+let bannersHtml = '';
+
 function renderBanners() {
   const box = $id('banners');
   const s = S.state || DEMO;
@@ -609,7 +683,10 @@ function renderBanners() {
     out.push(`<div class="banner"><b>实例锁被占着</b><span class="spacer"></span>
       <span>pid ${j(s, ['bridge', 'lock', 'pid'])} 持有锁，而面板这边没在跑机器人 —— 这种情况下点「启动机器人」会被拒。清锁是危险动作，交脚本或人工。</span></div>`);
   }
-  box.innerHTML = out.join('');
+  const html = out.join('');
+  if (html === bannersHtml) return; // 没变就别重建 —— 那颗「重启面板」会被整块换掉（见上方注释）
+  bannersHtml = html;
+  box.innerHTML = html;
 }
 
 /* ════════════════════════════════════════════════ 7. 导航 ═══ */
@@ -2451,6 +2528,23 @@ document.addEventListener('click', async (ev) => {
   if (nav1) { S.gi = Number(nav1.dataset.g); S.si = 0; paintPage(true); window.scrollTo({ top: 0 }); return; }
   const nav2 = ev.target.closest('#nav2 .sub');
   if (nav2) { S.si = Number(nav2.dataset.s); paintPage(true); window.scrollTo({ top: 0 }); return; }
+
+  // 「自定义大脑」表单里的「填入」按钮：把该服务商的接口地址与默认模型写进输入框。
+  //    ⚠️ 走**事件委托**而不是绑在节点上：弹窗的内容是每次打开重画的，绑上去会在下一次
+  //       打开时失效（而症状只是"点了没反应"，看不出原因 —— 与右键菜单那条同一个理由）。
+  //    ⚠️ 刻意**不注册成 action**：它不是 `data-a`，也就不进 `ACTIONS` / `INLINE_ACTIONS`
+  //       与 `auditActions()` 的自检 —— 这只是个填表单的便利按钮，不该进动作面。
+  const fillBtn = ev.target.closest('[data-bf-fill]');
+  if (fillBtn) {
+    const hit = brainPresetRows().find((r) => r.key === String(fillBtn.dataset.bfFill || ''));
+    if (!hit) return;
+    const bu = document.querySelector('[data-bf="baseUrl"]');
+    const md = document.querySelector('[data-bf="model"]');
+    if (bu) bu.value = hit.baseUrl;
+    if (md && hit.model) md.value = hit.model;
+    toast(`已填入 ${hit.baseUrl}${hit.model ? ` 与 ${hit.model}` : ''}`, 'ok');
+    return;
+  }
 
   const el = ev.target.closest('[data-a]');
   if (!el) return;

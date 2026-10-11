@@ -28,7 +28,7 @@ OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build
 
 <p>
   <a href="./README.md#3-four-brain-presets"><img alt="AI" src="https://img.shields.io/badge/AI-OpenAI--compatible-6f42c1?style=for-the-badge"></a>
-  <a href="./CHANGELOG.md"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.1-e05d44?style=for-the-badge"></a>
+  <a href="./CHANGELOG.md"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.2-e05d44?style=for-the-badge"></a>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
 </p>
 

@@ -428,7 +428,7 @@ export function makeStateCollector(deps) {
       modelLabels: MODEL_LABELS,
       // 能力开关的**显示名**（联网查询 / 识图 / 发 QQ 表情）。
       // 唯一真相源是 src/model-caps.js 的 FEATURE_LABEL —— 机器人侧自动关掉某个能力时
-      // 的提示语用的也是它。面板上「机器人设置」和「自定义工作台」两处摆的是**同一份配置**，
+      // 的提示语用的也是它。面板上「发言与时机 → 触发方式」与「自定义工作台」两处摆的是**同一份配置**，
       // 文字也必须逐字一致：一边写"联网查询"、另一边写"联网搜索"，用户会以为这是两个功能。
       featureLabels: FEATURE_LABEL,
       // 智谱模型档案：实测延迟 / 走哪个额度包 / 官方免费 / 思考形态。

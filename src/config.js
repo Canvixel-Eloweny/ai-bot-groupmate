@@ -20,6 +20,9 @@ import { isLocalBase, providerOf } from './net-rules.js';
 // 自定义大脑（2026-10-07）：用户自己填地址 / Key / 模型名的那些，能存好多套。
 // 判据与归一化是零依赖叶子 —— 同目录下的模块，不需要过 lib→src 白名单。
 import { customBrainsOf, materializeBrain } from './custom-brain.js';
+// 去 UTF-8 BOM。它是零依赖叶子里的一条纯字符串判据，扩展包清单与「读 config.json」
+// 共用同一份 —— 各写一份 `.replace(/^\uFEFF/, '')` 就是又一处会各自腐烂的语义。
+import { stripBom } from './plugin-manifest.js';
 
 const log = scoped('config');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -48,7 +51,16 @@ export const DATA_DIR = process.env.QQBOT_DATA_DIR
   : path.join(ROOT, 'data');
 
 function readJson(file) {
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
+  // ⚠️ 第 58 轮 · 真机实测：**带 BOM 的 config.json 会让机器人以一句看不懂的 JSON 报错起不来**
+  //    （`Unexpected token ''`）。Windows 上很容易踩到 —— 记事本「另存为 UTF-8」和一部分
+  //    编辑器默认都写 BOM，而"打开 app\config.json 手填群号 / Key"正是文档引导用户做的事。
+  //    去 BOM 是纯增益：合法 JSON 的正文前面本来就不允许出现它（RFC 8259 只认四个空白字符）。
+  //
+  // ⚠️ 第 59 轮：这里原先自己写了一份 `.replace(/^\uFEFF/, '')`，而 `stripBom` 早就在
+  //    `plugin-manifest.js` 里存在（扩展包清单也吃 BOM）。**改用那一份** ——
+  //    "BOM 怎么去"现在全项目只有一个答案，面板侧（`panel/lib/config-io.js`）也引的是它。
+  //    （顺带一个实际差别：`stripBom` 看的是**首字符码元**而不是正则，不吃回溯也不吃 g 标志。）
+  return JSON.parse(stripBom(fs.readFileSync(file, 'utf8')));
 }
 
 function asInt(v, fallback) {
@@ -224,10 +236,17 @@ export function loadConfig(overridePath) {
       //    （第 54 轮起 `startBridge()` 会把"启动即死"的原因原样回给界面）。
       //    所以它必须能**照着做** —— 只说 `allow.groups` 的话，Windows 便携版用户
       //    在界面上找不到那个词（面板管它叫「放行的群号」）。
+      //
+      // ⚠️⚠️ 第 58 轮 · 真机翻车记录：这里原来写的是「机器人设置 → 放行的群号」，
+      //    而现役控制台**根本没有「机器人设置」这个一级菜单**（那是旧版界面的残留名字）
+      //    ⇒ 用户照着去找，找不到，然后卡住。
+      //    路径以 `panel/next/schema.js` 里**唯一那颗** `bindSys: 'groups'` 控件为准：
+      //    它在 `speak`（发言与时机）→ `trigger`（触发方式）→ 卡片「被叫到」下。
+      //    **面板导航将来再改名，这一行必须跟着改** —— 它是"能照着做"的全部价值所在。
       throw new Error(
         '白名单为空，且 allow.allowAllWhenEmpty 不为 true —— 它不知道该听谁的，所以不会启动。\n' +
           '  怎么办（两条路，第二条强烈不建议）：\n' +
-          '    ① 填白名单：控制台里是「机器人设置 → 放行的群号」（私聊白名单同理，叫 allow.private）；\n' +
+          '    ① 填白名单：控制台「发言与时机 → 触发方式 → 放行的群号」（私聊白名单同理，叫 allow.private）；\n' +
           '       也可以直接编辑 app/config.json 的 allow.groups —— 群号写**纯数字**，多个用逗号隔开。\n' +
           '    ② 显式把 allow.allowAllWhenEmpty 设为 true。\n' +
           '       ⚠️ 那等于把 QQ 账号的控制权交给任何人和任何群，别这么干。'

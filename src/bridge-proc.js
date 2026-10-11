@@ -272,17 +272,57 @@ export function encodePwshCommand(script) {
   return Buffer.from(String(script ?? ''), 'utf16le').toString('base64');
 }
 
-/** 跑那次枚举的完整 argv（`/api/state` 会每 15 秒用一次，参数必须稳定）。 */
+/**
+ * 跑那次枚举的完整 argv。
+ *
+ * ⚠️ 第 58 轮：**`/api/state` 已经不再走这里**。真机实测 `powershell` 光启动就约 1030 ms，
+ *    而面板那份进程快照本来就枚举了全量进程、并带 `CommandLine` / `ExecutablePath` / `ProcessId` ⇒
+ *    两个消费者改成共用同一次调用（见 `panel/server.js` 的 `winProcessSnapshot`）。
+ *    保留本函数与 `WIN_PS_SCRIPT` 的理由：① smoke 直接断言它的编码与解析；
+ *    ② 它是"**只筛 node.exe**"那条窄查询的唯一实现，将来若只想拿候选池可以独立复用。
+ */
 export function winNodeListArgs() {
   return ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePwshCommand(WIN_PS_SCRIPT)];
 }
 
 /**
+ * `ConvertTo-Json` 的**单对象 / 数组**两种形态统一成数组。
+ *
+ * ⚠️ 必须吃**两种**形态：`ConvertTo-Json` 在只有一个元素时**不套数组**
+ *    （PowerShell 的老毛病），而"机器人刚起来、进程表里只有它一个"恰好是最常见的
+ *    时刻 —— 漏了这一支，表现就是"刚启动时面板认不出机器人"。
+ *
+ * 为什么要单独导出：这条 PowerShell 的脾气在**两处**都会被撞上 —— 只筛 `node.exe`
+ * 那条查询的输出，以及面板那份「整机内存 + 全量进程表」快照里的 `procs`。
+ * 各写一份"单对象还是数组"的判断，就是又一份会各自腐烂的语义。
+ */
+export function winRowsOf(value) {
+  if (value == null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+/**
+ * 一行 `Win32_Process` → `{pid, execPath, cmd}`；认不出返回 `null`。
+ *
+ * ⚠️ 「字段怎么读」**只有这一份**：`parseWinNodeProcesses`（吃 PowerShell 的原始输出）
+ *    与面板那份进程快照（已经反序列化好的行）共用它 —— 两边各解一遍，
+ *    迟早出现"面板认得出、机器人认不出"或反之。
+ * ⚠️ 认不出返回 `null`（fail-closed）：提名不出来就不会有东西被杀。
+ */
+export function winProcFromRow(row) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+  const pid = Number(row.ProcessId);
+  if (!Number.isFinite(pid) || pid <= 0) return null;
+  return {
+    pid,
+    execPath: String(row.ExecutablePath ?? ''),
+    cmd: String(row.CommandLine ?? ''),
+  };
+}
+
+/**
  * 解析 `ConvertTo-Json` 的输出 → `[{pid, execPath, cmd}]`。
  *
- * ⚠️ 必须吃**两种**形态：**单个对象**与数组。`ConvertTo-Json` 在只有一个元素时
- *    **不套数组**（PowerShell 的老毛病），而"机器人刚起来、进程表里只有它一个"
- *    恰好是最常见的时刻 —— 漏了这一支，表现就是"刚启动时面板认不出机器人"。
  * ⚠️ 认不出一律返回空数组（fail-closed）：提名不出来就不会有东西被杀。
  */
 export function parseWinNodeProcesses(stdout) {
@@ -294,17 +334,10 @@ export function parseWinNodeProcesses(stdout) {
   } catch {
     return [];
   }
-  const rows = Array.isArray(parsed) ? parsed : [parsed];
   const out = [];
-  for (const r of rows) {
-    if (!r || typeof r !== 'object' || Array.isArray(r)) continue;
-    const pid = Number(r.ProcessId);
-    if (!Number.isFinite(pid) || pid <= 0) continue;
-    out.push({
-      pid,
-      execPath: String(r.ExecutablePath ?? ''),
-      cmd: String(r.CommandLine ?? ''),
-    });
+  for (const row of winRowsOf(parsed)) {
+    const proc = winProcFromRow(row);
+    if (proc) out.push(proc);
   }
   return out;
 }

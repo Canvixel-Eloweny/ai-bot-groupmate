@@ -3,7 +3,69 @@
 本项目在 `main` 上持续迭代，每个对外可见的版本打一个 tag。以下按**批次**记录对外可见的变化。
 内部批次台账（含未交付项与裁决记录）是**内部件，不随公开仓库发布**。
 
-## Unreleased — 2026-10-09
+## 0.1.2 — 2026-10-11
+
+> 这一版把 2026-10-09 起累积的未发布改动一并带上 —— 上一节那四条 Windows 真机修复
+> 当时还只在包里、没进版本控制（第 59 轮补交为 `db67869`），现在随这一版一起对外。
+
+### 2026-10-11 · A BOM in `config.json` could break **either half** of the app
+
+The config file is the one file the documentation tells you to open and edit by hand. On Windows,
+Notepad's "Save as UTF-8" writes a byte-order mark, and `JSON.parse` chokes on it — with an error
+message that never mentions a BOM.
+
+The bot's half was fixed first: it used to **refuse to start** with a BOM'd `config.json`. The
+console's half was missed, and it was the worse of the two, because the console's reader is
+deliberately built to *return `null` instead of throwing*. So a BOM in that file made the console
+fall back to defaults, which looks exactly like "my settings were not saved" — and saving again
+would write those defaults back over what you had typed. Silently. Both readers now strip the BOM
+through a single shared helper, and a contract keeps the two from drifting apart again.
+
+### 2026-10-11 · Copying the API-key page URL made every reply fail with `HTTP 405`
+
+To use a custom model you paste an API **endpoint**. The obvious thing to copy out of a browser is
+the address of the provider's key-management page — for DeepSeek that is
+`https://platform.deepseek.com/api_keys`, with an **underscore**. The console-URL guard knew
+`apikey` and `api-keys` but not `api_keys`, so the address passed the check, was saved, and then
+every single message came back `405 Method Not Allowed`. From the group's side that reads as
+"it ignores me when I @ it".
+
+The guard now covers both spellings. The custom-model form also lists each known provider's real
+endpoint with a one-click "fill in" button — telling users what *not* to paste had already been
+tried and was not enough.
+
+### 2026-10-11 · Windows: the console asked PowerShell for the same thing twice
+
+Every `/api/state` on Windows used to start `powershell` **twice** — once for memory, once to count
+bot processes. On a real machine that is about 1030 ms of startup *per call*, and the two callers
+were asking for overlapping data. They now share one snapshot.
+
+Two related things came out of the same measurement: the process count could read **0 right after
+the bot started** (the snapshot in flight had been taken *before* the start, and it overwrote the
+freshly invalidated cache), and the snapshot's "single flight" state was not cleared in a `finally`
+— so one unexpected throw would have left every later `/api/state` failing forever, looking
+indistinguishable from "there is genuinely nothing to report". All three are fixed.
+
+### 2026-10-11 · The console could contradict itself, and could swallow your click
+
+Two separate defects, both in the console page:
+
+- **The alert bar never went away.** It was only redrawn when the connection came back or when a
+  request failed — never on a successful refresh. So it froze at whatever the page looked like when
+  it first connected, while the cards below it kept updating: the bar could say "the instance lock
+  is held, the console is not running the bot" while the card right underneath said "bot running,
+  pid …". It is now redrawn with the rest, whenever the state actually changes.
+- **The "restart the console" button could miss your click.** The alert bar carries that button, and
+  the page rebuilds it on a 3-second poll. Anything that replaces the node between `mousedown` and
+  `mouseup` loses the click — the symptom being the one this project keeps meeting: "I clicked it
+  and nothing happened". The bar is now only rewritten when its content really changed.
+
+### 2026-10-11 · Exporting the configuration answered `500`
+
+The "export config" button failed with a server error: `panel/lib/export-bundle.js` used
+`node:path` and `node:fs` without importing them. Nothing caught it because the panel boots fine
+and only that one route touches the file. It is fixed, and the regression that used to red on it
+now reds on the source instead of on the environment.
 
 ### 2026-10-09 · Windows: the first run that could never have worked
 

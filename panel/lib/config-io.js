@@ -24,6 +24,10 @@ import fs from 'node:fs';
 import { CONFIG_FILE, HISTORY_FILE } from './paths.js';
 import { writeJsonAtomic } from '../../src/atomic-write.js';
 import { appendHistory, historyEntryOf } from '../../src/config-history.js';
+// 去 BOM。**与机器人侧同一份实现**（`src/config.js` 的 readJson 引的也是它）——
+// 「BOM 怎么去」只有 `stripBom` 一个答案，两边各写一份就又是一个会漂移的判据。
+// 它在 `check-wb` 的 lib→src 白名单里（第 1833 行），闭包只有它自己。
+import { stripBom } from '../../src/plugin-manifest.js';
 
 /**
  * `config.json` 的绝对路径。
@@ -41,10 +45,19 @@ function configPath() {
  * 这个"吞掉异常"是刻意的，也是一处**危险**：配置读不到时整台面板会用默认值继续跑，
  * 看不出任何异常。所以它必须读对路径 —— 路径算错的表现正是"面板突然变回默认配置"。
  * （`paths.js` 里那道 `package.json` 自检就是为了让这种情况下**当场崩**。）
+ *
+ * ⚠️⚠️ **必须去 BOM**（第 59 轮补的一处真实缺口）：
+ *    第 58 轮在真机上逮到「带 BOM 的 `config.json` 让机器人起不来」，当时只修了
+ *    **机器人侧**（`src/config.js` 的 `readJson`）—— **面板这一侧漏了**。
+ *    而漏它的后果比机器人侧更隐蔽：本函数"读不到就返回 null、不抛"，
+ *    于是用户在 Windows 上用记事本改完 `config.json`（记事本「另存为 UTF-8」**写 BOM**），
+ *    面板读出来是 null ⇒ 界面回到默认值 ⇒ 他手填的群号 / Key **看起来没保存**，
+ *    再点一次保存还会把这份默认值写回去 —— 手填的内容就这么没了，全程无一处报错。
+ *    ⚠️ 这正是"读不到就吞掉"那条危险的真实面貌：BOM 是**最容易被用户制造出来**的一种。
  */
 export function readConfig() {
   try {
-    return JSON.parse(fs.readFileSync(configPath(), 'utf8'));
+    return JSON.parse(stripBom(fs.readFileSync(configPath(), 'utf8')));
   } catch {
     return null;
   }

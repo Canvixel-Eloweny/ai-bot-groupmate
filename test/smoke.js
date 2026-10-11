@@ -154,7 +154,7 @@ import {
 import { isOurBridge, parsePgrepLine, firstPathOf, PGREP, LSOF, PGREP_LIST_FLAGS } from '../src/bridge-proc.js';
 // Windows 适配（2026-10-08）：本机没有 Windows，所以那一族的判据全部做成**纯函数**，
 // 在这里直接喂 Windows 形态的数据 —— 否则"平台分支走错"只能等真机才暴露。
-import { pathEq, lastCmdToken, absEntryInRoot, encodePwshCommand, winNodeListArgs, parseWinNodeProcesses } from '../src/bridge-proc.js';
+import { pathEq, lastCmdToken, absEntryInRoot, encodePwshCommand, winNodeListArgs, parseWinNodeProcesses, winRowsOf, winProcFromRow } from '../src/bridge-proc.js';
 import {
   appendHistory, historyEntryOf, readHistory, configAt, popHistory,
 } from '../src/config-history.js';
@@ -2267,6 +2267,33 @@ async function main() {
           && parseWinNodeProcesses('not json').length === 0
           && parseWinNodeProcesses(JSON.stringify({ ProcessId: 0 })).length === 0,
         `单对象=${oneW.length} 数组=${manyW.length}`);
+
+      // ⑦ 「一行 Win32_Process 怎么读」现在**只有 `winProcFromRow` 一份**，被两条路共用：
+      //      · 只筛 node.exe 那条查询 → `parseWinNodeProcesses`（吃 PowerShell 原始输出）；
+      //      · 面板那份「整机内存 + 全量进程表」快照 → 直接吃**已经反序列化好的行**
+      //        （第 59 轮：先前为了复用解析而 `JSON.stringify` 再 parse 绕一圈，白烧 CPU）。
+      //    ⚠️ 这两条路必须**产出同一个结果**，否则就是"面板认得出、机器人认不出"或反之 ——
+      //       而它们的坏法都是静默的（实例数恒 0 / 停不掉机器人，不报任何错）。
+      //       所以下面这条断言是**十字验证**：同一份输入走两条路，逐字段比。
+      const sampleRows = [
+        { ProcessId: 4242, Name: 'node.exe', ExecutablePath: WNODE, CommandLine: `${WNODE} ${WR}\\src\\index.js` },
+        { ProcessId: 7, Name: 'node.exe', ExecutablePath: '', CommandLine: '' },
+      ];
+      const viaString = parseWinNodeProcesses(JSON.stringify(sampleRows));
+      const viaRows = winRowsOf(sampleRows).map(winProcFromRow).filter(Boolean);
+      check('T-WIN7 两条解析路必须同解：「原始输出」与「已反序列化的行」逐字段一致（一处改了另一处没跟 = 静默认不出）',
+        JSON.stringify(viaString) === JSON.stringify(viaRows) && viaRows.length === 2,
+        `字符串路=${viaString.length} 行路=${viaRows.length}`);
+
+      // ⑧ `winRowsOf` / `winProcFromRow` 自身的边界：认不出的输入一律不产出（fail-closed），
+      //    且**不许抛** —— 它们在 `/api/state` 的热路径上，抛一次就是一次 500。
+      const junkRows = [null, undefined, 0, 'x', [], { ProcessId: 0 }, { ProcessId: -1 }, { ProcessId: 'abc' }, {}];
+      const survived = junkRows.map(winProcFromRow).filter(Boolean);
+      check('T-WIN8 行解析 fail-closed 且不抛：坏行一律不提名（提名不出来就不会有东西被杀）',
+        survived.length === 0
+          && winRowsOf(null).length === 0 && winRowsOf(undefined).length === 0
+          && winRowsOf({ a: 1 }).length === 1 && winRowsOf([{ a: 1 }, { b: 2 }]).length === 2,
+        `坏行 ${junkRows.length} 条 → 提名 ${survived.length} 条`);
     }
 
     // T35 原子写（B10a · O-ATOMIC）。
@@ -10501,8 +10528,40 @@ const fs = require('node:fs');
         'https://open.bigmodel.cn/api/paas/v4/',
         'https://api.deepseek.com/v1',
         'http://127.0.0.1:8080/v1',
+        // ⚠️ 这条是**给"别把判据放宽过头"立的**：DeepSeek 官方**真有** `/user/balance`
+        //    这个接口。所以路径表里绝不能出现裸 `user`（写了它就会把真接口拦掉）。
+        'https://api.deepseek.com/user/balance',
       ]) {
         ck(consoleHostReject(okUrl) === '', `真地址被控制台判据误拦：${okUrl}`);
+      }
+
+      // ── ③b 路径那条判据（`CONSOLE_PATH_RE`）—— **第 58 轮补的用例** ──
+      //    ⚠️ 在这之前，上面 ③ 只测了 `CONSOLE_HOST_RE`（逐家手写的域名表）；
+      //       路径那条分支**一条用例都没有**，于是它漏了什么没人知道。
+      //       真机逮到的那一漏：用户按第一反应复制了「密钥管理页」的地址 ——
+      //       `https://platform.deepseek.com/api_keys`（下划线），而正则写的是 `apikeys?`。
+      //       ⇒ 放行 ⇒ 每条消息 `HTTP 405 Method Not Allowed` ⇒ "它 @ 了不回"。
+      for (const badUrl of [
+        'https://platform.deepseek.com/api_keys',   // ← 用户真机上实际填的那个
+        'https://platform.deepseek.com/api-keys',   // 连字符写法
+        'https://platform.deepseek.com/usage',      // ← 第 54 轮那个
+        'https://platform.deepseek.com/dashboard',
+        'https://dashscope.aliyuncs.com/billing',
+      ]) {
+        const why = consoleHostReject(badUrl);
+        ck(why.length > 20 && /控制台/.test(why), `厂商域名上的控制台路径没被拦下：${badUrl} → 「${why}」`);
+        // 拦下时必须说清该填什么（与 ③ 同一条要求）。
+        // ⚠️ 断言写成**不含反斜杠的普通字符串**是刻意的：`check-wb` 的"唯一实现"字面量扫描
+        //    用的指纹是 `deepseek\.com`（带转义）。写成 /api\.deepseek\.com\/v1/ 就等于
+        //    在测试里又抄了一份域名判据，会被契约正当拦下 —— 与上面 qwen 那条同款理由。
+        ck(why.includes('api.deepseek.com/v1'), `拒绝文案没说清该填哪个地址：${badUrl}`);
+      }
+      // 反向：自建 / 中转网关上的同名路径**必须放行** —— 判据只对已知厂商生效
+      for (const selfUrl of [
+        'https://my-gateway.example.com/api_keys',
+        'http://127.0.0.1:8080/billing',
+      ]) {
+        ck(consoleHostReject(selfUrl) === '', `自建/中转地址被控制台判据误拦：${selfUrl}`);
       }
 
       // ── ④ 统一免费判据：四态齐 + 历史账本回落 ──

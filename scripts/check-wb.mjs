@@ -63,8 +63,20 @@ console.log = (first, ...rest) => {
  *    以及它现在由哪一节盯着。答不上来就别删。
  * ⚠️ `MIN_CONTRACTS` 是**下限**，只许增；唯一合法的下降是"被断言的对象真被删了"
  *    （那时两数同向各减 1 + 在提交信息里写理由）。
+ *
+ * ⚠️⚠️ **第 59 轮补的两格**：这个常量在 `64bb2ba`（第 53 轮那批 Windows 改动）之后
+ *    就**落后于实际跑到的段数**了 —— 那一笔把值从 101 提到 104，而同一棵树实测跑的是
+ *    **105**；第 59 轮新增「config.json 的两个读口都去 BOM」一段后实际到 **106**，
+ *    当时也没跟着调。两个落后的合起来 = **有 2 段可以被静默删掉而不报任何错**，
+ *    而"有人删了断言"正是这个常量存在**唯一**要防的事（见上面那段自证）。
+ *    ⇒ 一并对齐到 106（= 规范环境实测值），并在 `CONTRACTS-HISTORY.md` 里补记账。
+ *
+ *    ⚠️ 量这个数的**前提是 `node_modules` 在场**：实测同一棵树在**没有 `node_modules`**
+ *       的裸 worktree 里只跑得到 17 段（100 个块一声不响地不打印）。这不是缺陷 ——
+ *       提交门 `pre-commit.sh` 正是因此才把 `node_modules` **软链**进闸门用的临时 worktree。
+ *       记在这里是为了下次有人量到 17 时**别以为闸门坏了**。
  */
-const MIN_CONTRACTS = 104;
+const MIN_CONTRACTS = 106;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -14527,6 +14539,59 @@ const LIB_SRC_ALLOW = [
       + 'brain.js 的分条有守门 + 一次性告警 · '
       + `行为断言见 smoke 的 T383 · 子判据 ${subCountOf('配置模板可运行')} 条（§51 核下限）`);
   }
+}
+
+// 98b) config.json 的**两个**读口都必须去 BOM（2026-10-11 · 第 59 轮）。
+//
+// 为什么值得单独一段：这是"**修了一半**"的形状，而"修一半"在本项目里比"没修"更难发现。
+//   第 58 轮在 Windows 真机上逮到「带 BOM 的 config.json 让机器人以一句看不懂的 JSON
+//   报错起不来」（`Unexpected token ''`），修的是**机器人侧**（`src/config.js`）——
+//   **面板侧漏了**（`panel/lib/config-io.js` 的 `readConfig`）。
+//
+//   而漏在面板侧的后果比漏在机器人侧更隐蔽：机器人侧会**当场报错**（看得见），
+//   面板侧那个函数是"读不到就返回 null、**不抛**"的 ⇒ 用户在 Windows 上用记事本
+//   改完 `config.json`（记事本「另存为 UTF-8」**写 BOM**）之后：
+//     面板读出来 null → 界面回到默认值 → 他手填的群号 / Key **看起来没保存** →
+//     再点一次保存还会把这份默认值写回去 —— 手填内容就这么没了，**全程无一处报错**。
+//
+// ⚠️ 这一段守的不是"去 BOM"本身（那由 `stripBom` 自己的用例守着），而是
+//    **"同一份判据不许只有一边在用"** —— 第 58 轮刚在这上面翻过一次车。
+{
+  const problems = [];
+  const cfgSrc = stripComments(fs.readFileSync(new URL('../src/config.js', import.meta.url), 'utf8'));
+  const ioSrc = stripComments(fs.readFileSync(new URL('../panel/lib/config-io.js', import.meta.url), 'utf8'));
+
+  // ① 两个读口都必须**真的调了** stripBom —— 判"调用"而不是"import 了"：
+  //    import 了不用，等于没去，而那正是第 58 轮面板侧的实际状态（它压根没引）。
+  if (!/JSON\.parse\(stripBom\(/.test(cfgSrc)) {
+    problems.push('src/config.js 读 JSON 没走 stripBom —— 带 BOM 的 config.json 会让机器人以一句看不懂的 JSON 报错起不来（第 58 轮真机实录）');
+  }
+  if (!/JSON\.parse\(stripBom\(/.test(ioSrc)) {
+    problems.push('panel/lib/config-io.js 的 readConfig 没走 stripBom —— 用户在记事本里改完配置后界面回到默认值、手填的群号/Key 看起来"没保存"（第 58 轮只修了机器人侧，这是漏的那一半）');
+  }
+
+  // ② 「BOM 怎么去」全项目**只有一份实现**：不许再冒出第二份手写正则。
+  //    ⚠️ 扫之前必须 `stripComments` —— 本轮改注释时里面**引用了**旧写法
+  //    （`各写一份 .replace(/^\uFEFF/, '')`），不剥注释就会把自己判成红（第 32 条老坑）。
+  const { BACKEND_SOURCES } = await import(new URL('../panel/lib/paths.js', import.meta.url));
+  const scanRels = [...new Set([...BACKEND_SOURCES, 'src/config.js', 'src/plugin-manifest.js', 'src/text-hygiene.js'])];
+  let implCount = 0;
+  const handWritten = [];
+  for (const rel of scanRels) {
+    let code = '';
+    try { code = stripComments(fs.readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8')); } catch { continue; }
+    if (/export function stripBom\(/.test(code)) implCount += 1;
+    if (/uFEFF/.test(code)) handWritten.push(rel);
+  }
+  if (implCount !== 1) {
+    problems.push(`stripBom 的实现不是恰 1 份（实测 ${implCount}）—— 两份实现必然各自漂移，而漂移的表现是"一边认得出、一边认不出"`);
+  }
+  if (handWritten.length) {
+    problems.push(`还有文件在手写 BOM 正则（\\uFEFF）：${handWritten.join('、')} —— 一律改用 stripBom`);
+  }
+
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else console.log('✓ config.json 的两个读口都去 BOM（第 59 轮 · 补第 58 轮漏的面板侧）：机器人侧与面板侧都真的调了 stripBom · 「BOM 怎么去」全项目恰 1 份实现 · 无手写 \\uFEFF 正则残留');
 }
 
 // 99) 表情 id 表（2026-10-09 · 第 53 轮 · B5）。

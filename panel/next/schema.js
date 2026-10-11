@@ -481,7 +481,7 @@ export const GROUPS = [
             id: 'basic', title: '他是谁', span: 6,
             ctrls: [
               { t: 'text', id: 'p.name', label: '机器人昵称', bindSys: 'personaName', ph: '例如：小鱼',
-                hint: '与「机器人设置 → 通用设置」共用同一个值（顶层 personaName，不在 custom 里）。' },
+                hint: '键名是**顶层** personaName（不在 custom 里）—— 换到别的页面看到的也是同一个值。' },
               { t: 'text', id: 'p.age', label: '年龄', bind: 'persona.age', ph: '例如：24' },
               { t: 'text', id: 'p.role', label: '身份', bind: 'persona.role', ph: '例如：刚毕业的程序员' },
               { t: 'text', id: 'p.world', label: '时代 / 世界观', bind: 'persona.world',
@@ -745,7 +745,7 @@ export const GROUPS = [
     subs: [
       {
         id: 'trigger', label: '触发方式', title: '触发方式',
-        desc: '什么情况下它才开口。放行 / 拉黑名单与「机器人设置」里的通用设置共用同一份配置。',
+        desc: '什么情况下它才开口。放行 / 拉黑名单写在同一份 config.json 的 <code>allow</code> 里 —— 别的入口看到的也是这一份。',
         draft: true,
         cards: [
           {

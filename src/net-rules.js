@@ -180,9 +180,17 @@ const CONSOLE_HOST_RE = /(^|\.)(platform\.qianwenai\.com|bailian\.console\.aliyu
  * ⚠️ **只对已知厂商生效**（`PROVIDER_HOST_END_RE` 里有官方域名的那些）：自建 / 中转网关
  *    的路径长什么样不该由我们猜 —— 那一类是被**刻意放行**的（见上文 ③），
  *    在这里拦错一次就是"正常配置填不进去"，比漏拦更坏。
+ *
+ * ⚠️⚠️ 第 58 轮 · 真机又逮到一道缝：这条路径判据**当时一条用例都没有**（smoke 只测了域名表那条），
+ *    于是它漏了什么没人知道。而它漏的恰好是**最常被复制的那一个**：
+ *    用户要填 Key，第一反应是打开服务商的「密钥管理页」，把浏览器地址栏复制过来 ——
+ *    而 DeepSeek 的那个页面是 `https://platform.deepseek.com/api_keys`（**下划线**），
+ *    原正则只写了 `apikeys?` ⇒ 不匹配 ⇒ 放行 ⇒ 机器人每条消息都 405。
+ *    现在把 `_` / `-` 两种写法都收进来，并给这条分支补了用例（smoke §T381 附近）——
+ *    判据与用例成对，才不会再无声腐烂。
  */
 const CONSOLE_PATH_RE =
-  /^\/(usage|dashboard|console|login|sign-?in|sign-?up|register|billing|payments?|apikeys?|account|profile|user-?center|workspace|settings)(\/|$)/i;
+  /^\/(usage|dashboard|console|login|sign-?in|sign-?up|register|billing|payments?|api[_-]?keys?|keys?|tokens?|credentials?|account|profile|user-?center|workspace|settings)(\/|$)/i;
 
 export function consoleHostReject(base) {
   const text = String(base);
