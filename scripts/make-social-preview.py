@@ -6,7 +6,7 @@
 就是那套深蓝配色的鲸鱼娘，没理由让链接展开成一块灰。
 
 配色取自项目自己的资产，不另起一套：
-  · 渐变两端来自 `QQ-BOT-CONTROL.app` 的 AppIcon（采样：浅 (235,243,253) / 深 (45,59,104)）
+  · 渐变两端来自 `Estrella-Bot.app` 的 AppIcon（采样：浅 (235,243,253) / 深 (45,59,104)）
   · 角色立绘直接用 `assets/appicon-figure.png`（带透明通道，就是 App 图标用的那张）
 
 用法：
@@ -75,7 +75,7 @@ def main():
 
     d = ImageDraw.Draw(canvas)
     x, y = 78, 168
-    d.text((x, y), 'QQ-BOT-Creative', font=ImageFont.truetype(fb, 58), fill=TITLE)
+    d.text((x, y), 'Estrella Bot', font=ImageFont.truetype(fb, 58), fill=TITLE)
     y += 84
     for line in ['Turn a spare QQ account', 'into an AI group member.']:
         d.text((x, y), line, font=ImageFont.truetype(fr, 30), fill=(206, 222, 248))

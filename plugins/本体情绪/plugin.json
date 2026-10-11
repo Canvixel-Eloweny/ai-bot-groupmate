@@ -5,7 +5,7 @@
   "apiVersion": 1,
   "category": "model",
   "description": "跨群共享的心情/精力/压力/离散情绪。每轮极轻注入一句状态；聊天事件自动加减情绪。数据存 data/bot-state.json。",
-  "author": "QQ-BOT-Creative",
+  "author": "Estrella Bot",
   "enabledByDefault": false,
   "capabilities": [],
   "requires": [],

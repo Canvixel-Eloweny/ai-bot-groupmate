@@ -5,7 +5,7 @@
   "apiVersion": 1,
   "category": "knowledge",
   "description": "让模型把自己总结成低权重背景板，写入角色卡「自我印象」区。每次注入都会带上，权重故意压低。",
-  "author": "QQ-BOT-Creative",
+  "author": "Estrella Bot",
   "enabledByDefault": false,
   "capabilities": [],
   "requires": [],

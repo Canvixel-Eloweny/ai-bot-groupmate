@@ -26,7 +26,7 @@
  */
 const SB = 'test/sandbox.sh';
 const SRV = 'panel/server.js';
-const LSH = 'QQ-BOT-CONTROL.app/Contents/Resources/launcher.sh';
+const LSH = 'Estrella-Bot.app/Contents/Resources/launcher.sh';
 const GA = '.gitattributes';
 const COC = 'CODE_OF_CONDUCT.md';
 
@@ -121,14 +121,16 @@ const M7 = {
 };
 
 // ── M8：L-01 —— 回到"把 $1 拼进 AppleScript 源码串"的老写法 ──────────────────
-const LSH_BLOCK = /notify\(\) \{\n  osascript -e 'on run argv' \\\n           -e 'display notification \(item 1 of argv\) with title "QQ-BOT-CONTROL"' \\\n           -e 'end run' "\$1" >\/dev\/null 2>&1\n\}/;
+// ⚠️ 这条锚点是**逐字**匹配整段 notify()，通知标题字符串就在它里面 ⇒
+//    改控制台显示名却漏改这里，锚点会**静默失效**（mutate-lint 会报失效数 ≠ 0）。
+const LSH_BLOCK = /notify\(\) \{\n  osascript -e 'on run argv' \\\n           -e 'display notification \(item 1 of argv\) with title "Estrella Bot Console"' \\\n           -e 'end run' "\$1" >\/dev\/null 2>&1\n\}/;
 const M8 = {
   id: 'M8',
   note: '把 notify 整块改回**双引号插值**的老写法（`$1` 重新变成 AppleScript 源码的一部分）——',
   anchor: LSH_BLOCK,
   count: 1,
   file: LSH,
-  apply: (s) => s.replace(LSH_BLOCK, 'notify() {\n  osascript -e "display notification \\"$1\\" with title \\"QQ-BOT-CONTROL\\"" >/dev/null 2>&1\n}'),
+  apply: (s) => s.replace(LSH_BLOCK, 'notify() {\n  osascript -e "display notification \\"$1\\" with title \\"Estrella Bot Console\\"" >/dev/null 2>&1\n}'),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };

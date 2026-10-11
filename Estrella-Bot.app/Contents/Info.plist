@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>QQ-BOT-CONTROL</string>
+	<string>Estrella Bot Console</string>
 	<key>CFBundleExecutable</key>
 	<string>launcher</string>
 	<key>CFBundleIconFile</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>QQ-BOT-CONTROL</string>
+	<string>Estrella Bot Console</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

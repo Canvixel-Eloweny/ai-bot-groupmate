@@ -2106,7 +2106,7 @@ async function main() {
     // /api/bridge/start 的那个 shell 都在内。**杀错一个的代价远大于漏清一个**，
     // 所以判据必须钉死，且必须 fail-closed。
     {
-      const R = '/Users/user/WorkBuddy/WB/QQ-BOT-Creative';
+      const R = '/Users/user/WorkBuddy/WB/estrella-bot';
 
       const real = isOurBridge({
         cmd: '/Users/x/.workbuddy/binaries/node/versions/22.22.2-3/bin/node src/index.js',
@@ -2160,7 +2160,7 @@ async function main() {
     // ⚠️ 这条断言的价值在于它**不是**拿参数名去对：它钉的是"node 后面可以有几个词"，
     //    所以将来加/换启动参数不会再把它弄坏（换参数名不会变红，换判据形状才会）。
     {
-      const R = '/Users/user/WorkBuddy/WB/QQ-BOT-Creative';
+      const R = '/Users/user/WorkBuddy/WB/estrella-bot';
       const NODE = '/Users/user/.workbuddy/binaries/node/versions/22.22.2-3/bin/node';
       const realArgv = `${NODE} --max-old-space-size=384 src/index.js`;
 
@@ -2198,7 +2198,7 @@ async function main() {
     //   · `ConvertTo-Json` 单元素不套数组 → "刚启动时认不出机器人"；
     //   · PowerShell 入参引号编码错 → 脚本静默不执行。
     {
-      const WR = 'C:\\proj\\QQ-BOT-Creative';
+      const WR = 'C:\\proj\\estrella-bot';
       const WNODE = 'C:\\Program Files\\nodejs\\node.exe';
 
       // ① 识别：`node.exe` / 反斜杠路径 / 命令行**包裹引号**三样都要认得出。

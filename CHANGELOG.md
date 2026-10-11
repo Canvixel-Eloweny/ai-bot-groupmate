@@ -11,6 +11,60 @@
 > 这一批把 2026-10-09 起累积的未发布改动一并带上 —— 上一节那四条 Windows 真机修复
 > 当时还只在包里、没进版本控制（第 59 轮补交为 `db67869`）。
 
+### 2026-10-11 · The project is now called **Estrella Bot**
+
+The software, the console and both launchers were renamed. **The repository slug and the npm
+package name are deliberately unchanged** — they are machine identifiers, and the previous change
+in this line of work (see the 2026-10-07 entries) showed what happens when a display name and a
+slug are forced to be the same string: the contract that asserts "package name == repository name"
+can only ever compare against a literal, so any divergence leaves a gate that is **green and
+wrong**. The display name now lives where it costs nothing to change.
+
+**One name, one place.** `README.md` and `README.zh-CN.md` keep the former name in the title
+(`Estrella Bot · QQ-BOT-Creative`) and nowhere else, so existing links, bookmarks and search
+results still land on the project. Everything else — the `NOTICE`, the package author field, the
+thirteen bundled extensions' manifests, the GitHub description, both user guides — says
+`Estrella Bot`.
+
+**The launchers changed shape, not just text.** `QQ-BOT-CONTROL.app` → `Estrella-Bot.app` and
+`QQ-BOT-CONTROL.bat` → `Estrella-Bot.bat`, and what they display is now `Estrella Bot Console`.
+Two consequences worth knowing before upgrading:
+
+- **A shortcut pointing at the old name will not follow.** macOS aliases and Windows shortcuts
+  resolve to a path, and the path is gone. Delete the old one and re-create it from the new bundle.
+- **The `.app` no longer hardcodes one project-folder name.** Its fallback search now accepts both
+  `estrella-bot` (what the user guide tells you to clone into) and the old `QQ-BOT-Creative`, in
+  that order. Without the second entry, anyone upgrading an existing clone and then moving the
+  `.app` out of the project folder would hit "找不到项目目录" for no visible reason.
+
+**New artwork.** The placeholder badge — a 32 px accent-coloured chip with the letters `QQ` — is
+replaced by the character illustration, and the app icon, the README logo and the social preview
+were rebuilt from the same source. Two details that are easy to get wrong:- **The illustrations carry an alpha channel on purpose.** Over the glass theme an opaque square
+  reads as a hole punched in the surface, and the two themes have very different backgrounds. The
+  art's own white rim is what keeps the outline visible on dark glass.
+- **The console's badge is inlined into `style.css` as a `data:` URI, not added to
+  `panel/next/`.** That directory's asset list is a *whitelist that gates file access by name*,
+  and its name-shape rule only admits `.html` / `.css` / `.js`. Widening a security gate to carry
+  one image is the wrong trade; the page's CSP already allows `data:` for images, and
+  `style.css` has used that route for its grain texture since 2026-10-03.
+
+One token was removed with it: `--c-highlight` existed only to draw an inner highlight on the
+filled logo chip. Over transparent pixels that highlight draws a visible edge, so it went — and
+the contract that forbids "defined but never consumed" design tokens is what caught it.
+
+**The README's console screenshot was re-shot, and the old file was deleted.** It is now
+`assets/panel-themes-v2.jpg` — a new name because the CDN caches by path, so a re-shoot under the
+old name would keep serving the old picture. Two things changed beyond the branding:
+
+- **Both halves are demo mode.** The previous image had been captured against a live console and
+  contains a real group name and real process ids. That class of leak is invisible to every gate in
+  this repository: `publish-audit` walks `git ls-files` as *text*, and a JPEG is not text. Opening
+  the console with no backend puts the page in demo mode, which is what the new image shows.
+- **The dark half needed a dark background variant.** The background gradient is a per-user pick
+  stored in the console, and its default is the pale `grain-pastel`, so a dark-theme capture at
+  default settings renders light text over a pale gradient. The two axes are independent — this is
+  worth knowing before re-shooting either half.
+
 ### 2026-10-11 · A BOM in `config.json` could break **either half** of the app
 
 The config file is the one file the documentation tells you to open and edit by hand. On Windows,

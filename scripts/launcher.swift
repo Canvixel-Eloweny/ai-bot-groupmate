@@ -1,4 +1,4 @@
-// QQ-BOT-CONTROL —— 原生外壳
+// Estrella Bot Console —— 原生外壳
 //
 // 为什么需要它：真正的启动逻辑在 Contents/Resources/launcher.sh，但「可执行文件是
 // 一个 bash 脚本」的 .app 在系统眼里不算应用（原来 Info.plist 里还标了 LSUIElement），
@@ -11,7 +11,7 @@
 //      图标不会一直赖在 Dock 上
 //
 // 编译（改完这个文件要重跑，否则 .app 里还是旧的）：
-//   swiftc -O -o "QQ-BOT-CONTROL.app/Contents/MacOS/launcher" scripts/launcher.swift
+//   swiftc -O -o "Estrella-Bot.app/Contents/MacOS/launcher" scripts/launcher.swift
 //
 // 脚本必须 detach：本进程退出时不能被一起带走（下面用 nohup ... & 起）。
 
@@ -26,11 +26,11 @@ let scriptPath = exeDir.deletingLastPathComponent()
   .appendingPathComponent("Resources").appendingPathComponent("launcher.sh").path
 
 if !FileManager.default.isExecutableFile(atPath: scriptPath) {
-  let msg = "找不到启动脚本：\(scriptPath)\n\n把 QQ-BOT-CONTROL.app 放回项目文件夹里再点一次。"
+  let msg = "找不到启动脚本：\(scriptPath)\n\n把 Estrella-Bot.app 放回项目文件夹里再点一次。"
   let esc = msg.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
   let p = Process()
   p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-  p.arguments = ["-e", "display alert \"QQ-BOT-CONTROL 启动失败\" message \"\(esc)\""]
+  p.arguments = ["-e", "display alert \"Estrella Bot Console 启动失败\" message \"\(esc)\""]
   try? p.run()
   p.waitUntilExit()
   exit(1)

@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/logo-v2.png" alt="QQ-BOT-Creative" width="140">
+<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/logo-v3.png" alt="Estrella Bot" width="140">
 
-# QQ-BOT-Creative
+# Estrella Bot · QQ-BOT-Creative
 
 **把 QQ 小号变成一个有脾气的群友。**
 它会插话、接梗、潜水，也会偶尔自己冒个泡。
@@ -36,7 +36,7 @@ OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建�
 
 <p><sub><b>控制台预览画面</b> · Console preview —— 同一个控制台的浅色 / 深色两套主题</sub></p>
 
-<p><img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-themes.jpg" alt="控制台的浅色主题与深色主题，左右并排" width="880"></p>
+<p><img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-themes-v2.jpg" alt="控制台的浅色主题与深色主题，左右并排" width="880"></p>
 
 <hr>
 
@@ -84,10 +84,11 @@ QQ 小号 ──► NapCat(Docker, OneBot v11) ──► 桥接进程 src/index.
                          └───────────────────────────────────────────────┘
 ```
 
-> 项目显示名 `QQ-BOT-Creative`（原名 `qq-bot`，2026-09-17 改名）；本仓库在 GitHub 上的 slug 是
-> `ai-bot-groupmate`（2026-10-07 由 `ai-group-chat` 换过来）—— slug 用便于检索的描述性英文，
-> 显示名沿用既有叫法。
-> 启动器为 `QQ-BOT-CONTROL.app`。
+> **`Estrella Bot` 是这个软件的名字。** 标题里那个曾用名**只保留这一处**，作用是让已有的链接、
+> 书签与搜索结果仍然能落到这里 —— 除此之外全文不再使用它。项目最初叫 `qq-bot`，此后改过两次名
+>（2026-09-17，然后 2026-10-11），完整沿革记在 [`CHANGELOG.md`](./CHANGELOG.md)。
+> 本仓库在 GitHub 上的 slug 保持 `ai-bot-groupmate` 不变（2026-10-07 由 `ai-group-chat` 换过来）——
+> slug 用便于检索的描述性英文，展示名与它有意分开。启动器为 `Estrella-Bot.app`。
 >
 > **只想把它跑起来？** 直接看 **[用户使用说明](./USER-GUIDE.zh-CN.md)** —— 安装 → 登录 → 配置 → 启动，
 > 写给不想先读源码的人。
@@ -97,7 +98,7 @@ QQ 小号 ──► NapCat(Docker, OneBot v11) ──► 桥接进程 src/index.
 ## 1. 本地自测（不需要 QQ、不需要模型）
 
 ```bash
-cd QQ-BOT-Creative
+cd estrella-bot
 npm install
 npm test                # 机器人本体断言（端到端 + 纯函数/纯判定防退化）
 npm run test:panel      # 隔离沙箱跑完整回归：后端断言 + 面板前端断言（真实浏览器）
@@ -345,10 +346,10 @@ node src/index.js
 ## 8. 目录
 
 ```
-QQ-BOT-Creative/
+estrella-bot/
   README.md
   INSTALL-DOCKER.md            # ← 容器路线安装手册（含回滚）
-  QQ-BOT-CONTROL.app           # ← 双击启动：拉 Docker/容器 + 开控制台页面
+  Estrella-Bot.app             # ← 双击启动：拉 Docker/容器 + 开控制台页面
   config.json                  # 你的实际配置（已预填，gitignore）
   config.example.json          # 配置模板（scripts/make-config-example.mjs 从真实配置生成并脱敏）
   docker-compose.yml           # NapCat 容器

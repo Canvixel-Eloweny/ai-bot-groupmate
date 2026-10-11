@@ -5,7 +5,7 @@
   "apiVersion": 1,
   "category": "message",
   "description": "把多条聊天记录打成 QQ 合并转发发出（分享对话/刷证据），避免一条条刷屏。",
-  "author": "QQ-BOT-Creative",
+  "author": "Estrella Bot",
   "enabledByDefault": false,
   "capabilities": [],
   "requires": [],

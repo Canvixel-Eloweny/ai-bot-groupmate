@@ -4,7 +4,7 @@
   "private": true,
   "description": "QQ 群 AI 仿真群友桥接层：OneBot v11 <-> OpenAI 兼容模型",
   "license": "Apache-2.0",
-  "author": "QQ-BOT-Creative contributors",
+  "author": "Estrella Bot contributors",
   "homepage": "https://github.com/Canvixel-Eloweny/ai-bot-groupmate",
   "repository": {
     "type": "git",

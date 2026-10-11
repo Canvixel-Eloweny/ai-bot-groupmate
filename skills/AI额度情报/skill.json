@@ -5,7 +5,7 @@
   "apiVersion": 1,
   "category": "knowledge",
   "description": "抓取「AI 免费额度 / 限时活动」情报并可查询。默认源：yangmao / linux.do。凌晨自动刷新。",
-  "author": "QQ-BOT-Creative",
+  "author": "Estrella Bot",
   "enabledByDefault": false,
   "capabilities": [],
   "requires": [],

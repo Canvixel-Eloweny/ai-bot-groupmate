@@ -5,7 +5,7 @@
   "apiVersion": 1,
   "category": "media",
   "description": "解析 B 站视频：标题/UP主/时长/简介/热评/可选字幕。不下载视频。",
-  "author": "QQ-BOT-Creative",
+  "author": "Estrella Bot",
   "enabledByDefault": false,
   "capabilities": [],
   "requires": [],

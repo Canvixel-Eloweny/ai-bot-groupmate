@@ -44,7 +44,7 @@ docker ps
 ## 第 2 步：一键拉起容器
 
 ```bash
-cd ~/QQ-BOT-Creative                  # 换成你实际 clone 下来的位置
+cd ~/estrella-bot                     # 换成你实际 clone 下来的位置
 bash scripts/bootstrap.sh
 ```
 
@@ -80,7 +80,7 @@ http://127.0.0.1:6099/webui?token=xxxxxxxx
 ## 第 4 步：验证通道
 
 ```bash
-cd ~/QQ-BOT-Creative                  # 换成你实际 clone 下来的位置
+cd ~/estrella-bot                     # 换成你实际 clone 下来的位置
 node scripts/check-onebot.js
 ```
 
@@ -115,7 +115,7 @@ node scripts/check-onebot.js
 最省事的做法是**在控制台的「大脑」页里填 Key**（不用命令行、不用改文件）：
 
 ```bash
-cd ~/QQ-BOT-Creative                  # 换成你实际 clone 下来的位置
+cd ~/estrella-bot                     # 换成你实际 clone 下来的位置
 npm start                             # 只跑机器人；控制台另开：node panel/server.js
 ```
 
@@ -155,7 +155,7 @@ npm start                             # 只跑机器人；控制台另开：node
 ## 日常运维
 
 ```bash
-cd ~/QQ-BOT-Creative                  # 换成你实际 clone 下来的位置
+cd ~/estrella-bot                     # 换成你实际 clone 下来的位置
 bash scripts/status.sh              # 容器 / 端口 / 桥接进程 / 当前配置 一屏看完
 docker logs --tail 50 napcat        # 协议端日志
 docker compose restart napcat       # 重启协议端（不会掉登录，扫码信息持久化在 ./napcat/）
@@ -189,7 +189,7 @@ docker logs --tail 30 napcat | grep 快速登录   # 应看到"快速登录"而�
 ## 回滚 / 卸载
 
 ```bash
-cd ~/QQ-BOT-Creative                  # 换成你实际 clone 下来的位置
+cd ~/estrella-bot                     # 换成你实际 clone 下来的位置
 docker compose down                 # 停掉并删除容器
 rm -rf napcat/                      # 删掉登录态和配置（等于彻底重来）
 ```

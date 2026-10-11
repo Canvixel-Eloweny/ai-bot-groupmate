@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/logo-v2.png" alt="QQ-BOT-Creative" width="140">
+<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/logo-v3.png" alt="Estrella Bot" width="140">
 
-# QQ-BOT-Creative
+# Estrella Bot · QQ-BOT-Creative
 
 **Turn a spare QQ account into an AI group member.**
 It chimes in, picks up running jokes, lurks, and occasionally speaks up on its own.
@@ -36,7 +36,7 @@ OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build
 
 <p><sub><b>Console preview</b> · 控制台预览画面 — the same console in light and dark</sub></p>
 
-<p><img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-themes.jpg" alt="The console in light theme and dark theme, side by side" width="880"></p>
+<p><img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-themes-v2.jpg" alt="The console in light theme and dark theme, side by side" width="880"></p>
 
 <hr>
 
@@ -82,8 +82,11 @@ QQ alt ──► NapCat (Docker, OneBot v11) ──► bridge src/index.js ─�
                       └───────────────────────────────────────────┘
 ```
 
-> The project was originally named `qq-bot`, renamed `QQ-BOT-Creative` on 2026-09-17; the GitHub slug is
-> `ai-bot-groupmate`. The launcher is `QQ-BOT-CONTROL.app`.
+> **`Estrella Bot` is the name of the software.** The former name in the title is kept in exactly one
+> place so that existing links, bookmarks and search results still land here — it is not used anywhere
+> else. The project began as `qq-bot` and was renamed twice (2026-09-17, then 2026-10-11); the full
+> history is in [`CHANGELOG.md`](./CHANGELOG.md). The GitHub slug stays `ai-bot-groupmate` on purpose.
+> The launcher is `Estrella-Bot.app`.
 > **This English README is the default. The Chinese edition lives in
 > [`README.zh-CN.md`](./README.zh-CN.md) and is the authoritative one when the two differ.**
 >
@@ -278,10 +281,10 @@ than a frontier cloud model).
 ## 8. Layout
 
 ```
-QQ-BOT-Creative/
+estrella-bot/
   README.md / README.zh-CN.md  # English (default) + Chinese (authoritative)
   INSTALL-DOCKER.md            # container install manual (incl. rollback)
-  QQ-BOT-CONTROL.app           # double-click launcher: bring up Docker + open the console
+  Estrella-Bot.app             # double-click launcher: bring up Docker + open the console
   config.json                  # your config (pre-filled, gitignored)
   config.example.json          # sanitised template generated from a real config
   docker-compose.yml           # NapCat container

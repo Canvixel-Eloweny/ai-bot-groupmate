@@ -825,7 +825,7 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
 
     // M-08：包名与仓库名一致，且 lock 与它同源（两侧不一致时 `npm ci` 的行为会让人困惑）
     // ⚠️ 下面这个字面量就是 **GitHub 仓库 slug**（不是项目显示名 —— 显示名是 README 标题里的
-    //    `QQ-BOT-Creative`）。
+    //    `Estrella Bot`）。
     // ⚠️⚠️ 改仓库名时**六处一起改**（2026-10-07 换仓到 `ai-bot-groupmate` 时逐处定位过）：
     //    ① `package.json` 的 `name` ② `package-lock.json` 的两处 `name`
     //    ③ 这一行的字面量 ④ 同文件 872 行的 origin 白名单（**漏了它 = 身份检查静默失效**）
@@ -1068,7 +1068,7 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
 
   // launcher.sh：它自己就在调一个写路由（/api/panel/restart）。
   // 不带 token 的话，最先失效的是"控制台版本自检 / 一键换新代码"这套自愈机制。
-  const lr = fs.readFileSync(new URL('../QQ-BOT-CONTROL.app/Contents/Resources/launcher.sh', import.meta.url), 'utf8');
+  const lr = fs.readFileSync(new URL('../Estrella-Bot.app/Contents/Resources/launcher.sh', import.meta.url), 'utf8');
   if (!/pcurl --max-time/.test(lr) || !/pcurl --max-time 2 -X POST/.test(lr)) {
     bad++; n++;
     console.log('✗ launcher.sh 调 /api/panel/restart 没有带 token —— 它的自检与一键重启会 401');
@@ -10033,7 +10033,7 @@ const LIB_SRC_ALLOW = [
   //    现在控制台只有一套、挂在根上，于是这一条从"三处对齐"简化成"**恰一处、且在根上**"。
   //    ⚠️ 仍然单独判一次：把 `/next` 留在开页地址里，用户会先吃一次 302（那是过渡地址，
   //       不是入口）—— 过渡期的东西留在"入口"的位置上，就是下一轮会忘掉的那一类。
-  const launcher58 = fs.readFileSync(path.join(REPO, 'QQ-BOT-CONTROL.app', 'Contents', 'Resources', 'launcher.sh'), 'utf8');
+  const launcher58 = fs.readFileSync(path.join(REPO, 'Estrella-Bot.app', 'Contents', 'Resources', 'launcher.sh'), 'utf8');
   const openHits = [...launcher58.matchAll(/"(http:\/\/127\.0\.0\.1:8788[^"]*)"/g)]
     .map((m) => m[1]).filter((u) => !/\/api\//.test(u));   // 探活与重启那两个是接口，不是"开页地址"
   if (openHits.length !== 1 || openHits[0] !== 'http://127.0.0.1:8788/') {
@@ -12849,7 +12849,7 @@ const LIB_SRC_ALLOW = [
 {
   const problems = [];
 
-  const LSH = path.join(REPO, 'QQ-BOT-CONTROL.app', 'Contents', 'Resources', 'launcher.sh');
+  const LSH = path.join(REPO, 'Estrella-Bot.app', 'Contents', 'Resources', 'launcher.sh');
   const ls = (() => { try { return fs.readFileSync(LSH, 'utf8'); } catch { return ''; } })();
   if (!ls) {
     problems.push('launcher.sh 不在位 —— L-01 的判据没有对象');
@@ -14232,24 +14232,24 @@ const LIB_SRC_ALLOW = [
   //    这里的解法是**把复杂度挪进 Node**（`scripts/win-launcher.mjs`），
   //    让 .bat 简单到 LF 也安全 —— LF 出问题的历来都是 `goto` 的按字节重定位。
   let batBuf = null;
-  try { batBuf = fs.readFileSync(new URL('../QQ-BOT-CONTROL.bat', import.meta.url)); } catch { /* 下面报 */ }
+  try { batBuf = fs.readFileSync(new URL('../Estrella-Bot.bat', import.meta.url)); } catch { /* 下面报 */ }
   const launcherSrc = (() => { try { return raw('../scripts/win-launcher.mjs'); } catch { return ''; } })();
   if (!batBuf) {
-    problems.push('仓库根没有 QQ-BOT-CONTROL.bat —— Windows 用户没有"双击就能用"的入口（.app 在那边打不开）');
+    problems.push('仓库根没有 Estrella-Bot.bat —— Windows 用户没有"双击就能用"的入口（.app 在那边打不开）');
   } else {
     const batTxt = batBuf.toString('utf8');
     if (batBuf.includes(13)) {
-      problems.push('QQ-BOT-CONTROL.bat 里有 CR —— 与本仓"文本文件零 CRLF"那条硬契约冲突（L-05）');
+      problems.push('Estrella-Bot.bat 里有 CR —— 与本仓"文本文件零 CRLF"那条硬契约冲突（L-05）');
     }
     if (!batBuf.every((x) => x < 128)) {
-      problems.push('QQ-BOT-CONTROL.bat 里有非 ASCII 字符 —— .bat 的编码/代码页会让中文变成乱码（文案该留在 Node 里）');
+      problems.push('Estrella-Bot.bat 里有非 ASCII 字符 —— .bat 的编码/代码页会让中文变成乱码（文案该留在 Node 里）');
     }
     if (/^\s*goto\b/im.test(batTxt) || /^\s*for\b/im.test(batTxt) || /[()]/.test(batTxt.replace(/rem[^\n]*/g, ''))) {
-      problems.push('QQ-BOT-CONTROL.bat 里出现了 label / 括号块 / for —— '
+      problems.push('Estrella-Bot.bat 里出现了 label / 括号块 / for —— '
         + '这三种结构在 LF 换行下可能被 cmd 静默错读，而本仓不许把 .bat 改成 CRLF');
     }
     if (!/node\s+"%~dp0scripts\\win-launcher\.mjs"/.test(batTxt)) {
-      problems.push('QQ-BOT-CONTROL.bat 没有调用 scripts/win-launcher.mjs —— '
+      problems.push('Estrella-Bot.bat 没有调用 scripts/win-launcher.mjs —— '
         + '那它就只是一个空壳（真正的启动逻辑在那边）');
     }
     if (/%~dp0"\s*$/.test(batTxt)) {

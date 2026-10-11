@@ -1,5 +1,5 @@
 /**
- * QQ-BOT-CONTROL（本地控制台）
+ * Estrella Bot Console（本地控制台）
  * 只监听 127.0.0.1，不依赖任何第三方包。
  * 提供：状态检测 / 配置读写 / 启动停止 / 连接自检 / 实时日志
  */
@@ -3205,7 +3205,7 @@ server.listen(PORT, '127.0.0.1', async () => {
 
   await adoptExistingBridge();
   pushLog('控制台已启动');
-  console.log(`\n  QQ-BOT-CONTROL 已启动`);
+  console.log(`\n  Estrella Bot Console 已启动`);
   console.log(`  → http://127.0.0.1:${PORT}\n`);
   console.log('  这个窗口保持开着即可，关掉窗口 = 控制台停止');
   console.log('  （机器人是独立进程，关掉控制台不会停掉机器人）\n');

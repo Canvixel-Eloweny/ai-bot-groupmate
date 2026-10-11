@@ -73,13 +73,13 @@ docker ps          # 能打出一个只有表头的空表格 → Docker 在跑
 ## 2. 把项目拿到本地（约 3 分钟）
 
 ```bash
-git clone https://github.com/Canvixel-Eloweny/ai-bot-groupmate.git QQ-BOT-Creative
-cd QQ-BOT-Creative
+git clone https://github.com/Canvixel-Eloweny/ai-bot-groupmate.git estrella-bot
+cd estrella-bot
 npm install
 ```
 
 > **不会用 `git`？** 在 GitHub 页面点 **Code → Download ZIP**，解压得到
-> `ai-bot-groupmate-main/`，把文件夹**改名为 `QQ-BOT-Creative`**，然后在终端
+> `ai-bot-groupmate-main/`，把文件夹**改名为 `estrella-bot`**，然后在终端
 > `cd` 进去，从 `npm install` 那行继续。
 
 ---
@@ -216,7 +216,7 @@ chmod 600 .env
 
 ### 方式 A：双击图标（推荐）
 
-双击项目文件夹里的 **`QQ-BOT-CONTROL.app`**。
+双击项目文件夹里的 **`Estrella-Bot.app`**。
 
 它会：起控制台 → **立刻**打开浏览器页面 → 再到后台去拉 Docker 和容器
 （慢的那几步不挡你看页面）。
@@ -329,7 +329,7 @@ Windows 不需要绕：**NapCat 官方就有 Windows 原生版，而且是当期
 | 环节 | macOS | Windows |
 |---|---|---|
 | QQ 协议端 | NapCat + Linux QQ，跑在 Docker 容器里 | **NapCat for Windows，原生安装** |
-| 双击启动 | `QQ-BOT-CONTROL.app` | `QQ-BOT-CONTROL.bat` |
+| 双击启动 | `Estrella-Bot.app` | `Estrella-Bot.bat` |
 | 桥接 + 控制台 | 同一份代码 · 同一套端口（3001 / 3000 / 8788） | 同一份代码 · 同一套端口 |
 | 填配置 / 换大脑 / 看状态 | 控制台页面 | **完全一样** |
 
@@ -353,7 +353,7 @@ Windows 不需要绕：**NapCat 官方就有 Windows 原生版，而且是当期
    npm install
    copy config.example.json config.json
    ```
-6. **双击 `QQ-BOT-CONTROL.bat`** → 浏览器自动打开控制台 → 在页面里填 API Key 与「放行的群号」
+6. **双击 `Estrella-Bot.bat`** → 浏览器自动打开控制台 → 在页面里填 API Key 与「放行的群号」
    → 点右上角 **「一键启动」**。
 
 > ⚠️ **顺序有讲究：先启动 NapCat 并扫码登录，再点「一键启动」。**
@@ -425,12 +425,12 @@ Windows 不需要绕：**NapCat 官方就有 Windows 原生版，而且是当期
 ### 更新到最新版
 
 ```bash
-cd ~/QQ-BOT-Creative     # 换成你实际的项目目录
+cd ~/estrella-bot        # 换成你实际的项目目录
 git pull
 npm install              # 依赖有变化时才有事做
 ```
 
-然后**重启控制台**：再双击一次 `QQ-BOT-CONTROL.app`（Windows 上是 `.bat`）就行 ——
+然后**重启控制台**：再双击一次 `Estrella-Bot.app`（Windows 上是 `.bat`）就行 ——
 它会自己发现「盘上的代码比运行中的新」，顺手把面板换成新代码。
 手动换也可以：控制台 → **系统** → 「重启面板」。
 

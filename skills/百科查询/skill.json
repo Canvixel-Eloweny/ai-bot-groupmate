@@ -5,7 +5,7 @@
   "apiVersion": 1,
   "category": "knowledge",
   "description": "多源 MediaWiki/百科查询。设定查外部百科，不进本地梗库。需要网络。",
-  "author": "QQ-BOT-Creative",
+  "author": "Estrella Bot",
   "enabledByDefault": false,
   "capabilities": [],
   "requires": [],

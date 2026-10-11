@@ -176,7 +176,7 @@ const sideHtml = (tag) => `
   <div class="side-tag">${tag}</div>
   <div class="topbar">
     <div class="tb-brand"><span class="logo">QQ</span>
-      <div class="tb-titles"><b>QQ-BOT-CONTROL</b><span class="tb-sub">顶栏 · 第 1 档（悬浮条）</span></div></div>
+      <div class="tb-titles"><b>Estrella Bot Console</b><span class="tb-sub">顶栏 · 第 1 档（悬浮条）</span></div></div>
     <div class="tb-pills"><span class="pill on"><span class="dot"></span>就绪</span><span class="pill"><span class="dot"></span>容器</span></div>
     <div class="tb-actions"><button class="btn btn-primary">一键启动</button></div>
   </div>
@@ -357,7 +357,7 @@ ${labCss}
 
 <header class="lab-head">
   <h1>液态玻璃 · 终轮优化（第 4 轮 / 收尾）</h1>
-  <p><b>总工程进度</b>：本支线把自家液态玻璃效果接进 QQ-BOT-Creative 控制面板。
+  <p><b>总工程进度</b>：本支线把自家液态玻璃效果接进 Estrella Bot 控制面板。
      第 1–2 轮做参数与边缘（当时的对象是旧面板 <code>panel/parts/</code>）；
      第 3 轮发现<b>旧面板已在 10-02 下线</b>，把实现整体移植进现行界面 v2
      （<code>panel/next/</code>：引擎 <code>glass.js</code> + 样式令牌 + 三档分层）；

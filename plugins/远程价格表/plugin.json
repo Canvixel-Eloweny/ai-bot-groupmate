@@ -5,7 +5,7 @@
   "apiVersion": 1,
   "category": "model",
   "description": "从自托管 URL 定时拉取模型价格表，覆盖内置表。断网用磁盘缓存，不影响查价。",
-  "author": "QQ-BOT-Creative",
+  "author": "Estrella Bot",
   "enabledByDefault": false,
   "capabilities": [],
   "requires": [],

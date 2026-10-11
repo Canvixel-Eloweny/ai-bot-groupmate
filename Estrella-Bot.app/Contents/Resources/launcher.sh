@@ -1,5 +1,5 @@
 #!/bin/bash
-# QQ-BOT-CONTROL —— 启动逻辑（真正的入口是原生壳 Contents/MacOS/launcher，
+# Estrella Bot Console —— 启动逻辑（真正的入口是原生壳 Contents/MacOS/launcher，
 # 它负责让 Dock 图标像别的 App 一样弹一下，再把这份脚本甩到后台继续跑）。
 #
 # 做的事（按顺序）：
@@ -16,27 +16,36 @@
 #
 # ⚠️⚠️ 改了**本文件**（或 .app 里的**任何**文件）之后，必须重新做一次 ad-hoc 签名：
 #
-#        codesign --force --sign - --identifier local.qqbot.panel QQ-BOT-CONTROL.app
+#        codesign --force --sign - --identifier local.qqbot.panel Estrella-Bot.app
 #
 #     不签的后果不是"提示一下"，而是启动时报 `a sealed resource is missing or invalid`
 #     —— 签名把 bundle 里所有资源都纳入了封印，动一个字节封印就废了。
 #     这个 .app 是**本地 ad-hoc 签名**（没有开发者证书），所以重签不需要任何凭据，
 #     一条命令即可；但**必须记得做**，而这件事没有任何自动机制会提醒你。
-#     自检：`codesign --verify --verbose QQ-BOT-CONTROL.app`
+#     自检：`codesign --verify --verbose Estrella-Bot.app`
 
 # ---------- 0. 项目目录 ----------
 # 按 .app 自身的位置推（放在项目里时，改项目文件夹名也不会失效）；
 # 推不出来（比如把 .app 单独拷到桌面/应用程序里）就回落到已知路径。
+#
+# ⚠️ 回落路径**必须认两个目录名**（2026-10-11 · 改名 Estrella Bot）：
+#    `USER-GUIDE` 现在教用户 clone 成 `estrella-bot`，而 2026-10-11 之前的 clone
+#    仍叫旧名。只认一个的话，把 .app 单独拷出去的旧用户当场找不到项目目录。
+#    新名先试、旧名兜底 —— 顺序有意义：新装的人命中第一个，老 clone 落到第二个。
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-KNOWN_DIR="$HOME/WorkBuddy/WB/QQ-BOT-Creative"
+KNOWN_DIRS=("$HOME/WorkBuddy/WB/estrella-bot" "$HOME/WorkBuddy/WB/QQ-BOT-Creative")
 if [ -f "$SELF_DIR/panel/server.js" ]; then
   DIR="$SELF_DIR"
 else
-  DIR="$KNOWN_DIR"
+  DIR=""
+  for d in "${KNOWN_DIRS[@]}"; do
+    if [ -f "$d/panel/server.js" ]; then DIR="$d"; break; fi
+  done
+  [ -n "$DIR" ] || DIR="${KNOWN_DIRS[0]}"
 fi
 
 cd "$DIR" || {
-  osascript -e 'display alert "找不到项目目录" message "QQ-BOT-Creative 项目不在原来的位置了。"'
+  osascript -e 'display alert "找不到项目目录" message "Estrella Bot 项目不在原来的位置了。"'
   exit 1
 }
 
@@ -56,7 +65,7 @@ DOCKER="/Applications/Docker.app/Contents/Resources/bin/docker"
 #    osascript 收到的就不是脚本处理器，而是裸语句 —— 那样 argv 根本不会被绑定。
 notify() {
   osascript -e 'on run argv' \
-           -e 'display notification (item 1 of argv) with title "QQ-BOT-CONTROL"' \
+           -e 'display notification (item 1 of argv) with title "Estrella Bot Console"' \
            -e 'end run' "$1" >/dev/null 2>&1
 }
 

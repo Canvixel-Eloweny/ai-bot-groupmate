@@ -78,13 +78,13 @@ docker ps          # an empty table with just headers means Docker is running
 ## 2. Get the project (about 3 minutes)
 
 ```bash
-git clone https://github.com/Canvixel-Eloweny/ai-bot-groupmate.git QQ-BOT-Creative
-cd QQ-BOT-Creative
+git clone https://github.com/Canvixel-Eloweny/ai-bot-groupmate.git estrella-bot
+cd estrella-bot
 npm install
 ```
 
 > **No `git`?** On the GitHub page click **Code → Download ZIP**, unzip it, **rename the folder to
-> `QQ-BOT-Creative`**, `cd` into it, and continue from `npm install`.
+> `estrella-bot`**, `cd` into it, and continue from `npm install`.
 
 ---
 
@@ -227,7 +227,7 @@ placeholder string is **accepted as if it were a real group ID**:
 
 ### Option A: double-click the icon (recommended)
 
-Double-click **`QQ-BOT-CONTROL.app`** inside the project folder.
+Double-click **`Estrella-Bot.app`** inside the project folder.
 
 It starts the console → **immediately** opens the page in your browser → then heads off to bring up
 Docker and the container in the background (the slow parts don't block the page).
@@ -343,7 +343,7 @@ So the Windows route is shorter — **no Docker, no WSL2, no Linux subsystem.**
 | Piece | macOS | Windows |
 |---|---|---|
 | QQ protocol side | NapCat + Linux QQ, inside a Docker container | **NapCat for Windows, installed natively** |
-| Double-click launcher | `QQ-BOT-CONTROL.app` | `QQ-BOT-CONTROL.bat` |
+| Double-click launcher | `Estrella-Bot.app` | `Estrella-Bot.bat` |
 | Bridge + console | Same code · same ports (3001 / 3000 / 8788) | Same code · same ports |
 | Config, brain switching, status | The console page | **Identical** |
 
@@ -371,7 +371,7 @@ So the Windows route is shorter — **no Docker, no WSL2, no Linux subsystem.**
    npm install
    copy config.example.json config.json
    ```
-6. **Double-click `QQ-BOT-CONTROL.bat`** → the console opens in your browser → enter your API key
+6. **Double-click `Estrella-Bot.bat`** → the console opens in your browser → enter your API key
    and your **allowed group IDs** → click **"One-click start"** in the top-right.
 
 > ⚠️ **Order matters: start NapCat and sign in first, *then* click "One-click start".**
@@ -446,12 +446,12 @@ Post the output of those to GitHub Issues — what this build needs most is exac
 ### Update to the latest version
 
 ```bash
-cd ~/QQ-BOT-Creative     # wherever you cloned it
+cd ~/estrella-bot        # wherever you cloned it
 git pull
 npm install              # only does anything if the dependencies changed
 ```
 
-Then **restart the console**: double-click `QQ-BOT-CONTROL.app` again (`.bat` on Windows). It
+Then **restart the console**: double-click `Estrella-Bot.app` again (`.bat` on Windows). It
 notices that the code on disk is newer than the running process and swaps the panel over for you.
 Manually: Console → **System** → "Restart panel".
 

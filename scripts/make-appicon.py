@@ -18,8 +18,8 @@
     # macOS 26+：合成满版图标（推荐）
     python scripts/make-appicon.py --full-bleed \
         --figure assets/appicon-figure.png \
-        --preview QQ-BOT-CONTROL.app/Contents/Resources/AppIcon-preview.png \
-        QQ-BOT-CONTROL.app/Contents/Resources/AppIcon.icns
+        --preview Estrella-Bot.app/Contents/Resources/AppIcon-preview.png \
+        Estrella-Bot.app/Contents/Resources/AppIcon.icns
 
     # 传统模式：直接吃一张方形图
     python scripts/make-appicon.py <方形图> <输出.icns>

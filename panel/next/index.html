@@ -10,7 +10,7 @@
      （S-12 第四批 2026-10-05：旧页 parts/ 下线后，这一处就是登记的取用侧。） -->
 <meta name="panel-token" content="__QQBOT_PANEL_TOKEN__" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>QQ-BOT-CONTROL · 控制台 v2（初步重构）</title>
+<title>Estrella Bot Console</title>
 <link rel="stylesheet" href="./style.css" />
 <!-- 动效组件样式。⚠️ **必须在 style.css 之后**：它的规则要能覆盖令牌默认值
      （如 .liq-track 的尺寸、mini 档的 --liq-thumb）。
@@ -43,9 +43,12 @@
 <!-- ══════════════ 顶栏：全局状态 + 全站动作 ══════════════ -->
 <header class="topbar">
   <div class="tb-brand">
-    <span class="logo" aria-hidden="true">QQ</span>
+    <!-- 角色立绘徽标：图案内联在 `style.css` 的 `.logo` 里（透明底，直接坐在玻璃上）。
+         这里**只留空容器** —— 图上没有文字，所以 aria-hidden 依然成立；
+         品牌名由紧邻的 `<b>` 提供，读屏不会少读一个名字。 -->
+    <span class="logo" aria-hidden="true"></span>
     <div class="tb-titles">
-      <b>QQ-BOT-CONTROL</b>
+      <b>Estrella Bot Console</b>
       <span class="tb-sub" id="subline">正在读取状态…</span>
     </div>
   </div>

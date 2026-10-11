@@ -222,7 +222,7 @@ cat <<'EOF'
 
 完成后回到终端验证：
 
-  cd QQ-BOT-Creative
+  cd estrella-bot
   node scripts/check-onebot.js      # 探活：能不能连上 3001
 
 然后用 Ctrl+C 停掉探活，改跑桥接：

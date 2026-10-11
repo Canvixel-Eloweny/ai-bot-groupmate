@@ -24,7 +24,7 @@
 > 第一轮只新建了 `panel/next/`（不动任何既有文件）；**第二轮**（同日）按"要能从控制台点进去"
 > 把它接成了面板的**第二条只读页面路由** `GET /next/`。接线面一共四处：
 > `panel/lib/next-page.js`（新叶子：资产名单 + 三道闸）· `panel/server.js`（一个分发分支）
-> · `QQ-BOT-CONTROL.app/.../launcher.sh`（开页探测）· `panel/parts/01-body-shell.html`（旧页面一个入口）
+> · `Estrella-Bot.app/.../launcher.sh`（开页探测）· `panel/parts/01-body-shell.html`（旧页面一个入口）
 > ＋ `panel/lib/paths.js`（`NEXT_DIR`）＋ `scripts/check-wb.mjs`（第 58 节契约 + 层号登记）。
 >
 > 交付物：`panel/next/`（schema 驱动的前端 + `verify.mjs` 自检）+ 本文。
@@ -317,7 +317,7 @@ $ node scripts/check-wb.mjs
 
 | 入口 | 位置 | 行为 |
 |---|---|---|
-| 控制台图标 | Dock / 访达里的 `QQ-BOT-CONTROL.app` | 开 **`http://127.0.0.1:8788/`** —— 这就是控制台，没有第二个可回落的目标 |
+| 控制台图标 | Dock / 访达里的 `Estrella-Bot.app` | 开 **`http://127.0.0.1:8788/`** —— 这就是控制台，没有第二个可回落的目标 |
 | 直接地址 | `http://127.0.0.1:8788/` | 手打或书签 |
 | 老地址（兼容） | `http://127.0.0.1:8788/next/` | **302 → 根**（只为旧书签；别存这个） |
 
