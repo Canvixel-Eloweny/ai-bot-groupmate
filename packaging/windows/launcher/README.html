@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estrella Bot —— 使用说明（Windows）</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1b1f24; --dim:#5b6672; --line:#e3e7ec;
+    --accent:#2f6feb; --accent-soft:#eaf1ff; --ok:#1a7f4b; --ok-soft:#e8f6ee;
+    --danger:#c02626; --danger-soft:#fdecec; --code:#f2f4f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.7 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;}
+  .wrap{max-width:880px;margin:0 auto;padding:32px 20px 72px}
+  header{border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:24px}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:.2px}
+  .sub{color:var(--dim);font-size:14px}
+  h2{font-size:19px;margin:34px 0 12px;padding-left:10px;border-left:3px solid var(--accent)}
+  p{margin:8px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin:14px 0}
+  .banner{border-radius:12px;padding:14px 18px;margin:16px 0;font-weight:600}
+  .banner.bad{background:var(--danger-soft);color:var(--danger);border:1px solid #f3c8c8}
+  .banner.note{background:var(--accent-soft);color:#1b3f86;border:1px solid #cddffb;font-weight:500}
+  code{background:var(--code);padding:1px 6px;border-radius:5px;font-family:"SF Mono",Consolas,monospace;font-size:13px}
+  .steps{counter-reset:s;list-style:none;padding:0;margin:14px 0}
+  .steps>li{counter-increment:s;position:relative;padding:14px 18px 14px 62px;background:var(--card);
+    border:1px solid var(--line);border-radius:12px;margin:10px 0}
+  .steps>li::before{content:counter(s);position:absolute;left:16px;top:14px;width:30px;height:30px;
+    border-radius:50%;background:var(--accent);color:#fff;font-weight:700;font-size:15px;
+    display:flex;align-items:center;justify-content:center}
+  .steps b{display:block;margin-bottom:2px}
+  .muted{color:var(--dim);font-size:13px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;background:var(--card);
+    border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:14px}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#f0f3f7;font-weight:600;font-size:13px;color:var(--dim)}
+  tr:last-child td{border-bottom:none}
+  ul{margin:8px 0 8px 22px;padding:0}
+  li{margin:4px 0}
+  footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Estrella Bot <span class="muted">Windows 免安装版</span></h1>
+  <div class="sub">解压即用 · 不用装 Node / npm / git / Docker · 开源免费 · 不需要激活</div>
+</header>
+
+<div class="banner bad">
+  开始前只需记住两条：① <b>一定用小号</b>（第三方协议端存在封号风险，别拿主号冒险）；
+  ② <b>第一次扫码前，先把电脑端 QQ 完全退出</b>（连右下角托盘一起退）。
+</div>
+
+<div class="card">
+  一句话：让一个 QQ 小号在群里当「AI 群友」。需要的东西这个包都自带了 ——
+  解压 → 双击 → 扫码，三步就能用。
+</div>
+
+<h2>一、第一次使用（3 步）</h2>
+<ol class="steps">
+  <li><b>解压到纯英文路径，例如 <code>D:\EstrellaBot</code></b>
+    <div class="muted">不要直接在压缩包里双击，也不要放在桌面、中文或带空格的路径里 ——
+      这是这类工具最常见的翻车点。</div>
+  </li>
+  <li><b>双击 <code>一键安装.bat</code></b>
+    <div class="muted">它会自动检测环境、缺什么补什么、然后打开控制台（全程无黑窗口）。
+      第一次会联网准备 QQ 协议端（约 30MB，自动，中断后重跑会续传）。
+      电脑上还没装 QQ 的话，它会告诉你去哪装 —— 装完再双击一次即可。<br>
+      中途只会问你一个问题：要不要在桌面建「Estrella Bot」快捷方式。
+      想完全不被打断：<code>一键安装.bat --yes</code></div>
+  </li>
+  <li><b>在打开的控制台里，用手机 QQ 扫一次码登录小号</b>
+    <div class="muted">扫码入口在「打开二维码登录」按钮（或「终端」页里）。
+      登录成功后，填好「<b>放行的群号</b>」（必填，纯数字，多个用逗号隔开）和
+      「<b>模型 API Key</b>」，再点右上角「<b>一键启动</b>」。<br>
+      扫过这一次之后，以后启动会自动登录，不用再扫。</div>
+  </li>
+</ol>
+
+<div class="banner note">
+  以后每天：双击桌面上的「Estrella Bot」图标就行（或包里的 <code>2-START.bat</code>），协议端会自动在后台跟着起。<br>
+  注意：它不会自己开口说话 —— 要你在控制台里点一次「一键启动」（这是刻意的设计，不是坏了）。
+</div>
+
+<h2>二、这个文件夹里都有什么</h2>
+<table>
+  <tr><th>文件</th><th>干什么用</th></tr>
+  <tr><td><b>一键安装.bat</b></td><td>★ 第一次就双击它（旧的 <code>1-SETUP.bat</code> 仍可用，一般用不到）</td></tr>
+  <tr><td><code>2-START.bat</code></td><td>日常启动（和双击桌面图标等价）</td></tr>
+  <tr><td><code>3-START-NAPCAT.bat</code></td><td>单独启动 QQ 协议端（排错时才用；它不显示窗口，看控制台即可）</td></tr>
+  <tr><td><code>4-DIAG.bat</code></td><td>一键收集诊断信息（只读、不改任何东西）—— 出问题时先跑它</td></tr>
+  <tr><td><code>README.html</code></td><td>本说明（离线单文件，可断网打开）</td></tr>
+  <tr><td><code>app\</code> <code>tools\</code> <code>runtime\</code></td><td>程序本体 / 脚本 / 自带 Node —— 都不用动</td></tr>
+</table>
+<div class="muted">只需要动上面这几个文件；<code>app</code> 文件夹里的任何 bat 都不要点（那是源码版入口，会报找不到 node）。</div>
+
+<h2>三、怎么关 / 怎么删</h2>
+<div class="card">
+  <p>控制台是<b>后台</b>跑的（没有黑窗口）：关掉浏览器标签 ≠ 关掉控制台。</p>
+  <p>要真正停下来：到控制台的「终端」页点 <b>「退出控制台」</b> ——
+    进程退出后，整个文件夹就可以直接删掉了。</p>
+</div>
+
+<h2>四、卡住了？先看这里</h2>
+<table>
+  <tr><th>现象</th><th>先做什么</th></tr>
+  <tr><td>一直不出二维码 / 登录总失败</td>
+      <td>先把<b>电脑端 QQ 完全退出</b>（单实例限制，见页面顶部提醒），
+          再在控制台点「打开二维码登录」。</td></tr>
+  <tr><td>双击 bat 窗口一闪就没了</td>
+      <td>直接双击 <code>4-DIAG.bat</code>，把 <code>diag-out</code> 里生成的那份报告发给开发者 ——
+          里面有判断问题所需的一切。</td></tr>
+  <tr><td>控制台页面打不开</td>
+      <td>先跑 <code>4-DIAG.bat</code>；也可以手动打开 <code>http://127.0.0.1:8788</code> 试试，
+          或看 <code>app\panel\panel.log</code> 里的报错。</td></tr>
+  <tr><td>群里 @ 它没反应</td>
+      <td>① 检查「放行的群号」是不是<b>真的数字</b>（在控制台「发言与时机」页里）；<br>
+          ② 看控制台上的协议端灯有没有亮（3001 端口）。</td></tr>
+  <tr><td>登录成功了，过一会儿又显示「未登录」</td>
+      <td>多半是有人把电脑端 QQ（主号）登回来了 —— 会把小号挤下线。退出电脑端 QQ 即可。</td></tr>
+  <tr><td>协议端下载很慢 / 装不上（离线怎么办）</td>
+      <td>① 自己到 <b>NapCat 官方 Releases</b> 下载 <code>NapCat.Shell.zip</code>（约 30MB）；
+          ② 把它放进 <b><code>app\napcat\</code></b> 这个文件夹（没有就新建一个 —— 名字别改，
+          <b>zip 不用自己解压</b>）；③ 重新双击 <code>一键安装.bat</code>，
+          它看到本地已有一份就直接解压继续，<b>不再联网</b>。<br>
+          已经解压过的：把里面的东西<b>平铺</b>进 <code>app\napcat\</code>
+          （让 <code>launcher-user.bat</code> 直接出现在这个目录里），安装器会直接跳过下载。</td></tr>
+  <tr><td>杀软 / QQ 报「可疑」</td>
+      <td>把整个文件夹加入信任 —— 包里带 node.exe 与协议端，被误报很常见。</td></tr>
+  <tr><td>想彻底重来</td>
+      <td>删掉整个文件夹，重新解压 + 双击 <code>一键安装.bat</code>。</td></tr>
+</table>
+
+<h2>五、关于「激活 / 授权」</h2>
+<div class="card">
+  <p>没有激活码，不用注册，不联网校验，不绑定机器，装上就能用。</p>
+  <p>唯一要做的「授权」是<b>扫一次码登录你自己的 QQ 小号</b> ——
+    那是腾讯对 QQ 账号的要求，任何第三方协议端都一样，绕不过去。</p>
+</div>
+
+<h2>六、安全与隐私（请认真读）</h2>
+<div class="card">
+  <ul>
+    <li><b>一定用小号。</b>第三方协议端存在封号风险，别拿主号冒险。</li>
+    <li><code>app\config.json</code> 里有你的模型 API Key —— 别截图、别发群、别放同步盘。</li>
+    <li>控制台与协议端都<b>只监听本机</b>（127.0.0.1），同一网络里的其他人连不上；
+      对话记录、记忆都只存在本机，不上传任何地方。</li>
+    <li>你选的模型服务商能看到发给它的对话内容 —— 这是用云端模型的固有代价。</li>
+  </ul>
+</div>
+
+<h2>七、许可</h2>
+<div class="card">
+  <p>本程序为 Apache-2.0 开源软件（见 <code>app\LICENSE</code>）；
+    QQ 协议端 <b>NapCat</b> 由第三方提供，按它自己的许可单独分发。</p>
+</div>
+
+<footer>
+  Estrella Bot · Windows 免安装版 —— 本页为离线单文件，可断网打开。<br>
+  当前为开发版（未正式发布）：遇到问题先跑 <code>4-DIAG.bat</code>，把生成的报告发给开发者。
+</footer>
+
+</div>
+</body>
+</html>

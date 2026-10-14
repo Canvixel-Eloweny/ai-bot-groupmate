@@ -161,7 +161,12 @@ export const NEXT_ENTRY = 'index.html';
  *    `app.js` 有 55 处内联 `style="…"`（进度条宽度、二维码尺寸、滑块位置…），
  *    去掉它整页版式会**静默**塌掉，而 DOM 级断言看不见版式。
  *    样式注入的危害等级远低于脚本注入，这个取舍是有意的。
- *  · `img-src 'self' data:` —— `style.css` 的颗粒噪点就是 `data:image/svg+xml;…`。
+ *  · `img-src 'self' data: blob:` —— `data:` 是 `style.css` 的颗粒噪点
+ *    （`data:image/svg+xml;…`）；**`blob:` 是登录二维码**：二维码弹窗把
+ *    `/api/qrcode` 的响应体装成 Blob、再用 `URL.createObjectURL()` 渲染。
+ *    少了 `blob:` 的症状非常具体（2026-10-13 真机截图）：接口通、日志显示
+ *    「✔ 已换一张新二维码」，页面上却是一张**裂图** —— 因为 CSP 把 blob: 拦了，
+ *    而裂图与"取不到"长得一样，光看页面分不出是接口坏了还是策略拦了。
  *  · `connect-src 'self'` —— `app.js` 只 fetch 同源的 `/api/…`。
  *  · `object-src` / `base-uri` / `frame-ancestors` 三条是零成本的加固：
  *    页面不嵌插件对象、不写 `<base>`、也不该被别的页面 iframe 套走。
@@ -170,7 +175,7 @@ export const PANEL_CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
+  "img-src 'self' data: blob:",
   "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'none'",

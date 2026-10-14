@@ -20,7 +20,7 @@
       "level": "low"
     },
     "temperature": 1,
-    "maxTokens": 400,
+    "maxTokens": 1500,
     "timeoutMs": 60000,
     "localSize": "4b",
     "keys": {
@@ -68,7 +68,7 @@
         "baseUrl": "https://api.deepseek.com/v1",
         "model": "deepseek-flash",
         "fallbackModels": [],
-        "maxTokens": 400,
+        "maxTokens": 1500,
         "temperature": 1,
         "context": {
           "recentTurns": 12,
@@ -96,7 +96,7 @@
           "glm-4.7-flash",
           "glm-4.6v-flash"
         ],
-        "maxTokens": 400,
+        "maxTokens": 1500,
         "temperature": 1,
         "context": {
           "recentTurns": 12,
@@ -124,7 +124,7 @@
           "qwen-turbo",
           "qwen-long"
         ],
-        "maxTokens": 400,
+        "maxTokens": 1500,
         "temperature": 1,
         "context": {
           "recentTurns": 12,

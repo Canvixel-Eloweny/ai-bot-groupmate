@@ -46,7 +46,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  *    理由：本文件**一 import 就跑**（读 argv、没目标目录就 exit），
  *    `scripts/check-wb.mjs` §71 没法 import 它做双向核对；抽成叶子后两个消费者读**同一份**。
  */
-import { DOCS_KEEP, isHeldBackDoc } from './lib/publish-docs.mjs';
+import { DOCS_KEEP, isHeldBackDoc, HOLD_BACK_ROOT } from './lib/publish-docs.mjs';
 
 /**
  * 追踪清单之外**还要排除**的项。
@@ -93,7 +93,27 @@ const EXCLUDE = [
   // ⚠️ **不排除的后果是具体的**：`pkg/app/packaging/windows/tools/*` 会与
   //    `pkg/tools/*` 逐字重复（实测过路径与文件名），而 `.bat` 按 `%~dp0tools\` 定位
   //    ⇒ 改一份不会改到另一份，症状是"我改了包里的 tools，重启还是旧的"。
-  'packaging/',
+  // ⚠️ 2026-10-15 维护者点名裁决：`packaging/` **纳入发布面**（原文照留，本条为订正，不删旧表述）。
+  //   维护者口径：「上传至 GitHub 就是要求把项目的源码都上传至仓库，做的所有东西都要上传」。
+  //   判定依据：`packaging/windows/` 是**源码脚本**（.mjs / .py / .bat / .vbs），
+  //   不是安装包 —— 安装包（④ 未压缩包 / ③ zip）本来就不在 git 里，只走 G6 手动发群/Release，
+  //   与本判据无关。⇒ 上面那三条"不公开"的理由，由「源码完整性与可重建性优先」这条覆盖。
+  //   ⚠️ 仍然成立的一条：纳进来只是**能看、能照着重建**，`scan-package.mjs` 依旧跑不动
+  //   （它要靠仓库外真值表 `~/.qqbot/known-real.local.mjs`，按设计不在仓库里）。
+  // ⚠️ 老条目（数组里的 `'packaging/',`）已于 2026-10-15 移除，发布面 324 → 352。
+  // ── 顶层排除：**名单本体住叶子**（2026-10-11）──────────────────────────────
+  // `AGENTS.md` 与 `scripts/pre-push.sh`（"总项目与外部线路"那一轮新增）走的是叶子
+  // `./lib/publish-docs.mjs` 的 `HOLD_BACK_ROOT`，理由写在那边。
+  //
+  // ⚠️ **为什么它们不直接写在这里**（这一条是实测逼出来的，不是洁癖）：
+  //    `check-wb` §71 的"死引用闸"要判断"某个 `.md`/`.html` 到底会不会被发布"，
+  //    而它**没法 import 本文件**（本文件一 import 就跑：读 argv、没目标目录就 exit）。
+  //    于是它只能用 `docs/` 那条规则 ⇒ 顶层被排除的文件会被误判成"被发布的文档"。
+  //    2026-10-11 实测踩到：`AGENTS.md` 明明已排除，§71 仍去扫它，报了**两条假红**。
+  //    ⇒ 名单搬去叶子，两个消费者读**同一份**（与 H-12 之后 `DOCS_KEEP` 的处置同一规矩）。
+  //    ⚠️ 上面那些**老条目不能跟着搬**：变异清单 `sec-s01-1005.mjs` 的 M8 把锚点钉在
+  //       `'scripts/publish-audit.mjs',` 那一行上，搬走它 = 那条变异变成"锚点失效"。
+  ...HOLD_BACK_ROOT,
 ];
 
 /**

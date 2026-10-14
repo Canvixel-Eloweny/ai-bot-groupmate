@@ -115,10 +115,17 @@ import { isSafeRelPath } from '../src/plugin-manifest.js';
 // H-09（同上）：面板的全局异常兜底要把异常正文写进日志，而 `/api/logs` **不鉴权** ——
 // 所以出口前必须过脱敏，且必须用唯一那份实现（与 `src/logger.js` 出口同一张特征表）。
 import { maskSecrets } from '../src/egress.js';
-import { state, logDropped, pushLog, clearLogs } from './lib/runtime-state.js';
+import { state, logDropped, pushLog, clearLogs, onLog } from './lib/runtime-state.js';
 // D21：`readBodyBuffer` 是"原样收字节"的读法（ZIP 上传用）—— 与 `readBody` 同模块，
 // 但**不动** `readBody` 的 JSON 语义与 1e6 上限（全部写路由共用它，改它等于改全局）。
 import { sendJson, readBody, readBodyBuffer } from './lib/http-io.js';
+// 原生 NapCat（Windows 便携包）—— 定位 / 起停 / token / 本地二维码图。
+// ⚠️ 为什么面板要知道"原生"这一支：便携包**不打 Docker**，协议端是被解压到
+//    `app\napcat\` 的原生进程。面板原来只认 docker exec ⇒ 便携包上二维码永远裂图、
+//    「重启协议端」点了没反应。详见那片叶子文件头的记录。
+import {
+  nativePresent, readNativeWebuiToken, readNativeWebuiPort, readLocalQr, startNativeNapcat, restartNativeNapcat,
+} from './lib/napcat-native.js';
 // ── `config.json` 的唯一所有者（B11b-2 · AR-SERVERSPLIT）────────────────────
 // 读配置 / 写配置 / 记配置历史这三件事只有这一处实现。搬了实现就要**把契约也搬过去**
 // （`check-wb` 的 3i / 3k 现在扫的是 `lib/config-io.js`），否则契约会变成永远绿的摆设。
@@ -254,6 +261,10 @@ const WRITE_ROUTES = new Set([
   '/api/local-model/start', '/api/local-model/stop',
   '/api/onekey/start', '/api/onekey/stop',
   '/api/stop-all', '/api/napcat/restart', '/api/panel/restart',
+  // 退出控制台（2026-10-11 · 网页内置终端）：它**结束本进程**，是最彻底的进程控制。
+  // ⚠️ 少了这一行，任何人（含 DNS Rebinding 过来的页面）都能一句话把控制台干掉，
+  //    而它连审计都不会记（审计挂在 `isWriteRequest` 上的同一张表）。
+  '/api/panel/quit',
   // 🟡 破坏性写 / 有副作用的开关
   '/api/debug', '/api/qrcode/refresh',
   '/api/trace/clear', '/api/logs/clear', '/api/usage/reset',
@@ -637,10 +648,16 @@ function napcatToken() {
 /**
  * 取 NapCat 的 WebUI token。
  *
- * 以**容器内**的 webui.json 为准：项目里的 .webui_token 只是当初 bootstrap 写下的，
- * 容器重建后 NapCat 可能自己换过 token（两边不一致时接口会返回 Unauthorized）。
+ * 顺序是刻意的（2026-10-12）：
+ *   ① **原生**（Windows 便携包）：`app\napcat\config\webui.json` —— NapCat 自己写的那份，
+ *      永远是最新的。以前没有这一支，于是便携包上"读不到 token"是必然，不是偶发。
+ *   ② **容器**：`docker exec … grep webui.json`（容器重建后 NapCat 可能换过 token，
+ *      项目里的 `.webui_token` 只是当初 bootstrap 写下的，两边不一致时会 Unauthorized）。
+ *   ③ 兜底：本地 `.webui_token`。
  */
 async function napcatWebuiToken() {
+  const local = readNativeWebuiToken();
+  if (local) return local;
   const r = await sh(DOCKER, ['exec', 'napcat', 'sh', '-c',
     "grep -o '\"token\": *\"[^\"]*\"' /app/napcat/config/webui.json"], HTTP_TIMEOUT_MS);
   const m = (r.stdout || '').match(/"token":\s*"([^"]+)"/);
@@ -656,24 +673,65 @@ async function napcatWebuiToken() {
  *   POST /api/auth/login { hash: sha256(token + ".napcat") } → Credential
  *   之后带 `Authorization: Bearer <Credential>` 调业务接口
  */
+/**
+ * NapCat WebUI 的**候选端口**（2026-10-13 · 群友真机资料补充）。
+ *
+ * ⚠️ 为什么不能只读 webui.json 里的端口：NapCat 探到 6099 被占时会 **+1 重试**
+ *    （源码 hm()，上限 +100），而且**不回写配置** ⇒ webui.json 里始终是 6099，
+ *    实际监听可能在 6100。只认配置就会去敲一个没人的门，症状是"连不上"。
+ *    群友实测：WebUI 由 **QQ 进程**监听（NapCat 把 hook 注进 QQ），端口漂移真实存在。
+ * 候选顺序：配置里的端口优先，再补 4 个近邻（足以覆盖真实漂移，又不把探测拖长）。
+ */
+function webuiPortCandidates() {
+  const base = readNativeWebuiPort() || NAPCAT_WEBUI_PORT;
+  const out = [base];
+  for (let i = 1; i <= 4; i += 1) out.push(base + i);
+  return out;
+}
+
 async function refreshNapcatQrcode() {
   const token = await napcatWebuiToken();
-  if (!token) return { ok: false, msg: '读不到 NapCat 的 token —— 容器没在运行，换不了码' };
+  if (!token) {
+    // 便携包（Windows）上没有 Docker，别再拿"容器"吓用户 —— 真因是协议端没装/没起
+    return {
+      ok: false,
+      degrade: true,
+      msg: IS_WIN && !nativePresent()
+        ? '读不到 NapCat 的 token —— 协议端还没装好（先双击「一键安装.bat」）'
+        : '读不到 NapCat 的 token —— 协议端没在运行，换不了码',
+    };
+  }
 
+  const ports = webuiPortCandidates();
   const hash = createHash('sha256').update(token + '.napcat').digest('hex');
-  const login = await httpJson(NAPCAT_WEBUI_PORT, '/api/auth/login', { body: { hash }, timeout: HTTP_TIMEOUT_MS });
-  const cred = login.data?.data?.Credential || '';
+  let login = null;
+  let usedPort = 0;
+  for (const port of ports) {
+    login = await httpJson(port, '/api/auth/login', { body: { hash }, timeout: HTTP_TIMEOUT_MS });
+    usedPort = port;
+    // 端口上**没有任何东西应答**才换下一个；一旦对方答了（哪怕是拒绝），就按它的答复走
+    if (login.status !== 0) break;
+  }
+  const cred = login?.data?.data?.Credential || '';
   if (!cred) {
-    const m = login.data?.message || `HTTP ${login.status}`;
+    const m = login?.data?.message || `HTTP ${login?.status}`;
+    if (login?.status === 0) {
+      return {
+        ok: false,
+        degrade: true,
+        msg: `连不上 NapCat 的 WebUI（试过 ${ports.join(' / ')} 端口）—— 协议端可能刚起、还没开 WebUI。\n` +
+             '点「重启协议端」重拉一次，几秒后再试；或看「终端」页的实时输出。',
+      };
+    }
     return {
       ok: false,
       msg: m === 'token is invalid'
-        ? 'WebUI 凭证对不上（容器被重建过）—— 直接点「打开 QQ 登录页」手动换一张'
+        ? 'WebUI 凭证对不上（协议端被重建过）—— 点「重启协议端」重拉一次再试'
         : `NapCat 登录失败：${m}`,
     };
   }
 
-  const r = await httpJson(NAPCAT_WEBUI_PORT, '/api/QQLogin/RefreshQRcode', {
+  const r = await httpJson(usedPort, '/api/QQLogin/RefreshQRcode', {
     headers: { Authorization: `Bearer ${cred}` },
     timeout: 20000,
   });
@@ -2948,6 +3006,26 @@ async function apiStopAll(req, res, url) {
 }
 
 async function apiNapcatRestart(req, res, url) {
+  // ── 原生协议端优先（2026-10-12 · Windows 便携包）────────────────────────────
+  // 便携包里没有 Docker，协议端是 `app\napcat\` 下的原生进程。原来这里一上来就
+  // `ensureDocker(150000, …)` ⇒ 用户点「重启协议端」，屏幕要等**两分半**才回一句
+  // "Docker 没起来"。这条分支让它变成一两秒的事。
+  //
+  // ⚠️ 已经在跑时**不重启**：NapCat 的重启 = 掉登录态 = 要重新扫码。
+  //    "拉起"是用户这一刻真正需要的；"重启"留给以后做成显式动作。
+  if (nativePresent() && !(await cachedDockerUp())) {
+    if (await portOpen(3001)) {
+      pushLog('· 协议端已经在运行（3001 有应答）—— 没有重启它（重启会掉登录态）');
+      return sendJson(res, { ok: true, output: '协议端已经在运行 —— 没有动它' });
+    }
+    // ⚠️ 没登录时**真重启**（杀干净再拉起）：以前这里只 `startNativeNapcat()`，
+    //    旧的 NapCat 还活着 ⇒ 点多少次"重启协议端"二维码都不会换（2026-10-13 真机）。
+    pushLog('… 重启协议端（先停掉旧的，再拉起）');
+    const r = await restartNativeNapcat(killTree);
+    pushLog(r.ok ? `✔ ${r.msg}` : `✗ ${r.msg}`);
+    return sendJson(res, { ok: r.ok, output: r.msg }, r.ok ? 200 : 400);
+  }
+
   pushLog('… 重启 NapCat 容器');
   // 以前 Docker 没起来时这条会一直挂到超时，点下去像死了一样。
   // 现在先把 Docker 拉起来，期间还会往日志里汇报进度。
@@ -2975,12 +3053,40 @@ async function apiNapcatRestart(req, res, url) {
   return sendJson(res, { ok: r.ok, output: (r.stdout + r.stderr).trim() || (r.ok ? '容器已重启' : '') });
 }
 
+/**
+ * 取登录二维码（`GET /api/qrcode`，页面上「打开二维码登录」按钮走它）。
+ *
+ * ⚠️ 顺序是**本地优先**（2026-10-12 · 真机修正）：
+ *    便携包里 NapCat 是原生进程，图片就躺在 `app\napcat\cache\qrcode.png` ——
+ *    直接读盘，比"先登录 WebUI 换凭证再取图"短三条街，也不受 WebUI 端口/令牌影响。
+ *    原来只有 `docker exec` 那一支 ⇒ 便携包上这个接口**必然 404**，
+ *    页面上就是一张永远裂着的图（用户报的就是这个现象）。
+ *    容器那一支保留在后面：macOS 主线仍然跑容器。
+ */
 async function apiQrcode(req, res, url) {
-  // 实时取容器里的登录二维码，避免给用户一张已经过期的静态图
+  const local = readLocalQr();
+  if (local) {
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Content-Length': local.length,
+    });
+    return res.end(local);
+  }
+  // 容器那一支（判据不变：实时取，避免给用户一张已经过期的静态图）
   const r = await shBuffer(DOCKER, ['exec', 'napcat', 'cat', '/app/napcat/cache/qrcode.png']);
   if (!r.ok || !r.buf.length) {
+    // ⚠️ 404 的正文会被页面**显示给用户**（前端不再拿 <img> 硬啃），
+    //    所以这里写的是"下一步做什么"，不是一句"取不到"。
+    // ⚠️ 文案按平台分流（2026-10-13 真机截图）：便携包（Windows）上根本没有 Docker，
+    //    「容器没在运行？」纯属误导 —— 真正的原因是协议端还没装（一键安装没跑）
+    //    或者还没把启动器拉起来。
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end('暂时取不到二维码');
+    return res.end(nativePresent()
+      ? '还没有二维码 —— 协议端要么没在跑，要么还没开始生成。\n点上面的「重启协议端」把它拉起来，几秒后这张图会自动出现。'
+      : (IS_WIN
+        ? '取不到二维码 —— 协议端还没装好。\n先回包的根目录双击「一键安装.bat」（它会把协议端装进 app\\napcat），装完再点「重启协议端」。'
+        : '暂时取不到二维码（容器没在运行？）'));
   }
   res.writeHead(200, {
     'Content-Type': 'image/png',
@@ -2993,8 +3099,13 @@ async function apiQrcode(req, res, url) {
 async function apiQrcodeRefresh(req, res, url) {
   // 手动换一张：旧的那张多半已经过期，扫了只会「登录失败」
   const r = await refreshNapcatQrcode();
-  pushLog(r.ok ? '✔ 已换一张新二维码（旧的扫不动就是因为过期了）' : `✗ 换二维码失败：${r.msg}`);
-  return sendJson(res, r, r.ok ? 200 : 400);
+  pushLog(r.ok ? '✔ 已换一张新二维码（旧的扫不动就是因为过期了）' : `✗ 换二维码失败：${String(r.msg).split('\n')[0]}`);
+  // ⚠️ 失败也回 **200**（2026-10-13 · 群友真机资料第③条）：
+  //    前端 `post()` 一见非 2xx 就 throw，而 throw 会把响应体整个丢掉 ⇒
+  //    用户只看到「HTTP 400」，真正那句原因（连不上 WebUI / 已登录 / 没在运行）
+  //    一个字都到不了眼前。这里与 /api/onekey/start 的回执同一取向：
+  //    **业务失败走 200 + ok:false，原因由调用方显示出来。**
+  return sendJson(res, r, 200);
 }
 
 async function apiLogsClear(req, res, url) {
@@ -3010,6 +3121,141 @@ async function apiLogsClear(req, res, url) {
 async function apiPanelRestart(req, res, url) {
   const r = restartPanel();
   return sendJson(res, r, r.ok ? 200 : 400);
+}
+
+/* ══════════════ 网页内置终端（2026-10-11）══════════════════════════════════════
+ *  它要解决的毛病是**具体**的：控制台以前是一个前台 cmd 窗口 ——
+ *  窗口关不掉（关了就等于杀进程）、目录删不掉（进程占着文件）。
+ *  正解不是教用户怎么关窗口，而是**不再需要那个窗口**：
+ *     · 面板以无窗口方式起（见 `packaging/windows/tools/lib/console.mjs`）
+ *     · 运行日志实时推到网页（本节的 SSE）
+ *     · 要停就在页面里点「退出控制台」（`/api/panel/quit`）—— 进程真退，目录随即能删
+ *
+ *  ⚠️ 为什么是 **SSE 而不是 WebSocket**：
+ *     面板**刻意零第三方依赖**（`ws` 是给机器人用的，不是给面板用的），
+ *     而 SSE 是纯 HTTP —— 一条 `text/event-stream` 响应就够了，不需要握手、不需要新端口。
+ *     方向上也正好合适：日志是**单向**推送，命令走现成的 POST 写路由。
+ *
+ *  ⚠️ 为什么**不给**"在网页里执行任意命令"：那等于把本机 shell 开给浏览器里
+ *     的任何脚本（DNS Rebinding 之后攻击者就是同源，见上面 S-05 那段）。
+ *     终端页上的动作是**固定的几条**（起停 / 重启 / 自检 / 退出），
+ *     每条都过 token + 跨源闸 —— 与页面其它写操作同一套闸门。
+ */
+const SSE_CLIENTS = new Set();
+
+/**
+ * 每压一行日志就推给所有在线的终端页。
+ *
+ * ⚠️ 为什么**只推增量**：页面自己有完整缓冲，重发整份会让"刷一下就重来一遍"。
+ * ⚠️ 写失败（客户端已断开）就把它移出集合 —— 否则每来一行都要对一个死连接 write 一次。
+ */
+onLog((lines) => {
+  if (SSE_CLIENTS.size === 0) return;
+  const payload = `event: log\ndata: ${JSON.stringify({ lines })}\n\n`;
+  for (const res of SSE_CLIENTS) {
+    try { res.write(payload); } catch { SSE_CLIENTS.delete(res); }
+  }
+});
+
+/**
+ * 终端页的日志流（SSE）。
+ *
+ * 三帧：`hello`（连上先给一份现有日志，页面不用等）、`log`（增量）、`state`（心跳，
+ * 让页面能显示"机器人在不在 / 协议端在不在"而**不必**去轮询 /api/state）。
+ */
+async function apiConsoleStream(req, res, url) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    // 中间若有代理，别缓冲它 —— 缓冲住的 SSE 表现为"日志隔很久才跳一批"
+    'X-Accel-Buffering': 'no',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.write('retry: 3000\n\n');
+  res.write(`event: hello\ndata: ${JSON.stringify({
+    lines: state.logs.slice(-200),
+    total: logDropped + state.logs.length,
+  })}\n\n`);
+
+  SSE_CLIENTS.add(res);
+  let closed = false;
+  const stop = () => { if (closed) return; closed = true; clearInterval(beat); SSE_CLIENTS.delete(res); };
+  // 心跳：既是 liveness（浏览器能自己重连），也把"在不在跑"带下去
+  const beat = setInterval(() => {
+    if (closed) return;
+    Promise.resolve(portOpen(3001))
+      .then((proto) => {
+        if (closed) return;
+        res.write(`event: state\ndata: ${JSON.stringify({
+          t: Date.now(), bridge: bridgeRunning(), proto, pid: process.pid,
+        })}\n\n`);
+      })
+      .catch(() => {});
+  }, 3000);
+  req.on('close', stop);
+  res.on('close', stop);
+}
+
+/** 从文件末尾读 N 行（**不整份读进内存** —— NapCat 的日志会长到几百 MB）。 */
+function tailLines(file, maxLines = 200, maxBytes = 256 * 1024) {
+  let size = 0;
+  try { size = fs.statSync(file).size; } catch { return { lines: [], missing: true }; }
+  const from = Math.max(0, size - maxBytes);
+  const len = size - from;
+  if (len <= 0) return { lines: [], missing: false };
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(len);
+    let got = 0;
+    while (got < len) {
+      const n = fs.readSync(fd, buf, got, len - got, from + got);
+      if (!n) break;
+      got += n;
+    }
+    const all = buf.subarray(0, got).toString('utf8').split('\n');
+    // 第一行通常是被截断的半行 —— 丢掉它，比显示一段乱码好
+    if (from > 0 && all.length > 1) all.shift();
+    return { lines: all.filter((l) => l.trim()).slice(-maxLines), missing: false };
+  } finally {
+    try { fs.closeSync(fd); } catch { /* 关不掉也无所谓 */ }
+  }
+}
+
+/**
+ * 终端页的"另一半"日志：协议端（NapCat）自己的输出。
+ *
+ * ⚠️ 路径为什么写成 `ROOT/napcat/napcat.log`：便携包里 `ROOT` 就是 `app/`，
+ *    开发树里 `ROOT` 是仓库根 —— **两处正好都对**（便携包把协议端装在 `app/napcat/`，
+ *    开发树的协议端在 `napcat/`）。这不是巧合，是当初约定好的同构布局。
+ */
+async function apiConsoleTail(req, res, url) {
+  const src = String(url.searchParams.get('src') || 'napcat');
+  const n = Math.min(Math.max(Number(url.searchParams.get('lines') || 200), 1), 500);
+  const file = src === 'panel' ? PANEL_LOG : path.join(ROOT, 'napcat', 'napcat.log');
+  const r = tailLines(file, n);
+  return sendJson(res, {
+    src, file: path.relative(ROOT, file),
+    lines: r.lines,
+    missing: Boolean(r.missing),
+    hint: r.missing ? '这个文件还不存在（协议端第一次跑起来之后才会写它）' : '',
+  });
+}
+
+/**
+ * 退出控制台。
+ *
+ * ⚠️ 存在的理由就是用户报的那个毛病：**要能关掉**。以前唯一的办法是在任务管理器里
+ *    杀 node —— 而"杀进程"这件事普通用户不该被逼着去做，且杀完还会留下锁文件。
+ * ⚠️ 只退**面板**。机器人是独立进程，这里绝不顺手杀它（与 `shutdown()` 同一条纪律）。
+ * ⚠️ 先把响应发出去再退 —— 立刻 `process.exit` 的话浏览器只会看到"连接被掐断"，
+ *    而用户需要的是一句"已退出"。
+ */
+async function apiPanelQuit(req, res, url) {
+  pushLog('■ 正在退出控制台（页面点了「退出控制台」）—— 机器人不受影响');
+  sendJson(res, { ok: true, msg: '控制台正在退出，约 1 秒后页面不再响应' });
+  setTimeout(shutdown, 400);
+  return undefined;
 }
 
 const API_ROUTES = [
@@ -3055,6 +3301,10 @@ const API_ROUTES = [
   { path: '/api/qrcode/refresh', method: 'POST', handler: apiQrcodeRefresh },
   { path: '/api/logs/clear', method: 'POST', handler: apiLogsClear },
   { path: '/api/panel/restart', method: 'POST', handler: apiPanelRestart },
+  // 网页内置终端（2026-10-11）：流是**只读**的（GET），退出是写路由（见 WRITE_ROUTES）。
+  { path: '/api/console/stream', handler: apiConsoleStream },
+  { path: '/api/console/tail', handler: apiConsoleTail },
+  { path: '/api/panel/quit', method: 'POST', handler: apiPanelQuit },
 ];
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);

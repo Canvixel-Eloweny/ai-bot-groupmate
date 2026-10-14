@@ -1614,13 +1614,10 @@ details.det pre { margin: 0; }
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-accent) 20%, transparent);
 }
 .stp-tx { min-width: 0; overflow-wrap: anywhere; }
-/* 空态：图标 + 一句话，不要一个孤零零的框 */
-.steps-empty {
-  display: flex; align-items: center; gap: 8px;
-  padding: 12px; color: var(--c-text-3); font-family: var(--font);
-  font-size: var(--t-md);
-}
-.steps-empty .ico { color: var(--c-idle); }
+/* ⚠️ 2026-10-14 删除 `.steps-empty`（原「空态：图标 + 一句话」那两条规则）：
+   「启动链路」的空态改成了**检查表**（复用 `.stp` 那套，见 `app.js` 的 `readyChecklist`），
+   于是它成了零引用的死代码 —— 全仓 grep 只剩这两行定义本身就说明没人用。
+   ⚠️ 不是丢覆盖：空态**没有**消失，只是从"一句话"换成了"四行事实 + 第一个待办被点亮"。 */
 
 /* ── 保存条 / 反馈 ───────────────────────────────────────────────────── */
 .savebar {
@@ -2217,4 +2214,52 @@ html[data-vt="circle-blur"]::view-transition-new(root) {
 @keyframes vt-circle-blur {
   from { clip-path: circle(0% at var(--vt-origin, 50% 100%)); filter: blur(8px); }
   to   { clip-path: circle(150% at var(--vt-origin, 50% 100%)); filter: blur(0px); }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   网页内置终端（2026-10-11）
+   ──────────────────────────────────────────────────────────────────────────
+   取代那个"关不掉、删不掉"的前台 cmd 窗口。视觉上它是页面里**唯一**一块
+   等宽深色区 —— 目的是让人一眼认出"这是原始输出，不是渲染过的数据"，
+   与页面其它"安静的仪表盘"风格形成**有意**的对比。
+
+   ⚠️ 颜色**只从现有令牌取**（本文件第 ① 条硬规则）：没有一个十六进制字面量，
+      于是深浅切换自动生效，而 §60 那条"深浅令牌名字集合相等"的契约也不会因为
+      多加两个令牌而需要同步维护。
+   ══════════════════════════════════════════════════════════════════════════ */
+.term {
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--c-surface);
+}
+.term-h {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--c-line-soft);
+  background: var(--c-surface-2);
+}
+/* 状态灯：**只画点**，不写字（文字在它右边，由渲染器给）。
+   亮 = --c-ok，灭 = --c-idle（"没在跑"，不是"出错"）—— 出过错另有日志行说。 */
+.term-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--c-idle);
+  display: inline-block; flex: 0 0 auto;
+}
+.term-dot + .hint { margin-right: 8px; }
+.term-dot.on { background: var(--c-ok); box-shadow: 0 0 0 3px var(--c-ok-bg); }
+.term-body {
+  margin: 0;
+  padding: 10px 12px;
+  /* ⚠️ 高度用视口单位 + 封顶：日志是流式的，给它一个"一屏能看多少"的界；
+     不封顶的话长日志会把下面的按钮推到屏幕外，而用户会以为按钮没了。 */
+  height: min(48vh, 420px);
+  overflow: auto;
+  background: var(--c-sunken);
+  color: var(--c-text-2);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
 }

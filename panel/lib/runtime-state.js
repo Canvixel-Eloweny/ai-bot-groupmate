@@ -52,17 +52,45 @@ export const MAX_LOG = 600;
  */
 export let logDropped = 0;
 
+/**
+ * 日志订阅（2026-10-11 · 网页内置终端）。
+ *
+ * ⚠️ 钩子为什么必须开在**这里**、而不是在 `server.js` 里包一层 `pushLog`：
+ *    ESM 的 import 绑定是**只读**的 —— 在别处写 `pushLog = 包装过的版本` 会直接抛
+ *    `TypeError`，而就算绕过去，调用点（全项目 30+ 处）拿到的仍是**原来那个**函数。
+ *    ⇒ 想让"每压一行日志"这件事有第二个消费者，只能在这个**定义 `pushLog` 的模块**里开口子。
+ *
+ * ⚠️ 订阅者抛异常**绝不能**影响 pushLog 本身：日志是排障的最后一条线索，
+ *    "推给终端失败"导致"连日志都不记了"是彻底的倒果为因。
+ * ⚠️ 本模块仍是**零依赖**的 L0（Set 是语言内置的，不需要 import）。
+ */
+const logListeners = new Set();
+
+/** @param {(lines:string[])=>void} fn @returns {()=>void} 取消订阅 */
+export function onLog(fn) {
+  logListeners.add(fn);
+  return () => logListeners.delete(fn);
+}
+
 /** 往环形日志里压一行（支持多行文本，按行拆开逐条记录） */
 export function pushLog(line) {
   const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  const added = [];
   for (const l of String(line).split('\n')) {
     if (!l.trim()) continue;
-    state.logs.push(`[${ts}] ${l}`);
+    const withTs = `[${ts}] ${l}`;
+    state.logs.push(withTs);
+    added.push(withTs);
   }
   if (state.logs.length > MAX_LOG) {
     const over = state.logs.length - MAX_LOG;
     state.logs.splice(0, over);
     logDropped += over;
+  }
+  if (added.length) {
+    for (const fn of logListeners) {
+      try { fn(added); } catch { /* 见上：订阅者的错不该吃掉日志 */ }
+    }
   }
 }
 

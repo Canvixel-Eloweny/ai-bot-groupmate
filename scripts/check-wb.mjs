@@ -76,7 +76,7 @@ console.log = (first, ...rest) => {
  *       提交门 `pre-commit.sh` 正是因此才把 `node_modules` **软链**进闸门用的临时 worktree。
  *       记在这里是为了下次有人量到 17 时**别以为闸门坏了**。
  */
-const MIN_CONTRACTS = 106;
+const MIN_CONTRACTS = 108;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -123,7 +123,7 @@ import {
 // ⚠️ 从这里 import，而**不是**在契约里重抄一份名单 —— `make-publish-copy.mjs` 读的也是它，
 //    两个消费者读同一份，才不会一个改了另一个没改（本项目"两份实现"那条头号纪律）。
 import {
-  DOCS_KEEP, INTERNAL_DOC_NAME_RE, isPublishedByDocsRule, isHeldBackDoc,
+  DOCS_KEEP, INTERNAL_DOC_NAME_RE, isPublishedByDocsRule, isHeldBackDoc, isHeldBackRoot, HOLD_BACK_ROOT,
 } from './lib/publish-docs.mjs';
 
 // ── 扫描器自己的两个 IO 工具：**唯一实现**（第 11 轮 · M-05）─────────────────────
@@ -2014,6 +2014,9 @@ const LIB_SRC_ALLOW = [
       // 控制通道的面板侧入口（D6b · Q7 裁决①）。依赖 L0 的 `paths.js` +
       // 两个 src 零依赖叶子，所以是 L1。
       'panel/lib/control.js': 1,
+      // 原生 NapCat（Windows 便携包）—— 只依赖 L0 的 `paths.js`（拿 ROOT）与 node 内置，
+      // 零业务依赖 ⇒ **L1**。它不许反过来被 L0 引用（那会构成循环）。
+      'panel/lib/napcat-native.js': 1,
       // D21：ZIP 编解码（只用 `node:zlib` 内置）—— 与 `sessions.js` 同层（L1）。
       'panel/lib/zip.js': 1,
       // D21：扩展包安装的判据 + 三步落盘。它依赖 L1 的 `zip.js` 与两个 **src 零依赖叶子**
@@ -12408,6 +12411,46 @@ const LIB_SRC_ALLOW = [
     if (!/if \(isHeldBackDoc\(f\)\) return false;/.test(mpcSrc)) {
       problems.push('make-publish-copy 里没有 `isHeldBackDoc(f)` 这条**排除规则** —— 白名单是一张没人读的表（H-12 会静默失效）');
     }
+    // ⚠️ 2026-10-11（"总项目与外部线路"那一轮）：顶层（`docs/` 以外）的排除名单
+    //    也住同一个叶子（`HOLD_BACK_ROOT`）。判据查**两件事**，缺一即红 ——
+    //    这是本项目第 4.0.3 条「断言存在 ≠ 断言接线」的直接套用：
+    //      · 只 import 却忘了展开 ⇒ 名单又是一张"没人读的表"，排除静默失效；
+    //      · 只展开却没用叶子  ⇒ 名单又回到脚本里自行维护一份（两份实现必然漂）。
+    //    来历：2026-10-11 实测 —— `AGENTS.md` 已写进 EXCLUDE，§71 的死引用闸仍把它当
+    //    "被发布的文档"扫，报了两条假红（提交门当时正确拦下）。根因就是 §71 读不到
+    //    这份名单（它没法 import 本文件），于是名单必须搬到两边都读得到的叶子里。
+    if (!/HOLD_BACK_ROOT/.test(mpcSrc)) {
+      problems.push('make-publish-copy 没读 `HOLD_BACK_ROOT` —— 顶层排除名单会退回"脚本里自行维护一份"，而 §71 读不到它 ⇒ 已排除的 `.md` 仍会被当"被发布的文档"扫（假红）');
+    } else if (!/\.\.\.HOLD_BACK_ROOT/.test(mpcSrc)) {
+      problems.push('make-publish-copy import 了 `HOLD_BACK_ROOT` 却**没有展开进 EXCLUDE** —— 名单成了一行没人消费的 import（排除静默失效，且看代码像是做了）');
+    }
+    for (const must of HOLD_BACK_ROOT) {
+      // ⚠️⚠️ **发布副本感知**（2026-10-11 实测踩到，本轮修的第二个洞）。
+      //   本条判据在两个仓里**方向相反**，而第一版只写了一个方向：
+      //     · 内部开发仓：条目必须**被 git 追踪**（否则是僵尸条目 —— 排除不了任何东西）；
+      //     · 发布拷贝：条目必须**不在**（它们本来就是被排掉的那批）。
+      //   实证：第一版在拷贝里跑 `git ls-files` ⇒ 报 2 条**假红**，
+      //   而这次是**构建流水线**把我拦下的（`finish-ai-bot-groupmate.sh` 的 ④ 步直接 die）——
+      //   ⇒ 判据写错方向，与"漏放真值"是同一个量级的事故：它拦住正确的发布。
+      //   处置沿用第 22 轮立的规矩：**不"跳过"**（跳过 = 静默放水），而是换成反向断言。
+      if (IS_PUBLISH_COPY) {
+        if (fs.existsSync(path.join(REPO, must))) {
+          problems.push(`发布副本里出现了 ${must} —— 它在顶层排除名单里，按设计不该随拷贝出去（少一份本机路径 = 少一个泄漏口）`);
+        }
+      } else {
+        let live = '';
+        try {
+          live = execFileSync('git', ['ls-files', '-z', '--', must], { cwd: REPO, encoding: 'utf8' });
+        } catch { live = ''; }
+        if (!live) {
+          problems.push(`顶层排除名单里的 ${must} 不是被 git 追踪的路径 —— 僵尸条目（排除不了任何东西，却让人以为"已收口"）`);
+        }
+      }
+    }
+    // 空数组自证：名单为空时上面那圈恒真（§8 那一族：空输入必然通过）。
+    if (HOLD_BACK_ROOT.length === 0) {
+      problems.push('HOLD_BACK_ROOT 是空的 —— 这一节对它的一切断言都会恒真（空输入必然通过）');
+    }
   }
   subHit('发布面 docs 白名单');
 
@@ -12449,7 +12492,7 @@ const LIB_SRC_ALLOW = [
   try {
     trackedAll = execFileSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8' }).split('\0').filter(Boolean);
   } catch { /* 上面已报 */ }
-  const publishedDocs = trackedAll.filter((f) => /\.(md|html)$/.test(f) && isPublishedByDocsRule(f));
+  const publishedDocs = trackedAll.filter((f) => /\.(md|html)$/.test(f) && isPublishedByDocsRule(f) && !isHeldBackRoot(f));
   const refRe = /`docs\/([A-Za-z0-9_.\-/]+)`|\]\((?:\.\/)?docs\/([A-Za-z0-9_.\-/]+)\)/g;
   let refBad = 0;
   for (const f of publishedDocs) {
@@ -13350,10 +13393,12 @@ const LIB_SRC_ALLOW = [
     const keys81 = entries81.map((m) => `${m[1]}|${m[2] ? 'POST' : 'GET'}`);
     const nPost81 = keys81.filter((k) => k.endsWith('|POST')).length;
     // 42 / 29（2026-10-07 接自定义大脑：新增 save / rename / delete 三条 POST）。
+    // 45 / 30（2026-10-11 接网页内置终端：新增 console/stream、console/tail 两条 GET
+    //         与 panel/quit 一条 POST —— 退出控制台是"能关掉"那件事的正规出口）。
     // ⚠️ 改这两个数字的同时**必须**也在 `WRITE_ROUTES` 里登记（§3e 会核对分类）——
     //    只改这里等于把"新路由绕过鉴权"这件事盖章通过。
-    if (entries81.length !== 42 || nPost81 !== 29) {
-      problems.push(`路由表项数变了（现 ${entries81.length} 项 / POST ${nPost81}，应恰 42 / 29）—— ` +
+    if (entries81.length !== 45 || nPost81 !== 30) {
+      problems.push(`路由表项数变了（现 ${entries81.length} 项 / POST ${nPost81}，应恰 45 / 30）—— ` +
         '加删路由是**明示动作**：请连 §3e 的分类与本节的精确值一起改，不许只动一头');
     }
     if (new Set(keys81).size !== keys81.length) {
@@ -14657,6 +14702,143 @@ const LIB_SRC_ALLOW = [
   }
 }
 
+// 100) 面板「启动链路」空态 = **只读检查表**（2026-10-14 · P5）。
+//
+// 为什么值得一整段：「启动链路」那块以前是一句「还没有动作 —— 点一次「一键启动」…」，
+// 于是**"还差什么"只能靠人去别的页面自己找**。2026-10-14 真机联调里维护者点了一次
+// 「一键启动」失败，原因恰恰是"模型的 API Key 没填" —— 那条信息一直存在
+// （`schema.js` 的 `config.hasKey` → 「尚未配置」），但它在「大脑 → 云端设置」页里。
+//
+// ⚠️ 它是**纯展示层**，所以判据的重点不是"它长得对"，而是**它没有变成第二个真相源**：
+//    ① 只许读 `/api/state` 里**已有的**字段 —— 尤其不许把 `src/config.js` 的
+//       「白名单为空」那条判据搬进面板（`panel/server.js` 的 `startBridge()` 注释明确反对过：
+//       复制一份判据，就一定会与机器人那一份漂开）；
+//    ② 空态**没有消失**（不许退化成一句占位）；
+//    ③ 点亮的必须是**第一个未就绪的项**，不能写死第 1 行 ——
+//       "协议端没问题、只差机器人"时写死第 1 行会把人指到错误的地方。
+{
+  const problems = [];
+  const appSrc = read('../panel/next/app.js');
+  const cssSrc = read('../panel/next/style.css');
+
+  // ① 旧占位在**代码**与**样式**里都不许留（剥注释后命中 ⇒ 不是注释，是真的又用上了）
+  if (/steps-empty/.test(appSrc)) {
+    problems.push('app.js 里又出现了 steps-empty —— 「启动链路」空态应当是检查表（readyChecklist），不是一句占位');
+  }
+  if (/\.steps-empty/.test(cssSrc)) {
+    problems.push('style.css 里又出现了 .steps-empty —— 那条规则已随空态改造成为死代码（剥注释后仍命中 ⇒ 不是注释）');
+  }
+
+  // ② 检查表函数在位（`fnSlice` 抽不到就返回空串 ⇒ fail-closed，不在真空里变绿）
+  const body = fnSlice(appSrc, 'function readyChecklist(s) {', 200);
+  if (!body) {
+    problems.push('抽不出 app.js 的 readyChecklist(s) —— 它被改名/搬走了，或者空态检查表整个没了'
+      + '（抽取失败当失败：否则本段契约落在真空里）');
+  } else {
+    // ③ **只读**面板已有的那四组字段。
+    const keys = [...body.matchAll(/j\(s,\s*\['([^']+)'/g)].map((m) => m[1]);
+    if (!keys.length) {
+      problems.push('readyChecklist 里一处 j(s, [...]) 都没抽到 —— 抽取规则失效，本段等于没查');
+    }
+    const ALLOWED = new Set(['ports', 'panel', 'bridge', 'config']);
+    const stray = [...new Set(keys)].filter((k) => !ALLOWED.has(k));
+    if (stray.length) {
+      problems.push(`readyChecklist 读了不该读的字段：${stray.join('、')} —— 它只许读 /api/state 里`
+        + '已有的 ports / panel / bridge / config 四组；其余状态要么没下发、要么属于别的层');
+    }
+    // ③b 群聊白名单：**事实**许摆，**结论**不许下（2026-10-14 维护者要求把这一项摆出来）。
+    //    「白名单为空 ⇒ 拒绝启动」那条判据住在 src/config.js，而且它还依赖 `allowAllWhenEmpty`
+    //    —— 面板要是把它抄过来，就会与机器人那一份漂开（startBridge 的注释反对过）。
+    //    ⇒ 这里查两件事：必须摆"填没填"，且**不许出现启动结论**。
+    if (!/放行的群聊/.test(body)) {
+      problems.push('readyChecklist 里没有「放行的群聊」那一行 —— 维护者 2026-10-14 要求把它摆出来'
+        + '（最容易忘的就是它：装好了、灯全绿、群里却没人理，多半是它）');
+    }
+    const FORBIDDEN_CONCLUSION = ['allowAllWhenEmpty', "allow\\.", '不会启动', '启动不了'];
+    const leaked = FORBIDDEN_CONCLUSION.filter((f) => new RegExp(f).test(body));
+    if (leaked.length) {
+      problems.push(`readyChecklist 里出现了启动判据 / 启动结论：${leaked.join('、')} —— `
+        + '面板只许摆「填没填」这个事实；"空了会不会拒绝启动"的结论只属于 src/config.js，'
+        + '抄过来必然与机器人那一份漂开');
+    }
+
+    // ④ 形状：每项都要有 ok 与 txt —— 渲染层靠 ok 选"点亮哪一行"、靠 txt 出文案
+    if (!/\bok:/.test(body) || !/\btxt:/.test(body)) {
+      problems.push('readyChecklist 的返回项缺 ok / txt —— 渲染层靠 ok 决定点亮哪一行、靠 txt 出文案');
+    }
+  }
+
+  // ⑤ 点亮逻辑：必须是**第一个未就绪项**，不是写死第 1 行。
+  //    `findIndex(it => !it.ok)` 与 `data-cur` 两个记号都要在（一个选、一个画）。
+  if (!/findIndex\(\(it\)\s*=>\s*!it\.ok\)/.test(appSrc) || !/data-cur=/.test(appSrc)) {
+    problems.push('空态没按「第一个未就绪的项」点亮（找不到 findIndex(!it.ok) 或 data-cur）—— '
+      + '写死第 1 行会让"协议端没问题、只差机器人"时指错地方');
+  }
+  subHit('启动链路检查表');
+
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else {
+    console.log('✓ 面板「启动链路」空态 = 只读检查表（2026-10-14 · P5，同日加到 5 行）：'
+      + '旧占位 .steps-empty 在代码与样式里都已摘除 · '
+      + 'readyChecklist 在位且**只读** ports/panel/bridge/config 四组 · '
+      + '「放行的群聊」那行在位（维护者要求的）——只摆"填没填"、不许下启动结论 · '
+      + '返回项带 ok/txt · 按「第一个未就绪」点亮一行而不是写死第 1 行 · '
+      + `子判据 ${subCountOf('启动链路检查表')} 条（§51 核下限）`);
+  }
+}
+
+// 101) 写操作的回报**不许写死成"成功色"**（2026-10-14）。
+//
+// 缺陷实录：每个动作都自己写 `toast(r.msg || '已启动', 'ok')` —— 那个 `'ok'` 是**写死的**，
+// 于是后端回 `ok:false`（机器人其实没起来）时，界面照样显示**绿色**，
+// 区别只在字里（"已启动" / "机器人没能起来，原因：…"）。
+// 这正是本项目最忌的「失败伪装成成功」，而且它**不报错、也不留痕** —— 契约与回归全绿。
+// 2026-10-14 真机上维护者点「启动机器人」失败却没能立刻察觉，就是这个形状。
+//
+// 判据三条（② 是"不许再犯"的形状约束，③ 是反向自证）：
+//   ① 统一入口 `toastResult(r, okMsg)` 在位，且**按 `r.ok === false` 判色**；
+//   ② app.js 里**不许**再出现 `toast(r.msg || …, 'ok')`（写死 ok）；
+//   ③ 走统一入口的处数 ≥10 —— 少于 10 说明抽取规则失效 / 大部分动作没接上来，
+//      那样"不许写死"这句话是在真空里通过的。
+{
+  const problems = [];
+  const appSrc = read('../panel/next/app.js');
+
+  const m = appSrc.match(/function toastResult\([^)]*\) \{[\s\S]*?\n\}/);
+  if (!m) {
+    problems.push('app.js 里找不到 toastResult —— 写操作的统一回报没了（2026-10-14 立的）；'
+      + '丢了它，后端回 ok:false 时界面又会显示成绿色');
+  } else {
+    const body = m[0];
+    if (!/r\.ok === false/.test(body)) {
+      problems.push('toastResult 没有按 `r.ok === false` 判色 —— 后端说失败时界面仍会显示成成功');
+    }
+    if (!/failed \? 'bad' : 'ok'/.test(body)) {
+      problems.push('toastResult 的 bad/ok 不是由后端的 ok 决定的（写成常量就等于没修）');
+    }
+  }
+
+  const hardCoded = [...appSrc.matchAll(/toast\(r\.msg \|\| ('[^']*'|`[^`]*`), 'ok'\)/g)].map((x) => x[0]);
+  if (hardCoded.length) {
+    problems.push(`app.js 里还有 ${hardCoded.length} 处把写操作的提示写死成成功色：`
+      + hardCoded.slice(0, 3).join(' / ')
+      + ' —— 后端回 ok:false 时会显示成绿色（失败伪装成成功）；请改走 toastResult');
+  }
+
+  const uses = (appSrc.match(/toastResult\(r,/g) || []).length;
+  if (uses < 10) {
+    problems.push(`只有 ${uses} 处走 toastResult（下限 10）—— 抽取规则失效或大部分动作没接上来，本段在真空里`);
+  }
+  subHit('写操作回报');
+
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else {
+    console.log('✓ 写操作的回报表（2026-10-14）：统一入口 toastResult 在位且**按后端的 ok 判色**'
+      + '（不许写死成功色 —— 后端回 ok:false 时必须红）· app.js 里零处写死 `toast(r.msg || …, \'ok\')` · '
+      + `已接入 ${uses} 处 · 子判据 ${subCountOf('写操作回报')} 条（§51 核下限）`);
+  }
+}
+
 // 51) 自证：这个扫描器**有没有真的在扫**（B11a · AR-SCANNER）。
 //
 // 为什么值得单独一节：上面各节都是"扫描器断言别人"，这一节是**扫描器断言自己**。
@@ -14786,7 +14968,13 @@ const LIB_SRC_ALLOW = [
 //       同样取精确值 —— 本桶只由这一段贡献，删任一处都该红。
 //    ⚠️ **第 53 轮新增** `['表情表', 3]`：§99 一段里恰三处 subHit（段入口 + 形状 + 注释里
 //       写了核对方法）。取精确值 3 —— 本桶只由这一段贡献，删任一处都该红。
-const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 18], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 11], ['子进程窗口', 4], ['配置模板可运行', 5], ['表情表', 3]];
+//    ⚠️ **2026-10-14 新增** `['启动链路检查表', 1]`：§100 一段里恰一处 subHit（段入口 ——
+//       段内那几条判据都挂在 `problems` 上，没有各自的 subHit）。
+//       取**精确值** 1（同 `表情表` 的先例）：本桶只由这一段贡献，整段被跳过即红。
+//       ⚠️ 如实登记的弱点：1 条 subHit 只能说"这一段的入口执行过了"，
+//          它**拦不住"段内某一条判据被删"**（那要靠 `problems` 里的判据本身）。
+//          留 1 而不是不留，是因为不留它就完全不在表里 —— 而"整段消失"是本项目反复踩的那一类。
+const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 18], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 11], ['子进程窗口', 4], ['配置模板可运行', 5], ['表情表', 3], ['启动链路检查表', 1], ['写操作回报', 1]];
   for (const [bucket, min] of HEAVY_SUB_MIN) {
     const c = subCountOf(bucket);
     if (c < min) {

@@ -48,3 +48,37 @@ export const isPublishedByDocsRule = (rel) =>
 
 /** `docs/` 下、**不会**发布的那一份（用于 §71 的反向核对与提示文案）。 */
 export const isHeldBackDoc = (rel) => rel.startsWith('docs/') && !DOCS_KEEP.includes(rel);
+
+/**
+ * ── 顶层（`docs/` 以外）**不随公开拷贝发布**的资产 ──────────────────────────────
+ * （2026-10-11 · 由「总项目与外部线路」那一轮立）
+ *
+ * 为什么这一份必须住在这个叶子里，而不是继续写在 `make-publish-copy.mjs` 的 `EXCLUDE` 里：
+ *   `EXCLUDE` 那些老条目**搬不动** —— 变异清单 `test/mutations/sec-s01-1005.mjs` 的 M8
+ *   把锚点钉在 `'scripts/publish-audit.mjs',` 那一行上，搬走它 = 那条变异变成"锚点失效"。
+ *   但 `check-wb` §71 的"死引用闸"需要知道**哪些 `.md`/`.html` 其实不会发布**，
+ *   否则它会把一份已排除的文件当成"被发布的文档"去扫（2026-10-11 实测踩到：
+ *   `AGENTS.md` 被排除后仍被判为"被发布的文档"。它引用了 `docs/PUBLISH-CHECKLIST.md`
+ *   ⇒ 报了两条**假红**，而闸门当时正确地拦下了提交）。
+ *
+ * ⚠️ 判据（而不是"我觉得"）：一条目进这里，必须同时满足
+ *   ① 它**写死了本机路径**或**只对这台机器上的 AI/维护者有约束力**（对外部读者是死路径）；
+ *   ② 它**没有对外使用价值**（与 `packaging/` 那条"对象不对"同族）。
+ *
+ * 单一来源：`make-publish-copy.mjs`（真的排除它）与 `check-wb.mjs` §71（判定"是否被发布"）
+ * **读同一份** —— 这正是 H-12 之后 `DOCS_KEEP` 立下的规矩，此处照办。
+ */
+export const HOLD_BACK_ROOT = [
+  // 四节点 + 七道批准闸门的**本机协作约定**正本。含 ~/Documents/estrella-bot、
+  // ~/Desktop/estrella-dist/、~/.qqbot/finish-ai-bot-groupmate.sh 等本机路径；
+  // 读者是"在这台机器上动手的 AI"。公开仓里的读者 clone 下来另起一套，这份约定对他们无约束力。
+  'AGENTS.md',
+  // push 闸门。与 `scripts/pre-commit.sh` 同族（钩子逻辑入库、`.git/hooks/` 只做转发），
+  // 但提示正文里写死了本机那条发布流水线（`~/.qqbot/finish-ai-bot-groupmate.sh`）——
+  // 对外是死路径，且把本机工具布局泄到公开面。旧纪律：本机路径不进公开仓。
+  'scripts/pre-push.sh',
+];
+
+/** 顶层资产是否**不随公开拷贝发布**（前缀匹配，与 `make-publish-copy.mjs` 的同名语义一致）。 */
+export const isHeldBackRoot = (rel) => HOLD_BACK_ROOT.some((e) => rel === e || rel.startsWith(e));
+

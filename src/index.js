@@ -1441,7 +1441,10 @@ async function main() {
       // 之前三道**一个都不落盘** → 界面上「开了识图却没反应」和「根本没收到图」完全同形，
       // 只能靠猜。三个值如实记下来，是谁挡住的（还是压根没图）一眼可辨。
       vision: {
-        supports: supportsVision(cfg.llm?.model, cfg.llm?.provider),
+        // ⚠️ 这里也要带 `declaredFeatures`（2026-10-12）：这个字段是**排障用的读数**，
+        //    它与 `brain.js` 那道真闸必须**同源**。少传一个参数，就会出现
+        //    "trace 说 supports:false 但图其实发出去了"——而那是排查时唯一能看的证据。
+        supports: supportsVision(cfg.llm?.model, cfg.llm?.provider, cfg.llm?.declaredFeatures),
         featureOn: !!cfg.llm?.features?.vision,
         imagesCount: Array.isArray(parsed.images) ? parsed.images.length : 0,
         // B10a · O-IMGURL：只留 8 位哈希，**不落原始 URL** ——

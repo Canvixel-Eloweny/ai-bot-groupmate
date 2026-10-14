@@ -1,0 +1,18 @@
+{
+  "_comment": "NapCat 下载源清单。唯一目的是「首装时把协议端拉下来」，不涉及本项目任何代码。改这里就能换源。",
+  "repo": "NapNeko/NapCatQQ",
+  "api": "https://api.github.com/repos/NapNeko/NapCatQQ/releases/latest",
+  "asset": "NapCat.Shell.zip",
+  "fallbackTag": "v4.18.33",
+  "downloadTemplate": "https://github.com/{repo}/releases/download/{tag}/{asset}",
+  "mirrors": [
+    "https://gh-proxy.com/",
+    "https://ghproxy.net/"
+  ],
+  "mirrorPrefixIsUrlPrefix": true,
+  "manual": {
+    "page": "https://github.com/NapNeko/NapCatQQ/releases",
+    "asset": "NapCat.Shell.zip",
+    "note": "下载后把 zip 原样放到 app/napcat/NapCat.Shell.zip，再重跑 1-SETUP.bat 即可离线完成安装。"
+  }
+}

@@ -246,7 +246,7 @@ export function loadConfig(overridePath) {
       throw new Error(
         '白名单为空，且 allow.allowAllWhenEmpty 不为 true —— 它不知道该听谁的，所以不会启动。\n' +
           '  怎么办（两条路，第二条强烈不建议）：\n' +
-          '    ① 填白名单：控制台「发言与时机 → 触发方式 → 放行的群号」（私聊白名单同理，叫 allow.private）；\n' +
+          '    ① 填白名单：控制台「发言与时机 → 触发方式 → 放行的群号」（私聊那一格叫「同意私聊的 QQ 号」，配置里叫 allow.private）；\n' +
           '       也可以直接编辑 app/config.json 的 allow.groups —— 群号写**纯数字**，多个用逗号隔开。\n' +
           '    ② 显式把 allow.allowAllWhenEmpty 设为 true。\n' +
           '       ⚠️ 那等于把 QQ 账号的控制权交给任何人和任何群，别这么干。'

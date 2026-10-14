@@ -70,6 +70,24 @@ function toast(msg, cls = '') {
   box.appendChild(el);
   setTimeout(() => el.remove(), cls === 'bad' ? 6000 : 3200);
 }
+
+/**
+ * 写操作的**统一回报**（2026-10-14 立）。
+ *
+ * ⚠️ 它防的是一类真实存在的缺陷：**后端回了 `ok:false`，界面却显示成绿色的"成功"**。
+ *    以前每个动作都自己写 `toastResult(r, '已启动')` —— 那个 `'ok'` 是**写死的**，
+ *    于是"机器人启动失败"和"机器人已启动"在界面上长得一样（都是绿条 + 一行字，
+ *    区别只在字里）。本项目最忌「失败伪装成成功」，而这一类恰恰**不报错、也不留痕**。
+ *    2026-10-14 真机上维护者点「启动机器人」失败却没能立刻察觉，就是这个形状。
+ *
+ * ⇒ 写操作的提示**一律走这里**：颜色由后端的 `ok` 决定，不由调用方决定。
+ *    （`catch` 里那条仍是 `'bad'` —— 那是请求本身失败，与这里不是一回事。）
+ */
+function toastResult(r, okMsg) {
+  const failed = r && r.ok === false;
+  toast((r && r.msg) || okMsg, failed ? 'bad' : 'ok');
+  return failed;
+}
 let busyDepth = 0;
 function busy(on, txt = '处理中…') {
   busyDepth = Math.max(0, busyDepth + (on ? 1 : -1));
@@ -121,7 +139,12 @@ async function refresh(silent = false) {
     if (!S.online) S.online = true;
   } catch (e) {
     if (S.online) { S.online = false; toast(`与后端断开：${e.message}`, 'bad'); }
-    if (!S.state) S.state = DEMO;
+    // ⚠️ 只有**原型模式**才回落到演示数据（2026-10-12 · 真机修正）。
+    //    面板发来的页面（HAS_TOKEN）如果拿不到状态就摆出一屏"演示数据"，
+    //    用户看到的是**看起来很正常的假数据**（机器人没在跑 / 容器未检测 / pid 0），
+    //    而真相是"后端没应答"。诚实做法是留着空白 + 一行说明，见 paintPage。
+    if (!S.state && !HAS_TOKEN) S.state = DEMO;
+    S.bootTried = true;
   }
   // ⚠️⚠️ 第 58 轮 · 真机截图抓到的缺陷：**告警条以前永远不会消失。**
   //
@@ -141,7 +164,31 @@ async function refresh(silent = false) {
   renderBanners();
   paintTop();
   softPaint();
+  announceLogin();
   if (!silent && !S.online) return;
+}
+
+/**
+ * 扫码登录**成功**的那一下，在面板里明确说出来（2026-10-13）。
+ *
+ * 为什么需要：以前扫码之后没有任何"成了"的信号 —— 用户只能自己猜（去别处看一眼，
+ * 或者干脆再扫一次）。而"再扫一次"在旧链路里意味着再开一个前台窗口，
+ * 那个窗口一关又把登录态带走了。
+ *
+ * ⚠️ 只在**二维码弹窗开着**的时候报（那才说明用户正处在扫码流程里）；
+ *    否则每次刷新页面都会因为"已经登录着"弹一次成功提示，那是噪音不是反馈。
+ *    报完顺手把弹窗关掉 —— 码用完了，留在屏幕上只会误导下一次。
+ */
+let loginNickShown = '';
+function announceLogin() {
+  const nick = (S.state && S.state.account && S.state.account.nickname) || '';
+  if (!nick) return;
+  const qrOpen = Boolean(document.querySelector('[data-qr]'));
+  if (!qrOpen) { loginNickShown = nick; return; }
+  if (nick === loginNickShown) return;
+  loginNickShown = nick;
+  closeModal();
+  toast(`✔ 登录成功：${nick}（以后开机会自动登录，不用再扫）`, 'ok');
 }
 
 /**
@@ -193,23 +240,45 @@ function markDirty() {
   $id('savebar').hidden = dirtyKeys() === 0;
   $id('savebarTxt').textContent = `有 ${dirtyKeys()} 处改动还没保存`;
 }
+/**
+ * 控件值的**读口**。
+ *
+ * ⚠️ `ctrl.pct`（2026-10-12）：界面上的百分数控件（如「随机插话概率（%）」）
+ *    与盘上的小数**不是同一个单位**，换算必须收在这里，不能让每个控件各写一遍。
+ *
+ *    修之前是一个很典型的"一个框、两个单位"缺陷：框里画 0–100、标签写着 `%`，
+ *    而 `trigger.interjectChance` 从 config.json 到服务端**全程是 0–1 的小数**，
+ *    读写两个方向都不换算。于是用户填 15 → 服务端 `Math.min(1, 15)` ⇒ 盘上是 `1`（=100%）
+ *    ⇒ **填什么都被钉在上限**（症状"改了不生效"）；盘上真值 0.15 时框里回显 0.15
+ *    （症状"改了不显示"）。两个症状看起来毫无关系，根因是同一行没换算。
+ */
 function valueOf(ctrl) {
   const s = S.state || DEMO;
-  if (ctrl.id in S.volatile) return S.volatile[ctrl.id];
-  if (ctrl.bind) {
-    const d = getPath(S.draft.custom, ctrl.bind);
-    return d !== undefined ? d : getPath(s.custom, ctrl.bind);
+  const raw = (() => {
+    if (ctrl.id in S.volatile) return S.volatile[ctrl.id];
+    if (ctrl.bind) {
+      const d = getPath(S.draft.custom, ctrl.bind);
+      return d !== undefined ? d : getPath(s.custom, ctrl.bind);
+    }
+    if (ctrl.bindSys) {
+      const d = S.draft.sys[ctrl.bindSys];
+      return d !== undefined ? d : getPath(s.config, ctrl.bindSys);
+    }
+    return ctrl.read ? ctrl.read(s) : ctrl.value;
+  })();
+  if (ctrl.pct && raw !== '' && raw != null && Number.isFinite(Number(raw))) {
+    return String(Math.round(Number(raw) * 100));
   }
-  if (ctrl.bindSys) {
-    const d = S.draft.sys[ctrl.bindSys];
-    return d !== undefined ? d : getPath(s.config, ctrl.bindSys);
-  }
-  return ctrl.read ? ctrl.read(s) : ctrl.value;
+  return raw;
 }
 function setValue(ctrl, v) {
-  if (ctrl.bind) { setPath(S.draft.custom, ctrl.bind, v); touchC(ctrl.bind); }
-  else if (ctrl.bindSys) { S.draft.sys[ctrl.bindSys] = v; touchS(ctrl.bindSys); }
-  else S.volatile[ctrl.id] = v;
+  // 写口是读口的逆运算，同样只在这里做一次（理由见 valueOf）
+  const stored = (ctrl.pct && v !== '' && v != null && Number.isFinite(Number(v)))
+    ? Number(v) / 100
+    : v;
+  if (ctrl.bind) { setPath(S.draft.custom, ctrl.bind, stored); touchC(ctrl.bind); }
+  else if (ctrl.bindSys) { S.draft.sys[ctrl.bindSys] = stored; touchS(ctrl.bindSys); }
+  else S.volatile[ctrl.id] = stored;
   markDirty();
 }
 /**
@@ -261,10 +330,10 @@ const post = (url, body) => api(url, { method: 'POST', body });
 const DEMO_BLOCK = () => { toast('演示模式：这一页没有连上后端，写操作不会发送', 'warn'); };
 
 const ACTIONS = {
-  'onekey.start': async () => { busy(true, '一键启动中…'); try { const r = await post('/api/onekey/start'); stepsOf(r); toast(r.msg || '已启动', r && r.ok === false ? 'bad' : 'ok'); await refresh(true); } catch (e) { toast(`启动失败：${e.message}`, 'bad'); } finally { busy(false); } },
-  'onekey.stop': async () => { if (!confirm('结束本次运行？机器人 + 本机模型 + 容器一起停。')) return; busy(true, '结束中…'); try { const r = await post('/api/onekey/stop'); stepsOf(r); toast(r.msg || '已结束', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
-  'bridge.start': async () => { busy(true, '启动机器人…'); try { const r = await post('/api/bridge/start'); toast(r.msg || '已启动', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
-  'bridge.stop': async () => { if (!confirm('停止机器人？')) return; busy(true, '停止中…'); try { const r = await post('/api/bridge/stop'); toast(r.msg || '已停止', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'onekey.start': async () => { busy(true, '一键启动中…'); try { const r = await post('/api/onekey/start'); stepsOf(r); toastResult(r, '已启动'); await refresh(true); } catch (e) { toast(`启动失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'onekey.stop': async () => { if (!confirm('结束本次运行？机器人 + 本机模型 + 容器一起停。')) return; busy(true, '结束中…'); try { const r = await post('/api/onekey/stop'); stepsOf(r); toastResult(r, '已结束'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'bridge.start': async () => { busy(true, '启动机器人…'); try { const r = await post('/api/bridge/start'); toastResult(r, '已启动'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'bridge.stop': async () => { if (!confirm('停止机器人？')) return; busy(true, '停止中…'); try { const r = await post('/api/bridge/stop'); toastResult(r, '已停止'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'cmd.sleep': () => bridgeCmd('sleep'), 'cmd.wake': () => bridgeCmd('wake'),
   'cmd.abort': () => bridgeCmd('abort'), 'cmd.retry': () => bridgeCmd('retry'),
   'check': async () => { busy(true, '自检中…'); try { const r = await post('/api/check'); modal('连接自检', `<pre class="mono" style="white-space:pre-wrap;font-size:12px;">${esc(r.output || '')}</pre>`, [{ label: '知道了', style: 'btn-primary' }]); } catch (e) { toast(`自检失败：${e.message}`, 'bad'); } finally { busy(false); } },
@@ -273,10 +342,10 @@ const ACTIONS = {
   'open.qwenchat': () => { const p = j(S.state, ['localModel', 'ports', 'qwenchat'], 8765); window.open(`http://127.0.0.1:${p}`, '_blank'); },
   'open.home': () => window.open('/', '_blank'),
   'napcat.restart': async () => { busy(true, '重启容器…'); try { const r = await post('/api/napcat/restart'); toast(r.output || '已重启', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
-  'qrcode.refresh': async () => { try { await post('/api/qrcode/refresh'); toast('已换一张新码', 'ok'); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
-  'stopall': async () => { if (!confirm('一键全停：机器人 + 本机模型 + QQ 容器？')) return; busy(true, '全停中…'); try { const r = await post('/api/stop-all'); toast(r.msg || '已全停', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
-  'local.start': async () => { busy(true, '拉起本机模型…'); try { const r = await post('/api/local-model/start'); toast(r.msg || '已启动', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
-  'local.stop': async () => { busy(true, '停止本机模型…'); try { const r = await post('/api/local-model/stop'); toast(r.msg || '已停止', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'qrcode.refresh': async () => { await doQrRefresh(); },
+  'stopall': async () => { if (!confirm('一键全停：机器人 + 本机模型 + QQ 容器？')) return; busy(true, '全停中…'); try { const r = await post('/api/stop-all'); toastResult(r, '已全停'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'local.start': async () => { busy(true, '拉起本机模型…'); try { const r = await post('/api/local-model/start'); toastResult(r, '已启动'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'local.stop': async () => { busy(true, '停止本机模型…'); try { const r = await post('/api/local-model/stop'); toastResult(r, '已停止'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'switch.local': () => switchBrain('local'), 'switch.cloud': () => switchBrain('cloud'),
   'switch.zhipu': () => switchBrain('zhipu'), 'switch.qwen': () => switchBrain('qwen'),
   /* 自定义大脑：`brain.use` 带 id（同一 target 下有多套）；
@@ -293,12 +362,12 @@ const ACTIONS = {
     window.open(url, '_blank');
   },
   'balance.load': async () => { busy(true, '查余额…'); try { const r = await api('/api/balance'); S.extra.balance = r; S.state.__balance = balanceText(r); paintPage(false); toast('已刷新余额', 'ok'); } catch (e) { toast(`查询失败：${e.message}`, 'bad'); } finally { busy(false); } },
-  'usage.reset': async () => { if (!confirm('清零用量统计？会删掉 panel/ 下所有 usage*.jsonl。')) return; try { const r = await post('/api/usage/reset'); toast(r.msg || '已清零', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
+  'usage.reset': async () => { if (!confirm('清零用量统计？会删掉 panel/ 下所有 usage*.jsonl。')) return; try { const r = await post('/api/usage/reset'); toastResult(r, '已清零'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
   'trace.clear': async () => { if (!confirm('清空对话流记录？')) return; try { await post('/api/trace/clear'); toast('已清空', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
   'logs.clear': async () => { try { await post('/api/logs/clear'); S.logCursor = 0; S.extra.logs = null; toast('已清空', 'ok'); paintPage(false); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
-  'mem.auto.clear': async () => { if (!confirm('清空历史存量？手动记忆与结构化记忆不受影响。')) return; try { const r = await post('/api/custom/memory/clear'); toast(r.msg || '已清空', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
-  'mem.auto.del': async (id) => { try { const r = await post('/api/custom/memory/delete', { id }); toast(r.msg || '已删除', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
-  'mem.review': async (p) => { const [id, action] = String(p).split('|'); try { const r = await post('/api/memory/review', { id, action }); toast(r.msg || `已${action}`, 'ok'); await refresh(true); } catch (e) { toast(e.message === '这条不在了' ? '这条已经不在了（可能另一个窗口刚删过），正在刷新' : `失败：${e.message}`, 'bad'); await refresh(true); } },
+  'mem.auto.clear': async () => { if (!confirm('清空历史存量？手动记忆与结构化记忆不受影响。')) return; try { const r = await post('/api/custom/memory/clear'); toastResult(r, '已清空'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
+  'mem.auto.del': async (id) => { try { const r = await post('/api/custom/memory/delete', { id }); toastResult(r, '已删除'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
+  'mem.review': async (p) => { const [id, action] = String(p).split('|'); try { const r = await post('/api/memory/review', { id, action }); toastResult(r, `已${action}`); await refresh(true); } catch (e) { toast(e.message === '这条不在了' ? '这条已经不在了（可能另一个窗口刚删过），正在刷新' : `失败：${e.message}`, 'bad'); await refresh(true); } },
   // D-M3：按关键词检索记忆。**只读**（不做复证、不加 samples），所以失败也不刷新整页。
   'mem.search': async () => {
     const q = String($id('memQ')?.value || '').trim();
@@ -315,8 +384,32 @@ const ACTIONS = {
      那是"这一屏怎么看"，不是数据 —— 所以不写 config、不落盘、刷新即折叠。 */
   'list.more': (p) => { if (!S.extra.open) S.extra.open = {}; S.extra.open[p] = true; paintPage(false); },
   'list.fold': (p) => { if (S.extra.open) delete S.extra.open[p]; paintPage(false); },
+  /* ── 网页内置终端（2026-10-11）─────────────────────────────────────────────
+     这三个动作都在终端页里。`panel.quit` 是"关掉控制台"的**唯一**正规出口 ——
+     以前只能去任务管理器杀 node，而那既不该是普通用户的操作，也会留下锁文件。 */
+  'term.src': () => { TERM.src = TERM.src === 'napcat' ? 'panel' : 'napcat'; TERM.stick = true; paintPage(false); },
+  'term.clear': () => {
+    if (TERM.src === 'napcat') TERM.nap = []; else TERM.lines = [];
+    paintTerm();
+  },
+  'panel.quit': async () => {
+    if (!confirm('退出控制台？\n\n机器人是独立进程，不会被一起停掉。\n退掉之后控制台不再占着文件，整个目录就能删了。')) return;
+    busy(true, '正在退出…');
+    try {
+      await post('/api/panel/quit');
+      TERM.quit = true;
+      paintPage(false);
+      toast('控制台已退出 —— 双击桌面图标可以再打开', 'ok');
+    } catch (e) {
+      // ⚠️ 连接被掐断**正是预期结果**（服务端先回响应再退，但竞态下也可能先断）
+      //    ⇒ 只要请求发出去过，就按"已退出"处理，别把正常结果报成失败。
+      TERM.quit = true;
+      paintPage(false);
+      toast('控制台已退出', 'ok');
+    } finally { busy(false); }
+  },
   'panel.restart': async () => { busy(true, '重启面板…'); try { const before = j(S.state, ['panel', 'pid']); const r = await post('/api/panel/restart'); if (!r.restarted) { toast(r.msg || '已是最新，没有重启'); busy(false); return; } toast('正在重启，几秒后自动刷新…', 'ok'); await waitPanelPid(before); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
-  'config.undo': async () => { if (!confirm('撤销上一次保存？配置会整份退回那一版。')) return; busy(true, '撤销中…'); try { const r = await post('/api/config/undo', { steps: 1 }); toast(r.msg || '已撤销', 'ok'); await refresh(true); } catch (e) { toast(`撤销失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'config.undo': async () => { if (!confirm('撤销上一次保存？配置会整份退回那一版。')) return; busy(true, '撤销中…'); try { const r = await post('/api/config/undo', { steps: 1 }); toastResult(r, '已撤销'); await refresh(true); } catch (e) { toast(`撤销失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'try.run': async () => { const text = String(S.volatile['try.text'] || '').trim(); if (!text) return toast('先写一句要它回的话', 'warn'); busy(true, '跑完整链路…'); try { S.extra.tryOut = await post('/api/try', { text }); paintPage(false); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'skill.add.pack': () => addSkill('pack'), 'skill.add.persona': () => addSkill('persona'),
   'skill.apply': (i) => applyPersonaCard(Number(i)),
@@ -334,7 +427,7 @@ async function bridgeCmd(cmd) {
   if (!S.online) return DEMO_BLOCK();
   try {
     const r = await post('/api/bridge/command', { cmd });
-    toast(r.msg || `已下发 ${cmd}，等机器人取走`, 'ok');
+    toastResult(r, `已下发 ${cmd}，等机器人取走`);
     await refresh(true);
   } catch (e) { toast(`下发失败：${e.message}`, 'bad'); }
 }
@@ -344,7 +437,7 @@ async function switchBrain(target, id = '') {
   try {
     const r = await post('/api/switch', id ? { target, id } : { target });
     if (Array.isArray(r.steps)) S.state.__steps = r.steps.map((x) => `· ${typeof x === 'string' ? x : x.msg || JSON.stringify(x)}`);
-    toast(r.msg || '已切换', 'ok');
+    toastResult(r, '已切换');
     await refresh(true);
     // ★ 切换成功后**顺带**把新服务商的模型清单读出来（用户报的 bug：不点「读取」
     //   下拉里就只剩当前那一个）。静默执行 —— 拉不到不算切换失败。
@@ -450,7 +543,7 @@ async function brainFormSubmit(id) {
       features: { vision: bfChecked('vision'), thinking: bfChecked('thinking'), webSearch: bfChecked('webSearch') },
     });
     closeModal();
-    toast(r.msg || '已保存', 'ok');
+    toastResult(r, '已保存');
     await refresh(true);
   } catch (e) { toast(`保存失败：${e.message}`, 'bad'); }
   finally { busy(false); }
@@ -465,7 +558,7 @@ function brainRename(id) {
     { label: '改', style: 'btn-primary', run: async () => {
       const name = bfVal('name');
       if (!name) return toast('名字不能为空', 'warn');
-      try { const r = await post('/api/custom-brain/rename', { id, name }); closeModal(); toast(r.msg || '已改名', 'ok'); await refresh(true); }
+      try { const r = await post('/api/custom-brain/rename', { id, name }); closeModal(); toastResult(r, '已改名'); await refresh(true); }
       catch (e) { toast(`改名失败：${e.message}`, 'bad'); }
     } },
   ]);
@@ -481,7 +574,7 @@ function brainDelete(id) {
     : '只是删掉这一套配置，当前在用的不受影响。'}</div>`, [
     { label: '不删' },
     { label: '删除', style: 'btn-danger', run: async () => {
-      try { const r = await post('/api/custom-brain/delete', { id }); closeModal(); toast(r.msg || '已删除', 'ok'); await refresh(true); }
+      try { const r = await post('/api/custom-brain/delete', { id }); closeModal(); toastResult(r, '已删除'); await refresh(true); }
       catch (e) { toast(`删除失败：${e.message}`, 'bad'); }
     } },
   ]);
@@ -519,8 +612,119 @@ async function waitPanelPid(before) {
   toast('等了几十秒还没回来，点右上角重开一次控制台', 'warn');
 }
 async function openTab(path, title, asModal) {
-  if (asModal) { modal(title, `<img alt="二维码" style="width:min(360px,100%);display:block;margin:0 auto;" src="${path}?t=${Date.now()}">`, [{ label: '换一张', run: async () => { try { await post('/api/qrcode/refresh'); openTab(path, title, true); } catch (e) { toast(e.message, 'bad'); } } }]); return; }
+  if (asModal) return openQrModal();
   window.open(path, '_blank');
+  return undefined;
+}
+
+/**
+ * 「打开二维码登录」的弹窗（2026-10-12 · 真机修正）。
+ *
+ * ⚠️ 为什么要**先探一次**、而不是直接把 `<img src=/api/qrcode>` 摆上去：
+ *    取不到时接口回的是 404 + 一段**给人看的说明**，而 `<img>` 只会把它渲染成一个
+ *    裂图标 —— 用户看到的就是"二维码坏了"，我们看到的是一张什么都没有的截图。
+ *    现在：探不到就把那段说明**显示出来**，并给一个能立刻解决问题的按钮。
+ *
+ * ⚠️ 为什么要自动换图：二维码约 2 分钟就失效，而这张弹窗可能开着不动。
+ *    每 5 秒重取一次，用户扫的时候手上那张**一定是新的**。
+ *    （自清理：找不到那个 img 元素就停表 —— 弹窗被关掉时不会留下一个空转的定时器。）
+ */
+let qrTimer = null;
+// 弹窗的"上一次状态"，用来判断要不要真的动 DOM（不动 = 不闪）
+let qrLastUrl = '';
+let qrLastMsg = '';
+
+/**
+ * 换一张二维码 —— 成功/失败都把后端那句话原样告诉用户。
+ *
+ * ⚠️ 两条来自真机资料的规矩（2026-10-13）：
+ *  ① 后端的 msg 必须显示出来（以前吞掉了，用户只看到"失败"两个字）；
+ *  ② `degrade`（够不着协议端）时**把盘上当前那张码打开**，别让用户手里空着 ——
+ *     而"已登录 / 凭证不符"这类是业务拒绝，不该也去开一张空图。
+ */
+async function doQrRefresh() {
+  let r = null;
+  try {
+    r = await post('/api/qrcode/refresh');
+  } catch (e) {
+    toast(`换码失败：${e.message}`, 'bad');
+    return;
+  }
+  if (r && r.ok) {
+    toastResult(r, '已换一张新码');
+    return;
+  }
+  const msg = (r && r.msg) || '换码失败（后端没给原因）';
+  toast(msg.split('\n')[0], 'bad');
+  if (r && r.degrade && typeof openTab === 'function') openTab('/api/qrcode', '二维码', true);
+}
+async function openQrModal() {
+  if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+  qrLastUrl = '';
+  qrLastMsg = '';
+
+  const grab = async () => {
+    try {
+      const r = await fetch(`/api/qrcode?t=${Date.now()}`, { cache: 'no-store' });
+      if (!r.ok) return { ok: false, msg: (await r.text() || '').trim() || `HTTP ${r.status}` };
+      const blob = await r.blob();
+      if (!blob.size) return { ok: false, msg: '取到的是一张空图' };
+      return { ok: true, url: URL.createObjectURL(blob) };
+    } catch (e) {
+      return { ok: false, msg: e.message };
+    }
+  };
+
+  const paint = async () => {
+    const got = await grab();
+    const box = document.querySelector('[data-qr]');
+    if (!box) return;
+    if (got.ok) {
+      // ⚠️ 闪烁修复（2026-10-13 真机反馈："二维码页面时不时会闪烁"）：
+      //    以前每次轮询都整块 `innerHTML =` ⇒ `<img>` 被销毁重建 ⇒ 肉眼可见的闪。
+      //    现在：**第一次**搭骨架，之后只换 `img.src`（同一个元素，浏览器原地换图，不闪）。
+      //    旧 blob URL 及时 revoke，免得开着几分钟泄漏一堆对象 URL。
+      let im = box.querySelector('img[data-qr-img]');
+      if (!im) {
+        box.innerHTML = `<img data-qr-img alt="登录二维码" style="width:min(360px,100%);display:block;margin:0 auto;">
+          <div class="hint" style="text-align:center;margin-top:10px;">用<b>机器人小号</b>的手机 QQ 扫这张码。约 2 分钟换一张，这里会自动换新的。</div>`;
+        im = box.querySelector('img[data-qr-img]');
+        // ⚠️ 裂图兜底（2026-10-13 真机截图驱动）："取到了数据"与"显示得出来"是两件事 ——
+        //    CSP 拦 blob: 那次就是数据到了、图是裂的，而用户看到裂图只会以为没换成功。
+        //    所以解码失败要单独说一句，并把锅指向"重试/看日志"这两条能走的路。
+        im.onerror = () => {
+          box.innerHTML = `<div class="empty" style="white-space:pre-wrap;">取到了二维码数据，但浏览器没能把它显示出来。\n点「重试」再取一次；反复这样就看「终端」页的协议端日志（二维码也在里面）。</div>`;
+        };
+      }
+      if (qrLastUrl) { try { URL.revokeObjectURL(qrLastUrl); } catch { /* 已失效无所谓 */ } }
+      qrLastUrl = got.url;
+      im.src = got.url;
+    } else {
+      // 失败态：文案没变就**不重写**（重写同样的字也会让页面抖一下）
+      const text = got.msg;
+      if (qrLastMsg !== text) {
+        qrLastMsg = text;
+        box.innerHTML = `<div class="empty" style="white-space:pre-wrap;">${esc(text)}</div>`;
+      }
+    }
+  };
+
+  modal('登录二维码', '<div data-qr><div class="empty">正在取二维码…</div></div>', [
+    { label: '重试', run: async () => { await paint(); } },
+    { label: '重启协议端', run: async () => { await ACTIONS['napcat.restart'](); await paint(); } },
+    // ⚠️ 换码失败也要把**后端那句原因**送到用户眼前（2026-10-13 · 群友真机资料）：
+    //    以前这里吞掉返回值，用户只看到一句"已换一张新码"或"失败"，
+    //    而真正的原因（连不上 WebUI / 这个号已登录 / 协议端没运行）一个字都看不到。
+    { label: '换一张', run: async () => { await doQrRefresh(); await paint(); } },
+    // ⚠️ 不传「关闭」：modal() 每次都会自动补一个 ghost「关闭」（见 modal() 末尾），
+    //    这里再传一个就成了两个（2026-10-13 真机截图确认的 UI 缺陷）。
+  ]);
+  await paint();
+  // 自动换图 + 自清理（找不到节点就停）
+  qrTimer = setInterval(() => {
+    if (!document.querySelector('[data-qr]')) { clearInterval(qrTimer); qrTimer = null; return; }
+    paint();
+  }, 5000);
 }
 function addRow(path, make) {
   draftArr(path).push(make ? make() : '');
@@ -616,8 +820,14 @@ function paintTop() {
   const dst = j(s, ['docker', 'daemon']), dapp = j(s, ['docker', 'app']);
   const cp = j(s, ['memory', 'pressure']);
   const set = (id, text, cls) => { const el = $id(id); el.className = `pill ${cls || ''}`; el.innerHTML = `<span class="dot"></span>${esc(text)}`; };
-  set('pillMode', S.online ? (j(s, ['panel', 'stale']) ? '面板跑着旧代码' : '已连接') : '演示模式（未连后端）',
-    S.online ? (j(s, ['panel', 'stale']) ? 'warn' : 'on') : 'warn');
+  // ⚠️ 首屏（还没拿到第一份状态）时**不许**显示"演示模式"：面板发来的页面只要还在
+  //    等第一份 /api/state，说"演示模式"就是在描述一个用户根本没进入的状态
+  //    （与 paintPage 里那条同源，2026-10-12）。只有**拿到过数据又断开**才叫演示模式。
+  const modeText = S.state
+    ? (j(s, ['panel', 'stale']) ? '面板跑着旧代码' : '已连接')
+    : (HAS_TOKEN ? '正在连接…' : '演示模式（未连后端）');
+  const modeCls = S.state ? (j(s, ['panel', 'stale']) ? 'warn' : 'on') : 'warn';
+  set('pillMode', modeText, modeCls);
   set('pillBridge', j(s, ['bridge', 'running']) ? `机器人在跑 · ${fmtDur(j(s, ['bridge', 'uptimeMs'], 0))}` : '机器人没在跑', j(s, ['bridge', 'running']) ? 'on' : 'off');
   /* ⚠️ 第 53 轮（B2）：`container.applicable === false` 表示**这台机器根本没走容器这条路**
      （Windows 便携版用原生 NapCat、不装 Docker）⇒ 不许再说"Docker 没跑"——
@@ -875,6 +1085,22 @@ function paintPage(rebuildNav = true) {
     document.querySelectorAll('#nav1 .grp').forEach((b, i) => b.setAttribute('aria-selected', String(i === S.gi)));
     document.querySelectorAll('#nav2 .sub').forEach((b, i) => b.setAttribute('aria-selected', String(i === S.si)));
   }
+  /* ⚠️⚠️ 首屏**不许**先摆一屏"演示数据"（2026-10-12 · 真机截图抓到的现象）：
+     面板发来的页面在拿到第一份 /api/state 之前 `S.state` 是 null，
+     而下面所有渲染都写着 `S.state || DEMO` ⇒ 用户看到的是**一屏看起来很正常的假数据**
+     （机器人没在跑 / 实例数 0 / 容器未检测 / pid 0），几秒后真实数据到了又整屏换掉 ——
+     观感就是"这页闪了一下，还都是错的"。诚实做法：**没数据就先说没数据**。
+     （原型模式 `!HAS_TOKEN` 不在此列：那种场合演示数据就是它的用途。） */
+  if (!S.state && HAS_TOKEN) {
+    const msg = S.bootTried
+      ? '读不到控制台后端 —— 已断开，正在每 3 秒重试。\n如果一直这样：双击桌面上的「Estrella Bot」图标重新打开控制台。'
+      : '正在连接控制台…';
+    $id('page').innerHTML = `<div class="wrap-head" style="grid-column:span 12;">
+        <h1 style="font-size:var(--t-2xl);">正在连接</h1>
+      </div>
+      <section class="card" style="grid-column:span 12;"><div class="empty" style="white-space:pre-wrap;">${esc(msg)}</div></section>`;
+    return;
+  }
   /* 指示器每次都对齐一次：首次 `jump`（不飞）、之后 `animate`（滑过去）。
      判断住在 `syncNavIndicator` 内部（靠 `ind.inited`），这里不摆第二份。 */
   syncNavIndicator(false);
@@ -1007,6 +1233,69 @@ function capChips(items, chipFn) {
     + (rest > 0 ? `<span class="chip">还有 ${rest} 条</span>` : '');
 }
 
+/**
+ * 「启动链路」**空态**显示的检查表 —— 2026-10-14 立，同日加到 5 行。
+ *
+ * 为什么要有它：维护者点了一次「一键启动」，失败了，而原因是"模型的 API Key 没填"。
+ * 那条信息其实**一直在**（`schema.js` 的 `config.hasKey` → 「尚未配置」），
+ * 但它在「大脑 → 云端设置」页里 —— 人得先想到去那儿看。于是空态从
+ * 「还没有动作」变成一张**只摆事实的检查表**：一眼看出"还差什么、去哪儿补"。
+ *
+ * ⚠️ 纪律（破了就会长出第二个真相源）：
+ *   ① **只读 `/api/state` 里已有的字段**（`ports.*` / `panel.pid` / `bridge.running` /
+ *      `config.hasKey` / `config.groups`）—— 与 `banners()` 用的是同一套读法，这里不另算。
+ *   ② **可以摆"配置填没填"这个事实，但不许下"能不能启动"的结论。**
+ *      "白名单为空 ⇒ 拒绝启动"那条判据住在 `src/config.js`，它的注释明确反对在面板里
+ *      复制一份（"复制一份白名单判据，就一定会与机器人那一份漂开"）——
+ *      那条结论还依赖 `allowAllWhenEmpty`，抄过来必然漂。
+ *      ⇒ 所以群聊那一行**只说"填没填、去哪儿填"**，不说"不填就启动不了"。
+ *      （2026-10-14 维护者要求把这一项摆出来：最容易忘的就是它。）
+ *   ③ 文案里写的是**去哪一页改**（面板导航名），与 `src/config.js` 那条报错同一写法。
+ *
+ * 返回顺序 = **该动手的先后**：协议端 → 控制台 → Key → 放行的群聊 → 机器人本体。
+ * 渲染时把**第一个 `ok: false`** 标成 `data-cur="1"`（复用 `.stp` 现成样式：实心点 + 强调环），
+ * 视线自然落到"最该先处理的那一件"上 —— 本项目一贯的"把判断交给视觉，别让人读字符串"。
+ */
+function readyChecklist(s) {
+  const wsOk = j(s, ['ports', 'onebotWs']) === true;
+  const httpOk = j(s, ['ports', 'onebotHttp']) === true;
+  const wsNo = j(s, ['ports', 'onebot', 'ws'], '');
+  const httpNo = j(s, ['ports', 'onebot', 'http'], '');
+  const hasKey = j(s, ['config', 'hasKey']) === true;
+  const keyNeeded = j(s, ['config', 'keyNotNeeded']) !== true;
+  const botRunning = j(s, ['bridge', 'running']) === true;
+  /* 只取**个数**，不把群号打印到检查表里 —— 群号是真实标识符，
+     这一块又常被整屏截给别人看；要核对具体是哪几个，去「触发方式」那一页看。 */
+  const groupCount = (j(s, ['config', 'groups'], []) || []).length;
+
+  const ok = wsOk && httpOk;
+  const out = [
+    { ok,
+      txt: `协议端：WS ${wsNo || '—'} ${wsOk ? '在听' : '没在听'} · HTTP ${httpNo || '—'} ${httpOk ? '通' : '不通'}`
+        + (ok ? '' : ' —— 点「重启协议端」把协议端拉起来（首次要扫码）') },
+    { ok: true, txt: `控制台：pid ${j(s, ['panel', 'pid'], '—')} 运行中` },
+  ];
+  /* Key 只有**云端大脑**才需要（`keyNotNeeded` 是本机模型那一路）——
+     本机模型下不摆这一行，免得说一句不适用的话。 */
+  if (keyNeeded) {
+    out.push({ ok: hasKey,
+      txt: hasKey
+        ? '模型的 API Key：已填'
+        : '模型的 API Key：还没填 —— 去「大脑 → 云端设置」填上（不填的话机器人起得来，但一被叫到就回不了话）' });
+  }
+  /* 放行的群聊（2026-10-14 维护者要求加，插在 Key 与机器人本体之间）：
+     "配了哪些群"是最容易忘的一步 —— 装好了、灯全绿，群里却没人理，多半是它。 */
+  out.push({ ok: groupCount > 0,
+    txt: groupCount > 0
+      ? `放行的群聊：${groupCount} 个`
+      : '放行的群聊：还没填 —— 去「发言与时机 → 触发方式 → 放行的群号」把允许它说话的群号填上' });
+  out.push({ ok: botRunning,
+    txt: botRunning
+      ? '机器人本体：在跑'
+      : '机器人本体：没在跑 —— 点右上角「一键启动」；点完的进度会显示在这一块里' });
+  return out;
+}
+
 const RENDER = {
   /* ── 只读展示 ── */
   /* `text` 允许是**函数**（按状态算），与 `hint` / `metric` / `ports.label` 同款
@@ -1049,10 +1338,19 @@ const RENDER = {
      于是"走到第几步 / 卡在哪一步"变成**看位置和颜色**，不用读字。
      步骤文本本身来自 `source()`（服务端给的真实日志），**不编造**。 */
   steps: (x) => {
-    const lines = x.source(S.state || DEMO);
+    const s = S.state || DEMO;
+    const lines = x.source(s);
     const label = x.label ? `<div class="f-lb">${esc(x.label)}</div>` : '';
+    /* 空态 = **检查表**（2026-10-14）：还没点过任何动作时，先让人看清"走到哪一步、还差什么"。
+       ⚠️ 一旦有了真实步骤日志（`s.__steps`）就**只显示那份日志**，两者不混摆 ——
+          混着摆会让人分不清"这是我这次点的进度"还是"现在的就绪情况"。 */
     if (!lines.length) {
-      return `${label}<div class="steps steps-empty">${Icons.icon('play', { size: 15 })}<span>还没有动作 —— 点一次「一键启动」或「启动机器人」，进度会出现在这里。</span></div>`;
+      const items = readyChecklist(s);
+      const firstBad = items.findIndex((it) => !it.ok);
+      const cur = firstBad === -1 ? items.length - 1 : firstBad;
+      const lis = items.map((it, i) => `<li class="stp" data-cur="${i === cur ? '1' : '0'}">`
+        + `<span class="stp-dot"></span><span class="stp-tx">${esc(it.txt)}</span></li>`).join('');
+      return `${label}<ol class="steps">${lis}</ol>`;
     }
     /* ⚠️ 最后一条视为「当前」：它一定是最新的那一条。
        判据是**位置**而不是内容 —— 日志文本里可能有"成功"也有"失败"，
@@ -1908,6 +2206,31 @@ const RENDER = {
       <pre class="mono" style="max-height:320px;overflow:auto;font-size:11px;background:var(--c-sunken);padding:10px;border-radius:var(--r2);margin:0;">${lines.length ? esc(lines.join('\n')) : '（暂无日志）'}</pre>
     </div>`;
   },
+  /* ══════════════ 网页内置终端（2026-10-11）═════════════════════════════════
+     它取代的是那个"关不掉、删不掉"的前台 cmd 窗口：同一份运行日志，实时推到页面上。
+     ⚠️ 内容用 `textContent` 写，**不走 innerHTML** —— 日志正文里有 NapCat 原始输出
+        （含 ANSI 转义、路径、登录提示），当成 HTML 插进去既会串格式、也是个注入面。
+     ⚠️ 它与页面那 3 秒一轮的 `innerHTML` 重建是**并存**的：重建后由 `mountTerm()`
+        负责按 `TERM.lines`（模块级，不随重画丢失）重新填一次。 */
+  termView: () => {
+    if (TERM.quit) {
+      return `<div class="term"><div class="term-h"><span class="hint">控制台已退出</span></div>
+        <div class="term-body mono">控制台已经退出 —— 关掉这个标签页即可。
+要再打开：双击桌面上的「Estrella Bot」图标。</div></div>`;
+    }
+    const st = TERM.st || {};
+    const dot = (on, label) => `<span class="term-dot ${on ? 'on' : ''}" title="${esc(label)}"></span><span class="hint">${esc(label)}</span>`;
+    return `<div class="term">
+      <div class="term-h">
+        ${dot(st.bridge, '机器人')}${dot(st.proto, '协议端')}${dot(true, '控制台')}
+        <span class="spacer"></span>
+        <span class="hint">${esc(TERM.src === 'napcat' ? '协议端日志（NapCat 自己写的那一份）' : '控制台日志（服务端实时推送）')}</span>
+        <button class="btn btn-ghost btn-sm" data-a="term.src">${TERM.src === 'napcat' ? '看控制台日志' : '看协议端日志'}</button>
+        <button class="btn btn-ghost btn-sm" data-a="term.clear">清屏</button>
+      </div>
+      <pre class="term-body mono" id="termBody"></pre>
+    </div>`;
+  },
   auditList: (x) => {
     const d = S.extra.audit;
     if (!d) return `<div class="f"><div class="empty">正在读取…</div><div class="btn-row"><button class="btn btn-ghost btn-sm" data-a="audit.load">刷新</button></div></div>`;
@@ -2036,6 +2359,114 @@ function boundHint(key) {
   return b ? `<span class="spacer"></span><span class="hint">后端允许 ${b[0]} – ${b[1]}</span>` : '';
 }
 
+/* ══════════════ 8.5 网页内置终端（2026-10-11）═════════════════════════════════
+   为什么状态放在**模块级**而不是 `S.extra`：页面那 3 秒一轮的重画会整块替换
+   `#page` 的 innerHTML，任何挂在 DOM 上的东西（滚动位置、已收到的日志行）都会丢。
+   所以日志行与 SSE 连接必须住在重画之外，重画只负责"按现状再画一遍"。 */
+const TERM = {
+  lines: [],   // 控制台日志（SSE 推来的）
+  nap: [],     // 协议端日志（拉取的尾部）
+  src: 'panel',
+  st: null,    // 最近一次心跳：{ bridge, proto, pid }
+  es: null,    // EventSource（只建一次）
+  stick: true, // 是否在"贴着底部"（贴底才自动滚动，否则尊重用户手动翻的位置）
+  napTimer: null, // 协议端日志的续拉定时器（单例，见 startNapTailTimer）
+  quit: false,
+};
+
+/** 把当前该显示的那份文本写进 `#termBody`（**只动这一个节点**，不整页重画）。 */
+function paintTerm() {
+  const box = $id('termBody');
+  if (!box) return;
+  const lines = TERM.src === 'napcat' ? TERM.nap : TERM.lines;
+  box.textContent = lines.length ? lines.join('\n') : (TERM.src === 'napcat'
+    ? '（还没有协议端日志 —— 它第一次跑起来之后才会写这个文件。）'
+    : '（正在连接日志流…）');
+  if (TERM.stick) box.scrollTop = box.scrollHeight;
+}
+
+/** 页面重画完之后重新挂一次（元素每轮都是新的）。 */
+function mountTerm() {
+  const box = $id('termBody');
+  if (!box) return;
+  paintTerm();
+  if (!TERM.stick) box.scrollTop = 0;
+  // ⚠️ 每轮重建后**重新绑**：`scroll` 是绑在节点上的，节点换了监听就随它一起没了。
+  box.addEventListener('scroll', () => {
+    TERM.stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+  });
+  if (!S.online) { box.textContent = '演示模式：这一页没有连上后端，看不到实时日志。'; return; }
+  if (!TERM.es) openTermStream();
+  if (TERM.src === 'napcat') { loadNapcatTail(); startNapTailTimer(); } else stopNapTailTimer();
+}
+
+/**
+ * 协议端日志的**定时续拉**（2026-10-13）。
+ *
+ * 为什么需要：控制台那一路是 SSE 推的，而协议端那一路是从 `napcat.log` 尾部读的，
+ * 以前只在"切到这一栏 / 页面重画"时拉一次 ⇒ 扫码提示与登录过程**停在第一帧**，
+ * 用户只好再去开一个黑窗口看实时输出 —— 而那个窗口一关就掉登录态。
+ * 现在这一栏自己每 3 秒续一次，黑窗口就没有任何存在理由了。
+ *
+ * ⚠️ 定时器的句柄要住在 `TERM` 里（页面 3 秒一轮重画会换掉 DOM，但不会换掉模块级状态），
+ *    且**必须单例**：重画每调一次 mountTerm 就多一个定时器，很快会变成每秒几十个请求。
+ */
+function startNapTailTimer() {
+  if (TERM.napTimer) return;
+  TERM.napTimer = setInterval(() => {
+    // 只在"还看得见这一栏"时拉：用户翻到别的页就别再打扰后端了
+    if (TERM.src !== 'napcat' || !document.querySelector('#termBody')) { stopNapTailTimer(); return; }
+    loadNapcatTail();
+  }, 3000);
+}
+function stopNapTailTimer() {
+  if (!TERM.napTimer) return;
+  clearInterval(TERM.napTimer);
+  TERM.napTimer = null;
+}
+
+/**
+ * 开日志流（SSE）。
+ *
+ * ⚠️ 为什么不用轮询 `/api/logs`：那要每 3 秒发一次请求，而日志**大部分时间没有新增** ——
+ *    轮询的代价付在"没变化时"上，SSE 的代价付在"有变化时"上，后者才是我们要的。
+ * ⚠️ 断线**不手工重连**：`EventSource` 自带重连（服务端 `retry: 3000` 指定了间隔）。
+ */
+function openTermStream() {
+  if (TERM.es || typeof EventSource === 'undefined') return;
+  const es = new EventSource('/api/console/stream');
+  TERM.es = es;
+  const push = (arr) => {
+    TERM.lines = TERM.lines.concat(arr).slice(-400);
+    if (TERM.src === 'panel') paintTerm();
+  };
+  es.addEventListener('hello', (ev) => { try { push(JSON.parse(ev.data).lines || []); } catch { /* 坏帧丢掉即可 */ } });
+  es.addEventListener('log', (ev) => { try { push(JSON.parse(ev.data).lines || []); } catch { /* 同上 */ } });
+  es.addEventListener('state', (ev) => {
+    try { TERM.st = JSON.parse(ev.data); } catch { /* 同上 */ }
+    // 状态灯只在"值变了"时才重画一次整个终端块 —— 心跳每 3 秒来一次，
+    // 无脑重画会让页面一直在闪（而闪起来看不出是心跳还是出问题了）。
+    const h = document.querySelector('.term-h');
+    if (h) {
+      const dots = h.querySelectorAll('.term-dot');
+      if (dots[0]) dots[0].classList.toggle('on', Boolean(TERM.st?.bridge));
+      if (dots[1]) dots[1].classList.toggle('on', Boolean(TERM.st?.proto));
+    }
+  });
+  es.onerror = () => { /* 交给 EventSource 自己重连；页面上的"断线"由不增长的行数自然显示 */ };
+}
+
+async function loadNapcatTail() {
+  try {
+    const r = await api('/api/console/tail?src=napcat&lines=200');
+    TERM.nap = r.lines || [];
+    paintTerm();
+  } catch (e) {
+    TERM.nap = [`（协议端日志读不到：${e.message}）`];
+    paintTerm();
+  }
+}
+
 /* ════════════════════════════════════════════════ 9. 页面显示时拉数据 ═══ */
 function onPageShown(su) {
   const ids = new Set((su.cards || []).flatMap((c) => (c.ctrls || []).map((x) => x.t)));
@@ -2043,6 +2474,7 @@ function onPageShown(su) {
   if (ids.has('chatList') && !S.extra.chats) loadChats();
   if (ids.has('logList')) loadLogs();
   if (ids.has('auditList')) loadAudit();
+  if (ids.has('termView')) mountTerm();
   mountLiquidSwitches();
   mountMorphIcons();
   mountTicks();

@@ -326,9 +326,18 @@ export function capabilitiesOf(provider, model, declared) {
  * 图片能力判定。保留这个函数名是因为 brain.js 一直在用它；
  * 实现改成走 capabilitiesOf —— 再也不要第二套名单。
  */
-export function supportsVision(model, provider) {
+/**
+ * 这个模型能不能看图。
+ *
+ * ⚠️ `declared` 必须传（2026-10-12 修）：自定义大脑没有内置能力档案，
+ *    它的能力**只来自用户勾选**。不传的话 `capabilitiesOf` 会对它判 `vision: false`
+ *    ⇒ 用户勾了"能看图"却永远看不到图（`brain.js` 用它做第一道闸，会把图剥成 `[图片]`），
+ *    而配置页那边同时说"支持"（`llm.js` 传了 declared）—— 两边口径不一致。
+ *    签名保持可选：老调用点不传时行为**逐字不变**（内置模型不吃 declared）。
+ */
+export function supportsVision(model, provider, declared) {
   const p = provider || (String(model || '').includes('/') ? 'local' : 'zhipu');
-  return capabilitiesOf(p, model).features.vision;
+  return capabilitiesOf(p, model, declared).features.vision;
 }
 
 /** 把「内部档位」映射成某个服务商认的档位 */

@@ -360,6 +360,9 @@ export function makeStateCollector(deps) {
             .map((k) => [k, !!String(cfg?.llm?.keys?.[k] || '').trim()])
         ),
         groups: cfg?.allow?.groups || [],
+        // 私聊白名单（2026-10-12；面板上现在叫「同意私聊的 QQ 号」）：机器人侧一直按 `allow.private` 判定私聊放行，
+        // 但面板从没下发过它 ⇒ 界面上看不见也改不了。下发与落盘两处一起补。
+        privateUsers: cfg?.allow?.private || [],
         // 黑名单也下发 —— 面板要能编辑它（以前只有后端认这个字段，界面没有入口）
         denyGroups: cfg?.deny?.groups || [],
         denyUsers: cfg?.deny?.users || [],

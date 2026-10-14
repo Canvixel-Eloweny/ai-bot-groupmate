@@ -167,7 +167,15 @@ export function makeConfigRoute(deps) {
     // 表现是"机器人突然不说话了"，而用户根本想不到是自己切了模型导致的。
     // 静默关掉 + 明确告诉他关了哪一项，好过一个看不出原因的哑巴。
     const featureBefore = { ...(cfg.llm.features || {}) };
-    const conv = resolveFeatures(providerNow, cfg.llm.model, cfg.llm.features);
+    // ⚠️ 第 4 个参数（`declared`）**必须传**（2026-10-12 修）：
+    //    它是「用户自己勾的能力」，而自定义大脑**没有内置能力档案**（providerOf 把
+    //    `api.z.ai` 这类国际站域名归到 `other`，能力表里根本没有这一桶）⇒
+    //    不传 declared，它勾的"能联网 / 能看图"会被这里判成"这个型号没有该能力"
+    //    而**当场关掉**，并弹一句"当前模型不支持"。而发请求的 `src/llm.js` 是**传了**
+    //    declared 的 ⇒ 同一个大脑，配置侧说"不支持"、请求侧说"支持"，
+    //    用户看到的就是"开了又自己关 / 开了也不生效"。
+    //    判据只有一份（`resolveFeatures`），**谁调用谁把 declared 带上**。
+    const conv = resolveFeatures(providerNow, cfg.llm.model, cfg.llm.features, cfg.llm.declaredFeatures);
     cfg.llm.features = conv.features;
     const autoDisabled = [];
     for (const k of ['webSearch', 'vision']) {
@@ -175,6 +183,9 @@ export function makeConfigRoute(deps) {
     }
     cfg.allow = cfg.allow || {};
     if (Array.isArray(body.groups)) cfg.allow.groups = body.groups.map((x) => String(x).trim()).filter(Boolean);
+    // 私聊白名单（2026-10-12；面板上现在叫「同意私聊的 QQ 号」）。它与 `groups` 是**同一个闸的两半**（brain.js 按消息类型二选一），
+    // 所以键名不同、形状与清洗规则必须逐条一致 —— 半扇门开着等于没有门。
+    if (Array.isArray(body.privateUsers)) cfg.allow.private = body.privateUsers.map((x) => String(x).trim()).filter(Boolean);
     // 黑名单。优先级高于白名单（src/brain.js 的 decide() 里先判 deny），
     // 所以界面上要写清楚"进了黑名单就不管白名单了"，否则用户会以为两个都设了是"取交集"。
     cfg.deny = cfg.deny || {};

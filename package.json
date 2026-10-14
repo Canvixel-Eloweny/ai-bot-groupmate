@@ -17,7 +17,8 @@
     "test": "node test/smoke.js",
     "test:panel": "bash test/sandbox.sh --run",
     "panel:boot": "node test/panel-boot.mjs",
-    "verify": "node scripts/check-wb.mjs && node test/smoke.js && bash test/sandbox.sh --run && node test/panel-boot.mjs",
+    "panel:dom": "node test/panel-dom.mjs",
+    "verify": "node scripts/check-wb.mjs && node test/smoke.js && bash test/sandbox.sh --run && node test/panel-boot.mjs && node test/panel-dom.mjs",
     "publish:audit": "node scripts/publish-audit.mjs",
     "config:example": "node scripts/make-config-example.mjs"
   },

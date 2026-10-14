@@ -297,7 +297,7 @@ export class Brain {
       evt.message_type === 'group'
         ? allow.groups.includes(String(evt.group_id)) || allow.allowAllWhenEmpty
         : allow.private.includes(String(evt.user_id)) || allow.allowAllWhenEmpty;
-    if (!allowed) return evt.message_type === 'group' ? '群不在白名单' : '用户不在私聊白名单';
+    if (!allowed) return evt.message_type === 'group' ? '群不在白名单' : '对方不在「同意私聊的 QQ 号」里';
     return '';
   }
 
@@ -677,7 +677,11 @@ export class Brain {
     // 白白多下载一次图片、多占上下文，所以干脆不组。
     // ⚠️ 必须把 provider 一起传进去：本机是目录路径、云端是模型 id，
     //    同一个模型名在不同服务商下的能力未必一样（能力表按服务商分桶）。
-    const canSee = supportsVision(this.cfg.llm?.model, this.cfg.llm?.provider) && this.cfg.llm?.features?.vision;
+    // ⚠️ 也必须把 `declaredFeatures` 传进去（2026-10-12 修）：自定义大脑的能力**只在声明里**，
+    //    不传的话这道闸会把它永远判成"看不见"——用户勾了"能看图"，图片在这里就被剥成
+    //    `[图片]`，而配置页那边说"支持"。同一件事两套口径，用户没法自证是哪边错。
+    const canSee = supportsVision(this.cfg.llm?.model, this.cfg.llm?.provider, this.cfg.llm?.declaredFeatures)
+      && this.cfg.llm?.features?.vision;
     const imgs = canSee && Array.isArray(parsed.images)
       ? parsed.images.filter(Boolean).slice(0, 3)
       : [];

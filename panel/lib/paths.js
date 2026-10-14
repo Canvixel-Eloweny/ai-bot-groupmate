@@ -259,6 +259,9 @@ export const BACKEND_SOURCES = [
   // 控制通道（D6b · Q7 裁决①）：命令文件的读写口，**面板侧唯一一处**。
   // 进表的理由同 sessions.js —— 改了它必须重启面板才生效。
   'panel/lib/control.js',
+  // 原生 NapCat（Windows 便携包，2026-10-12）：定位 / 起停 / WebUI token / 本地二维码图。
+  // 进表的理由同 control.js —— 改了它必须重启面板才生效，否则"页面换了而取码方式还是旧的"。
+  'panel/lib/napcat-native.js',
   // D21：ZIP 编解码（读与写共用**同一份** crc32）与扩展包安装（staging / 备份 / 回滚）。
   // 进表的理由同上 —— 改了它们必须重启面板才生效，否则"页面换了而判据还是旧的"。
   'panel/lib/zip.js',

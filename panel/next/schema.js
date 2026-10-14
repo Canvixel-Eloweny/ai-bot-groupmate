@@ -251,6 +251,37 @@ export const GROUPS = [
           },
         ],
       },
+      {
+        /* ══════════════ 终端（2026-10-11）═══════════════════════════════
+           它取代的是那个**前台 cmd 窗口**：以前控制台是一个黑框 —— 关不掉
+           （关了 = 杀进程）、目录删不掉（进程占着文件）。现在：
+             · 面板无窗口后台运行，日志实时推到这一页（SSE，不轮询）
+             · 要停就点「退出控制台」—— 进程真退，目录随即能删
+           ⚠️ 这一页**没有**"在网页里执行任意命令"的输入框：那等于把本机 shell
+              开给浏览器里的任何脚本（DNS Rebinding 之后攻击者就是同源）。
+              需要的动作就是下面这几个按钮，每条都过 token + 跨源闸。 */
+        id: 'term', label: '终端', title: '终端（实时运行日志）',
+        desc: '控制台与协议端的输出都在这里实时滚动。它是**那个黑窗口的替代品** —— 关掉本页不会停掉任何东西，要停控制台请点下面的「退出控制台」。',
+        cards: [
+          {
+            id: 'term', title: '实时日志', span: 12,
+            desc: '上面三个灯依次是：机器人在不在跑 / 协议端（NapCat）在不在 / 控制台自己。日志是服务端**推**过来的（不是定时刷的），新的一行出来就到。',
+            ctrls: [
+              { t: 'termView' },
+              {
+                t: 'buttons', label: '常用动作', items: [
+                  act('起机器人', 'bridge.start', 'btn-primary'),
+                  act('结束本次运行', 'onekey.stop', 'btn-danger'),
+                  act('重启协议端', 'napcat.restart'),
+                  act('打开二维码登录', 'open.webui'),
+                  act('连接自检', 'check'),
+                  act('退出控制台', 'panel.quit', 'btn-danger'),
+                ],
+              },
+            ],
+          },
+        ],
+      },
     ],
   },
 
@@ -754,8 +785,17 @@ export const GROUPS = [
               { t: 'switch', id: 't.at', label: '群里必须 @ 才回话', bindSys: 'requireAtInGroup' },
               { t: 'tags', id: 't.kw', label: '包含这些词就回', bind: 'trigger.keywords', ph: '小鱼, 肥鱼, 在吗',
                 hint: '命中任意一个就会回，不受「必须 @」限制。关键词触发属于"被叫到"，所以<b>不受主动发言总闸影响</b>。' },
+              /* 同意私聊的 QQ 号（2026-10-12 补；2026-10-14 改名并挪到「放行的群号」之前）——
+                 机器人侧一直在按 `allow.private` 判定私聊放行，但**面板上原先没有这一格**：
+                 用户想让它在私聊里回话，只能手工编辑 config.json。
+                 同一个闸缺了半扇门 ⇒ 私聊不回时，用户在界面上看不见也改不了，
+                 只会以为"机器人坏了"。三段链路（下发 → 编辑 → 落盘）已一起补齐。
+                 ⚠️ 改名时**必须**同步 `src/config.js` 里那条"去哪儿填"的报错文案 ——
+                    它的注释写着"面板导航改名时这一行必须跟着改"。 */
+              { t: 'tags', id: 't.priv', label: '同意私聊的 QQ 号', bindSys: 'privateUsers', ph: '100000001',
+                hint: '填入同意私聊的 QQ 号（纯数字、逗号隔开）。填好后，这些人直接私聊它，它就会回话 —— 私聊相当于"直接点名"，<b>不用 @ 也不用关键词</b>。<b>留空 = 谁私聊都不回</b>。' },
               { t: 'tags', id: 't.allow', label: '放行的群号', bindSys: 'groups', ph: '100000001, 987654321',
-                hint: '留空 = 所有群都能放开聊。' },
+                hint: '留空 = 群里它谁都不回。至少填一个要它说话的群（纯数字、逗号隔开）。' },
             ],
           },
           {
@@ -794,7 +834,12 @@ export const GROUPS = [
                 when: (s) => !!j(s, ['custom', 'trigger', 'proactive', 'enabled']) },
               { t: 'text', id: 'pro.text', label: '想让它说什么', bind: 'trigger.proactive.text',
                 ph: '留空 = 每次由模型自己编一句', when: (s) => !!j(s, ['custom', 'trigger', 'proactive', 'enabled']) },
-              { t: 'number', id: 'pr.chance', label: '随机插话概率（%）', bindSys: 'interjectChance', min: 0, max: 100, step: 5,
+              /* ⚠️ `pct: true` 是**必须**的（2026-10-12 修）：这一格画的是 0–100 的百分数，
+                 而盘上 `trigger.interjectChance` 是 0–1 的小数。缺了它，写方向的
+                 `Math.min(1, 15)` 会把**每一次保存都夹成 1**（=100%）—— 症状是
+                 「改了不生效」，而读方向会回显 `0.15`（症状「改了不显示」）。
+                 换算收在 app.js 的 valueOf / setValue 里，控件只负责声明单位。 */
+              { t: 'number', id: 'pr.chance', label: '随机插话概率（%）', bindSys: 'interjectChance', min: 0, max: 100, step: 5, pct: true,
                 hint: '0 = 只有被点名才回。仅在上面的「必须 @」关掉后有效。' },
               { t: 'note', text: '插话还有一层<b>时机</b>判定（活跃期提权 / 冷场降权，D12b）：上面这个概率是基准值，实际掷骰时会乘以因子。因子表在 trace 的 <code>interject</code> 那一格里可见。' },
             ],
@@ -1099,5 +1144,9 @@ export const CTRL_KINDS = [
   'schedList', 'holidays', 'emotionState', 'pluginSummary', 'pluginList', 'pluginSettings', 'pluginScope',
   'faces', 'people', 'unread', 'gallery', 'apiDeals',
   'sesList', 'sesDetail', 'chatList', 'chatDetail', 'traceList', 'logList', 'auditList',
+  /* `termView`：网页内置终端（2026-10-11）—— 取代那个关不掉的前台 cmd 窗口。
+     它不是一个"控件"，而是一个**自己管连接的面板**：日志由服务端经 SSE 推过来
+     （`/api/console/stream`），页面重画时靠模块级状态重填，不重新建连接。 */
+  'termView',
   'tryOut', 'importFile', 'importZip', 'protoInfo',
 ];
