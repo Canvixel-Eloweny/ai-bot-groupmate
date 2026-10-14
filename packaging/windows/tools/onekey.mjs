@@ -35,7 +35,7 @@ import { makeShortcut } from './make-shortcut.mjs';
 import { ensureConfigJson, writeOnebotConfig } from './setup.mjs';
 import { startNapcat } from './start-napcat.mjs';
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 const PROTOCOL_PORT = 3001;
 
 const argOf = (name) => {

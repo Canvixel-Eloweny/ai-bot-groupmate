@@ -24,7 +24,7 @@ import {
 } from './lib/common.mjs';
 import { collectEnv, printEnv } from './check-env.mjs';
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 
 // ── ① 配置：生成 config.json ────────────────────────────────────────────────
 /**

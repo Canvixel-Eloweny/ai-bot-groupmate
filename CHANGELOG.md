@@ -3,13 +3,75 @@
 本项目在 `main` 上持续迭代，每个对外可见的版本打一个 tag。以下按**批次**记录对外可见的变化。
 内部批次台账（含未交付项与裁决记录）是**内部件，不随公开仓库发布**。
 
-## 未发布 —— 0.1.1 之后累积的改动
+## 0.1.2 — 2026-10-15
 
-> ⚠️ 最新**已发布**版本仍是 **0.1.1**（见下一节）。本栏记的是 `main` 上累积、
-> **尚未发布为任何版本**的改动，因此**故意没有版本号** —— 直到它被正式发布。
->
-> 这一批把 2026-10-09 起累积的未发布改动一并带上 —— 上一节那四条 Windows 真机修复
-> 当时还只在包里、没进版本控制（第 59 轮补交为 `db67869`）。
+**Windows: bug fixes and a one-command startup.** Everything below was reproduced on real
+Windows hardware, fixed, and re-verified; the packaged zip is attached to the release.
+
+### 2026-10-14 · Starting on Windows is **one command**, not three
+
+The package used to ask for a sequence: `1-SETUP.bat` → `3-START-NAPCAT.bat` → `2-START.bat`,
+three windows, three places to fail, and a README that had to explain the order. **`一键安装.bat`
+(now also in `packaging/windows/launcher/`) collapses it**: it checks the environment, verifies
+and repairs what it can, fetches the protocol side, brings the console up, and offers a desktop
+shortcut — all in one run. Two things moved with it:
+
+- **The black console window is gone from the happy path.** The panel carries its own terminal, so
+  the commands that used to need a separate window now run where the user can see their output.
+- **The three numbered `.bat` files still ship.** Driving the steps by hand remains possible for
+  anyone who needs it; they are no longer the recommended path.
+
+### 2026-10-14 · The QR code could not be shown — and "restart protocol side" did not restart it
+
+Four separate defects behind one symptom ("no QR code"):
+
+- **The portable package could not read the QR image at all.** It now prefers the local
+  `app\napcat\cache\qrcode.png` and `config\webui.json` before going over the network.
+- **The image arrived broken.** The panel's CSP did not allow `blob:`, which is what the QR is
+  served as.
+- **The dialog had two 关闭 buttons**, and it flashed on every refresh.
+- **「重启协议端」 only pretended to restart.** It now force-kills the old process, clears orphaned
+  QQ processes, walks a list of WebUI port candidates, and — when it still cannot get a code —
+  shows the reason and a button instead of a broken image.
+
+Verified on real hardware 2026-10-14 19:30: **three lights green** (HTTP 3000 / WS 3001 /
+WebUI 6099), the QR code appears and can be refreshed, and a scanned login completed.
+
+### 2026-10-14 · The protocol side was never actually being launched
+
+The hidden launch chain passed its arguments in the wrong order, so **NapCat was never spawned on
+any machine** — the failure was invisible because nothing checked. Underneath it sat two
+VBScript-level fatal errors in `launch-napcat-hidden.vbs` (`IIf`, which VBScript does not have,
+and undeclared variables), now fixed and guarded by a new `vbs-lint.py`. Two implementations of
+"start the protocol side" (`tools/start-napcat.mjs` and `panel/lib/napcat-native.js`) also held
+`napcat.log` open with `openSync`, which made any restart fail on the lock; both let go of it now.
+
+### 2026-10-14 · The panel displayed success when the write had failed
+
+- **Eighteen write operations were hard-coded to report `ok`.** A backend `ok:false` was rendered
+  in the success colour, so a failed save looked like a saved one. All of them now report through
+  one path, and a failure is red.
+- **The 启动链路 empty state is a read-only checklist**, so "what is still missing" is visible at
+  a glance instead of an empty box; 放行的群聊 was added to it because it is the step people forget.
+- **The first screen no longer flashes demo data** — with no state yet it says 「正在连接控制台…」.
+- **Two labels were wrong, not just ugly.** 私聊白名单 is now 「同意私聊的 QQ 号」 and sits above
+  放行的群号; the group-allowlist hint said the opposite of the real behaviour (leaving it empty
+  means it replies to nobody in the group).
+- **The portable package no longer claims to be the container route.**
+
+### 2026-10-13 · Also in this release
+
+- Closing the window no longer drops the login session; the protocol side runs windowless.
+- Command execution is built into the panel; account login is QR-only (no hand-typed QQ number).
+- **`4-DIAG.bat`** collects the evidence a support request needs in one run, and stops afterwards
+  instead of flashing away; `3-START-NAPCAT.bat` now always pauses and prints what you should see.
+- **A front-end DOM guard (`test/panel-dom.mjs`) joined the gate stack**, walking 33 pages for
+  blank screens and runtime errors — the four existing gates were all server-side and could not
+  see a frontend that rendered nothing.
+
+> **Not verified on real hardware yet:** this release's panel copy changes (私聊 entry rename, the
+> group-allowlist hint) and re-running 「重启协议端」 while the protocol side is already up. The
+> protocol-side launch chain, the QR path and the three lights **were** verified (see above).
 
 ### 2026-10-11 · The project is now called **Estrella Bot**
 

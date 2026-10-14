@@ -1,6 +1,6 @@
 {
   "name": "ai-bot-groupmate",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "QQ 群 AI 仿真群友桥接层：OneBot v11 <-> OpenAI 兼容模型",
   "license": "Apache-2.0",
