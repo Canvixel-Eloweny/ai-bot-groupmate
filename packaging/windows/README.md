@@ -19,6 +19,7 @@
 ```
 packaging/windows/
   README.md            本文件
+  make-app.mjs         ★ 生成**包内**的 `app/`（对外拷贝 + 剔除 `app/packaging/`，见第 1 步）
   make-zip.py          打 zip（可复现：条目排序 + 固定时间戳 + 校验 SHA256SUMS）
   make-ico.py          从方形图生成 Windows 快捷方式用的 .ico（7 档尺寸）
   scan-package.mjs     对**最终产物**做真值复扫（不复制判据，复用 scripts/known-real.mjs）
@@ -93,21 +94,29 @@ Win-v<版本>/
   runtime/node/           ← 内嵌的 Node.js 官方 Windows x64 发行版，**不入库**（见第 2 步）
 ```
 
-（包内**不会**有 `app/packaging/` —— 那一份是构建素材，已被 `EXCLUDE` 排除，见第 4 步。）
+（包内**不会**有 `app/packaging/` —— 那一份是构建素材，由第 1 步的 `make-app.mjs` 剔除，见第 4 步。）
 
 ## 构建步骤
 
 > ⚠️ **每一步都要在"树是干净的"状态下做**（`git status --porcelain` 为空），
 > 否则打出来的包无法与任何一次提交对应 —— 第 58 轮就是从这里出的问题。
 
-**1. `app/` ← 从仓库生成对外拷贝**
+**1. `app/` ← 从仓库生成对外拷贝（并剔除构建素材）**
 
 ```bash
-node scripts/make-publish-copy.mjs <工作区>/pkg/app
+node packaging/windows/make-app.mjs <工作区>/pkg
 ```
 
-它**以 `git ls-files` 为准**，所以 `.gitignore` 的语义被自动继承，运行期数据天然不进包。
-（不要用 rsync 按路径名排除 —— 历史清单漏过 `.env`，那是机器人真实 QQ 号。）
+它做两件事：① 调 `scripts/make-publish-copy.mjs` 生成 `pkg/app`（**以 `git ls-files` 为准**，
+所以 `.gitignore` 的语义被自动继承，运行期数据天然不进包；不要用 rsync 按路径名排除 ——
+历史清单漏过 `.env`，那是机器人真实 QQ 号）；② **剔除 `pkg/app/packaging/`**。
+
+② 为什么需要（2026-10-15 起）：`packaging/` 已进**仓库发布面**（维护者点名"源码都上传"），
+于是第 ① 步会把它一起带进 `app/`。但包里**顶层已有一份** `tools/` 与那几个 `.bat` ——
+同一个 `setup.mjs` 在一个包里出现两份，"一份数据维护两遍"：`.bat` 按 `%~dp0tools\` 定位，
+改一份不会改到另一份，症状是"我改了包里的 tools，重启还是旧的"。
+⇒ **仓库发布面要完整，包内分发面不带重复件**，两件事由这个脚本分开。脚本结尾有自证
+（包内不得再有 `app/packaging/windows/tools/setup.mjs`）。
 
 **2. `runtime/node/` ← 内嵌运行时（不入库，每次构建重新取）**
 
@@ -137,9 +146,8 @@ cp -R <开发仓>/node_modules/ws  pkg/app/node_modules/ws
 
 把 `packaging/windows/launcher/*` 拷到 `pkg/` 根；`packaging/windows/tools/` 拷成 `pkg/tools/`。
 
-⚠️ 因为 `packaging/` 在 `make-publish-copy.mjs` 的 `EXCLUDE` 里，第 1 步生成的 `app/`
-**不会**带 `app/packaging/` —— 所以包内不会出现"两份 `setup.mjs`"。构建后可以核一下：
-`ls pkg/app/packaging` 应当不存在。
+⚠️ 因为第 1 步的 `make-app.mjs` 会**剔除 `app/packaging/`**，包内不会出现"两份 `setup.mjs`"。
+构建后可以核一下：`ls pkg/app/packaging` 应当不存在。
 
 **5. 重算 `pkg/SHA256SUMS.txt`（30 项 · 点名制）**
 
