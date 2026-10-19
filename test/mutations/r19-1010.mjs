@@ -88,12 +88,12 @@ const M3 = {
 const M4 = {
   id: 'M4',
   note: 'memory-store.js 引一个 src 模块（不再是零依赖叶子）——',
-  anchor: /^const ROOT = /m,
+  anchor: /^import fs from 'node:fs';/m,
   count: 1,
   file: STORE,
   apply: (s) => s.replace(
-    'const ROOT =',
-    "import { similarity } from './custom-config.js';\nconst ROOT ="
+    "import fs from 'node:fs';",
+    "import fs from 'node:fs';\nimport { similarity } from './custom-config.js';"
   ),
   layer: 'check-wb',
   expect: 'BLOCKED',

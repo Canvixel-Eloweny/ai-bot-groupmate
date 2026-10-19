@@ -37,7 +37,14 @@
  * 插在 `ambient`（半易变）之前，才既靠后、又不会每轮作废一次前缀缓存。
  */
 const SECTION_ORDER = [
-  'base', 'persona', 'enhance', 'rules', 'isolate', 'memory', 'scenes', 'skills', 'speech', 'ambient', 'volatile',
+  'base', 'persona', 'enhance', 'rules', 'isolate', 'memory', 'scenes', 'skills',
+  // 扩展包指引（清单 `prompt.sections`）紧跟在「技能」之后：两者都是"你本来就会的东西"，
+  // 而它必须排在 `speech` 之前才符合"行为类块越靠后越服从"。
+  // ⚠️ **2026-10-17 补登记**：这一节 2026-10-15 就建好了（`src/brain.js` 的
+  //    `sec('extensions', …)`），但当时忘了写进这张表 —— `joinSections()` 只按本表拼，
+  //    于是**每个已加载扩展包的指引都被静默丢掉**：段建了、字算了、提示词里一个字没有。
+  //    表现正是「模型有工具却没被告知何时用」（小鱼问图库答"是空的"那个洞）。
+  'extensions', 'speech', 'ambient', 'volatile',
 ];
 
 /**
@@ -79,6 +86,10 @@ const DEFAULT_BUDGET = Object.freeze({
     memory: 3000,
     scenes: 2500,
     skills: 2000,
+    // 扩展包指引：来自**已加载**的包清单（`prompt.sections`）。与 `skills` 同档，
+    // 理由相同 —— 它是"什么时候该用哪个工具"的说明，不是人格/规则，
+    // 单独封顶是为了让"装了一堆包"不至于把别的段挤掉。超了从末尾丢（新加的排后面）。
+    extensions: 2000,
     ambient: 3000,
     // 表达规范（ATI-1）：静态文本，实测约 400 字符；给 800 是"封顶"不是"配额"。
     // ⚠️ 它**不在 EVICTION_ORDER 里**（那份清单有契约钉着，且优先级是刻意定的）——

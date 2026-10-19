@@ -4,7 +4,8 @@
 #
 # 做的事（按顺序）：
 #   1. 控制台没跑 → 起它，等就绪
-#   2. **立刻**打开浏览器（先让你看到页面）
+#   2. **立刻**把界面开出来 —— 浏览器标签页 / 独立窗口由 config.json 的 launch 段决定
+#      （判据唯一一份住 scripts/launch-mode.mjs；先让你看到页面）
 #   3. 回头看 Docker Desktop / QQ 容器（慢活，不挡你看页面）
 #
 # 为什么把「开浏览器」提到 Docker 前面：
@@ -168,8 +169,35 @@ rm -f "$MARK_OPENED"
 # 面板有没有起来由上面的 `panel_up` 负责等；真起不来也照常开这一页，
 # 浏览器与页面都会把"连不上"如实显示出来，比一个静默的"什么都不开"更好懂。
 PANEL_URL="http://127.0.0.1:8788/"
+
+# 找 node。以前这套候选只写在 start_panel 里 —— 现在「启动方式」的呈现也要用它
+# （独立窗口的判据是一份 Node 脚本），所以提出来共用一份（两份候选必然漂移）。
+find_node() {
+  local c
+  for c in "$HOME/.workbuddy/binaries/node/versions/22.22.2-3/bin/node" \
+           "/usr/local/bin/node" "/opt/homebrew/bin/node"; do
+    [ -x "$c" ] && { printf '%s' "$c"; return 0; }
+  done
+  c="$(command -v node 2>/dev/null)"
+  if [ -n "$c" ] && [ -x "$c" ]; then printf '%s' "$c"; return 0; fi
+  return 1
+}
+
 open_panel() {
-  open "$PANEL_URL"
+  # 「启动方式」（config.json 的 launch 段：浏览器标签页 / 独立窗口）的**唯一一份判据**
+  # 住仓库里：`scripts/launch-mode.mjs`（它再连到 `src/launch-mode.js`）。
+  # ⚠️ 这里**不许**自己再判一次 mode —— 两份判据必然漂移（维护者点名过的老毛病）。
+  # 判据自己 fail-open：认不出的值回落浏览器、找不到窗口浏览器也回落浏览器；
+  # 只有它**什么都没打开**（退出码非 0）时，才用系统自带的 `open` 兜底。
+  local node_bin
+  node_bin="$(find_node || true)"
+  if [ -n "$node_bin" ] && [ -f "$DIR/scripts/launch-mode.mjs" ]; then
+    "$node_bin" "$DIR/scripts/launch-mode.mjs" open \
+      --url "$PANEL_URL" --config "$DIR/config.json" --entry mac-app \
+      >> "$DIR/panel/panel.log" 2>&1 || open "$PANEL_URL"
+  else
+    open "$PANEL_URL"
+  fi
   touch "$MARK_OPENED"
 }
 
@@ -178,33 +206,37 @@ open_panel() {
 # 会往日志里丢一条报错，页面也可能连到一个"半死"的服务上。
 # 用 mkdir 的原子性当锁 —— 只有拿到锁的那个实例负责启动，其余的直接开页面。
 LOCK="/tmp/qqbot-control.lock"
+TAKEOVER=0
 if ! mkdir "$LOCK" 2>/dev/null; then
-  # 锁也可能是上次异常退出留下的：超过 5 分钟就当它已经死了
-  if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +5 2>/dev/null)" ]; then
-    rmdir "$LOCK" 2>/dev/null
+  # 锁也可能是上次异常退出留下的：超过 45 秒就当它已经死了。
+  # ⚠️ 原来是 5 分钟（2026-10-18 群友/维护者回执：点图标"拉不起来"）—— 那 5 分钟里
+  #    每一次点击都走进"等别人就绪"的分支，而别人早就死了 ⇒ 只开一个空白页。
+  if [ -d "$LOCK" ]; then
+    age=$(( $(date +%s) - $(stat -f %m "$LOCK" 2>/dev/null || echo 0) ))
+    if [ "$age" -gt 45 ]; then rmdir "$LOCK" 2>/dev/null; fi
   fi
   if ! mkdir "$LOCK" 2>/dev/null; then
-    # 已经有一个实例在启动中：等它就绪再开页面，绝不重复起进程
+    # 已经有一个实例在启动中：等它就绪再开页面，绝不重复起进程。
+    # 等不到就说明持锁者死了 —— **自己接手启动**，而不是给用户一个空白页。
     for _ in $(seq 1 30); do
       panel_up && break
       sleep 0.3
     done
-    open_panel
-    exit 0
+    if panel_up; then
+      open_panel
+      exit 0
+    fi
+    rmdir "$LOCK" 2>/dev/null
+    TAKEOVER=1
   fi
 fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 
 # ---------- 2. 控制台 ----------
 start_panel() {
-  NODE=""
-  for c in "$HOME/.workbuddy/binaries/node/versions/22.22.2-3/bin/node" \
-           "/usr/local/bin/node" "/opt/homebrew/bin/node"; do
-    [ -x "$c" ] && NODE="$c" && break
-  done
-  [ -z "$NODE" ] && NODE="$(command -v node 2>/dev/null)"
+  NODE="$(find_node)"
 
-  if [ -z "$NODE" ] || [ ! -x "$NODE" ]; then
+  if [ -z "$NODE" ]; then
     osascript -e 'display alert "找不到 Node.js" message "需要先装 Node.js 22 或更高版本。告诉我，我来装。"'
     exit 1
   fi
@@ -230,6 +262,13 @@ fi
 
 # ---------- 3. 开页面 ----------
 # 到这儿就开，不再等 Docker —— 慢活留给下面几步慢慢做。
+[ "$TAKEOVER" = "1" ] && start_panel
+# ⚠️ 面板没起来就**不许开页面**：开一个连不上的标签页 = 用户眼里"拉不起来"。
+#    给一句带日志路径的弹窗，比一个空白页能省十分钟排查。
+if ! panel_up; then
+  notify "控制台没起来，所以没有开页面。日志：$DIR/panel/panel.log"
+  exit 1
+fi
 open_panel
 
 # 启动期的活干完了，放锁：后面无论再点几下，都不会起出第二个控制台。
@@ -263,7 +302,13 @@ fi
 STALE="$("$DOCKER" inspect napcat --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' 2>/dev/null \
           | while IFS= read -r s; do
               [ -n "$s" ] || continue
-              case "$s" in "$DIR"/*) ;; *) echo "$s" ;; esac
+              # ⚠️ 这里**不能写 case**：在 $( ) 里，case 模式尾部那个未加引号的 ")"
+              #    会被 bash 当成命令替换的结束括号（实测 syntax error near unexpected
+              #    token newline）⇒ 整段 substitution 失败、STALE 恒空 ——
+              #    2026-09-17 那个"容器挂旧路径"的守卫从那天起就没真正跑过。
+              #    改用参数展开做前缀判断，括号问题从根上消失。
+              rest="${s#"$DIR"/}"
+              [ "$rest" = "$s" ] && echo "$s"
             done)"
 
 if [ -n "$STALE" ]; then

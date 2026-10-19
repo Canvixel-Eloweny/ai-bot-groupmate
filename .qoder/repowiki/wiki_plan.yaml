@@ -1,0 +1,109 @@
+version: 1
+
+repowiki:
+  notes:
+    - text: "这是一个单进程、零构建的 QQ 群机器人：NapCat（OneBot v11）→ src/index.js → OpenAI 兼容模型 → 回群；不要把它描述成多进程、微服务或需要打包器的项目。"
+    - text: "唯一 npm 依赖是 ws；Node >= 22.13；面板是零依赖 Node HTTP + 原生 HTML/CSS/ESM，不要建议引入 React/Vue/构建链。"
+    - text: "不要为 .workbuddy/、config.json、.env、panel/*.jsonl、data/、napcat/、node_modules/、docs/archive/ 生成页面或摘录内容；这些是运行期数据、内部记忆或第三方产物。"
+    - text: "不要写任何 API Key、token、真实 QQ 号、群号、cookie 或 .env 值；配置只引用 config.example.json 的字段名与默认值。"
+    - text: "不要生成 AGENTS.md、HANDOFF、PUBLISH-CHECKLIST 的内部审批细节；Repo Wiki 只描述代码与可公开的运维流程。"
+    - text: "当前门禁基线是 check-wb 109/109、smoke 466/466，数字会随改动变化；页面不要写死基线，只写命令与判读方法。"
+  documents:
+    - title: "项目总览与消息主链路"
+      goal: "解释这个项目是什么、一条消息如何从 OneBot 事件走到模型再回到群里，以及为什么选择单进程零构建。"
+      hints: "覆盖 src/index.js、src/onebot.js、src/brain.js、src/context-budget.js、src/llm.js、src/egress.js、src/pace.js；引用 docs/ARCHITECTURE.md 与 README.md；画出单向依赖。"
+      template: |
+        1. 一句话定位与目标用户
+        2. 主链路（事件 → 决策 → 提示词 → 模型 → 出站）
+        3. 关键模块与依赖方向
+        4. 刻意不做的设计（多进程、热插拔、图片二进制）
+        5. 读代码的推荐顺序
+    - title: "运行入口、配置与持久化"
+      goal: "说明机器人如何启动、配置从哪里来、哪些数据会落盘、哪些文件绝不能进仓库。"
+      hints: "覆盖 src/config.js、src/field-schema.js、src/atomic-write.js、src/config-history.js、src/memory-store.js、src/session-archive.js、src/trace-id.js、config.example.json；强调 config.json 权限 600、含 Key 的文件不入库。"
+      template: |
+        1. 启动入口与环境变量
+        2. 配置读取、校验与回滚
+        3. 运行期落盘清单（trace / memory / session / usage）
+        4. 敏感文件与权限
+        5. 常见启动失败与定位
+    - title: "消息决策、提示词与记忆"
+      goal: "解释该不该回、怎么表达、提示词如何按预算拼装，以及短期/长期记忆的分层。"
+      hints: "覆盖 src/brain.js、src/speech-rules.js、src/internal-marks.js、src/reply-text.js、src/context-budget.js、src/ambient.js、src/working-memory.js、src/memory.js、src/memory-record.js、src/style-profile.js；说明 SECTION_ORDER 与小节登记。"
+      template: |
+        1. 决策判据与优先级
+        2. 提示词分区与预算
+        3. 短期 / 长期 / 风格记忆
+        4. 内部标记与出站清洗
+        5. 改提示词的检查清单
+    - title: "模型层、能力判定与降级链"
+      goal: "说明 OpenAI 兼容请求、能力判定、降级链、档位与免费额度的真实边界。"
+      hints: "覆盖 src/llm.js、src/model-caps.js、src/custom-brain.js、src/custom-config.js、src/tier.js、src/free-quota.js、src/vision-probe.js、src/usage.js；强调能力判定唯一入口是 model-caps.js，降级链必须属于同一服务商。"
+      template: |
+        1. 请求形状与错误语义
+        2. 能力表（vision / webSearch / thinking）
+        3. 降级链与档位
+        4. 自定义大脑与预设
+        5. 能力探测与用量
+    - title: "出站安全、节奏与主动行为"
+      goal: "说明出站闸门、凭据特征、发送节奏、插话冷却、睡眠/主动发言的边界。"
+      hints: "覆盖 src/egress.js、src/gate-scan.js、src/send-guard.js、src/net-rules.js、src/safe-fetch.js、src/pace.js、src/interject.js、src/proactive.js、src/sleep.js、src/unread.js、src/reminder.js；强调出口规则只有一份实现。"
+      template: |
+        1. 出站闸门与凭据特征
+        2. 发送节奏与限流
+        3. 插话 / 主动 / 睡眠
+        4. 未读与定时提醒
+        5. 安全边界与失败策略
+    - title: "扩展宿主、Skill 与工具循环"
+      goal: "说明插件/技能如何被发现、校验、加载、授权与调用，以及为什么不做热插拔。"
+      hints: "覆盖 src/plugin-manifest.js、src/plugin-host.js、src/plugin-api.js、src/plugin-settings.js、src/skills.js、src/hook-bus.js、src/tool-registry.js、src/tool-loop.js、src/ext-scope.js、src/ext-fetch.js；强调插件不是沙箱、只在启动时加载、发言走 ctx.sender。"
+      template: |
+        1. 两种扩展（plugins / skills）
+        2. 清单、状态与白名单
+        3. 工具注册与调用循环
+        4. 权限裁剪与受管 fetch
+        5. 生命周期与已知边界
+    - title: "控制台后端（panel/server.js 与 lib）"
+      goal: "说明面板 HTTP 服务、路由表、鉴权、审计、状态下发与配置写入的完整链路。"
+      hints: "覆盖 panel/server.js、panel/lib/config-route.js、panel/lib/state-collector.js、panel/lib/models.js、panel/lib/model-sync.js、panel/lib/napcat-native.js、panel/lib/paths.js、panel/lib/next-page.js、panel/lib/audit-log.js；引用 docs/API_CONTRACT.md；强调路由三张表与 lib 层级。"
+      template: |
+        1. 服务启动与路由表
+        2. 鉴权、审计与幂等
+        3. 配置写入白名单
+        4. state 下发与模型目录对账
+        5. 协议端拉起与二维码
+    - title: "控制台前端（panel/next）"
+      goal: "说明零构建前端的页面结构、控件渲染、主题/动效与 DOM 守卫的边界。"
+      hints: "覆盖 panel/next/index.html、panel/next/app.js、panel/next/schema.js、panel/next/style.css、panel/next/demo-state.js、panel/next/glass.js、panel/next/motion.js、panel/next/morph.js、panel/next/sortable.js、panel/next/tilt.js、panel/next/url-safe.js、panel/next/verify.mjs；引用 docs/FRONTEND-V2.md；强调控件三处同集合、判据单源、玻璃区块零就地 rgba。"
+      template: |
+        1. 零构建资产与加载
+        2. 页面 / 卡片 / 控件模型
+        3. 状态刷新与写操作反馈
+        4. 主题、玻璃与动效
+        5. 前端验证与常见坑
+    - title: "测试、契约与回归门禁"
+      goal: "说明四层回归、契约扫描、变异测试与发布面审计怎么跑、怎么判读。"
+      hints: "覆盖 test/smoke.js、test/sandbox.sh、test/panel-boot.mjs、test/panel-dom.mjs、test/mutations、scripts/check-wb.mjs、scripts/mutate.mjs、scripts/mutate-lint.mjs、scripts/publish-audit.mjs、scripts/make-publish-copy.mjs；强调 NODE_OPTIONS= 前缀、smoke 后台跑、已知假红。"
+      template: |
+        1. 四层门禁与命令
+        2. 契约扫描与变异锚点
+        3. 沙箱与 DOM 守卫
+        4. 发布面审计
+        5. 假红判读与收工清单
+    - title: "Windows 打包、启动与发布面"
+      goal: "说明 Windows 便携包的构建、隐藏启动链、完整性校验与对外/VM 两份包的区别。"
+      hints: "覆盖 packaging/windows/README.md、make-app.mjs、make-sums.py、make-zip.py、scan-package.mjs、make-vm-copy.mjs、make-publish-from-vm.mjs、vbs-lint.py、launcher/、tools/；引用 docs/WINDOWS-INTERFACE.md；强调 ④/④b 不能混、NapCat 不随包分发、.bat 纯 ASCII/LF、vbs 必须过 vbs-lint。"
+      template: |
+        1. 节点与派生关系
+        2. 构建步骤与判据
+        3. 隐藏启动链（vbs / windowsHide）
+        4. 完整性校验（SHA256SUMS / scan-package）
+        5. 对外包与 VM 包的区别
+        6. 常见故障与排查
+
+knowledgecard:
+  notes:
+    - text: "按模块建知识卡：入口与桥 / 决策与提示词 / 模型层 / 出站安全 / 扩展 / 控制台后端 / 控制台前端 / 测试门禁 / Windows 打包；每张卡写职责、入口文件、依赖方向、改动检查。"
+    - text: "单进程、零构建是硬约束；卡片不要建议引入框架、打包器、多进程或微服务。"
+    - text: "不要为内部记忆、运行期配置、第三方协议端或归档目录建卡；不要摘录密钥、token、真实 QQ 号、群号或 .env 值。"
+    - text: "卡片中的路径必须是当前仓库真实存在的文件；行号会漂移，用函数名或契约号作锚点。"

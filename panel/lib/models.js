@@ -295,7 +295,7 @@ const PROVIDER_DEFAULTS = {
     // 本机只有开/关，没有档位
     thinking: { mode: 'off', level: 'low' },
     // 本机不认 web_search（会 400），也不是 VL 模型，两个开关都关掉
-    features: { webSearch: false, vision: false, stickers: false },
+    features: { webSearch: false, vision: false },
   },
   // DeepSeek：便宜、快，但**没有**联网工具、也没有视觉模型
   deepseek: {
@@ -307,7 +307,7 @@ const PROVIDER_DEFAULTS = {
     context: { ...CLOUD_CONTEXT },
     // DeepSeek 默认就在思考，且思考 token 按输出价计费 → 群聊默认关掉
     thinking: { mode: 'off', level: 'medium' },
-    features: { webSearch: false, vision: false, stickers: false },
+    features: { webSearch: false, vision: false },
   },
   // 智谱：有官方免费档 + 内置联网 + 唯一的多模态档，能力最全
   zhipu: {
@@ -319,7 +319,7 @@ const PROVIDER_DEFAULTS = {
     context: { ...CLOUD_CONTEXT },
     // 智谱默认思考且思考会吃光 max_tokens（正文变空），群聊必须关
     thinking: { mode: 'off', level: 'high' },
-    features: { webSearch: false, vision: false, stickers: false },
+    features: { webSearch: false, vision: false },
   },
   // 千问：额度**按模型发**（每模型 100 万 token）⇒ 链排得长，详见 QWEN_DEFAULT_CHAIN。
   // 能力开关两个都关：webSearch 那个形状千问不认（会被 400）；vision 表里还没实测过能看图的型号。
@@ -333,11 +333,116 @@ const PROVIDER_DEFAULTS = {
     temperature: 1,
     context: { ...CLOUD_CONTEXT },
     thinking: { mode: 'off', level: 'medium' },
-    features: { webSearch: false, vision: false, stickers: false },
+    features: { webSearch: false, vision: false },
   },
 };
 
 export const PRESET_KEYS = ['local', 'deepseek', 'zhipu', 'qwen'];
+
+/**
+ * 这家**能用的模型清单**（面板认识的那一份，唯一实现 = `buildModelCaps()`）。
+ *
+ * 为什么不让调用方自己拿：模型表在 `src/model-caps.js`，面板这一层只该问"这家有什么"，
+ * 而不是各自再抄一份名单（本项目"同一份名单两处维护"踩过好几次）。
+ *
+ * @returns {string[]} 认不出这家时返回 `[]`（调用方据此**不做判断**，见 chainForProvider）
+ */
+export function modelsOfProvider(provider) {
+  const caps = buildModelCaps()[provider];
+  return caps ? Object.keys(caps) : [];
+}
+
+/**
+ * 降级链要不要做"这家有没有"的判断 —— **只有云端那三家**。
+ *
+ * ⚠️ `local` 必须排除：本机模型的 id 是推理服务（LM Studio / llama.cpp / MLX）自己起的名字，
+ *    我们手上没有任何名单（`modelCaps.local` 里的 4b/9b 是 MLX 规格，不是模型 id）。
+ *    拿它去过滤会把用户填的本地模型名全判成"这家没有"。
+ * ⚠️ `other`（自建 / 中转网关）同理：模型名就是网关自己定的事。
+ *
+ * @returns {string[]} 要据以过滤的名单；`[]` = 不判
+ */
+export function chainModelsOf(provider) {
+  if (provider === 'local' || provider === 'other' || !provider) return [];
+  return modelsOfProvider(provider);
+}
+
+/**
+ * 按**服务商**过滤一条降级链 —— 这家清单里没有的模型一律算"不认识"。
+ *
+ * ⚠️ 存在的理由（2026-10-17 维护者截图）：一套自定义千问大脑的降级链里躺着 8 条 GLM ——
+ *    来源是「恢复实测最优」写死了智谱的默认链（见 app.js 的 `resetRoute`），而
+ *    `/api/config` 对千问**刻意放行跨家名字**（千问平台也代理别家模型，见
+ *    `modelProviderMismatch` 里那段说明）⇒ 一整条打不通的链被原样存了下来。
+ *    现象就是"选了千问，降级链全是 GLM，一条都不会成功"。
+ *
+ * ⚠️ 判据是**清单成员资格**，不是名字前缀：千问那一支按前缀判不了（开放集）。
+ *    清单认不出的服务商（`local` / `other` / 自建网关）⇒ **原样放过**（见 `chainModelsOf`）。
+ *
+ * @param {string[]} chain
+ * @param {string} provider `providerOf(baseUrl)` 的结论
+ * @returns {{kept: string[], dropped: string[]}}
+ */
+export function chainForProvider(chain, provider) {
+  const list = (Array.isArray(chain) ? chain : [])
+    .map((m) => String(m ?? '').trim()).filter(Boolean);
+  const known = new Set(chainModelsOf(provider));
+  if (!known.size) return { kept: list, dropped: [] };
+  const kept = [];
+  const dropped = [];
+  for (const m of list) (known.has(m) ? kept : dropped).push(m);
+  return { kept, dropped };
+}
+
+/**
+ * 这家的**默认降级链**（**含主模型**，顺序即优先级）。
+ *
+ * ⚠️ 面板的「恢复实测最优」以前写死取 `zhipuDefaultChain` —— 在千问页面上按一下，
+ *    就会把一条 GLM 链提交给 `/api/config`。现在按当前服务商取，判据只有这一处。
+ * @returns {string[]} 认不出这家（local / other）时返回 `[]` —— 没有"官方默认链"这回事，别编
+ */
+export function defaultChainOf(provider) {
+  if (provider === 'zhipu') return [...ZHIPU_DEFAULT_CHAIN];
+  if (provider === 'qwen') return [...QWEN_DEFAULT_CHAIN];
+  if (provider === 'deepseek') return [CLOUD_PRESETS.deepseek.model];
+  return [];
+}
+
+/**
+ * 官方模型目录的**版本清单**（2026-10-17 新增 · 维护者点名）。
+ *
+ * 它回答一个问题：「我们这张表里记的这个模型，现在是官方哪个版本」。
+ * 面板每次启动拿它对一遍已添加的官方大脑 —— 版本对不上就说出来（右下角提示），
+ * 并把名称 / 地址 / 模型 id 对齐到目录里的最新值。
+ *
+ * ⚠️⚠️ 为什么**不能**去问 `/models` 接口：DeepSeek 的 `/models` 返回的是**稳定别名**
+ *    （永远是 `deepseek-flash`），版本号（`V4.1-Flash-1017`）只出现在官方发版说明里。
+ *    ⇒ 版本的真相源只能是这里，随包发布。加一个模型/升一版 = 改这张表 + 改 MODEL_LABELS。
+ * ⚠️ 只登记**官方**那几家；`local` / `other` 没有"官方版本"这回事。
+ */
+export const MODEL_VERSIONS = {
+  deepseek: {
+    docsUrl: 'https://api-docs.deepseek.com/zh-cn/updates/',
+    models: {
+      'deepseek-flash': {
+        version: 'V4.1-Flash-1017', at: '2026-10-17',
+        note: '新增识图（原生多模态，2026-09-10 起）；搜索改为独立接口',
+      },
+      'deepseek-v4-pro': {
+        version: 'V4-Pro-0813', at: '2026-08-13',
+        note: 'Agent 能力提升；思考强度三档 low/high/max',
+      },
+    },
+  },
+  // 智谱 / 千问暂不按版本对账（它们用"模型名带版本号"的方式，名字变了就是新模型）。
+  zhipu: { docsUrl: 'https://open.bigmodel.cn/dev/api/normal-model/glm-4', models: {} },
+  qwen: { docsUrl: 'https://help.aliyun.com/zh/model-studio/release-notes', models: {} },
+};
+
+/** 某家的目录条目（没有就 null） */
+export function catalogOf(provider) {
+  return MODEL_VERSIONS[provider] || null;
+}
 
 /**
  * 内置模型名单。
@@ -350,7 +455,7 @@ export const PRESET_KEYS = ['local', 'deepseek', 'zhipu', 'qwen'];
  */
 export const BUILTIN_MODELS = {
   zhipu: ZHIPU_SELECTABLE,
-  deepseek: ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
+  deepseek: ['deepseek-flash', 'deepseek-v4-pro'],
   qwen: QWEN_SELECTABLE,
   local: [],
   other: [],
@@ -554,6 +659,22 @@ function presetFieldsFromConfig(cfg, provider) {
  * 每次保存配置 / 每次切换前都会调一次 —— 这是「各存各的」能成立的关键。
  */
 export function stashCurrentPreset(cfg) {
+  /* ⚠️⚠️ 当前这套是**自定义大脑**时**什么都不存**（2026-10-17 · 沙箱实测抓到的）。
+     扁平字段此刻是那套自定义大脑 `materializeBrain()` 物化出来的，**不属于任何内置预设**。
+     以前照存不误 ⇒ 一套指向 dashscope 的自定义大脑会把 `presets.qwen` 整个覆盖成
+     它的模型名 + 它自己那条（往往是空的）降级链 ⇒ 症状是"切回内置千问，主模型
+     变成了自定义那套、降级链也没了"，而且**全程不报错**。
+     （`test/sandbox.sh --run` 的 verify-presets 就是这么红的：先切一下智谱，
+       就把上一套自定义千问的扁平值存进了 `presets.qwen`。）
+     判据只有一句：**扁平配置属于谁，就存回谁**；属于自定义大脑时没有预设可存 ——
+     它自己的设置活在 `llm.customBrains[id]` 里，由 `apiCustomBrainSave` 负责。 */
+  if (String(cfg?.llm?.activeCustomId || '').trim()) {
+    /* 一格都不写，但**把结构补齐**：四家的键必须一直在（`readPresets` 会把缺的补成默认值）。
+       少一个槽的后果很具体 —— 之后切到那一家时没有落点，而"切走再切回不丢"就无从谈起
+       （沙箱 verify-presets 直接崩在 `presets.zhipu` 为 undefined 上，2026-10-17 实测）。 */
+    cfg.llm.presets = readPresets(cfg);
+    return cfg.llm.presets;
+  }
   const provider = providerOf(cfg?.llm?.baseUrl);
   if (!PRESET_KEYS.includes(provider)) return readPresets(cfg);
   const presets = readPresets(cfg);
@@ -632,7 +753,7 @@ export const MODEL_LABELS = {
   'glm-5.3-flash': 'GLM-5.3-Flash',
   'glm-5v-turbo': 'GLM-5V-Turbo',
   'glm-ocr': 'GLM-OCR',
-  'deepseek-flash': 'DeepSeek Flash',
+  'deepseek-flash': 'DeepSeek V4.1 Flash',
   'deepseek-v4-pro': 'DeepSeek V4 Pro',
   // ── 千问（2026-10-07）──
   // ⚠️ 这几个名字要**跟着官方改名走**：平台把版本号写进模型名（`qwen3.8-max`），

@@ -309,4 +309,273 @@
 // ⚠️ **已知的台账缺口（如实登记，不猜）**：**第 22–52 轮**的增减**没有逐笔记录**，
 //         现有材料只够确定"101 → 105"这个区间（`adce4e3` 定 101 → `64bb2ba` 定 104）。
 //         要补得靠逐提交实跑，本轮没有做。**谁再动这个常量，先补这一段再动。**
+//
+// 108 → 109（2026-10-16）：新增 §102「Windows 兼容面」。
+//   ⚠️ 表述订正（同日维护者亲自纠正）：下面这句原写"Windows 端长期不做同步更新"，
+//      那是**错的**。正确口径是 —— 精力**优先在 Mac 端**做与更新，等 Mac 做出他要的成果
+//      **后**才执行 Windows 侧任务；**中途他想改 Windows 功能也会随时改**。
+//      ⇒ 不是"Windows 长期冻结"，而是"排序在后、按需插入"。
+//   背景：维护者定了平台优先级 —— 精力优先在 Mac 端，Windows 排序在后、按需插入。
+//   这条路的已知代价是"Mac 一路往前跑，Windows 包越来越不适配"，
+//   而这**没法靠人记得来防**（本项目对"靠人记"一贯不信任），只能变成机器判据。
+//   本节钉两件事：① `make-sums.py` 的 `ITEMS` 点名的那串 `app/…` 路径必须能在仓库里找到
+//   对应文件（重命名 `panel/next/app.js` 这类动作会当场红，而不是几个月后断在别人手上）；
+//   ② 11 个 `QQBOT_*` 环境变量名 + 4 个面板路由名不许消失（launcher / 协议端 / diag 靠它们定位）。
+//   ⚠️ 处置新名字前先读「Windows 兼容面」那一页文档 —— 那一页是这条策略的完整清单。
+//      （本文件**是被发布**的，所以这里不写出那份文档的路径：它还在发布面白名单之外，
+//        写了就是一条"公开仓库里并不存在"的死引用。它进白名单时再把路径补回来。）
+//   ⚠️ 本段**刻意不登记 `subHit`**：§51 那张表是给"重段"核子判据下限用的，
+//      轻量段登记进去会让账目出现一个它不认识的名字。
+//
+// 109 → 110（2026-10-16）：新增 §103「源码零来源字样」。
+//   背景：维护者 2026-10-16 裁决 **来源与许可信息统一登记在 `THIRD-PARTY-NOTICES.md`**，
+//   源码里不留"借鉴自谁"的痕迹。而当天清理的事实是 —— **两批都没一次清干净**：
+//     ① 第一批只清了 `panel/next/` 里 morphicons / bencho 的字样，同目录的 beui.dev 两处
+//        （`sortable.js` / `tilt.js`）漏了；
+//     ② 第二批之前，`src/`、`panel/lib/`、`plugins/`、`skills/`、`test/` 还留着 17 处
+//        带项目名与许可字样的表述，其中 5 处直接写着「QQ-Agent · MIT」——
+//        那正是 Q18 口径第②条禁止的"引用他人许可表述"（且 QQ-Agent 许可链本身有瑕疵）。
+//   ⇒ 结论：**靠人记一定漏**，所以把它变成机器判据。本段扫 `src/` `panel/` `plugins/`
+//     `skills/` `test/` `scripts/` 下的 `.js/.mjs/.html`，禁止出现项目名与许可语境的 MIT。
+//   ⚠️ 两个放行（都是"它应该包含这些字样"，别误删）：
+//     ① `test/mutations/**` —— 变异测试样本，故意构造的错误数据；
+//     ② `scripts/check-wb.mjs` 自身 —— §2 项目条数那条判据要断言登记处里有这些名字。
+//   ⚠️ 两个正则坑（实测踩到，改回去必红）：
+//     ① 项目名**必须大小写敏感**：本产品自己的 UA 是 `qq-agent-price-feed/1.0`、
+//        `qq-agent-skill/1.0`（全小写），加 `/i` 会把自家请求头误判成"来源字样"；
+//     ② `morphicons` **必须按独立词**判：自家钩子叫 `mountMorphIcons`，忽略大小写后
+//        与 `morphicons` 逐字母相同 ⇒ 会误伤 5 处。
+//   ⚠️ 许可只判**许可语境**的 MIT：裸 `MIT` 会误伤 `USAGE_LIMITS`（LIMITS 里就有这三个字母）。
+//
+// 110 → 111（2026-10-16 · **补记**）：§104「桌面端启动方式」落地时**漏调这个常量**
+//   （同日的会话记录写着"check-wb 111 段全绿"，而常量停在 110 —— 即 1 格静默余量）。
+//   本次（§105 同一轮）一并对齐，不留余量。
+//
+// 111 → 112（2026-10-16 · 本次）：新增 §105「二维码取图来源」。
+//   背景：macOS 主线的二维码写在**容器内**（compose 只挂 `config` 与 `QQ`，**没挂 cache**），
+//   而开发树 `napcat/cache/qrcode.png` 躺着一张 2026-09-16 的**孤儿文件**。
+//   旧实现"本地文件存在就优先"⇒ `/api/qrcode` 永远发那张陈旧的码：
+//   点「换一张」后端在容器里真换了（实测容器内哈希当场变化、接口回 200 + 新码 URL）、
+//   终端还写着"已换一张新二维码"，而前端每 5 秒取回的还是同一张旧图 ——
+//   维护者看到的现象正是「二维码切换不了，但显示已刷新」（2026-10-16 报告）。
+//   修复 = `panelLocalQr(isNative, readDisk)` 把"本地优先"挂上**原生形态门槛**
+//   （判据本体在 `panel/lib/napcat-native.js`，server.js 只接线）。
+//   本节钉：① 判据本体带 native 门槛（形状断言，fail-closed）；② server.js 的
+//   `apiQrcode` 不许退回裸 `readLocalQr()`；③ 容器兜底那一支在位。
+//   配套回归：smoke **T386**（非原生不许读盘 / 原生本地优先不变 / 读不到回 null）。
+//   ⚠️ 本段**刻意不登记 `subHit`** —— 轻量段不进 §51 的重段表（与 §102/§104 同）。
+//
+// 112 → 113（2026-10-17 · 本次）：新增 §106「Windows 隐藏通道」。
+//   背景：那只"关不掉的灰色方框"在 VM 上**归因两次、修两次都还在**（第一次：多趟
+//   PowerShell 往返；第二次：缺 `windowsHide`）。第二轮的真机数据证明前两次都没打中 ——
+//   `windowsHide` 一直带着、`consoleKilled` 正常、窗口几何已兑现，灰框照样在。
+//   ⇒ 第三次换思路：**取证优先**（新增可见窗口普查，4-DIAG ⑥d + boot 日志旁路快照）。
+//   第一份普查报告立刻给出机制：屏上 5 只可见窗口里没有 msedge，而有一只
+//   `WindowsTerminal title=[C:\Windows\system32\cmd.exe]` —— Windows 11 把默认终端
+//   设成 Windows 终端后，**控制台程序不认 CREATE_NO_WINDOW**（`windowsHide` 就是它），
+//   进程照样去要控制台 ⇒ 终端窗口自己弹出来。
+//   修复 = 立**唯一一条**隐藏通道：包根 `run-hidden.vbs`（`WScript.Shell.Run cmd, 0`，
+//   即 ShellExecute 的 SW_HIDE —— 包里另两条隐藏链就是这个机制，生产上一直干净），
+//   三处调用方（起面板 / 打开界面 / 关旧实例）全部改走它；**GUI 程序（msedge）绝不套壳**
+//   （SW_HIDE 会真把浏览器窗口藏起来）。
+//   本节钉：① 隐藏件本体在（ASCII · SW_HIDE · Option Explicit）；② 判据侧
+//   `openPanelFromConfig` / `closeStaleConsole` 都收 `hiddenVbs`；③ 只有控制台程序
+//   套壳；④ 便携包接线到位；⑤ 取证通道不许被拆（普查模块 + ⑥d）。
+//   配套回归：smoke **T389**（五组：走 wscript · 单趟 PS 封在 -EncodedCommand 里 ·
+//   GUI 不套壳 · 「0」的歧义拆开 · 无隐藏件时退回原样）。
+//   ⚠️ 同批还修了 §104⑥ 那处**口径**：`closeStaleConsole` 的注释曾断言"灰框就是
+//       PowerShell 窗口"——那句话已被真机数据证伪，本次改为订正后的机制说明。
+//   ⚠️ 本段**刻意不登记 `subHit`** —— 轻量段不进 §51 的重段表（与 §102/§104/§105 同）。
+//
+// 113 → 112（2026-10-17 · 回退 · 维护者点名）：**删掉 §106「Windows 隐藏通道」**，
+//   并把 §104 收窄成"只剩 macOS 一个启动入口"。
+//   背景：维护者判断"Windows 越改越乱、越改越差"，要求把 Windows 进度整体退回
+//   「刚准备做 Windows 桌面端、还没做」那一刻（= 提交 a582474 的状态），
+//   同时**保留 Mac 端的窗口化与窗口记忆**，以及**A 线**（NapCat 供应链 digest
+//   校验 / 下载器强化 / boot 诊断）。
+//   回退面：`tools/lib/console.mjs`（整份，退回 spawn + 系统浏览器）、`tools/start.mjs`、
+//   `tools/make-shortcut.mjs`、`scripts/win-launcher.mjs`、以及 Windows 接口说明文档
+//   全部回 HEAD；包根 `run-hidden.vbs` / `5-GRAYBOX.bat` / `tools/graybox.mjs` /
+//   `tools/lib/win-census.mjs` 四件移除；混编文件逐块摘（`lib/common.mjs` 的
+//   `bootLogFile()`、`tools/diag.mjs` 的 ⑥d、`tools/onekey.mjs` 两处 `c.mode`、
+//   `make-sums.py` 四条 ITEMS）。
+//   保留面（重要，别当成"漏删"）：`src/launch-mode.js` 与包内 `app/src/launch-mode.js`
+//   **必须留着** —— 面板 `/api/panel/window` 的窗口几何判据住在里面，删了面板当场
+//   import 失败；它里面的 win32 分支因此成为**暂时无人调用**的代码，等 Windows
+//   重启桌面端时再启用。同理 smoke **T389** 保留（它测的是判据模块本身，不是包）。
+//   ⚠️ 这是本项目**唯一一次按下限**（113 → 112）：符合文件头那条"唯一合法的下降 =
+//      被断言的对象真被删了"——§106 断言的 `run-hidden.vbs` / 普查模块已整体移除。
+//   ⚠️ 本段**刻意不登记 `subHit`**（与 §102/§104/§105 同）。
+// 112 → 110（2026-10-17 · 维护者点名）：**删掉「发 QQ 表情」整条能力**及其四段契约。
+//   裁决原文：「它只会发那几个黄豆脸，并不是很智能，不要让它再发 QQ 官方的那些表情包了，把这个功能删掉。」
+//   删面：
+//     · 判据模块 `src/face-habit.js`（ATI-4 习惯闸）/ `src/face-marks.js`（标记形态 + 拆段 + 图片护栏）
+//       / `src/custom-faces.js`（D14 收藏表情只读接入）—— 三个文件整体删除；
+//     · `FACE_PRESETS` 那张 15 张的黄豆脸表（`src/custom-config.js`）；
+//     · `onebot.faceSegment` 与发送循环里的表情段分流；提示词第 9 条（条件出现的那一行）；
+//     · 面板的「发 QQ 表情」开关、`faces` 控件与「收藏表情」卡、导出包里的「QQ表情ID表.md」、
+//       人设里的「喜欢用的表情」字段；`llm.features.stickers` 这一格能力位。
+//   删的契约段：§40（D14）、§99（表情 id 表，含 3 处 subHit）、D15 ⑥（出站媒体护栏）、
+//     以及 §记忆记录里顺带钉 `rec.face` 的那条子判据。⇒ 112 → 110。
+//   保留：`stripFaceMarks` 搬到 `src/reply-text.js` —— 它不再是功能，是**防漏**
+//     （历史存档与模型惯性还会写 `[face:14]`，不剥就会原样发进群里）；由 smoke T394 钉着。
+//     入站 `[表情]` 占位与 `isBareMedia`、`style-profile` 的「对方带表情」统计一律不动
+//     （那是**读**，不是**发**）。
+//   ⚠️ 这是按下限的第二次（与 §106 同性质）：符合文件头那条
+//      「唯一合法的下降 = 被断言的对象真被删了」。
+// 110 → 109（2026-10-17 · 维护者点名）：**删掉 §38「状态注入行」**。
+//   起因：同日维护者裁决把 13 个扩展包（`plugins/` 5 + `skills/` 8）**全部删除**。
+//   §38 判的是 `plugins/本体情绪/lib/state.js` 里的 `botStatePromptLine` ——
+//   "唯一一处由扩展包改写 system 正文的地方"（上限 ≤80 字、落在时间行之前）。
+//   插件没了，那条能力也随之消失 ⇒ 整节删除。
+//   ⚠️ 别删错：check-wb 里另有一节"状态注入行的**行为**判据"（走真实 brain 输出、
+//     判"不进会话存档"），它**不依赖插件**，保留。
+//
+// 同轮另外 4 处（不是降段数，是"断言对象没了 / 空状态合法化"）：
+//   ① `.gitignore` 必须给 `plugins/本体情绪/` 开例外 → 删（连同 13 条例外一起删）；
+//   ② "有扩展包 import DATA_DIR" → 改成扫 src/ 与 panel/lib/（它俩仍在用）；
+//   ③ ④ 白名单"非空"自证 → 删。⚠️ 这不是放宽：空现在是**合法状态**（确实没包了），
+//      而"两处逐条相等"仍在判 —— 一边被改照样红。原自证会把"没包"误判成"没读到文件"。
+//   ⚠️ 保留 `/plugins/*` 与 `/skills/*` 两条锚定规则：宿主仍支持扩展包，且
+//      「新增目录三件套」那条判据正是拿这两行做断言。
+// 109 → 110（2026-10-18 · P1 数据分离）：新增 §107「单一根解析」。
+// 110 → 111（2026-10-18 · P2 安装器）：新增 §108「安装器布局与单一来源」。
+//   钉住：appId/版本只从 package.json 读；/api/health 只读且不读配置；
+//   isOurBridge 认 current+previous；stop.mjs 先停机器人再退面板；
+//   install-commit 原子写指针并有事务恢复；NSIS per-user、先 stop 再 commit；
+//   卸载默认保留数据且删除前二次确认；payload 构建复用发布拷贝/自校验/复扫。
+//   钉住：只有 src/user-root.js 推导程序根；panel/lib/paths.js 只消费；
+//   面板 spawn 注入 QQBOT_USER_ROOT/QQBOT_MODE；工具层 common.mjs 消费
+//   NAPCAT_DIR/CONFIG_FILE；config.js re-export DATA_DIR；migrate.mjs 在位。
+//   ⚠️ 同上：这不是"多加一条漂亮的断言"，而是 P1 把 11 处根推导收成一处后，
+//      防止下一个人再把根拆回去的唯一机器判据。
 ```
+
+// 111 → 112（2026-10-18 · P3 应用内更新）：新增 §109「更新协议与两击契约」。
+//   钉住：固定 GitHub HTTPS 清单/64KiB/8KiB 上限；原始字节先验签后 JSON.parse；
+//   appId/channel/version/minVersion/minWindows/expiresAt；HTTPS+host 白名单与 testMode 旁路；
+//   下载先 size+sha256 再 rename、取消删 .part；只从 ready 显式安装、无自动安装；
+//   5 条路由（4 POST 在 WRITE_ROUTES）；前端 update 控件/SSE/四个动作；公钥入库/私钥不入库；
+//   make-installer-payload 复制公钥、make-app 剔除 app/resources、make-sums 点名更新模块。
+
+// 112 → 113（2026-10-18 · P4 回滚/断电/离线/保留）：新增 §110。
+//   钉住：两次失败才回滚、失败先停子进程；runtime/node.previous 交换与失败不翻指针；
+//   rollback.json 与 previous=null；配置 schema 闸；install-commit 的 journal 在
+//   rename 前落盘、指针已是新版时幂等收口；保留策略只留 current+previous 且不碰
+//   USER_ROOT；离线 prepare 先验签后解析、complete 校 size+sha 且不联网；
+//   离线路由进 WRITE_ROUTES；镜像固定 tag 且拒绝 latest。
+//   ⚠️ 这不是"多加一条断言"，而是 P4 把"坏版本自愈"接进真实启动链后，
+//      防止下一个人把回滚/runtime 交换/journal 落盘顺序拆回去的唯一机器判据。
+
+// 113 → 114（2026-10-18 · P6 NapCat 获取改造）：新增 §114「NapCat 获取与离线放包」。
+//   钉住：安装工具侧与面板更新侧**两个**下载口都有连接/空闲/存活速率/单源/总预算，
+//   数值区间被钉死（改 0 或改 10 分钟都算破坏"有上限"这件事本身）；空闲计时必须
+//   **在数据块循环体内重挂**（用 braceAt 取准确循环体，固定字符窗口会把 finally
+//   与下一源的文字框进来而把判据喂绿）；续传必须**读** content-range 响应头
+//   （不能写成 /content-range/i —— 两个文件里都有关于它的报错文案，字符串常量
+//    会把这条喂绿，注释会被 read() 剥掉而字符串不会）；函数体内先算哈希后改名；
+//   预算常量与 DOWNLOAD_BUDGET 只许住安装工具侧；**全仓下载口恰好 2 个**
+//   （这是 single-entry 历来缺的那格 —— 此前没有任何机器判据防"第三份拷贝"）；
+//   knownGood 真值表 2..6 条、sha256 必须是 64 位十六进制、每条带整数 size、
+//   fallbackSha256/fallbackTag 必须同时是表里的一行（一张表不许有两个名字）、
+//   assetMinBytes ≥ 8,000,000（OneKey 壳 994,134 字节且各版本哈希相同）。
+//   ⚠️ 两个下载口**故意不合并**：载荷根不同（<InstallRoot>\tools 与
+//      <InstallRoot>\versions\<ver>\app\panel，后者每次升级换目录），合并等于把
+//      P3 更新协议的 §109 判据搬去服务安装器改动。既然合并不了，就必须有人盯着"别漂移"。
+//   ⚠️ 病根不是猜测：Windows 11 测试机实测 gh-proxy.com 44KB/s、ghproxy.net 30KB/s、
+//      github.com 与 api.github.com 直接 DNS 失败 ⇒ 35MB ≈ 13 分钟，而 NSIS 的进度条
+//      在 nsExec 外部进程里**不会推进** —— 一条没有超时的 fetch 在用户屏幕上就叫卡死。
+//      同一段取证还查出既有缺陷：手放的包若不是 fallbackTag 那一版，
+//      napcatDigestForTag 返回 null 之外的路径会把它按兜底哈希判"校验不过"直接中止，
+//      即"离线放包"这条路一直是坏的（修法见 §114 的 knownGood 按哈希反查）。
+//   反向证据：test/mutations/install-p6-1019.mjs 9 条（M1-M7 + M2P 双口同判 + C1 对照），
+//      逐条实测会红；其中 M2P/M5 打在**面板侧**，用来证明"盯两个口"不是文案。
+
+// 114 段数不变 · §114 内部改判据一处 + 上面那条"9 条"过期（2026-10-18 同日 P6 收口实测）：
+//   ① 台账数字订正：清单实物 **18 条 = 17 条变异（M1–M16 + M2P）+ 1 条对照 C1**，
+//      Batch 3/4 把 M8–M16 加进来时没有回写上面那行。全量复跑 **18/18 符合期望**，
+//      还原后工作树 == pristine。
+//   ② M13 第一次跑是 **NOT-BLOCKED** —— 这是一条真假绿，值得记形状：
+//      原判据写 `!/StrCpy \$NapcatMode "skip"/.test(nsiText)`，问的是"全文里出现过 skip 没有"；
+//      而 .nsi 里 `StrCpy $NapcatMode "skip"` 有**三处**（.onInit 默认值 / /NAPCATSKIP 分支 /
+//      NapCatPageLeave 兜底）。变异把**默认值那一条**改成 auto，另外两条原地不动，
+//      判据在噪声里点了个头 ⇒ 用户症状的元凶（"默认就联网下载"）恰好是**唯一没人盯的属性**。
+//      「默认」是**位置**属性不是内容属性：全文包含式断言永远无法区分"哪一条是默认"。
+//      修法：取 .onInit → 首个 ${GetParameters} 之间的窗口，要求其中**恰好 1 条**
+//      $NapcatMode 赋值且值为 skip；窗口取不到时报红而不是静默通过。
+//      check-nsi.mjs 同步改成同判据（VM 构建机侧），四条反向证据实测：
+//      原样→不报 / 默认改 auto→点名 "auto" / 删掉默认行→"实测 0 条" / 加第二条→"实测 2 条（skip、auto）"。
+//   ⚠️ 可复用的形状：**凡断言"某处的值必须是 X"，先问这个字面量在文件里出现几次。**
+//      出现 ≥2 次 ⇒ 全文 test() 就等于没断言，必须换成取作用域窗口 + 计数。
+
+//   ③ 同日再订正（不改 ①②与上面 44KB/30KB 那两行旧值）：那三个速率是**转写错误**。
+//      回读探针原文实测：gh-proxy.com 229,064 B/s、ghproxy.net 46,919 B/s（25s 处被
+//      --max-time 截断 rc=28）、github.com 与 api.github.com 0 字节 rc=6
+//      ⇒ 35,884,742 B 按第一候选 ≈2.6 分钟、按第二候选 ≈12.7 分钟（差 5 倍）。
+//      病根结论不变（进度条不会推进 + 无超时的 fetch = 用户看见卡死），数字正本在
+//      INSTALLER-SPEC.md §21（含探针原文逐字照录）。§114 里凡引用该速率的注释已同步。
+
+//   ④ 同日补一条（§114 内部判据 +1，段数不变；基线 makensis 实测 2 条警告）：
+//      `.nsi` 两个选包对话框把初始目录写成 `"$DOWNLOADS"` —— NSIS 3.13 **没有**这个 shell
+//      常量，makensis 只打 warning 6000、EXE 照出（25,611,830 B），症状是"浏览"对话框
+//      初始目录静默变空。没有判据时这类"能编译但行为退化"的东西会一直躺在包里。
+//      ⇒ 改 `"$PROFILE\\Downloads"`；check-nsi 与 §114 各加一条禁止 `$DOWNLOADS` 的判据，
+//      变异清单加 **M17**（锚点 `"$PROFILE\\Downloads"` count 2），实测 BLOCKED。
+//      变异总数 701 → **702**，失效/惰性仍为 0。
+
+// 同日第三批（§114 内部判据 +2，段数不变；变异 702 → **704**）：
+//   ⑤ `$DOWNLOADS` 不是 NSIS 常量（makensis 3.13 警告 6000）：初始目录静默变空。
+//      check-nsi 与 §114 各加一条禁止；**M17**（锚点 `"$PROFILE\Downloads"` count 2）BLOCKED。
+//   ⑥ `${GetOptions}` 返回 **`=value`**：不剥前导就传成 `=C:\...`，离线放包必被拒。
+//      check-nsi 与 §114 要求 `.onInit` 里 ≥2 处 `StrCpy $R1 $R1 "" 1`；**M19**（count 4）BLOCKED。
+//   ⑦ 静默安装把显式 `/NAPCATZIP=` `/NAPCATFOLDER=` 覆盖回 skip（.onInit 的 IfSilent 兜底）。
+//      删掉兜底；两套门禁禁止 `.onInit` 内出现 IfSilent 指令（**先剥注释**，否则解释规则的
+//      注释自己会把判据喂红）；**M18** BLOCKED。
+//   反向证据：install-p6 清单 **21 条 = 20 个变异 + 1 条对照**（M1–M16 + M2P + M17–M19 + C1）；
+//      全量复跑 20/20 符合期望（M13 修复后），单独复跑 M17/M18/M19 均 BLOCKED。
+//   VM 验收另见 INSTALLER-SPEC §21.6；三个"能编译但静默失效"的形状见 §21.7。
+
+// P7（2026-10-18 深夜 · 群友测试回执五项整改）：变异 705 → **711**。
+//   M20 首装默认 launch.mode 改回 window（灰窗）· M21/M22 真退出（process.exit / --app= 校验）
+//   · M23 zip 按钮回潮 · M24 删 SimpChinese · M25 Mac 锁容忍窗回 5 分钟。
+//   p7 清单 test/mutations/p7-exit-1019.mjs 6 条（5 变异 + 1 对照）实测 6/6。
+//   段数不变（114）；check-nsi 的 ASCII 闸语义改为"UTF-8 + Unicode true + 无 BOM"。
+//   ⚠️ 本轮自己踩的坑（已修，见 0e9097e）：i18n 替换**先插 LangString 块再全局替换字面量**
+//      会把块里的英文定义换成 $(KEY) 自引用、且吃掉引号 ⇒ 顺序必须是"先替换使用点、再插块"。
+
+// P8（2026-10-19 · 群友真机回执「选中文后全乱码」整改）：变异 711 → **714**。
+//   M26 剥 BOM（新判据：含非 ASCII 的 .nsi 必须带 UTF-8 BOM）· M27 删 Unicode true · C1 对照。
+//   p8 清单 test/mutations/p8-i18n-enc-1019.mjs 3 条实测 3/3（M26/M27 BLOCKED、C1 NOT-BLOCKED）。
+//   根因证据（VM 对照探针 2026-10-19）：同源码有/无 BOM 的 string pool 差 52 B
+//   = 4 B 文件名 + 12 个 CJK 字被误读成 36 字 ×2 B —— 无 BOM 时 makensis 3.13 按构建机 ACP
+//   （英文 Windows = CP1252）读源码，中文以乱码烤进中文语言表；MUI 自带文案不乱因 SimpChinese.nsh 自带 BOM。
+//   ⚠️ 订正：P7 旧判据「无 BOM」（check-nsi 称 makensis 会把 BOM 当指令的一部分）系未经实证的猜测，
+//   与实测真相相反；本轮翻转为「含非 ASCII 必须有 BOM」，check-wb §114 同判据加牙（段数不变 114）。
+
+// P9（2026-10-19 · 群友回执三条：二选一 / 下载提示 / 详情乱码）：变异 714 → **719**。
+//   M28 删 EnableWindow 置灰行 · M29 摘 installerAscii 的非 ASCII 替换 · M30 输出行塞回中文
+//   · M31 删下载页眉提示 · C1 对照；p9 清单 test/mutations/p9-napcat-ux-1019.mjs 实测 5/5。
+//   页面：NapCat 页收紧排版 + 未选时 GetDlgItem $HWNDPARENT 1 + EnableWindow 0 置灰「下一步」；
+//   两路线 NSD_OnChange 互斥；/INSTALLNAPCAT 进页预勾选；leave 兜底 NAP_MSG_CHOICE。
+//   下载：mode=auto 时页眉副标题 WM_SETTEXT 成 $(DL_HINT) + DetailPrint 横幅，结束恢复。
+//   详情：nsExec 按系统码页解码子进程字节 ⇒ 安装链路五工具输出行全英文；
+//   ASCII 化原语 installerAscii 单份住 install-layout.mjs（bootstrap 须在 import common 前设环境），
+//   .onInit 设 ESTRELLA_NSIS=1；✓/✗ 记号在安装器环境下换 [ok]/[x]。
+//   ⚠️ 本轮编译三坑（已修，见 6e51dc0）：LangString 字符串里 \" 不被 NSIS 认（改单引号界定）；
+//   nsDialogs 只有 NSD_OnChange 没有 NSD_OnChanged；内页客户区约 144u，150u 的标签会被裁掉。
+//   ⚠️ 验收坑：只换 .nsi 不换 stage ⇒ 装出来的工具还是旧的（详情仍乱码）；
+//   且 makensis「Can't open output file」= 旧安装器进程还握着 exe（结束页没关）。
+
+// P9-r8（2026-10-19 · 维护者点名回滚）：变异 719 → **717**。
+//   还原 P9 的①排版重排与②未选置灰二选一回 P8 快照（提交 95e94b8 + 4cf7c1d）；
+//   保留③下载页眉提示与④详情英文化。§114/check-nsi 撤置灰与二选一判据；
+//   p9 清单撤 M28/C1（留 M29/M30/M31 实测 3/3）；p7 M23 / install-p6 M14 锚点回 P8 坐标。
+//   ⚠️ 还原脚本自伤实录（4cf7c1d）：字符串替换把 intact 的 ${…} 加成 $${…}
+//   ⇒ makensis 警告 7025/6030；教训：对含 ${} 的文件做替换前先数 $\$\{ 残留。
+
+// P10（2026-10-19 · 群友回执「一键启动在哪」）：变异 717 → **723**。
+//   M32 payload 拷回便携 README · M33 摘协议端自起 · M34 守卫不 return（跌回 Docker）
+//   · M35 换码提示改回 bat · M36 给同步叶子挂 .catch · C1 对照；p10 清单 6/6。
+//   M32 顺带修了条自己写错的假牙：判据只 test 文件名会被注释喂绿，改钉 copyFile 调用本体。
+//   验收另逮存量真机 bug：maybeSyncModelCatalog 同步永不抛却挂 .catch ⇒
+//   真机每次启动红一条未处理拒绝（沙箱跳过该行，回归失守面）。改 setImmediate 并钉 §114。

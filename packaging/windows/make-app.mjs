@@ -30,6 +30,7 @@ if (!PKG) {
 }
 const APP = path.resolve(PKG, 'app');
 const PRUNE = path.join(APP, 'packaging');
+const PRUNE_RESOURCES = path.join(APP, 'resources');
 
 // ① 生成对外拷贝（复用发布面判据：git ls-files + 真值复扫，一处实现不抄第二份）
 console.log('① 生成 app/ 对外拷贝…');
@@ -47,14 +48,24 @@ if (fs.existsSync(PRUNE)) {
   console.log('② app/packaging/ 不存在，无需剔除');
 }
 
+// ②b 剔除 app/resources：更新公钥只在安装器 payload 的 <InstallRoot>/resources 落一份
+if (fs.existsSync(PRUNE_RESOURCES)) {
+  const n = fs.readdirSync(PRUNE_RESOURCES, { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile()).length;
+  fs.rmSync(PRUNE_RESOURCES, { recursive: true, force: true });
+  console.log(`②b 已剔除 app/resources/（${n} 个文件，公钥只随安装器 payload 发布）`);
+} else {
+  console.log('②b app/resources/ 不存在，无需剔除');
+}
+
 // ③ 自证：包内不应再有两份 setup.mjs
 const dup = [
   path.join(APP, 'packaging', 'windows', 'tools', 'setup.mjs'),
   path.join(APP, 'packaging', 'windows', 'launcher', '一键安装.bat'),
 ];
-const left = dup.filter((p) => fs.existsSync(p));
+const left = [...dup, PRUNE_RESOURCES].filter((p) => fs.existsSync(p));
 if (left.length) {
-  console.error(`✗ 仍有重复件：${left.join(', ')}`);
+  console.error(`✗ 仍有重复件/未清理目录：${left.join(', ')}`);
   process.exit(1);
 }
 console.log('③ 自证通过：包内只有一份 tools/ 与一套启动器');

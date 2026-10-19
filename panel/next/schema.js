@@ -106,15 +106,21 @@ export const GROUPS = [
                    ⚠️ 判据在**后端**（`container.applicable`），前端不自己按平台猜 ——
                       "这台机器走没走容器"是事实，不该由页面重算一遍。 */
                 { ico: 'container', label: '容器',
-                  value: (s) => (j(s, ['container', 'applicable']) === false
-                    ? '原生 NapCat'
-                    : (j(s, ['container', 'line'], '') || '—')),
+                  value: (s) => {
+                    if (j(s, ['container', 'applicable']) !== false) return j(s, ['container', 'line'], '') || '—';
+                    // P11：Windows 原生形态下这一格实际就是「协议端」。没装时必须说"未安装"，
+                    // 不能拿"原生 NapCat"当成正常状态（群友就是被这格骗过：面板一片绿，二维码却取不到）。
+                    return j(s, ['napcat', 'present']) === false ? '协议端未安装' : '原生 NapCat';
+                  },
                   sub: (s) => (j(s, ['container', 'applicable']) === false
-                    ? '不走 Docker（Windows 原生安装）'
+                    ? (j(s, ['napcat', 'present']) === false
+                      ? `放进 ${j(s, ['napcat', 'dir'], 'userdata\\napcat')}`
+                      : '不走 Docker（Windows 原生安装）')
                     : 'NapCat（QQ 协议端）'),
-                  st: (s) => (j(s, ['container', 'applicable']) === false
-                    ? 'ok'
-                    : (j(s, ['container', 'line']) ? 'ok' : 'bad')) },
+                  st: (s) => {
+                    if (j(s, ['container', 'applicable']) !== false) return j(s, ['container', 'line']) ? 'ok' : 'bad';
+                    return j(s, ['napcat', 'present']) === false ? 'bad' : 'ok';
+                  } },
                 { ico: 'monitor', label: '面板',
                   value: (s) => `pid ${j(s, ['panel', 'pid'], '—')}`,
                   sub: (s) => `已运行 ${fmtDur(j(s, ['panel', 'uptimeMs'], 0))}`,
@@ -123,6 +129,16 @@ export const GROUPS = [
                   value: (s) => j(s, ['account', 'nickname'], '未登录'),
                   sub: () => '真 QQ 号只在本机 .env 里',
                   st: (s) => (j(s, ['account', 'nickname']) ? 'ok' : 'warn') },
+              ] },
+              /* P11（2026-10-19 维护者回执）：协议端没装时**不许再让用户去 AppData 里放文件**。
+                 面板自己去常见目录找（下载/桌面/文档），找不到就打开目标文件夹让用户拖进去。
+                 ⚠️ 必须放在「启动链路」与五张状态卡**之间**的空行里，且 `label` 留空：
+                   塞进 statusGrid 的 items 会被当成第六张卡，按钮掉到窗口可视区外
+                   （2026-10-19 VM 截图：用户只能看到卡片标题、点不到按钮）。
+                 只在 Windows 且确实没装时出现 —— 装好后这两颗按钮自动消失。 */
+              { t: 'buttons', label: '', when: (s) => j(s, ['napcat', 'present']) === false && j(s, ['napcat', 'win32']) === true, items: [
+                act('自动查找并安装', 'napcat.importAuto', 'btn-primary', '扫描「下载 / 桌面 / 文档」里已解压的 NapCat 并复制进来（只复制，原件不动）', 'search'),
+                act('打开协议端文件夹', 'napcat.openFolder', 'btn-ghost', '打开后把 NapCat.Shell 里的文件拖进去即可，页面每 3 秒自动检测'),
               ] },
               /* 端口**拆成三格**而不是拼成一行 `HTTP 通 · WS 通 · WebUI 通` ——
                  三条各自独立（HTTP 通但 WS 断是真实故障），
@@ -297,25 +313,31 @@ export const GROUPS = [
             id: 'switch', title: '一键切换', span: 4,
             desc: '点一下<b>立即生效</b>，不用再点保存。切到云端会自动关掉本机模型，把内存还给你。',
             ctrls: [
-              { t: 'modebar', calc: (s) => brainModeOf(s) },
-              { t: 'buttons', label: '', items: [
-                /* ⚠️ 第 53 轮（B6）：本机模型那套是 Apple Silicon 专用（MLX + QwenChat），
-                   Windows 上**根本不存在实现** ⇒ 这个按钮在那边点了必然失败。
-                   本项目对"给一条走不通的路"有过教训（M7：手册让 Windows 用户点的按钮
-                   第一步就 400），所以直接**不显示**，改用下面那张说明卡指路。 */
-                { ...act('用本机模型（免费·不联网）', 'switch.local', 'btn-ghost'),
-                  when: (s) => j(s, ['localModel', 'supported']) !== false },
-                act('用 DeepSeek 云端', 'switch.cloud', 'btn-ghost'),
-                act('用智谱免费云端', 'switch.zhipu', 'btn-ghost'),
-                act('用千问免费云端', 'switch.qwen', 'btn-ghost'),
-              ] },
-              { t: 'brainList' },
+              /* `id` 只给 DOM 守卫当锚点用（横幅渲染成 `data-mb`）——
+                 页面上有两条横幅（这条 + 计费页那条），不标出来就没法精确断言。 */
+              { t: 'modebar', id: 'brain.now', calc: (s) => brainModeOf(s) },
+              /* 2026-10-17 第二轮：标签行**就是"我建过的模型"** ——
+                 本机 / DeepSeek / 智谱 / 千问 这些预设标签不再占位（维护者点名），
+                 新建的云端或本地模型自动出现在这里；右键改名 / 改设置 / 删除。
+                 下面那张「自定义模型」列表**整块删掉**：模型都跑到这一行了，
+                 再摆一份列表就是同一件事的两个入口。 */
+              { t: 'brainTags' },
               { t: 'kv', rows: (s) => [
-                kv('正在生效', () => j(s, ['effective', 'model'], '—')),
-                kv('接口地址', () => j(s, ['effective', 'baseUrl'], '—')),
-                kv('降级链', () => (j(s, ['effective', 'fallbackModels'], []) || []).join(' → ') || '无'),
+                /* 这一整组都是「现在这套是什么」，所以**和横幅同源**（`brainPickOf`）。
+                   上一版这里取 `effective`（机器人上次读到的），切换后要等热重载才变 ——
+                   于是横幅、标签、这四行在同一个页面上互相打架（2026-10-17 实测截图）。
+                   唯一还取 `effective` 的是最后一行：它说的就是"机器人什么时候读的配置"，
+                   换源会变成一句谎话。 */
+                kv('当前厂商', () => brainPickOf(s).vendor),
+                kv('正在使用', () => brainPickOf(s).model),
+                kv('接口地址', () => brainPickOf(s).baseUrl || '—'),
+                kv('降级链', () => (j(s, ['config', 'fallbackModels'], []) || []).join(' → ') || '无'),
                 kv('机器人读入配置于', () => (j(s, ['effective', 'since']) ? new Date(s.effective.since).toLocaleString() : '—')),
               ] },
+              /* 免费额度：**一颗按钮**（2026-10-17 维护者第二次点名，去掉整块卡片）。
+                 位置就在卡片右下角（红框标的大致位置）；点一下打开那家的额度/余额官网。
+                 本机模型不摆 —— 它没有额度也没有账单。 */
+              { t: 'quotaBtn', calc: (s) => quotaBtnOf(s), when: (s) => brainPickOf(s).isLocal === false },
             ],
           },
           {
@@ -325,8 +347,10 @@ export const GROUPS = [
                `supported` —— **这个平台上真有这套实现**。
                第二个条件是新增的：Windows 上 MLX / QwenChat 一个都不存在，
                而它原来照样显示一整张死控件（状态恒"没在跑"、启动按钮点了必然失败）。
-               用户的真实反应（实测截图）是去「自定义模型」里填 llama.cpp 的目录路径。 */
-            when: (s) => j(s, ['effective', 'isLocal']) === true
+               用户的真实反应（实测截图）是去「自定义模型」里填 llama.cpp 的目录路径。
+               ⚠️ `isLocal` 取 `brainPickOf`（面板已选定），与横幅/标签同一个判据 ——
+                  取 `effective` 的话，刚切到本机、机器人还没重读时这张卡**不出现**。 */
+            when: (s) => brainPickOf(s).isLocal === true
               && j(s, ['localModel', 'supported']) !== false,
             ctrls: [
               { t: 'kv', rows: (s) => [
@@ -366,7 +390,8 @@ export const GROUPS = [
           },
           {
             id: 'cloud', title: '云端设置', span: 4,
-            when: (s) => j(s, ['effective', 'isLocal']) === false,
+            // 与「本机模型」那张互斥，判据同样是 `brainPickOf`（见上面那条注释）。
+            when: (s) => brainPickOf(s).isLocal === false,
             desc: '地址按当前大脑自动填并且锁住 —— 手填地址正是上一版误报错的来源。',
             ctrls: [
               { t: 'text', id: 'cfg.baseUrl', label: '模型接口地址', readonly: true, wide: true,
@@ -383,7 +408,7 @@ export const GROUPS = [
             // ⚠️ 标题**不再写死"（智谱）"** —— 写死之后千问的页面上会出现
             //    "优先级线路（智谱）"配千问的模型，那是最容易让人误判的一类文案错。
             when: (s) => ['zhipu', 'qwen'].includes(j(s, ['config', 'provider'])),
-            desc: '机器人按这里的顺序从上往下试，谁先应就用谁。第 1 条是主模型；被限流 / 超时 / 故障时自动换下一条。<b>候选名单跟着当前大脑走</b> —— 智谱的页面上不会出现千问的模型，反之亦然。',
+            desc: '机器人先试<b>主模型</b>，被限流 / 超时 / 故障时按这里的顺序往下换。列表里只放<b>这一家的模型</b> —— 候选名单由后端按服务商下发，别家的模型放进这条链一条都不会被响应（放不进去：保存时会被拦下并说清）。',
             ctrls: [
               { t: 'routeBoard' },
               // ⚠️ 赠送额度进度条**只有智谱有**（它的资源包接口用 API Key 就能查）。
@@ -393,18 +418,10 @@ export const GROUPS = [
               { t: 'packages', label: '赠送额度（智谱）', when: (s) => j(s, ['config', 'provider']) === 'zhipu' },
             ],
           },
-          {
-            id: 'quota', title: '免费额度', span: 6,
-            // 本机大脑不摆这一栏：它既没有额度也没有账单，摆出来只会让人找"哪里充值"。
-            when: (s) => j(s, ['effective', 'isLocal']) === false,
-            desc: '两家的「免费」<b>性质不一样</b>：智谱的 Flash 档是<b>永久免费</b>（不会用完）；智谱的赠送包与千问的<b>全部档位</b>都是<b>限时额度</b>（会用完、会到期）。这一栏说的是<b>规则</b>，不是余额。',
-            ctrls: [
-              { t: 'kv', rows: (s) => quotaRowsOf(s) },
-              { t: 'buttons', label: '', items: [
-                act('打开这家额度的官网页面', 'quota.open'),
-              ] },
-            ],
-          },
+          /* 2026-10-17（维护者第二次点名）：**不再单独占一块**。
+             整张「免费额度」卡删掉，收成「一键切换」卡右下角**一颗按钮** ——
+             点一下直接去那家能看额度/余额的官网页面；解释文案全部塞进 `title`。
+             理由：它要传达的只有"这家会不会扣钱、额度去哪看"，不值得半屏版面。 */
         ],
       },
       {
@@ -429,7 +446,7 @@ export const GROUPS = [
           },
           {
             id: 'caps', title: '能力开关', span: 6,
-            desc: '前三个是<b>模型能力</b>：当前大脑做不到的会灰掉并写明原因（摆在页面上能点却不生效更糟）。「主动发言」与模型无关，是行为层总闸。',
+            desc: '上面两格是<b>模型能力</b>：当前大脑做不到的会灰掉并写明原因（摆在页面上能点却不生效更糟）。「主动发言」与模型无关，是行为层总闸。',
             ctrls: [
               // 自定义大脑：**只显示勾过的那几项**（下发的 `customVisibleFeatures` 是结论）。
               // 没勾的连开关都不摆 —— 摆出来又关不掉，正是"点了没用"那一类。
@@ -437,7 +454,6 @@ export const GROUPS = [
                 when: (s) => customFeatureVisible(s, 'webSearch') },
               { t: 'featSwitch', feat: 'vision', label: '识图', hint: '群里有人发图时，它能看懂图里说了什么',
                 when: (s) => customFeatureVisible(s, 'vision') },
-              { t: 'featSwitch', feat: 'stickers', label: '发 QQ 表情', hint: '允许它在回复里插 QQ 表情' },
               { t: 'switch', id: 'cfg.proactive', label: '主动发言', volatile: true,
                 hint: '总闸：关掉之后插话 / 定时主动 / 定时消息全都不再发声（关键词触发不受影响）。',
                 read: (s) => j(s, ['custom', 'allowProactive'], true),
@@ -527,7 +543,6 @@ export const GROUPS = [
               { t: 'text', id: 'p.traits', label: '性格关键词', bind: 'persona.traits', ph: '活泼、爱吐槽、嘴贫但没恶意' },
               { t: 'textarea', id: 'p.tone', label: '说话方式', bind: 'persona.tone', rows: 2, ph: '短句为主，多用语气词……' },
               { t: 'text', id: 'p.catch', label: '口头禅', bind: 'persona.catch', ph: '有一说一 / 绷不住了' },
-              { t: 'text', id: 'p.faces', label: '喜欢用的表情', bind: 'persona.faces', ph: '狗头、呲牙、拿捏' },
             ],
           },
           {
@@ -577,7 +592,6 @@ export const GROUPS = [
             { t: 'number', id: 'r.cool', label: '连续回复的最小间隔（秒）', bind: 'replyStyle.cooldownSec',
               bounds: 'cooldownSec',
               hint: (s) => `0 = 只保留底层的 ${fieldNum(s, 'minIntervalMsSec')} 秒防抖。区间由后端下发（field-schema）。` },
-            { t: 'note', text: '「要不要发表情包」不在这里 —— 它就是「大脑 → 能力开关 → 发 QQ 表情」，摆两处只会让人以为有两个开关。' },
           ],
         }],
       },
@@ -680,7 +694,7 @@ export const GROUPS = [
               { t: 'buttons', label: '', items: [
                 act('完整配置', 'export.all'), act('人格', 'export.persona'), act('提示词', 'export.prompt'),
                 act('规则与场景', 'export.rules'), act('记忆', 'export.memory'), act('技能', 'export.skills'),
-                act('运行日志', 'export.log'), act('表情 ID 表', 'export.faces'),
+                act('运行日志', 'export.log'),
               ] },
             ],
           },
@@ -753,18 +767,16 @@ export const GROUPS = [
         ],
       },
       {
-        id: 'faces', label: '表情与图库', title: '表情与图库',
-        desc: '它自己的表情资产：QQ 收藏表情（只读接入）+ 可发送的图片库（插件 <code>自定义图库</code>）。',
+        /* 2026-10-17：这一页原叫「表情与图库」，左边那张是 QQ 收藏表情。
+           收藏表情随「发 QQ 表情」能力一起下线（它本来就是同一套决策链的二级分支），
+           于是这一页只剩图库 —— 名字跟着改，免得点进来找不到表情。
+           ⚠️ 子页 id 保留 `faces`：没有深链路由依赖它，但改 id 会让"我从哪一页来的"
+              这类排查对不上旧截图；label 才是给人看的。 */
+        id: 'faces', label: '图库', title: '图库',
+        desc: '可发送的图片库（需自行安装 <code>自定义图库</code> 插件；默认未安装）。',
         draft: true,
         cards: [
-          {
-            id: 'faces', title: '收藏表情', span: 6,
-            ctrls: [
-              { t: 'faces' },
-              { t: 'note', text: 'D14 是<b>只读接入</b>：令牌 = 图片 URL 的短哈希，出站时按令牌分流。素材由你自己在 QQ 里收藏。' },
-            ],
-          },
-          { id: 'img', title: '自定义图库', span: 6, ctrls: [{ t: 'gallery' }, { t: 'pluginSettings', extId: 'image-lib' }] },
+          { id: 'img', title: '自定义图库', span: 12, ctrls: [{ t: 'gallery' }, { t: 'pluginSettings', extId: 'image-lib' }] },
         ],
       },
     ],
@@ -799,11 +811,37 @@ export const GROUPS = [
             ],
           },
           {
-            id: 'deny', title: '拉黑', span: 6,
+            id: 'deny', title: '拉黑', span: 6, col: 'r',
             ctrls: [
               { t: 'tags', id: 't.dg', label: '拉黑的群号', bindSys: 'denyGroups', ph: '这些群里它完全不回话' },
               { t: 'tags', id: 't.du', label: '拉黑的 QQ 号', bindSys: 'denyUsers', ph: '哪怕被 @ 也不回' },
               { t: 'note', kind: 'warn', text: '<b>拉黑优先于放行</b> —— 一个群同时出现在两个名单里，结果是<b>不回</b>。另外「必须 @」和关键词触发都拦不住拉黑。' },
+            ],
+          },
+          /* ── 插话冷却（2026-10-17）────────────────────────────────────────
+             为什么它单独占一块玻璃板、并且**只**是一条进度条：
+
+             ① 它此前**根本没有界面**。`trigger.interjectCooldownMs` 从机器人第一版起就在
+                `src/brain.js` 里判（`lastInterjectAt < interjectCooldownMs` ⇒ deny「插话冷却中」），
+                而面板既不下发、也不接受写入 —— 用户想改只能手改 config.json。
+                所以这块板的第一职责是「让它存在」，不是「让它更好看」。
+             ② 用户点名要的是**进度条**，不是输入框：这个量是"两次主动接话之间至少隔多久"，
+                适合用位置表达（越靠右越安静），而一个 5 位数的毫秒输入框两者都给不了。
+             ③ `col: 'r'` —— 落点就是「拉黑」卡下方那块空白（12 列栅格的右半）。
+                不用 `span: 12`：那会把左列「被叫到」顶下去一整行，红框那块反而空着。 */
+          {
+            id: 'cool', title: '插话冷却', span: 6, col: 'r', tone: 'liquid',
+            ctrls: [
+              { t: 'range', id: 't.cool', label: '两次主动插话之间至少隔',
+                bindSys: 'interjectCooldownMs',
+                /* `scale: 60000` = 界面上的**分钟** × 60000 = 盘上的毫秒。
+                   换算只在 app.js 的 valueOf / setValue 里做一次（与 `pct` 同一条纪律）——
+                   控件自己只声明单位，不在渲染函数里乘除。 */
+                scale: 60000, min: 1, max: 300, log: true, unit: '分钟',
+                // 刻线只标三处（5 分钟 / 半小时 / 2 小时）：对数刻度下"5 分钟"落在 28%
+                // 而不是 1/300 —— 没有刻线时这个位置会被读成"滑块坏了"。
+                marks: [5, 30, 120],
+                hint: '两次<b>主动接话</b>之间至少隔这么久。被 @、被关键词叫到<b>不受</b>它限制 —— 冷却只拦它自己起话头。拖到最右（5 小时）≈ 只在你叫它时才说话。' },
             ],
           },
         ],
@@ -907,7 +945,9 @@ export const GROUPS = [
             id: 'pluggrid', title: '插件清单与设置', span: 12,
             /* ⚠️ `bare: true` = **不套外层 .card**（`cardHtml` 走 `bareHtml`）。
                插件网格自己就是完整的板集合：外面再罩一张 span-12 玻璃板，
-               视觉上就变成「大玻璃板里切了 13 块」—— 而用户要的是每块独立浮着。
+               视觉上就变成「大玻璃板里切了 N 块」—— 而用户要的是每块独立浮着。
+     （这里原本写着"13 块"：那是当时装着的包数，2026-10-17 那 13 个包已全部删除 ——
+       数字会腐烂，写 N 才不会在下一次变成"注释说一件不再成立的事"。）
                那层外壳不是设计，是容器，所以这里把它整个脱掉。 */
             bare: true,
             ctrls: [{ t: 'pluginList' }],
@@ -991,6 +1031,8 @@ export const GROUPS = [
                 kv('启动于', () => new Date(j(s, ['panel', 'bootedAt'], 0)).toLocaleString()),
                 kv('服务端代码是不是旧的', () => (j(s, ['panel', 'stale']) ? '是 —— 新接口还没生效（表现为某些按钮点了没反应）' : '否')),
               ] },
+              /* 应用内更新（P3）：检查/下载/取消/安装；自动检查，但绝不自动安装。 */
+              { t: 'update', id: 'upd' },
               { t: 'buttons', label: '', items: [
                 act('重启面板', 'panel.restart', 'btn-ghost', '代码没变就回「已是最新」，绝不无谓重启'),
                 act('打开控制台主页', 'open.home'),
@@ -999,6 +1041,59 @@ export const GROUPS = [
             ],
           },
           { id: 'about', title: '这一页是什么', span: 6, ctrls: [{ t: 'protoInfo' }] },
+          {
+            /* 桌面端「启动方式」（2026-10-16）：控制台以什么形态呈现。
+               ⚠️ 这两项**只在启动的一瞬间**被读一次（启动器读 config.json 的 launch 段）——
+                  所以提示语必须说"下次启动生效"（走控件的 `savedMsg`，app.js 的保存回报），
+                  否则用户会以为"没保存"或盯着当前这个旧标签页纳闷。
+               ⚠️ 文案里的"找不到浏览器自动回落"不是修饰 —— 它是判据的真实行为
+                  （src/launch-mode.js，fail-open）。 */
+            id: 'startmode', title: '启动方式（桌面端）', span: 6,
+            desc: '双击启动器 / 桌面图标时，控制台以什么形态出现。启动器**只在启动时读一次**这份设置 —— <b>改完下次启动生效</b>。',
+            ctrls: [
+              { t: 'seg', id: 'l.mode', label: '打开方式', volatile: true,
+                options: [
+                  { v: 'browser', l: '浏览器标签页' },
+                  { v: 'window', l: '独立窗口 · 无地址栏' },
+                ],
+                read: (s) => j(s, ['config', 'launch', 'mode'], 'browser'),
+                savedMsg: '已保存 —— 下次启动生效',
+                hint: '注意：内测版先不要点「独立窗口 · 无地址栏」，还有部分 BUG（首跑可能出一个灰色空窗，要再双击一次）。'
+                  + '独立窗口用系统里已装的 Microsoft Edge / Google Chrome 以「应用窗口」方式打开'
+                  + '（没有地址栏和标签页，任务栏上是单独一个窗口）。两个都没装时自动回落到浏览器标签页。',
+                save: (v) => ({ url: '/api/config', body: { launch: { mode: v } } }) },
+              { t: 'switch', id: 'l.open', label: '启动后自动打开界面', volatile: true,
+                read: (s) => j(s, ['config', 'launch', 'openOnStart'], true),
+                savedMsg: '已保存 —— 下次启动生效',
+                hint: '关掉后，启动器只把控制台放进后台、不弹任何窗口（适合「开机自启、静默驻留」）。'
+                  + '想手动看它：浏览器打开 http://127.0.0.1:8788/ 。',
+                save: (v) => ({ url: '/api/config', body: { launch: { openOnStart: v } } }) },
+              { t: 'kv', rows: (s) => {
+                /* 「上次启动」= 启动跟踪里最近一条（三个启动器每次都会写一行）。
+                   没有它的时候，下面那两格设置"到底生效没有"只能靠感觉 ——
+                   这一行让"双击之后实际走了哪条路"当场可见。 */
+                const l = j(s, ['config', 'launch', 'last'], null);
+                if (!l) return [kv('上次启动', () => '还没有记录 —— 下次启动后这里会出现')];
+                const ts = String(l.t || '').replace('T', ' ').slice(0, 16) || '—';
+                const how = l.skipped
+                  ? '按设置未打开界面'
+                  : (l.opened === false
+                    ? `打开失败（${l.error || '原因未知'}）`
+                    : (l.kind === 'window' ? `独立窗口 · ${l.used || '浏览器'}` : '浏览器标签页'));
+                const why = l.reason === 'no-window-browser'
+                  ? '（没找到 Edge / Chrome，已回落）'
+                  : (l.reason ? `（${l.reason}）` : '');
+                return [
+                  kv('上次启动', () => `${ts} · ${how}${why}`),
+                  kv('来自', () => String(l.entryLabel || l.entry || '未知入口')),
+                  ...(l.unknownMode
+                    ? [kv('注意', () => `配置里的 launch.mode 是「${l.unknownMode}」，认不出 —— 已按浏览器处理`)]
+                    : []),
+                ];
+              } },
+              { t: 'note', text: '这项设置存进 <code>config.json</code> 的 <code>launch</code> 段，由启动器（Windows 桌面快捷方式 / Mac 图标 / 命令行）在启动时读取 —— 它<b>不影响</b>当前这个已经开着的页面。每次启动的实际形态会记一笔（上面那行「上次启动」，存在 <code>panel/launch-log.jsonl</code>），排障时直接看它。' },
+            ],
+          },
         ],
       },
     ],
@@ -1013,19 +1108,105 @@ function controlHintOf(s) {
   if (!c) return '';
   return c.done ? `上一次命令 ${c.cmd}：${c.done}` : `已下发 ${c.cmd}，等机器人取走`;
 }
-function brainModeOf(s) {
-  const isLocal = j(s, ['effective', 'isLocal']);
-  const provider = j(s, ['config', 'provider'], '?');
-  const model = j(s, ['effective', 'model'], '—');
-  // 服务商 → 显示名，**四家写全**。漏一家的症状很隐蔽：那一页顶部写着**别人**的名字，
-  // 而页面其余部分（按钮高亮、模型下拉）全部正确 —— 用户会以为"切换根本没生效"。
-  // 兜底给 '云端' 而不是'智谱云端'：认不出时说"不知道是哪家"比指错一家安全。
-  const cloudLabel = { deepseek: 'DeepSeek 云端', zhipu: '智谱云端', qwen: '千问云端' };
-  const label = isLocal ? '本机模型（免费·不联网）' : (cloudLabel[provider] || '云端');
+/* 服务商 → 人话名（四家写全）。⚠️ **唯一**的消费者是 `brainPickOf()` ——
+   别处再抄一份映射，就会出现"横幅说一家、下面那行说另一家"（这个形状踩过）。
+   兜底给 '云端' 而不是'智谱云端'：认不出时说"不知道是哪家"比指错一家安全。 */
+const CLOUD_VENDOR = { deepseek: 'DeepSeek 云端', zhipu: '智谱云端', qwen: '千问云端' };
+
+/**
+ * 「现在用的是哪一套」—— **唯一判据**（2026-10-17 第三轮 · 维护者点名）。
+ *
+ * ⚠️⚠️ 只读 `config`（面板已选定、已经写进 config.json 的那一套），**不读 `effective`**。
+ *    这不是"少判一层"，而是把两个互相打架的源头收成一个：
+ *
+ *      `config`    = 面板这一侧的事实：用户点了哪个，磁盘上现在就是哪个；
+ *      `effective` = 机器人那一侧的事实：它**上次读到**的是哪个（切换要热重载才更新）。
+ *
+ *    上一版的实现是"横幅取 effective、标签高亮也靠 effective 匹配、提示语再拿 config
+ *    去比对" ⇒ 刚切换完的那几十秒里页面三处各说一套（横幅还是上一家、选中的那颗挂着
+ *    虚线「待生效」）。维护者 2026-10-17 明确：**点了就是它，用户自己会测** ——
+ *    中间态整块去掉。
+ *
+ *    `effective` 的痕迹只保留在「机器人读入配置于」那一行：它描述的是**机器人的动作**，
+ *    不该冒充"我在用哪个模型"。所以这里也不把 effective 的旧值混进来拼读数。
+ *
+ * ⚠️ `provider` 由后端 `providerOf(baseUrl)` 算好下发（唯一实现），前端不按域名重算 ——
+ *    重算就是第二份会漂的规则（本项目在这件事上踩过好几次）。
+ *
+ * @param {object} s `/api/state` 的完整状态
+ * @returns {{provider:string,isLocal:boolean,model:string,baseUrl:string,
+ *            vendor:string,label:string,customId:string}}
+ */
+export function brainPickOf(s) {
+  const provider = String(j(s, ['config', 'provider'], '')
+    || j(s, ['effective', 'provider'], '') || '');
+  const isLocal = provider === 'local';
+  const model = j(s, ['config', 'model'], '') || j(s, ['effective', 'model'], '') || '—';
+  const baseUrl = j(s, ['config', 'baseUrl'], '') || j(s, ['effective', 'baseUrl'], '') || '';
+  let vendor = CLOUD_VENDOR[provider] || '';
+  if (!vendor) {
+    if (isLocal) vendor = '本机模型';
+    // 自建 / 中转网关：写清是哪台机器，比一句"自定义"有用得多（排查时就是靠它）。
+    else {
+      try { const host = new URL(baseUrl).hostname; vendor = host ? `自定义（${host}）` : '自定义'; }
+      catch { vendor = '云端'; }
+    }
+  }
   return {
-    title: `现在在用：${label} · ${model}`,
-    hint: isLocal ? '切换后首次要加载约 20–60 秒。' : '切到本机模型会自动把内存还给你。',
-    cls: j(s, ['effective', 'alive']) ? 'ok' : 'warn',
+    provider,
+    isLocal,
+    model,
+    baseUrl,
+    vendor,
+    label: isLocal ? '本机模型（免费·不联网）' : vendor,
+    customId: String(j(s, ['config', 'activeCustomId'], '') || ''),
+  };
+}
+
+/**
+ * 顶部那条横幅：**只报"现在这套是什么"**，不再报"哪套还没生效" ——
+ * 后者是维护者点名去掉的（2026-10-17）：点一下就是它，剩下的他自己会测。
+ *
+ * 颜色仍然说实话：机器人没在跑时是黄条（`effective.alive` 是**另一件事**的判断，
+ * 不是模型身份判断，所以留在这里合法）。
+ */
+function brainModeOf(s) {
+  const p = brainPickOf(s);
+  const alive = j(s, ['effective', 'alive']) === true;
+  return {
+    title: `现在在用：${p.label} · ${p.model}`,
+    hint: p.isLocal
+      ? '切到本机模型会自动把内存还给你。'
+      : (alive ? '' : '机器人没在运行 —— 启动后就按这套走。'),
+    cls: alive ? 'ok' : 'warn',
+  };
+}
+
+/**
+ * 「免费额度」**一颗按钮**的数据（2026-10-17 维护者第二次点名：不再单独成块）。
+ *
+ * 按钮上只放两样：`免费额度` + 一个 4 字左右的标签（会不会花钱）。其余（额度规则、
+ * 能不能在面板里查余额、那句"用完即停要自己开"）全部进 `title` —— 鼠标停一下就有，
+ * 不占版面。**文案仍然全部来自 `state.quotaPlans`**（唯一实现住 `src/free-quota.js`），
+ * 前端一个字都不自己写：那句"用尽即停"是真会让人被扣钱的提醒，抄一份就多一处会烂的地方。
+ */
+function quotaBtnOf(s) {
+  const provider = j(s, ['config', 'provider'], 'zhipu');
+  const pl = j(s, ['quotaPlans', provider], null);
+  const tag = provider === 'deepseek' ? '按量计费'
+    : provider === 'zhipu' ? 'Flash 免费'
+      : provider === 'qwen' ? '限时赠送'
+        : (pl?.label || '官网查看');
+  const tip = [
+    pl?.kindNote || (pl ? '' : '这一版后端还没下发额度说明（重启一次面板即可）'),
+    pl?.liveBalance === 'api' ? '面板能查实时余额' : '实时余额要登录官网看（面板拿不到，不编数字）',
+    pl?.mustDo || '',
+  ].filter(Boolean).join('\n');
+  return {
+    label: `免费额度 · ${tag}`,
+    title: tip,
+    mustDo: !!pl?.mustDo,
+    hasUrl: !!pl?.controlUrl,
   };
 }
 
@@ -1046,35 +1227,6 @@ function customFeatureVisible(s, key) {
   return vis.includes(key);
 }
 
-/**
- * 「免费额度」卡的数据行。
- *
- * ⚠️ 内容**全部**来自 `state.quotaPlans`（唯一实现住 `src/free-quota.js`）——
- *    前端一个字的规则文案都不许自己写。理由很实在：这里面有那句
- *    「免费额度用尽即停默认是关的」，它是**真会让人被扣钱**的提醒，
- *    抄一份就多一处会腐烂的地方（而它腐烂时页面看起来完全正常）。
- *
- * ⚠️ 也**不在这里编数字**：`liveBalance: 'none'` 的服务商（千问）就是"查不到"，
- *    照实说"要去官网看"。项目里已经有过一次"把本机免费档当成云端计费"的错账，
- *    那次没人看得出来 —— 编一个看似统一的余额会更糟，因为它**看起来**更专业。
- */
-function quotaRowsOf(s) {
-  const provider = j(s, ['config', 'provider'], 'zhipu');
-  const pl = j(s, ['quotaPlans', provider], null);
-  if (!pl) {
-    return [kv('额度说明', () => '这一版后端还没下发（面板代码比后端新）—— 重启一次面板即可')];
-  }
-  const rows = [
-    kv('当前这家', () => pl.label || provider),
-    kv('额度类型', () => pl.kindNote || '—'),
-    kv('能不能在面板里看实时余额', () => (pl.liveBalance === 'api'
-      ? '能 —— 点上面的「查余额」'
-      : '不能 —— 这家的用量要登录官网才看得到，面板拿不到（不编数字）')),
-  ];
-  // 只有"不做就会被扣钱"的事才占一行 —— 这是本卡存在的**主要理由**。
-  if (pl.mustDo) rows.push(kv('必须你自己做一个动作', () => pl.mustDo));
-  return rows;
-}
 function costModeOf(s) {
   const isLocal = j(s, ['effective', 'isLocal']);
   return {
@@ -1129,24 +1281,40 @@ export const CTRL_KINDS = [
      把等权 kv 行换成有状态色的卡片，坏的那格自己会变红。 */
   'statusGrid', 'ports',
   'text', 'textarea', 'password', 'number', 'time', 'select', 'seg', 'tags',
-  /* `ticks`：**有序档位**的刻度选择器（抄 bencho.dev「Progress ticks」）。
+  /* `ticks`：**有序档位**的刻度选择器。
      与 `seg` 同一套数据契约（同一个 `options` / 同一个 `valueOf`/`setValue`），
      差别只在呈现：刻度把高度接上，所以顺序是**看得见的**。
      ⚠️ 少于 3 档时它**自动退回 `seg`**（2 档时高度差表达不了顺序，
         白占一行高度与一套指针逻辑）。 */
   'ticks',
+  /* `range`（2026-10-17）：**连续量**的进度条（区别于 `ticks` 的有限档位）。
+     数据契约与 `number` 相同（`bind` / `bindSys` / `min` / `max`），额外认：
+       · `scale` —— 界面值 × scale = 盘上的值（插话冷却：分钟 × 60000 = 毫秒）；
+       · `log: true` —— 对数刻度（1 分钟–5 小时这种跨两个数量级的量，线性刻度会把
+         常用的前半小时挤在最左边 10% 里，拖都拖不准）；
+       · `marks` —— 只画刻线不写字（文字只标两端，免得窄卡里挤成一团）。
+     ⚠️ 它与 `ticks` **不是**一回事：`ticks` 是有序少量档位的选择器（键盘换档语义），
+        这个是真滑块（连续值 + 原生 range 的无障碍语义）。不要合并。 */
+  'range',
   'sleepLine', 'sleepDetail', 'modelPick', 'routeBoard', 'packages',
   // 自定义大脑列表（2026-10-07）：渲染用户自己造的那几套 + 右键菜单（改名 / 删除）。
   // ⚠️ 与 `modelPick` 分开：那个是"选模型"，这个是"选大脑"，两件事的数据源也不同。
-  'brainList',
+  // ⚠️ 2026-10-17 第二轮：列表控件已从页面上摘掉（模型都显示在 `brainTags` 里），
+  //    `brainList` 不再登记 —— 控件类型清单只列**页面上真的会用到**的那些。
+  /* 2026-10-17 维护者点名的重做：
+     · `brainTags`  —— 顶部切换标签（只放自定义模型，右键改名/删除）
+     · `quotaBtn`   —— 「一键切换」卡右下角的**一颗**「免费额度 ↗」按钮
+                       （同一天先说"底部一条"，第二次又说"不要单独成块"⇒ 收成按钮） */
+  'brainTags', 'quotaBtn',
   'usageBySource', 'usageTable',
   'enhance', 'scenes', 'playRules', 'skills', 'memOverview', 'memList', 'memRecords', 'autoMemList',
   'schedList', 'holidays', 'emotionState', 'pluginSummary', 'pluginList', 'pluginSettings', 'pluginScope',
-  'faces', 'people', 'unread', 'gallery', 'apiDeals',
+  'people', 'unread', 'gallery', 'apiDeals',
   'sesList', 'sesDetail', 'chatList', 'chatDetail', 'traceList', 'logList', 'auditList',
   /* `termView`：网页内置终端（2026-10-11）—— 取代那个关不掉的前台 cmd 窗口。
      它不是一个"控件"，而是一个**自己管连接的面板**：日志由服务端经 SSE 推过来
      （`/api/console/stream`），页面重画时靠模块级状态重填，不重新建连接。 */
   'termView',
+  'update',
   'tryOut', 'importFile', 'importZip', 'protoInfo',
 ];

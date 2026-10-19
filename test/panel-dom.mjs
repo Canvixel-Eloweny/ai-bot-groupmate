@@ -116,10 +116,32 @@ const panelPort = await freePort();
 const cdpPort = await freePort();
 const BASE = `http://127.0.0.1:${panelPort}`;
 const profile = path.join(os.tmpdir(), `panel-dom-${process.pid}-${Date.now()}`);
+const USERDATA = fs.mkdtempSync(path.join(os.tmpdir(), 'panel-dom-userdata-'));
+try {
+  const ex = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json'), 'utf8'));
+  ex.llm = ex.llm || {};
+  // 大脑页至少演示「一颗自定义模型 + 一颗添加」；只用脱敏 fixture，不碰真机 Key。
+  ex.llm.customBrains = {
+    'fixture-brain': {
+      id: 'fixture-brain', name: '测试模型', baseUrl: 'https://api.example.com/v1',
+      model: 'test-model', apiKey: '', fallbackModels: [], features: {},
+      maxTokens: 400, temperature: 1,
+    },
+  };
+  ex.llm.activeCustomId = 'fixture-brain';
+  fs.writeFileSync(path.join(USERDATA, 'config.json'), JSON.stringify(ex, null, 2));
+} catch { /* 缺模板就按默认 */ }
 
 const panel = spawn(NODE, ['panel/server.js'], {
   cwd: ROOT,
-  env: { ...process.env, QQBOT_PANEL_PORT: String(panelPort), QQBOT_SANDBOX: '1', NODE_OPTIONS: '' },
+  env: {
+    ...process.env,
+    QQBOT_PANEL_PORT: String(panelPort),
+    QQBOT_SANDBOX: '1',
+    QQBOT_MODE: 'dev',
+    QQBOT_USER_ROOT: USERDATA,
+    NODE_OPTIONS: '',
+  },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let srvOut = '';
@@ -238,6 +260,12 @@ try {
           newErrs: (window.__errs || []).length - before,
           sample: (page.textContent || '').trim().slice(0, 40),
           sampleAll: (page.textContent || ''),
+          // 大脑页重做（2026-10-17）：切换标签与免费额度按钮都是**数据驱动**的，
+          // 少一个不会报错、只会"看着少了一块"——所以单独记数量，由下面钉住。
+          brainTags: page.querySelectorAll('.brain-tags .brain-tag').length,
+          // 免费额度 2026-10-17 第二次改版：整块卡片 ⇒ 「一键切换」卡里**一颗按钮**。
+          quotaBtn: page.querySelectorAll('.quota-btn').length,
+          quotaCard: page.querySelectorAll('#card-quota').length,
         });
       }
     }
@@ -264,6 +292,233 @@ try {
 
   const counts = r.map((x) => `${x.label.trim()}=${x.cards}`).join(' ');
   console.log(`  每页卡片数：${counts}`);
+
+  /* ── 大脑页的两块新东西（2026-10-17 · 维护者点名重做）──
+     ⚠️ 它们**不是**业务逻辑，但正是那种"少一块也不报错"的形态：
+        标签行没了 → 用户以为只能改配置改模型；免费额度没了 → 再没人发现它在哪。
+        ⚠️ 标签数量 ≥5：本机（Mac）+ DeepSeek + 智谱 + 千问 + 添加 + 自定义若干。
+        Windows 上本机不显示，所以下限取 5 已经留了余量。 */
+  const brainPage = r.find((x) => /模型与线路/.test(x.label));
+  ok(!!brainPage, '遍历里找到了「模型与线路」页');
+  if (brainPage) {
+    /* 2026-10-17 第二轮：标签行**只放用户自己建的模型**（本机 / DeepSeek / 智谱 / 千问
+       这些预设标签已按维护者要求撤掉），所以下限是「至少一颗模型 + 一颗添加」。
+       钉下限而不是钉具体数字：模型数量本来就随用户配置变。 */
+    ok(brainPage.brainTags >= 2, `大脑标签行渲染出来了（实得 ${brainPage.brainTags} 颗：自定义模型 + 「＋ 自定义模型」，下限 2）`);
+    /* 免费额度 2026-10-17 第二次点名：**不再单独占一块**，收成「一键切换」卡右下角的
+       一颗按钮。所以这里两头都钉：卡没了、按钮在（少一个都不报错，只是"少了一块"）。 */
+    ok(brainPage.quotaCard === 0, `「免费额度」不再单独成卡（实得 ${brainPage.quotaCard} 张）`);
+    ok(brainPage.quotaBtn === 1, `免费额度收成**一颗按钮**（实得 ${brainPage.quotaBtn} 颗）`);
+  }
+
+  /* ── 添加模型的「云端 ⇄ 本地」切换 + 标签右键菜单（2026-10-17 第二轮）──
+     这两件事都只有**点下去**才知道对不对：静态扫描只能看到按钮存在。
+     ⚠️ 必须回到模型页再点 —— 上面的遍历停在最后一页（系统 / 面板维护）。 */
+  const brainUi = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const groups = [...document.querySelectorAll('#nav1 .grp')];
+    const g = groups.find((x) => /大脑/.test(x.textContent));
+    if (!g) return { error: '没找到「大脑」分组' };
+    g.click(); await sleep(150);
+    const subs = [...document.querySelectorAll('#nav2 .sub')];
+    const sub = subs.find((x) => /模型与线路/.test(x.textContent));
+    if (!sub) return { error: '没找到「模型与线路」子页' };
+    sub.click(); await sleep(220);
+    const box = document.getElementById('modalBox');
+    const modalEl = document.getElementById('modal');
+    const add = document.querySelector('.brain-tag.add');
+    if (!add) return { error: '没找到「＋ 自定义模型」标签' };
+    add.click(); await sleep(120);
+    const first = {
+      open: modalEl.hidden === false,
+      title: (box.querySelector('h3') || {}).textContent || '',
+      head: (box.querySelector('[data-a="brain.mode"]') || {}).textContent || '',
+      hasKey: !!box.querySelector('[data-bf="apiKey"]'),
+      base: (box.querySelector('[data-bf="baseUrl"]') || {}).value || '',
+    };
+    (box.querySelector('[data-a="brain.mode"]') || {}).click && box.querySelector('[data-a="brain.mode"]').click();
+    await sleep(120);
+    const second = {
+      head: (box.querySelector('[data-a="brain.mode"]') || {}).textContent || '',
+      hasKey: !!box.querySelector('[data-bf="apiKey"]'),
+      base: (box.querySelector('[data-bf="baseUrl"]') || {}).value || '',
+      hasWebSearch: !!box.querySelector('[data-bf="webSearch"]'),
+    };
+    const close = box.querySelector('[data-a="__modal-close"]');
+    if (close) close.click();
+    await sleep(80);
+    // 右键标签 → 与列表行同一份菜单（改名 / 改设置 / 删除）
+    const tag = document.querySelector('.brain-tag[data-brain]');
+    let menu = null;
+    if (tag) {
+      tag.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      await sleep(120);
+      const btns = [...box.querySelectorAll('button')].map((b) => b.textContent || '');
+      menu = {
+        open: modalEl.hidden === false,
+        title: (box.querySelector('h3') || {}).textContent || '',
+        items: btns.join('|'),
+      };
+      const c2 = box.querySelector('[data-a="__modal-close"]');
+      if (c2) c2.click();
+    }
+    return { first, second, menu };
+  })()`);
+  console.log('\n── 添加模型：云端 ⇄ 本地 ──');
+  ok(!brainUi.error, `打开「＋ 自定义模型」并读到表单（${brainUi.error || 'ok'}）`);
+  if (!brainUi.error) {
+    ok(brainUi.first.open && /添加自定义模型/.test(brainUi.first.title), `弹窗打开了（${brainUi.first.title}）`);
+    ok(brainUi.first.head === '切换到本地模型', `云端模式下标题右侧写「切换到本地模型」（实得「${brainUi.first.head}」）`);
+    ok(brainUi.first.hasKey, '云端模式有 API Key 输入框');
+    brainUi.second && ok(brainUi.second.head === '切换到云端', `切到本地后按钮变成「切换到云端」（实得「${brainUi.second.head}」）`);
+    ok(brainUi.second && brainUi.second.hasKey === false, '本地模式**没有** API Key 输入框（本地不需要 Key）');
+    ok(brainUi.second && /127\.0\.0\.1:8080/.test(brainUi.second.base), `本地模式地址默认填本机（实得「${brainUi.second && brainUi.second.base}」）`);
+    ok(brainUi.second && brainUi.second.hasWebSearch === false, '本地模式不摆「能联网」（web_search 是智谱形状，本地必然 400）');
+  }
+  if (brainUi.menu) {
+    ok(brainUi.menu.open && /删除/.test(brainUi.menu.items) && /改名字/.test(brainUi.menu.items),
+      `标签右键弹出改名 / 删除菜单（标题「${brainUi.menu.title}」· 按钮 ${brainUi.menu.items}）`);
+  }
+
+  /* ── 切换的反馈：横幅 + 选中态 + 四行 kv 必须同时跟着换（2026-10-17 · 维护者点名）──
+     ⚠️ **不改磁盘**：直接改页面里那份 `S.state`（`window.__next`）再让它重画。
+        真去点标签会走 `/api/switch` —— 沙箱只挡机器人进程、**不挡 config.json**，
+        那样这个守卫会改写本机真实配置。
+     ⚠️ 造的状态里 `config` 与 `effective` **故意不一致**（正是用户截图那一刻：
+        已经选了千问、机器人还停在 DeepSeek）。两者一致时"取对了源"与"取错了源"
+        在页面上长得一模一样，只有不一致才分得出来。 */
+  console.log('\n── 切换反馈：横幅 / 选中态同步 ──');
+  const pickUi = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => /大脑/.test(x.textContent));
+    if (!g) return { error: '没找到「大脑」分组' };
+    g.click(); await sleep(120);
+    const sub = [...document.querySelectorAll('#nav2 .sub')].find((x) => /模型与线路/.test(x.textContent));
+    if (!sub) return { error: '没找到「模型与线路」子页' };
+    sub.click(); await sleep(220);
+    const S = window.__next;
+    if (!S || !S.state || !S.state.config) return { error: '页面没有 window.__next.state.config' };
+    const cfg = S.state.config;
+    const A = { id: 't-a', name: '测试甲', model: 'test-model-a',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', provider: 'qwen', fallbackModels: [] };
+    const B = { id: 't-b', name: '测试乙', model: 'test-model-b',
+      baseUrl: 'https://api.deepseek.com/v1', provider: 'deepseek', fallbackModels: [] };
+    cfg.customBrains = [A, B];
+    const keep = { activeCustomId: cfg.activeCustomId, model: cfg.model, baseUrl: cfg.baseUrl, provider: cfg.provider };
+    // 机器人还停在上一套（用户截图那一刻的形状）
+    S.state.effective = { alive: true, since: Date.now(), provider: 'deepseek', model: 'deepseek-flash',
+      baseUrl: 'https://api.deepseek.com/v1', isLocal: false };
+    const paint = (b) => {
+      cfg.activeCustomId = b.id; cfg.model = b.model; cfg.baseUrl = b.baseUrl; cfg.provider = b.provider;
+      window.__nextRepaint();
+      return {
+        bar: (document.querySelector('[data-mb="brain.now"] b') || {}).textContent || '',
+        on: [...document.querySelectorAll('.brain-tag.on')].map((x) => x.getAttribute('data-brain')),
+        useTag: document.querySelectorAll('.brain-tag.on .use-tag').length,
+        pressed: [...document.querySelectorAll('.brain-tag[data-brain]')]
+          .map((x) => x.getAttribute('aria-pressed')).join(','),
+        pend: document.querySelectorAll('.brain-tag.pend, .pend-tag').length,
+        page: (document.getElementById('page') || {}).textContent || '',
+      };
+    };
+    const a = paint(A);
+    const b = paint(B);
+    Object.assign(cfg, keep);
+    return { a, b };
+  })()`);
+  ok(!pickUi.error, `读到页面状态并重画（${pickUi.error || 'ok'}）`);
+  if (!pickUi.error) {
+    const a = pickUi.a, b = pickUi.b;
+    ok(/千问云端/.test(a.bar) && /test-model-a/.test(a.bar) && !/deepseek/i.test(a.bar),
+      `横幅跟着**已选定**那套走，没有留在机器人上次读到的旧模型上（实得「${a.bar}」）`);
+    ok(a.on.length === 1 && a.on[0] === 't-a', `选中态只亮一颗，且是刚选的那颗（实得 ${JSON.stringify(a.on)}）`);
+    ok(a.useTag === 1, `选中那颗带「在用」标记（实得 ${a.useTag} 个）`);
+    ok(a.pend === 0, `没有「待生效」那种中间态（实得 ${a.pend} 个 pend 元素）`);
+    ok(/当前厂商\s*千问云端/.test(a.page) && /正在使用\s*test-model-a/.test(a.page),
+      '下面四行 kv 与横幅同源（同一页里不会出现两个人话说同一件事）');
+    ok(b.on.length === 1 && b.on[0] === 't-b' && /test-model-b/.test(b.bar) && !/test-model-a/.test(b.bar),
+      `再切一套：横幅与选中态一起换（实得 ${JSON.stringify(b.on)} ·「${b.bar}」）`);
+    ok(/^false,true$|^true,false$/.test(b.pressed), `标签带 aria-pressed（实得 ${b.pressed}）`);
+  }
+  /* ── 优先级线路：主模型单独一行 + 别家的模型要标出来（2026-10-17 · 维护者截图）──
+     截图里同一屏写着「正在使用 qwen3.8-max」和「主模型 GLM-4.5-Air」—— 因为列表存的
+     其实是**备用链**（主模型由 `config.model` 承担），第 1 行却被标成了「主模型」。
+     顺带把"这家的清单里没有的条目"标出来并给一键清掉（GLM 混进千问就是这么来的）。
+     ⚠️ 同样只在内存里改 state 再重画，不写盘。 */
+  console.log('\n── 优先级线路：主模型 / 别家模型 ──');
+  const boardUi = await evalJs(`(() => {
+    const S = window.__next;
+    if (!S || !S.state || !S.state.config) return { error: '页面没有 window.__next.state.config' };
+    const cfg = S.state.config;
+    const keep = { model: cfg.model, provider: cfg.provider, chain: (cfg.fallbackModels || []).slice() };
+    cfg.provider = 'qwen';
+    cfg.model = 'qwen3.8-max';
+    cfg.fallbackModels = ['glm-4.5-air', 'qwen3.7-flash'];
+    window.__nextRepaint();
+    const page = document.getElementById('page') || {};
+    const rows = [...document.querySelectorAll('.srt-item')].map((r) => ({
+      tag: (r.querySelector('.tag') || {}).textContent || '',
+      txt: (r.textContent || '').replace(/\\s+/g, ' ').trim(),
+    }));
+    const out = {
+      rows,
+      clean: !!(page.querySelector && page.querySelector('[data-a="route.clean"]')),
+      pageText: (page.textContent || ''),
+    };
+    cfg.model = keep.model; cfg.provider = keep.provider; cfg.fallbackModels = keep.chain;
+    window.__nextRepaint();
+    return out;
+  })()`);
+  ok(!boardUi.error, `读到线路板（${boardUi.error || 'ok'}）`);
+  if (!boardUi.error) {
+    ok(/主模型/.test(boardUi.pageText) && /qwen3\.8-max/.test(boardUi.pageText),
+      '主模型单独一行、写的是真正在用的那个模型（不再把备用链第 1 条标成主模型）');
+    ok(boardUi.rows.length === 2 && boardUi.rows[0].tag === '这家没有',
+      `别家的模型被标成「这家没有」（实得 ${JSON.stringify(boardUi.rows.map((r) => r.tag))}）`);
+    ok(boardUi.rows[1] && boardUi.rows[1].tag === '第 2 备用',
+      `本家的条目按"第 N 备用"排（实得 ${boardUi.rows[1] && boardUi.rows[1].tag}）`);
+    ok(boardUi.clean, '给了「清掉不属于这家的」入口（点了立即存）');
+  }
+
+  /* ── 插话冷却：进度条真的会动（2026-10-17 · 维护者点名）──────────────────
+     为什么必须是真浏览器：静态扫描只能证明 `t:'range'` 写了、RENDER 里有实现，
+     证明不了"液面跟着走、右上读数字跟着变" —— 而那两件才是用户点得到的东西。
+
+     ⚠️ 只派发 `input`、**不派发 `change`**：`change` 会 `setValue()` 写进草稿，
+        而草稿一旦非空，`softPaint()` 就不再重画 ⇒ 后面的断言会在冻结的旧 DOM 上跑。
+     ⚠️ 也不点「保存」：沙箱只挡机器人进程、不挡 config.json。 */
+  console.log('\n── 插话冷却：进度条 ──');
+  const coolUi = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => /发言与时机/.test(x.textContent));
+    if (!g) return { error: '没找到「发言与时机」分组' };
+    g.click(); await sleep(150);
+    const sub = [...document.querySelectorAll('#nav2 .sub')].find((x) => /触发方式/.test(x.textContent));
+    if (!sub) return { error: '没找到「触发方式」子页' };
+    sub.click(); await sleep(250);
+    const card = document.getElementById('card-cool');
+    const el = document.querySelector('.rng-track input');
+    if (!card || !el) return { error: '页面上没有插话冷却的进度条' };
+    const read = () => ({
+      val: (card.querySelector('.rng-val') || {}).textContent || '',
+      p: getComputedStyle(card.querySelector('.rng')).getPropertyValue('--p').trim(),
+    });
+    const before = read();
+    el.value = '600';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(80);
+    return { before, after: read(), aria: el.getAttribute('aria-valuetext') || '' };
+  })()`);
+  ok(!coolUi.error, `「触发方式」页读得到插话冷却（${coolUi.error || 'ok'}）`);
+  if (!coolUi.error) {
+    /* ⚠️ 这里**不能写死**"默认 5 分钟"：读数跟着真机 config.json 走，
+       维护者随时可能自己调过。把配置值写死进断言 = 断言会替用户撒谎。 */
+    ok(/分钟|小时/.test(coolUi.before.val), `读数带单位、不是毫秒原值（实得「${coolUi.before.val}」）`);
+    ok(coolUi.after.val !== coolUi.before.val, `拖动后读数跟着变（${coolUi.before.val} → ${coolUi.after.val}）`);
+    ok(parseFloat(coolUi.after.p) > parseFloat(coolUi.before.p),
+      `液面跟着变长（--p ${coolUi.before.p} → ${coolUi.after.p}）`);
+    ok(coolUi.aria && coolUi.aria === coolUi.after.val, `读屏文案与读数同源（aria-valuetext「${coolUi.aria}」）`);
+  }
 } catch (e) {
   fails.push(`守卫自己出错：${e && e.message ? e.message : e}`);
 } finally {
@@ -273,6 +528,7 @@ try {
   for (let i = 0; i < 30 && panel.exitCode === null; i++) await sleep(100);
   if (panel.exitCode === null) panel.kill('SIGKILL');
   try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* 清不掉就算了 */ }
+  try { fs.rmSync(USERDATA, { recursive: true, force: true }); } catch { /* 清不掉就留给 tmp */ }
 }
 
 if (fails.length) {
@@ -280,5 +536,5 @@ if (fails.length) {
   console.log(`── ${fails.length} 处问题 ──`);
   process.exit(1);
 }
-console.log('\n✓ 前端 DOM 守卫通过：首屏 + 检查表 + 逐页遍历（含零运行时错误 / 无白屏页）');
+console.log('\n✓ 前端 DOM 守卫通过：首屏 + 检查表 + 逐页遍历（含零运行时错误 / 无白屏页）+ 插话冷却进度条');
 process.exit(0);

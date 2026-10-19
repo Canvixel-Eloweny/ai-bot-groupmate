@@ -23,9 +23,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+import { panelFile } from './user-root.js';
 
 /**
  * 解析两个记忆文件的位置（**唯一一份**判据）。
@@ -45,10 +43,10 @@ export function resolveMemoryFiles(env = process.env) {
   return {
     autoFile: env.QQBOT_AUTO_MEMORY_FILE
       ? path.resolve(env.QQBOT_AUTO_MEMORY_FILE)
-      : path.join(ROOT, 'panel', 'auto-memory.jsonl'),
+      : panelFile('auto-memory.jsonl'),
     recordsFile: env.QQBOT_MEMORY_RECORDS
       ? path.resolve(env.QQBOT_MEMORY_RECORDS)
-      : path.join(ROOT, 'panel', 'memory-records.json'),
+      : panelFile('memory-records.json'),
   };
 }
 

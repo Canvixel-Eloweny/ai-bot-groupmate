@@ -167,6 +167,8 @@ NODE_OPTIONS= node scripts/mutate.mjs --restore     # 万一进程被杀，用�
 | `t2v3-hardening.mjs` | 任务2 v3 · 形态面收口 | 5 | 契约 5 | ✅ | 5/5 BLOCKED |
 | `t2v5-all.mjs` | 任务2 v5 · 随附清单 | 32 | 契约 25 / smoke 7 | ❌ 故意 | 28/28（S-12 第五批**退役 A23-1 / D-23a / D-23b / D-23c**：四条全打旧页 `renderSleepLine`）<br>⚠️ **第 7 轮重锚 8 条 + 修 `apply` 4 条**：Q86 把 reply 记录里那个 `sleep` 从**多行内联对象**换成单行引用 `sleep: sleepRound,`（A24-1 / A24-2a / A24-2b / A24-3 / A24-4 / A24-3S / A24-4S / D-24a）；A21-6 的 `count` 改实测值 **6**。<br>⚠️ 组 B1 的三条（诱饵在"窗内 / 窗外"）**已退化成同一件事**：`§50㉔` 早已从固定窗口改成 `braceSlice` **配平取体**，"窗"不存在了 —— **保留**但如实登记重复 |
 | `zcode-0928.mjs` | ZCode「面板断言体检」复现 | 1 | 契约 1 | ✅ | 1/1（S-12 第五批**退役 PH4c**：面板层变异打旧页徽标，随对象下线） |
+| `install-p1-1017.mjs` | P1 数据分离 · 单一根解析（§107） | 6 | 契约 5 / 对照 1 | ✅ | **6/6 · INVALID 0**：M1–M5 BLOCKED · C1 NOT-BLOCKED |
+| `install-p2-1018.mjs` | P2 安装器布局 · 单源/health/停止链/NSIS（§108） | 7 | 契约 6 / 对照 1 | ✅ | **7/7 · INVALID 0**：M1–M6 BLOCKED · C1 NOT-BLOCKED |
 | **`cleanup-01.mjs`** | **清理轮（死代码 / 导出面 / 归档）** | **9** | **契约 8 / smoke 1** | ❌ 待提交 | **本轮新增，见下** |
 | `b33-internal-marks.mjs` | B33 内部标记不许外泄 | 7 | 契约 5 / smoke 2 | ✅ | 2026-10-04 **补入库** —— 它被契约引用却一直未跟踪（见审查轮 C-3） |
 | `mem-01.mjs` | 记忆体系 D-M1 / D-M2 / D-M3 | 7 | 契约 5 / smoke 2 | ✅ | 2026-10-04 **补入库**（同上） |

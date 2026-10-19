@@ -24,6 +24,8 @@ import { sanitizeConfig, findLeaks } from './sanitize-config.mjs';
 import { interjectTuningOf } from '../src/interject.js';
 import { DEFAULT_AMBIENT_BATCH } from '../src/ambient.js';
 import { budgetOf } from '../src/context-budget.js';
+// 桌面端「启动方式」的缺省值（2026-10-16）：同样只从唯一判据取，不在这里手写。
+import { DEFAULT_LAUNCH } from '../src/launch-mode.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = path.join(ROOT, 'config.json');
@@ -75,6 +77,16 @@ if (!('qwen' in example.llm.keys)) example.llm.keys.qwen = '';
 //    里面的 `apiKey` 会被 `sanitize-config` 的判据照常清掉（键名以 `Key` 结尾）。
 if (!example.llm.customBrains || typeof example.llm.customBrains !== 'object') example.llm.customBrains = {};
 if (!('activeCustomId' in example.llm)) example.llm.activeCustomId = '';
+
+// ── 2026-10-16（桌面端形态）：模板里补上 `launch` 段 ─────────────────────────
+// 理由与上面 m-4 / `keys.qwen` 两段**一模一样**：生成器是"从真机 config.json 抄"的，
+// 而真机那份还没被面板写过 `launch` ⇒ 不补就**永远不会出现在模板里**，
+// 照着模板配的人不知道有"浏览器标签页 / 独立窗口"可选。
+// ⚠️ 值只从唯一判据取（`src/launch-mode.js` 的 `DEFAULT_LAUNCH`）—— 不许在这里手写；
+//    且**强制取默认值**（而不是"抄真机那份"）：模板服务的是"全新用户拿到什么"，
+//    而真机那份可能被切成 `window` 做试用。要改新用户的默认，就去改 `DEFAULT_LAUNCH`
+//    （唯一出处）—— 那条一改这里跟着变，正是我们要的单源。
+example.launch = { ...DEFAULT_LAUNCH };
 
 // ⚠️ 这里**刻意不补 `presets.qwen`**（对照：上面补了 `keys.qwen`）—— 两者的区别是
 //    "缺失时有没有人兜底"：

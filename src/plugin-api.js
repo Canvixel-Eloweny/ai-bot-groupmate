@@ -11,7 +11,7 @@
  *  ────────────────────────────────────────────────────────────────────
  *  规格（v2 §5）对 `EX-CAPCTX` 的原话是「`capabilities` 白名单 → 只给声明过的
  *  ctx 字段」，验收是"未声明能力时 ctx 字段为 `undefined`"。
- *  本批开工前把 **13 个真实扩展包**（QQ-Agent · MIT）逐个 grep 了一遍，
+ *  本批开工前把 **13 个真实扩展包**逐个 grep 了一遍，
  *  它们实际用到的 ctx 字段只有四个：
  *
  *  | 字段 | 用它的包 | 说明 |
@@ -171,7 +171,7 @@ export function buildApi({ manifest, log, now, registerTool, isActive, fetch, se
 
   // ── registerTool：两种型都给 ──────────────────────────────────────────
   // 第 47 轮 B12e-3 修正（此前这里对 plugin 型**抛错**，是照一份没核实出处的
-  // "lint" 写的）：拿参考实现（QQ-Agent 0.4 preview）的真实样本核过 ——
+  // "lint" 写的）：拿真实样本核过 ——
   //   · src/skills/manifest.js:37 原话：「这只是**语义归类**，不是能力限制」；
   //   · src/plugin-loader.js:70 createSkillApi 对两种型给同一个 registerTool；
   //   · 真实包「本体情绪」就放在 plugins/ 下、注册 2 个工具 + 4 个钩子。

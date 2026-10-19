@@ -71,9 +71,9 @@ export default [
   {
     id: 'M5',
     file: 'THIRD-PARTY-NOTICES.md',
-    anchor: /随本仓库分发的扩展包\*\*共 13 个\*\*/,
+    anchor: /随本仓库分发的扩展包\*\*共 0 个\*\*/,
     count: 1,
-    apply: (src) => src.replace('随本仓库分发的扩展包**共 13 个**', '随本仓库分发的扩展包**共 12 个**'),
+    apply: (src) => src.replace('随本仓库分发的扩展包**共 0 个**', '随本仓库分发的扩展包**共 1 个**'),
     layer: 'check-wb',
     expect: 'BLOCKED',
     note: '§25③-2：声明里的数量与 `git ls-files -- plugins skills` 脱钩（本轮真事故的形状）',

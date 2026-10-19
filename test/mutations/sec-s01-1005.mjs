@@ -101,20 +101,8 @@ const M5 = {
 };
 
 // ── M6：白名单被清空 ───────────────────────────────────────────────────────
-const M6 = {
-  id: 'M6',
-  note: '把自用包白名单清空（SELF_OWNED_PLUGIN_DIRS = []）—— 空输入会让"口径对齐"判据恒真，且发布审计会误杀自用包。预期 BLOCKED（§8 空数组 + 两处不一致）',
-  // ⚠️ 锚点认的是「这条 export 语句」而不是数组字面量（2026-10-07 修）：
-  //   自用包名单从 1 个长到 5 个、且改成多行排版之后，钉 `= ['plugins/本体情绪/'];`
-  //   的锚点命中 0/1 ⇒ 这两条变异从此 INVALID（拿不到任何结论）。
-  //   排版与成员都会再变，被执行的那一行不会。
-  anchor: /export const SELF_OWNED_PLUGIN_DIRS = \[/,
-  count: 1,
-  file: ALLOW,
-  apply: (s) => s.replace(/export const SELF_OWNED_PLUGIN_DIRS = \[[\s\S]*?\];/, 'export const SELF_OWNED_PLUGIN_DIRS = [];'),
-  layer: 'check-wb',
-  expect: 'BLOCKED',
-};
+  /* 2026-10-17：变异 M6 的对象（自用包的 gi 例外 / 非空白名单）已随 13 个包一起删除 ——
+     变异后与现状相同 ⇒ 惰性。锚点会失效，所以整条删掉。 */
 
 // ── M7：白名单搬回已知真值表模块（重新合并）────────────────────────────────
 const M7 = {
@@ -170,4 +158,6 @@ const M10 = {
   expect: 'NOT-BLOCKED',
 };
 
-export default [M1, M2, M3, M4, M5, M6, M7, M8, M9, M10];
+// ⚠️ 2026-10-17：M6（清空自用包白名单）已随 13 个包一起删除 —— 白名单本来就是空的，
+//    变异后与现状相同 ⇒ 惰性。对象从导出里摘掉（留着会是 ReferenceError）。
+export default [M1, M2, M3, M4, M5, M7, M8, M9, M10];

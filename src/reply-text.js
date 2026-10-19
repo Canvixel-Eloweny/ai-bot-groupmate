@@ -192,3 +192,20 @@ export function hardWrap(text, max) {
   if (rest) parts.push(rest);
   return parts.join(' ');
 }
+
+/**
+ * 剥掉残留的 QQ 表情标记（`[face:14]` / 旧版收藏令牌 `[face:cf-xxxxxxxx]`）。
+ *
+ * ⚠️ 这条**不是**「发表情功能」的一部分，是它的**防漏**：
+ *    表情能力已于 2026-10-17 按维护者要求整体下线（提示词不再教、发送侧不再拼表情段、
+ *    面板入口全删），但**历史记忆 / 旧会话存档 / 模型自己的惯性**照样会产出 `[face:14]`。
+ *    不剥的话，那一串字面量会原样出现在群里 —— 这是本项目实测过的形态：不报错、
+ *    只是群里多了一句"哈哈哈[face:14]"。
+ *
+ * ⚠️ **形态只此一份**：调用方是 `brain.parseReply`（每条回复都过）与
+ *    `index.js` 的发送兜底。别在别处再写一份 `/\[face:\d+\]/` ——
+ *    那份会漏掉旧令牌，于是历史存档里的 `[face:cf-…]` 漏网。
+ */
+export function stripFaceMarks(text) {
+  return String(text ?? '').replace(/\[face:(?:\d{1,3}|cf-[0-9a-f]{8})\]/g, '').trim();
+}

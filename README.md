@@ -289,8 +289,10 @@ estrella-bot/
   config.example.json          # sanitised template generated from a real config
   docker-compose.yml           # NapCat container
   persona/qq-chat.md           # persona
-  plugins/                     # extensions, deterministic kind (capabilities / hooks) — 5 ship with this repo
-  skills/                      # extensions, LLM kind (register tools) — 8 ship with this repo
+  plugins/                     # extensions, deterministic kind (capabilities / hooks) — none ship by default
+  skills/                      # extensions, LLM kind (register tools) — none ship by default
+                               #   (the 13 built-in packages were removed on 2026-10-17; the host still loads
+                               #    any package you drop here, subject to the allow-list below)
                                #   this on-disk skills/ is NOT src/skills.js: one is code on disk,
                                #   the other is data inside config.json. The host scans, validates,
                                #   reports, and only loads packages named in the allow-list
@@ -356,7 +358,6 @@ estrella-bot/
     style-profile.js           # per-member speaking profile
     reply-track.js             # who said what in which turn
     unread.js                  # unread model (bounded; no clear-all API)
-    custom-faces.js / face-habit.js / face-marks.js   # saved stickers (read-only)
     ephemeral.js / config-history.js
     ── extension execution layer ──
     plugin-manifest.js         # manifest contracts: id / apiVersion / entry
@@ -405,7 +406,7 @@ one-person project and priorities follow real pain.
 
 - [ ] **Multi-account support** — currently single process / single instance.
 - [ ] **Understanding voice and video content** — today they become placeholder text.
-- [ ] **Outbound rich media** — sending images / using saved stickers. Stickers are currently read-only.
+- [ ] **Outbound rich media** — sending images. (Sticker output was **removed** on 2026-10-17: the bot only ever picked from QQ's 15 built-in faces.)
 - [ ] **Native macOS protocol side** (route B) — blocked by NapCat's QQ version allow-list.
 - [ ] **Hot-reloading extensions** — changing the allow-list still requires restarting the bot.
 
@@ -452,8 +453,9 @@ explicitly restricts building other projects from its code. This project therefo
 official channels, shares no code with it, and distributes none of its code or binaries. Obtain it yourself
 and follow its licence.
 
-`plugins/` and `skills/` ship **13 extensions written for this project** (5 deterministic + 8 LLM kind) and
-are ready to use out of the box. Third-party packages *you* drop into those directories are **not**
+`plugins/` and `skills/` ship **no extensions by default**: the 13 packages written for this project
+(5 deterministic + 8 LLM kind) were removed on 2026-10-17. The host still loads any package you drop
+into either directory, subject to the allow-list below. Third-party packages *you* add are **not**
 committed (see the per-package exceptions in `.gitignore`). Which of them actually load is decided by
 `custom.plugins.enabled` in `config.json` — ⚠️ there is **no hot-plug**: changing the allow-list needs a
 restart (the console says so when you do). Also not distributed: `napcat/` (the protocol side) and the data

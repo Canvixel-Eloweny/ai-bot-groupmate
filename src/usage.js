@@ -1,11 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 // 月份键与「今天」同源：唯一实现住在零依赖叶子 `holidays.js`（第 13 轮 H-11 收敛前，
 // 这里是第二份 `monthKey`，与 `trace-stats.dayKeyOf` 各拼各的补零）。
 import { monthKeyOf } from './holidays.js';
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+import { panelFile } from './user-root.js';
 
 /**
  * 账本文件路径：**按月切分**，默认 `panel/usage-YYYY-MM.jsonl`。
@@ -20,7 +18,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  */
 export function usageFilePath() {
   if (process.env.QQBOT_USAGE_FILE) return path.resolve(process.env.QQBOT_USAGE_FILE);
-  return path.join(ROOT, 'panel', `usage-${monthKeyOf()}.jsonl`);
+  return panelFile(`usage-${monthKeyOf()}.jsonl`);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

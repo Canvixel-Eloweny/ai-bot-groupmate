@@ -58,7 +58,7 @@ const SKILL_BG_MAX = 1500;
  * 两处各写一份列表，加字段时漏一处就是这个项目反复踩过的坑。
  * 前 7 个是短字段（一句话能说完），后 5 个是叙述型（天生要写一段）。
  */
-export const PERSONA_KEYS = ['age', 'role', 'world', 'traits', 'tone', 'catch', 'faces', 'desire', 'fear', 'logic', 'attitude', 'status'];
+export const PERSONA_KEYS = ['age', 'role', 'world', 'traits', 'tone', 'catch', 'desire', 'fear', 'logic', 'attitude', 'status'];
 const PERSONA_LONG_KEYS = ['desire', 'fear', 'logic', 'attitude', 'status'];
 
 /**
@@ -198,38 +198,20 @@ export const SKILL_CHARS_IN_PROMPT = 2000;
  */
 export const MANUAL_MEMORY_IN_PROMPT = 12;
 
-/**
- * QQ 内置表情的常用档 —— 机器人**可以发**的那一批（id → 人看的名字）。
+/*
+ * QQ 内置表情表（`FACE_PRESETS`，15 张黄豆脸）已于 2026-10-17 **整表删除**。
  *
- * ⚠️ 消费者（2026-10-09 核）：`src/index.js`（下发给面板 + 喂 `face-habit.pickFace` 的
- *    `presets`）、`panel/lib/export-bundle.js`（导出配置包里那张 id 表）、
- *    `panel/server.js`（拼「下载表情 ID 表」）、`test/smoke.js`（T 族表情用例）。
- *    （这里以前写着"消费者只有一处"，已经不成立 —— 别再照着那句话去删。）
+ * 它原来喂的是「ATI-4 表情习惯」那道闸：按冷却 + 概率从这 15 张里挑一张，
+ * 插到回复的句首 / 句中 / 句尾。维护者的裁决是**不要这个功能** ——
+ * 「它只会发那几个黄豆脸，并不智能」。
  *
- * ⚠️ **ID 空间**：这里的 id 就是 OneBot `face` 段的 `id`，等于 QQ 的**旧版表情 id**
- *    （`14=微笑` / `13=呲牙` / `1=撇嘴`…）。它与 NapCat 自带 `face_config.json` 里的
- *    **`QSid`** 是同一套 —— 2026-10-09（第 53 轮）逐条核对过。
- *
- * ⚠️⚠️ 这张表以前**名称配错了对**（15 项里 11 项对不上），后果是：
- *    「面板上/清单里写着发一个『狗头』，群里显示的是『OK』」——
- *    用户报的「**乱发表情包**」有一半来自这里（另一半是随机的挑选与位置，那是**设计**，
- *    见 `src/face-habit.js`）。这个错的形态特别隐蔽：id 是**直传**的
- *    （`faceSegment(id)` 不做任何校验），所以发出去的**一直是合法的 QQ 表情**，
- *    只是**不是你以为的那一个** —— 不报错、不变形，只是名不副实。
- *
- * ⚠️ 改这张表之前必须**按 id 核对名字**（`napcat/` 不入库，只能在那台机器上核：
- *    那份 `face_config.json` 跟着 NapCat 走）。`scripts/win-diag.mjs` 的
- *    「表情 id 对照」一节干的就是这件事；也可以直接：
- *      node -e 'const j=require("./napcat/QQ/nt_qq/global/nt_data/Emoji/emoji-resource/face_config.json");
- *               const m=new Map(j.sysface.map(x=>[Number(x.QSid),String(x.QDes).replace(/^\//,"")]));
- *               for (const id of [14,13,5]) console.log(id, m.get(id));'
- *    **名字以那张表为准** —— 它是 QQ 官方给这套 id 的描述。
+ * ⚠️ 删的不是"配色"或"名单"，是**能力本身**：
+ *    · 提示词不再教它发表情（`brain.js` 的第 9 条已删）；
+ *    · 发送侧不再拼 `face` 段（`onebot.faceSegment` 已删）；
+ *    · 面板的「发 QQ 表情」开关与「收藏表情」卡一并移除。
+ * ⚠️ 历史存档里残留的 `[face:14]` 由 `reply-text.js` 的 `stripFaceMarks` 剥掉 ——
+ *    那是**防漏**，不是功能：不剥的话那一串字面量会原样发进群里。
  */
-export const FACE_PRESETS = [
-  [14, '微笑'], [13, '呲牙'], [5, '流泪'], [4, '得意'], [20, '偷笑'],
-  [22, '白眼'], [28, '憨笑'], [32, '疑问'], [33, '嘘'], [18, '抓狂'],
-  [27, '流汗'], [99, '鼓掌'], [182, '笑哭'], [6, '害羞'], [66, '爱心'],
-];
 
 export const REPLY_LENGTHS = {
   short: { label: '短', hint: '每条尽量 15 字以内，像随手打的' },
@@ -582,14 +564,32 @@ function enhanceFields(v) {
 }
 
 /**
- * 角色卡里存的那份"人格快照"＝ 人格 12 字段 + 增强 12 项。
+ * 场景 9 项的归一化（角色卡里的**场景快照**，形状与顶层 `custom.scenes` 一致）。
  *
- * 为什么增强项也要跟着卡走：角色卡的意义是"一键换人"。
+ * ⚠️ 它只认**卡自己的**那一份（`fields.scenes`），**绝不读顶层 `custom.scenes`**
+ *    （2026-10-15 · B4 / Issue #5）。理由：场景是**单份全局状态**，而卡存的是快照。
+ *    若在这里一律取顶层，三张卡会存到同一份 ⇒ 套用哪张都一样，等于没换；
+ *    若 `v` 是卡的快照（本来就没有 scenes），取 `v` 又只会得到 9 个空串
+ *    —— 那更糟：**字段在、值是空，看起来"存了"**，套用时会把用户的场景静默清空。
+ *    所以归一化只负责"卡里有就保住、没有就留空"，覆盖与否交给套用那一侧判断。
+ */
+function sceneFields(v) {
+  const src = v && typeof v === 'object' ? v : {};
+  return Object.fromEntries(Object.keys(SCENES).map((k) => [k, str(src[k], 500)]));
+}
+
+/**
+ * 角色卡里存的那份"人格快照"＝ 人格 12 字段 + 增强 12 项 + 场景 9 项。
+ *
+ * 为什么增强项、场景也要跟着卡走：角色卡的意义是"一键换人"。
  * 只存骨架、不存血肉的话，套用一张卡换回来的只是个半成品 ——
  * 用户会发现"语气对了但细节全没了"，然后只能手工再补一遍。
+ * 场景（被骂怎么回 / 冷场怎么办 / 深夜什么风格）明显是人设的一部分，
+ * 不跟着卡走时，换卡后场景还是上一张卡留下的。
  */
 function cardFields(v) {
-  return { ...personaFields(v), ...enhanceFields(v) };
+  const src = v && typeof v === 'object' ? v : {};
+  return { ...personaFields(src), ...enhanceFields(src), scenes: sceneFields(src.scenes) };
 }
 
 /**

@@ -14,20 +14,36 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
+import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { loadUserRoot } from './user-root-loader.mjs';
+import { NAPCAT_LAUNCHER_CANDIDATES, NOT_LAUNCHER_RE, isNapcatLauncherName } from './napcat-shape.mjs';
 
-// ── 路径 ────────────────────────────────────────────────────────────────────
-export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-export const APP = path.join(ROOT, 'app');
-export const TOOLS = path.join(ROOT, 'tools');
-export const RUNTIME_NODE_DIR = path.join(ROOT, 'runtime', 'node');
+// ── 路径（P1：根由 src/user-root.js 唯一解析）──────────────────────────────
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const ROOTS = await loadUserRoot();
+
+export const MODE = ROOTS.MODE;
+export const PROGRAM_ROOT = ROOTS.PROGRAM_ROOT;
+export const INSTALL_ROOT = ROOTS.INSTALL_ROOT;
+export const USER_ROOT = ROOTS.USER_ROOT;
+/** 兼容旧名：工具层原先的 ROOT 就是安装根。 */
+export const ROOT = ROOTS.INSTALL_ROOT;
+export const APP = ROOTS.PROGRAM_ROOT;
+export const TOOLS = path.join(PACKAGE_ROOT, 'tools');
+export const RUNTIME_NODE_DIR = path.join(ROOTS.INSTALL_ROOT, 'runtime', 'node');
 export const NODE_EXE = path.join(RUNTIME_NODE_DIR, 'node.exe');
-export const NAPCAT_DIR = path.join(APP, 'napcat');
+export const NAPCAT_DIR = ROOTS.NAPCAT_DIR;
 export const NAPCAT_ZIP = path.join(NAPCAT_DIR, 'NapCat.Shell.zip');
-export const CONFIG_JSON = path.join(APP, 'config.json');
-export const CONFIG_EXAMPLE = path.join(APP, 'config.example.json');
-export const SETUP_MARKER = path.join(APP, '.qqbot-portable-setup.json');
+/** 更新/下载的临时区（`userdata\update`）—— **不在协议端目录里**，见 fetchNapcatZip 的注释。 */
+export const UPDATE_DIR = ROOTS.UPDATE_DIR;
+export const CONFIG_JSON = ROOTS.CONFIG_FILE;
+export const CONFIG_EXAMPLE = path.join(ROOTS.PROGRAM_ROOT, 'config.example.json');
+export const SETUP_MARKER = ROOTS.SETUP_STATE_FILE;
+export const MIGRATION_FILE = ROOTS.MIGRATION_FILE;
+/** 版本单一来源：程序根的 package.json（P1 起不再在 setup/onekey 里各写一份）。 */
+export const VERSION = JSON.parse(fs.readFileSync(path.join(ROOTS.PROGRAM_ROOT, 'package.json'), 'utf8')).version;
 
 export const IS_WIN = process.platform === 'win32';
 export const MIN_NODE = '22.13';
@@ -40,12 +56,21 @@ const C = {
 const canColor = () => process.stdout.isTTY || process.env.FORCE_COLOR === '1';
 const paint = (c, s) => (canColor() ? `${c}${s}${C.reset}` : s);
 
-export const say = (s = '') => console.log(s);
-export const ok = (s) => console.log(`${paint(C.green, '  ✓')} ${s}`);
-export const warn = (s) => console.log(`${paint(C.yellow, '  !')} ${s}`);
-export const bad = (s) => console.log(`${paint(C.red, '  ✗')} ${s}`);
+// nsExec feeds child stdout into the instfiles details view, which decodes bytes with
+// the system codepage: UTF-8 Chinese (and our ✓/✗ marks) renders as mojibake on Chinese
+// Windows (P9 group-test screenshot). Under the installer we therefore print ASCII:
+// English wording plus '?' for anything non-ASCII left (e.g. a Chinese user name in a
+// path). Manual runs keep full UTF-8. The primitive lives in install-layout.mjs (pure
+// leaf) so bootstrap can use it before common.mjs is allowed to be imported.
+import { installerMode as underInstaller, installerAscii as safe } from './install-layout.mjs';
+
+export const say = (s = '') => console.log(safe(s));
+export const ok = (s) => console.log(safe(underInstaller() ? `  [ok] ${s}` : `${paint(C.green, '  ✓')} ${s}`));
+export const warn = (s) => console.log(safe(underInstaller() ? `  [!] ${s}` : `${paint(C.yellow, '  !')} ${s}`));
+export const bad = (s) => console.log(safe(underInstaller() ? `  [x] ${s}` : `${paint(C.red, '  ✗')} ${s}`));
+export const sayErr = (s = '') => console.error(safe(s));
 export const title = (s) => console.log(`\n${paint(C.bold, s)}`);
-export const dim = (s) => console.log(paint(C.dim, s));
+export const dim = (s) => console.log(safe(paint(C.dim, s)));
 
 // ── 小工具 ──────────────────────────────────────────────────────────────────
 export function humanSize(n) {
@@ -58,6 +83,36 @@ export function humanSize(n) {
 }
 
 export function exists(p) { try { return fs.existsSync(p); } catch { return false; } }
+
+/** 整个文件的 SHA-256（十六进制小写）。本包要哈希的件最大约 36MB，整读即可。 */
+export function sha256File(p) {
+  const h = createHash('sha256');
+  h.update(fs.readFileSync(p));
+  return h.digest('hex');
+}
+
+// ── 启动诊断（boot 日志）────────────────────────────────────────────────────
+/**
+ * 逐阶段启动诊断（2026-10-16 · Windows P0-3）：往 `<包根>/diag-out/boot-<日期>.log`
+ * **同步追加**一行 —— "双击之后卡在哪一步 / 下载到底走没走到"这类问题过去只能靠人
+ * 复述屏幕；现在 `4-DIAG` 会把这份日志的尾部一起收走（见 diag.mjs ⑥c）。
+ *
+ * 三条纪律（与「启动跟踪」同一取向）：
+ *  ① **写本机本地时间**（给人读，与钟一致；不写 UTC —— 别再制造"13:55 是什么时候"）。
+ *  ② **同步 append**：顺序即事实（异步写会把"谁先谁后"搅乱）。
+ *  ③ **写不进去绝不抛**：诊断是锦上添花，不是任何流程的前置。
+ */
+export function diag(msg) {
+  try {
+    const d = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const day = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+    const stamp = `${day} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+    const dir = path.join(USER_ROOT, 'diag-out');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, `boot-${day}.log`), `[${stamp}] ${msg}\n`, 'utf8');
+  } catch { /* 纪律 ③：写不进去就算了 */ }
+}
 
 /** 递归找出**全部**命中（找启动器/配置时要看全再排序，不能只拿第一个碰到的）。 */
 function findAll(dir, predicate, { maxDepth = 5, skip = new Set(['node_modules', 'QQ']) } = {}) {
@@ -101,7 +156,35 @@ export async function waitPort(port, ms, step = 800) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ── 下载（带镜像回退 / 断点续传 / 进度）──────────────────────────────────────
+// ── 下载（带镜像回退 / 断点续传 / 进度 / 真值校验 / 超时与预算）──────────────
+/**
+ * 网络的下限（2026-10-18 · P6）：**宁可这一次不下，也不要把安装器挂死。**
+ *
+ * 来历：Windows 安装器在 `nsExec` 里同步调用本函数下载 NapCat，而 NSIS 的进度条
+ * 在外部进程里**不会推进** —— 于是任何时长都表现成"卡在最后一格"。在维护者的
+ * Windows 11 测试机上实测（2026-10-18 18:47 · 3MB Range 探针 · `--max-time 25`，
+ * 原文见 `INSTALLER-SPEC.md` §21 引用的探针输出）：
+ *   · 第一候选 `gh-proxy.com`  3,000,001 B / 13.097 s = **229,064 B/s**（≈224 KiB/s）
+ *     ⇒ 官方包 35,884,742 B ≈ **2.6 分钟**；
+ *   · 第二候选 `ghproxy.net`   1,173,044 B / 25.003 s = **46,919 B/s**（≈46 KiB/s），
+ *     且**在 25 秒处被 max-time 截断**（curl rc=28）⇒ 按这一档 ≈ **12.7 分钟**；
+ *   · `github.com` 与 `api.github.com` **0 字节、curl rc=6**（DNS 直接解析失败）。
+ * ⇒ 两个镜像**差 5 倍**，而第二候选连 3MB 都要 25 秒都拉不完 —— 这才是"看起来卡死"的量级。
+ * 而这里原来**一个超时都没有**（同仓的元数据口 `lib/versions.mjs` 反倒有 8 秒，
+ * 注释写着"宁可查不到，也不要让安装卡在一台断网的机器上"）。
+ * ⇒ 五个数字全部具名、可被 `check-wb` §114 静态解析，不许改回魔法数。
+ */
+/** DNS + TLS + 首个响应头的上限。实测坏 DNS 在 0.02 秒就失败，这条只管"挂住不动"。 */
+export const CONNECT_TIMEOUT_MS = 12000;
+/** 两个数据块之间的最大静默；**每收到一个 chunk 重新计时**。 */
+export const STALL_TIMEOUT_MS = 20000;
+/** 15 秒滑动窗口的最低存活速率（字节/秒）。低于它 = 这个源还活着但没用，判死并回退。 */
+export const MIN_ALIVE_BYTES_SEC = 15000;
+/** 单个源最多占用的时间，超了就换下一个。 */
+export const PER_SOURCE_BUDGET_MS = 150000;
+/** 整轮（所有源加起来）的预算；耗尽 ⇒ 抛 `code='DOWNLOAD_BUDGET'`，**保留 `.part`** 供下次续传。 */
+export const TOTAL_BUDGET_MS = 300000;
+
 /**
  * 从候选 URL 依次尝试下载到 dest。
  *
@@ -110,53 +193,195 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  *    ① 支持多镜像回退；② 打印进度与速率（否则用户以为卡死了）；
  *    ③ 支持 `.part` 断点续传（重跑 SETUP 不从头再来）。
  *
+ * ⚠️ 2026-10-16 增强（Windows P0-2），四条都围绕"用户看到的数字要可信"：
+ *    ① `expectedSha256`：拿到官方哈希就**整份重算**（含续传留下的前半段 ——
+ *       残段被改过、或两次下载来自不同版本，都会在这里现形）。对不上 ⇒
+ *       丢弃残段**自动从头重下一次**（`.part` 被改的自我修复），再对不上才换镜像；
+ *    ② 非 TTY（输出被重定向、被日志收走）时不再用 `\r` 原地刷新 —— 改成**每 10%
+ *       一行**（`\r` 在非 TTY 里会拼成一坨，把日志搅花过）；
+ *    ③ TTY 进度行带 **ETA**（"还要多久"比"已下多少"更能安抚用户）；
+ *    ④ 报错翻出 `error.cause`（`fetch failed` 没有信息量，`ECONNRESET` /
+ *       `ENOTFOUND` 才指向真原因）。
+ *
+ * ⚠️ 2026-10-18（P6）加的两条：
+ *    ⑤ **超时与预算**：连接 / 空闲 / 存活速率 / 单源 / 总预算五道，任何一道触发都
+ *       换下一个源或收工，**不存在"一直等"**；总预算耗尽 ⇒ 抛 `err.code='DOWNLOAD_BUDGET'`
+ *       并**保留 `.part`**（调用方是被"转交"而不是被"取消"，下次续传从断点起，
+ *       与 `panel/lib/update-download.js` 的"取消即删残段"是**有意的不对称**）；
+ *    ⑥ `expectedSize`：官方尺寸一给，源返回的总长对不上就**当场判这个源不对**
+ *       （以前 `total > 0 &&` 的守卫意味着服务端不给 `content-length` 时，
+ *        截断流也会被当成成功）。
+ *
  * @param {string[]} urls  候选 URL，按顺序试
  * @param {string} dest    最终文件路径
- * @returns {Promise<{url:string, bytes:number}>}
+ * @param {{expectedSha256?:string, expectedSize?:number, budgetMs?:object, onProgress?:Function}} [opt]
+ *        官方哈希（十六进制小写）与官方字节数；`budgetMs` 只给测试注入用（缩小时间尺度），
+ *        生产路径一律用上表的具名常量。
+ * @returns {Promise<{url:string, bytes:number, sha256:string}>} sha256 = 校验通过的实测值（没给期望值时为 ''）
  */
-export async function downloadWithMirrors(urls, dest) {
+export async function downloadWithMirrors(urls, dest, opt = {}) {
+  const { expectedSha256 = '', expectedSize = 0 } = opt;
+  const budget = {
+    connectMs: CONNECT_TIMEOUT_MS,
+    stallMs: STALL_TIMEOUT_MS,
+    minAliveBytesPerSec: MIN_ALIVE_BYTES_SEC,
+    perSourceMs: PER_SOURCE_BUDGET_MS,
+    totalMs: TOTAL_BUDGET_MS,
+    ...(opt.budgetMs || {}),
+  };
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   const part = `${dest}.part`;
   const errors = [];
+  let budgetHit = false; let slowHit = false;
+  const tAll = Date.now();
+  const errText = (e) => {
+    if (!e) return String(e);
+    const cause = e.cause ? (e.cause.code || e.cause.message || String(e.cause)) : '';
+    return cause ? `${e.message || e}（${cause}）` : (e.message || String(e));
+  };
 
   for (const url of urls) {
-    let offset = exists(part) ? fs.statSync(part).size : 0;
-    try {
-      const res = await fetch(url, offset > 0 ? { headers: { Range: `bytes=${offset}-` } } : {});
-      if (!res.ok) { errors.push(`${url} → HTTP ${res.status}`); offset = 0; continue; }
-      if (offset > 0 && res.status !== 206) offset = 0; // 服务端不认 Range：从头来
-
-      const totalHeader = Number(res.headers.get('content-length') || 0);
-      const total = offset + totalHeader;
-      say(`  下载中… ${url}`);
-      if (total > 0) dim(`  共 ${humanSize(total)}（可断点续传：中断后重跑本脚本）`);
-
-      const out = fs.createWriteStream(part, offset > 0 ? { flags: 'a' } : { flags: 'w' });
-      let got = offset;
-      let lastPrint = 0;
-      const t0 = Date.now();
-      for await (const chunk of res.body) {
-        if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
-        got += chunk.length;
-        const now = Date.now();
-        if (now - lastPrint > 500) {
-          lastPrint = now;
-          const kbps = ((got - offset) / 1024) / Math.max((now - t0) / 1000, 0.001);
-          const pct = total > 0 ? `${((got / total) * 100).toFixed(1)}% ` : '';
-          process.stdout.write(`\r  ${pct}${humanSize(got)}${total > 0 ? ` / ${humanSize(total)}` : ''}  ${kbps.toFixed(0)}KB/s   `);
-        }
+    // 一个源最多两轮：① 带续传正常下载；② 校验不过 ⇒ 丢弃残段从头再来一次。
+    for (let round = 0; round < 2; round += 1) {
+      if (Date.now() - tAll > budget.totalMs) {
+        errors.push(`${url} → 总预算 ${Math.round(budget.totalMs / 1000)} 秒已用尽，不再试下一个源`);
+        budgetHit = true;
+        break;
       }
-      await new Promise((r) => out.end(r));
-      process.stdout.write('\r' + ' '.repeat(72) + '\r');
+      if (round === 1) {
+        try { fs.rmSync(part, { force: true }); } catch { /* 下面用 'w' 截断也能盖掉 */ }
+        say('    ! previous part failed verification - discarded the partial file, restarting from scratch');
+      }
+      const offset = round === 0 && exists(part) ? fs.statSync(part).size : 0;
+      // 三道计时器共用一个 AbortController：连接超时（拿到响应头即撤）、
+      // 空闲超时（**每收到一个 chunk 重挂**）、单源预算（到点就放弃这个源）。
+      const ctl = new AbortController();
+      const abortWith = (why) => { try { ctl.abort(new Error(why)); } catch { /* 已 abort */ } };
+      let idleTimer = null;
+      let sourceTimer = null;
+      const armStall = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => abortWith('空闲超时（一段时间内没有任何数据到达）'), budget.stallMs);
+      };
+      const sourceDeadline = Date.now() + budget.perSourceMs;
+      let out = null; // 半途 abort 也必须在 finally 关掉：Windows 上留着的句柄会让下一个源写不进同一个 .part
+      let connectTimer = null;
+      try {
+        connectTimer = setTimeout(() => abortWith('连接超时'), budget.connectMs);
+        armStall();
+        sourceTimer = setTimeout(() => abortWith('单源预算耗尽'), Math.max(sourceDeadline - Date.now(), 1));
+        const res = await fetch(url, {
+          signal: ctl.signal,
+          ...(offset > 0 ? { headers: { Range: `bytes=${offset}-` } } : {}),
+        });
+        clearTimeout(connectTimer);
+        if (!res.ok) { errors.push(`${url} → HTTP ${res.status}`); break; }
+        if (Date.now() > sourceDeadline) { errors.push(`${url} → 单源预算耗尽`); budgetHit = true; break; }
+        let startAt = 0; // 服务端不认 Range（不是 206）：从头来
+        if (offset > 0 && res.status === 206) {
+          // ⚠️ 续传必须核对起点：Content-Range 的起始字节不等于我们的残段长度，
+          //    说明服务端记的是**另一份**内容，接上去只会得到一个哈希对不上的文件。
+          const cr = res.headers.get('content-range') || '';
+          const from = /^bytes (\d+)-/.exec(cr);
+          if (!from || Number(from[1]) !== offset) {
+            fs.rmSync(part, { force: true });
+            errors.push(`${url} → 续传起点与残段不符（Content-Range：${cr || '缺失'}），已丢弃残段`);
+            continue; // 残段没了 ⇒ 回到 round 1，从 0 整份重下
+          }
+          startAt = offset;
+        }
+        const totalHeader = Number(res.headers.get('content-length') || 0);
+        const total = startAt + totalHeader;
+        if (expectedSize > 0 && total > 0 && total !== expectedSize) {
+          // 总长与官方记录不符 = 源不对（或残段接错），当场判死，别等哈希才发现
+          errors.push(`${url} → 尺寸 ${total} 与官方记录 ${expectedSize} 不符`);
+          if (startAt > 0) { fs.rmSync(part, { force: true }); continue; }
+          break;
+        }
+        say(`  downloading... ${url}`);
+        if (total > 0) dim(`  total ${humanSize(total)} (resumable: re-run this script after an interruption)`);
 
-      if (total > 0 && got < total) { errors.push(`${url} → 不完整（${got}/${total}）`); continue; }
-      fs.renameSync(part, dest);
-      return { url, bytes: got };
-    } catch (e) {
-      errors.push(`${url} → ${e && e.message ? e.message : e}`);
+        out = fs.createWriteStream(part, startAt > 0 ? { flags: 'a' } : { flags: 'w' });
+        out.on('error', () => { /* 半途 destroy 的 premature-close 错误不该掀翻进程 */ });
+        let got = startAt;
+        let lastPrint = 0;
+        let nextMark = 0.1; // 非 TTY 的 10% 打点
+        const t0 = Date.now();
+        let winStart = t0;
+        let winBytes = 0;
+        for await (const chunk of res.body) {
+          armStall(); // 活着就重新计时 —— 这条是 §114 数的"逐块重挂"
+          if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
+          got += chunk.length;
+          winBytes += chunk.length;
+          const now = Date.now();
+          // 存活速率地板：还连着但基本不动的源，比彻底断连更坏（用户看不见进度），
+          // 所以每 15 秒算一次窗口速率，低于地板就放弃这个源去试下一个。
+          if (now - winStart >= 15000) {
+            const rate = winBytes / ((now - winStart) / 1000);
+            winStart = now;
+            winBytes = 0;
+            if (rate < budget.minAliveBytesPerSec) { abortWith(`速率过低（约 ${Math.round(rate)}B/s）`); continue; }
+          }
+          if (process.stdout.isTTY) {
+            if (now - lastPrint > 500) {
+              lastPrint = now;
+              const rate = (got - startAt) / 1024 / Math.max((now - t0) / 1000, 0.001);
+              const pct = total > 0 ? `${((got / total) * 100).toFixed(1)}% ` : '';
+              const eta = total > 0 && rate > 1 ? ` · ETA ${fmtEta((total - got) / 1024 / rate)}` : '';
+              process.stdout.write(`\r  ${pct}${humanSize(got)}${total > 0 ? ` / ${humanSize(total)}` : ''}  ${rate.toFixed(0)}KB/s${eta}   `);
+            }
+          } else if (total > 0 && got / total >= nextMark) {
+            nextMark = Math.min(0.95, nextMark + 0.1);
+            say(`  progress ${Math.floor((got / total) * 100)}% (${humanSize(got)} / ${humanSize(total)})`);
+          }
+        }
+        await new Promise((r) => out.end(r));
+        if (process.stdout.isTTY) process.stdout.write(`\r${' '.repeat(72)}\r`);
+
+        if (total > 0 && got < total) { errors.push(`${url} → 不完整（${got}/${total}）`); break; }
+
+        // 真值校验：整份重算（含续传的前半段）。不过 ⇒ 同源从头再来一轮。
+        if (expectedSha256) {
+          const gotHex = sha256File(part);
+          if (gotHex !== expectedSha256) {
+            if (round === 0) continue;
+            errors.push(`${url} → SHA-256 校验不过（期望 ${expectedSha256.slice(0, 12)}… 实测 ${gotHex.slice(0, 12)}…）`);
+            break;
+          }
+          fs.renameSync(part, dest);
+          return { url, bytes: got, sha256: gotHex };
+        }
+        fs.renameSync(part, dest);
+        return { url, bytes: got, sha256: '' };
+      } catch (e) {
+        const why = errText(e);
+        errors.push(`${url} → ${why}`);
+        if (/超时|预算|速率过低/.test(why)) slowHit = true; // 是"太慢"，不是"没网"——说法要分开
+        break; // 网络层出错：换下一个源（round 重试只服务于"校验不过"那一类）
+      } finally {
+        if (connectTimer) clearTimeout(connectTimer);
+        if (idleTimer) clearTimeout(idleTimer);
+        if (sourceTimer) clearTimeout(sourceTimer);
+        if (out) { try { out.destroy(); } catch { /* 已经关了 */ } }
+      }
     }
   }
-  throw new Error(`所有下载源都失败了：\n    - ${errors.join('\n    - ')}`);
+  const err = new Error(`所有下载源都失败了：\n    - ${errors.join('\n    - ')}`);
+  // 三种失败各有各的下一步，调用方（bootstrap）据此写状态文件，不许混成一句"失败"：
+  //   DOWNLOAD_BUDGET 总预算耗尽（最可能：镜像活着但太慢）
+  //   DOWNLOAD_SLOW   各源都因超时/断流/速率过低被放弃
+  //   DOWNLOAD_FAILED 源本身就连不上/返回不对（没网、404、尺寸不符…）
+  err.code = budgetHit ? 'DOWNLOAD_BUDGET' : slowHit ? 'DOWNLOAD_SLOW' : 'DOWNLOAD_FAILED';
+  err.sources = errors;
+  throw err;
+}
+
+/** 秒数 → 人话 ETA（`45s` / `2m05s`）。 */
+function fmtEta(sec) {
+  const s = Math.max(0, Math.round(sec));
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
 }
 
 // ── 解压（Windows 上只用系统自带能力，不装任何东西）─────────────────────────
@@ -236,6 +461,19 @@ export function loadNapcatSource() {
   return cfg;
 }
 
+/**
+ * NapCat 官方包的**候选下载 URL**（镜像打头、直连垫底）。
+ * ⚠️ 只有这一份：`setup.mjs`（老入口）与 `lib/repair.mjs`（一键安装）都调它 ——
+ *    以前两边各写了一遍，改一处漏一处是迟早的事。
+ */
+export function napcatUrls(src, tag) {
+  const base = src.downloadTemplate
+    .replace('{repo}', src.repo).replace('{tag}', tag).replace('{asset}', src.asset);
+  const list = (src.mirrors || []).map((m) => (m.endsWith('/') ? m + base : `${m}/${base}`));
+  list.push(base); // 直连排最后：实测最慢，还可能挂死
+  return list;
+}
+
 /** 判断"本文件是不是被直接双击/直接跑的那个"。Windows 与 macOS 都能用。 */
 export function isMain(metaUrl) {
   const self = fileURLToPath(metaUrl);
@@ -245,30 +483,23 @@ export function isMain(metaUrl) {
   return norm(self) === norm(argv1);
 }
 
-// ── NapCat 定位（全项目只有这一处知道它长什么样）────────────────────────────
-/**
- * 启动器候选，**按优先级排**（数组顺序就是优先级）。
- *
- * ⚠️ 这里踩过一次坑，注释留下：最初只写了一条宽松正则
- *    `/^napcat[\w-]*\.(bat|exe)$/i`，理由是"NapCat 的启动器名改过多次"。
- *    实测（`NapCat.Shell.Windows.OneKey.zip` v4.18.33）才发现它**同时**匹配了
- *    `NapCatInstaller.exe` —— 而那是**安装器**，不是启动器。宽松到一定程度就不再是
- *    "容错"，而是"指错"。
- *    所以改成：① 精确候选 + 优先级；② 明确排除安装器/结束器一类；③ 兜底才用宽泛匹配。
- */
-export const NAPCAT_LAUNCHER_CANDIDATES = [
-  /^launcher[\w-]*\.bat$/i,     // 官方文档里最常见的一任名字
-  /^NapCatWinBootMain\.exe$/i,  // Windows 一键包里的真正入口
-  /^napcat\.bat$/i,
-  /^napcat[\w.-]*\.bat$/i,      // napcat.quick.bat 之类
-];
-/** 名字里带这些的**不是**启动器（安装器、结束器、卸载器）。 */
-const NOT_LAUNCHER_RE = /(install|uninstall|kill|stop|remove)/i;
+// ── NapCat 定位（形状判据住在 lib/napcat-shape.mjs，这里只做"找文件"）────────
+// 那张候选表 + 排除表 + 粗判函数搬到了零依赖叶子 `napcat-shape.mjs`，因为构建脚本
+// `make-vm-copy.mjs` 也要同一份判据，而它不能 import 本文件（本文件在模块求值时
+// 就要解析安装/用户根）。搬走之后"协议端长什么样"全 tools 侧只有一处定义。
+// ⚠️ 来历与两次指错的教训写在 napcat-shape.mjs 的头注释里，改表之前先读那段。
+export { NAPCAT_LAUNCHER_CANDIDATES, NOT_LAUNCHER_RE, isNapcatLauncherName };
 export const NAPCAT_LAUNCHER_RE = NAPCAT_LAUNCHER_CANDIDATES[0]; // 保留导出：只用于"像不像"的粗判
 
-export function findNapcatLauncher() {
-  if (!exists(NAPCAT_DIR)) return null;
-  const files = findAll(NAPCAT_DIR, (name) => /\.(bat|exe|cmd)$/i.test(name), { maxDepth: 3 })
+/**
+ * @param {string} [dir=NAPCAT_DIR] 要检查的目录。
+ *   ⚠️ 这个参数是 P6 加的，为的是"先验暂存目录、再提交"：离线放包必须能对一个
+ *   **还没落到 NAPCAT_DIR** 的目录说"这里面确实有启动器"。写死成 NAPCAT_DIR
+ *   就等于逼调用方先提交再检查 —— 那时已经来不及了。
+ */
+export function findNapcatLauncher(dir = NAPCAT_DIR) {
+  if (!exists(dir)) return null;
+  const files = findAll(dir, (name) => /\.(bat|exe|cmd)$/i.test(name), { maxDepth: 3 })
     .filter((p) => !NOT_LAUNCHER_RE.test(path.basename(p)))
     .sort(); // 排序是第二重保险：结果不再依赖文件系统的返回顺序
   // ① 按候选表优先级挑
@@ -288,15 +519,48 @@ export function findNapcatLauncher() {
   }
   // ② 兜底：家目录里第一个 .bat / .exe（官方若又改了命名，宁可先指一个再让用户改，
   //    也不要因为认不出名字就说"没装好"）。
-  const home = flattenSingleDir(NAPCAT_DIR);
+  const home = flattenSingleDir(dir);
   const local = files.filter((p) => path.dirname(p) === home || path.dirname(path.dirname(p)) === home);
   return local[0] || files[0] || null;
 }
 
 /** NapCat 的"家" = 启动器所在目录。解压后可能多套一层目录，所以必须动态求。 */
-export function napcatHome() {
-  const l = findNapcatLauncher();
-  return l ? path.dirname(l) : exists(NAPCAT_DIR) ? NAPCAT_DIR : null;
+export function napcatHome(dir = NAPCAT_DIR) {
+  const l = findNapcatLauncher(dir);
+  return l ? path.dirname(l) : exists(dir) ? dir : null;
+}
+
+/**
+ * 把 `srcDir` **覆盖**到 `dstDir`（只复制，不删除目标里已有的东西）。
+ *
+ * ⚠️ 只**覆盖**、**不删除**：官方每个版本的文件集合不完全一样，删旧文件
+ *    会把"上一版有、这一版没有"的依赖连带清掉（例如它自己的数据目录）。
+ * ⚠️ `preserve` 里的名字**整个跳过** —— 默认保住 `config/`（NapCat 的登录态与
+ *    OneBot 配置都在那里，是用户扫过码的唯一凭证）。
+ *
+ * 住在 common.mjs 是因为有两个消费者要用**同一份**覆盖语义：
+ * `lib/repair.mjs`（下载后升级）与 `lib/napcat-local.mjs`（用户自带件）。
+ * 各写一份的话，将来一定是一份保 config、一份不保 —— 那是会丢登录态的那种分叉。
+ *
+ * @param {string} srcDir 解压出来的（已 flatten 的）新版本目录 / 用户选的目录
+ * @param {string} dstDir 现有 NapCat 的家
+ * @returns {number} 复制的文件数
+ */
+export function overlay(srcDir, dstDir, { preserve = new Set(['config']) } = {}) {
+  let copied = 0;
+  const walk = (rel) => {
+    const from = rel ? path.join(srcDir, rel) : srcDir;
+    const to = rel ? path.join(dstDir, rel) : dstDir;
+    fs.mkdirSync(to, { recursive: true });
+    for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+      if (preserve.has(e.name)) continue;
+      const f = rel ? path.join(rel, e.name) : e.name;
+      if (e.isDirectory()) walk(f);
+      else { fs.copyFileSync(path.join(srcDir, f), path.join(dstDir, f)); copied += 1; }
+    }
+  };
+  walk('');
+  return copied;
 }
 
 /** NapCat 的 OneBot11 配置（形如 `onebot11_<QQ号>.json`，也可能是不带号的默认件）。 */

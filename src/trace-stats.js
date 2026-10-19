@@ -37,13 +37,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { panelFile } from './user-root.js';
 // 本地日期键的**唯一实现**住在 `holidays.js`（零依赖叶子）—— 这里只 import，不再自己拼一份。
 // 第 13 轮 H-11：它曾有 `dayKeyOf` / `isoOfLocal` / `usage.monthKey` 三份 + `cache-hit.dayOf` 一份。
 import { dayKeyOf } from './holidays.js';
 import { writeJsonAtomic } from './atomic-write.js';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /** 直方图桶数：100 = 1% 一档。改它等于改中位数的精度，会同时影响历史数据的解读 */
 export const RATIO_BUCKETS = 100;
@@ -90,7 +89,7 @@ export function ambientBlockOf(prompt) {
  */
 export function statsFilePath() {
   if (process.env.QQBOT_PROMPT_STATS) return path.resolve(process.env.QQBOT_PROMPT_STATS);
-  return path.join(ROOT, 'panel', 'prompt-stats.json');
+  return panelFile('prompt-stats.json');
 }
 
 /** 一个空的统计槽：n / 直方图 / ambient 变动计数 / 精确 min-max / 时间覆盖范围 */

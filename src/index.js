@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { loadConfig, DATA_DIR } from './config.js';
-import { OneBotClient, flattenMessage, textSegment, atSegment, replySegment, faceSegment, imageSegment, triggerTextOf } from './onebot.js';
+import { loadConfig } from './config.js';
+import { CONFIG_FILE, USER_ROOT, PANEL_STATE_DIR, DATA_DIR, panelFile } from './user-root.js';
+import { OneBotClient, flattenMessage, textSegment, atSegment, replySegment, imageSegment, triggerTextOf } from './onebot.js';
 import { LlmClient } from './llm.js';
 import { supportsVision } from './model-caps.js';
 import {
-  Brain, SessionStore, splitFaceMarks, classifySegments, capImageSegments, IMAGE_CAP_PER_RUN, hasFaceMark, stripFaceMarks,
+  Brain, SessionStore, stripFaceMarks,
   renderSpeakerLine, lateSendReason,
 } from './brain.js';
 import { MemoryKeeper } from './memory.js';
@@ -24,16 +24,11 @@ import { INTERNAL_MARKS, stripInternalMarks } from './internal-marks.js';
 //    2026-10-01 清理轮定位：这个导出一直存在、注释也写着"进程退出前用"，但**全仓 0 调用**
 //    —— 死导出在这里的真实含义是**漏接线**（对照面：存档那条做了）。
 import { observeAndStore, flushProfiles } from './style-profile.js';
-// 表情习惯（ATI-4）：判据在 face-habit（纯函数），这里只做**一次**接线。
-import { faceDecision, applyFaceMark, createFaceMemory } from './face-habit.js';
-import { FACE_PRESETS } from './custom-config.js';
-// 收藏表情（D14 · 报告 E12 · 用户 Q5 翻案）：判据全在 custom-faces（零依赖叶子），
-// 这里只做**两类接线** —— ① 定时拉一次只读列表 ② 出站把令牌分流成图片段。
-// ⚠️ **只读**：一个写动作（add / delete / set_desc）都不调（用户 Q15 的裁决）。
-import {
-  CUSTOM_FACE_FETCH_COUNT, CUSTOM_FACE_REFRESH_MS,
-  parseFaceUrls, customFaceEntries, shouldUseCustom, pickCustomFace,
-} from './custom-faces.js';
+/* 表情能力（ATI-4 习惯闸 + D14 收藏表情）已于 2026-10-17 **整体删除**。
+   维护者的理由只有一句：它只会发那几个黄豆脸，不如不发。
+   ⇒ 提示词不再教、发送侧不再拼表情段、面板入口全删。
+   现在只剩 `stripFaceMarks` 一条**防漏**（见 reply-text.js），
+   挡的是历史存档 / 模型惯性里残留的 `[face:14]`。 */
 // 用量账本：记录（一直有）+ **判档**（D8 新增，见文件内 `usageGateOf`）。
 // 判据（纯函数）住在 src/usage.js，这里只做**一处接线**与一次入参传递。
 import { recordUsage, usageGateOf, USAGE_SOURCES } from './usage.js';
@@ -117,12 +112,12 @@ import {
 import { newTraceId, imageRefsOf } from './trace-id.js';
 import { recordSample, sampleOf } from './trace-stats.js';
 import scoped from './logger.js';
-import { loadExtensions, createExtensionHost, extensionRoots } from './plugin-host.js';
+import { loadExtensions, createExtensionHost, extensionRoots, HOST_STATE } from './plugin-host.js';
 import { createToolRegistry } from './tool-registry.js';
 import { createToolLoop } from './tool-loop.js';
 import { createHookBus } from './hook-bus.js';
 import { createSendGuard } from './send-guard.js';
-import { scopedOnebot } from './ext-scope.js';
+import { scopedOnebot, scopedSender } from './ext-scope.js';
 // notice 事件的标准化与合成（D9b · 报告 E7）。判据全在 src/notice.js（零依赖叶子），
 // 这里只做**唯一接线点**：拍一拍走主链路、禁言与「/安静」只改会话上的两个到期时间戳。
 // D31-3 的补看合成事件（`catchUpEventOf`）与拍一拍同一族、同一理由，所以住在一起。
@@ -152,10 +147,6 @@ import {
 
 const log = scoped('bridge');
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CONFIG_FILE = process.env.QQBOT_CONFIG
-  ? path.resolve(process.env.QQBOT_CONFIG)
-  : path.join(ROOT, 'config.json');
 // 把「机器人此刻真正在用的配置」写出来给面板看。
 // 面板之前只能读 config.json，一旦用户改了但没重启，显示的和实际跑的就是两套，
 // 这才有了「切了却没生效」「统计认错对象」这一串怪事。
@@ -165,16 +156,13 @@ const CONFIG_FILE = process.env.QQBOT_CONFIG
 // 而 `since` 正是「改动有没有生效」的判据来源（见 §6.5），被测试写一脚会直接污染取证。
 // 外包体检（ZCode 2026-09-27）发现这一处漏了 env 覆盖。
 const EFFECTIVE_FILE = process.env.QQBOT_EFFECTIVE_FILE
-  || path.join(ROOT, 'panel', 'effective.json');
-// D14 · 收藏表情的只读缓存（**模块级**：`writeEffective` 也要读它，把"此刻认得几张"下发到面板）。
-// 写它只有一处：`main()` 里的 `refreshCustomFaces()`。URL 只活在这里，不进任何落盘文件。
-const customFaceCache = { urls: [], at: 0, error: '' };
+  || panelFile('effective.json');
 // 「正在生成回复」的标记文件。本机模型一条要十几秒，
 // 面板靠它显示进度，否则用户只能干等，以为机器人坏了。
 //
 // ⚠️ 与上面 `EFFECTIVE_FILE` / 下面 `TRACE_FILE` 同一条理由，**必须**能指走
 //    （2026-10-01 代码审查补 · 本文件里**最后一条**没有 env 覆盖的落盘常量）。
-//    根因：`test/smoke.js` 是 `spawn(node, ['src/index.js'], { cwd: ROOT })` ——
+//    根因：`test/smoke.js` 是 `spawn(node, ['src/index.js'], { cwd: 程序根 })` ——
 //    **cwd 就是真实仓库**，而收尾是 `child.kill('SIGKILL')`。没有这条覆盖时：
 //      ① mock 对话的「正在生成」快照写进**用户真实的 `panel/.thinking.json`**；
 //      ② SIGKILL 打断进行中的原子写 → 临时文件会**长期累积**（实测口径见 REVIEW-1002 Q208：
@@ -193,7 +181,7 @@ const customFaceCache = { urls: [], at: 0, error: '' };
 // 那条命令会原样躺在真机的命令文件里，等真机器人一起来就被执行（一次没人点过的中止）。
 const CONTROL_FILE = process.env.QQBOT_CONTROL_FILE
   ? path.resolve(process.env.QQBOT_CONTROL_FILE)
-  : path.join(ROOT, 'panel', '.bridge-cmd.json');
+  : panelFile('.bridge-cmd.json');
 
 // ── D17 · 提醒的运行时状态（**故意不进 config.json**）────────────────────────
 // `custom` 是**用户资产**，机器人进程高频写它迟早与面板互相覆盖（D11a 的教训：自动记忆
@@ -206,7 +194,7 @@ const CONTROL_FILE = process.env.QQBOT_CONTROL_FILE
 //    整段吞掉（第 41 轮在别处踩过同一件事，表现是一组互不相关的契约同时假红）。
 const REMINDER_FILE = process.env.QQBOT_REMINDER_FILE
   ? path.resolve(process.env.QQBOT_REMINDER_FILE)
-  : path.join(ROOT, 'panel', 'reminder-state.json');
+  : panelFile('reminder-state.json');
 
 // ── D31-1 · 睡眠的运行时状态（**不进 config.json**）────────────────────────
 //
@@ -301,7 +289,7 @@ function saveSleepState() {
 //    留档被折半 → 真机日志丢）。
 const LOCK_FILE = process.env.QQBOT_BRIDGE_LOCK_FILE
   ? path.resolve(process.env.QQBOT_BRIDGE_LOCK_FILE)
-  : path.join(ROOT, 'panel', '.bridge.lock');
+  : panelFile('.bridge.lock');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const startedAt = Date.now();
@@ -328,14 +316,6 @@ function writeEffective(cfg) {
       // ⚠️ 面板自己**扫目录**得到的是"磁盘上有什么"（`panel/lib/extensions.js`），
       //    两件事不同：一个包能通过扫描但加载失败。页面要能同时看到这两层。
       extensions: extSnapshot,
-      // D14 · 收藏表情（只读）：此刻认得几张 / 上次拉取时刻 / 最近一次失败原因。
-      // 为什么值得下发：没有它，"一条收藏都没有"与"永远选中内置表情"在账面上一模一样 ——
-      // 而这两件事的排查方向完全相反（前者去 QQ 里收藏，后者要查选择逻辑）。
-      customFaces: {
-        count: customFaceCache.urls.length,
-        at: customFaceCache.at,
-        error: customFaceCache.error,
-      },
       updatedAt: Date.now(),
       // D31-1 · 睡眠：此刻睡没睡 / 计划 / 下一次入眠与起床的时刻 / 积压几条未读。
       // ⚠️ `null` = **还没算过**（机器人刚起来的那一瞬）—— 与"醒着"是两件不同的事，
@@ -363,6 +343,33 @@ function writeEffective(cfg) {
  *    前者表示"这一栏没有数据"，后者表示"一个都没启用"。页面按 `null` 不显示。
  */
 let extSnapshot = null;
+
+/**
+ * 已加载扩展包声明的**提示词指引**（清单 `prompt.sections`），收集成 `src/brain.js` 认的形状。
+ *
+ * ⚠️ 只收 `HOST_STATE.LOADED` 的：没启用的、加载失败的**不许**往提示词里塞话 ——
+ *    否则用户会看到"明明没开这个包，机器人却按它的指引行事"（同样是静默的假象）。
+ * ⚠️ `tools` 用**真实注册名**：记录里的 `tools` 已经是 `scopedToolId()` 的结果
+ *    （如 `image-lib__image_lib_search`）。清单作者写的是裸 id，模型只认注册名 ——
+ *    写裸 id 等于让它去调一个不存在的工具。
+ * ⚠️ 排序按 `priority` 升序、同优先级按收集顺序 —— 顺序稳定，提示词前缀才可复现（缓存才命得中）。
+ */
+function extensionSectionsOf() {
+  const items = extSnapshot?.items;
+  if (!Array.isArray(items)) return [];
+  const out = [];
+  for (const it of items) {
+    if (!it || it.state !== HOST_STATE.LOADED) continue;
+    const tools = Array.isArray(it.tools) ? it.tools : [];
+    for (const s of (Array.isArray(it.promptSections) ? it.promptSections : [])) {
+      out.push({ ...s, tools });
+    }
+  }
+  return out
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => (a.s.priority - b.s.priority) || (a.i - b.i))
+    .map((x) => x.s);
+}
 
 /** 配置文件的 mtime，用来判断是不是真的变了（编辑器保存可能触发多次事件） */
 let cfgMtime = 0;
@@ -495,7 +502,7 @@ async function main() {
   // 放在启动最前面：此刻还没开始写任何东西，扫到的必然是**上一次运行/上一次崩溃**的残留。
   // 判据（"不是我的 && 够旧"，两个条件都朝 fail-safe 方向）见 src/atomic-write.js。
   // ⚠️ 清扫面含扩展包的两个根（D21）：那里会留下安装用的 staging / 备份临时**目录**。
-  const swept = sweepStaleTemps([ROOT, path.join(ROOT, 'panel'), ...extensionRoots(ROOT).map((r) => r.dir)], { log });
+  const swept = sweepStaleTemps([PANEL_STATE_DIR, DATA_DIR, ...extensionRoots(USER_ROOT).map((r) => r.dir)], { log });
   if (swept.length) log.info(`清理了 ${swept.length} 个残留的原子写临时文件（上次被强杀时留下的）`);
 
   const store = new SessionStore(cfg);
@@ -510,38 +517,6 @@ async function main() {
   // 「自我记忆 → 自动记录」。传 getCfg 而不是 cfg 快照：配置会热重载，
   // 抓快照的话开关改了它永远看不到。
   const keeper = new MemoryKeeper(() => cfg, llm);
-  /** 表情习惯的会话级状态（最近用过哪几张 / 上次什么时候发的）。纯运行时，不进会话存档 */
-  const faceHabit = createFaceMemory();
-
-  /**
-   * D14 · 收藏表情的**只读缓存刷新**（唯一的拉取点）。
-   *
-   * 四条设计约束，每条都对应一个具体的失败形态：
-   *   ① **只读**（用户 Q15 裁决：他自己去收藏）—— 只调 `fetch_custom_face`，
-   *      写动作（add / delete / set_desc）一个都不许出现在这个文件里，契约有反向断言盯着；
-   *   ② **失败不清空** —— 拉取失败保留上一次的结果。清空的表现是"它突然不认识收藏表情了"，
-   *      而那看起来与"用户删了图"一模一样，事后无法分辨；
-   *   ③ **不新增定时器** —— 挂在既有的 30 秒 tick 上，且**在 `tickProactive()` 之前**：
-   *      后者内部有好几条提前 return（总闸关着 / 免打扰 / 没有白名单群…），
-   *      挂在它后面会被那些分支吃掉，表现是"白天能用、晚上不用了"；
-   *   ④ **失败也不马上重试** —— 先记时间戳再拉：否则协议端一挂，每 30 秒打一次，
-   *      日志会被同一个错误刷满（这个项目为"日志噪声掩盖真问题"踩过坑）。
-   */
-  async function refreshCustomFaces(now = Date.now()) {
-    if (now - customFaceCache.at < CUSTOM_FACE_REFRESH_MS) return;
-    customFaceCache.at = now;
-    try {
-      // `bot.call` 解包后的就是 `data`（见 onebot.js 的 resolve 分支），
-      // 即协议端的「表情URL列表」。`parseFaceUrls` 两种形状都收。
-      const res = await bot.call('fetch_custom_face', { count: CUSTOM_FACE_FETCH_COUNT }, 8000);
-      customFaceCache.urls = parseFaceUrls(res);
-      customFaceCache.error = '';
-      log.info(`收藏表情已同步：${customFaceCache.urls.length} 张`);
-    } catch (err) {
-      customFaceCache.error = String(err?.message || err);
-      log.warn(`拉取收藏表情失败（保留上一次的 ${customFaceCache.urls.length} 张）：${customFaceCache.error}`);
-    }
-  }
 
   /**
    * 工具注册表 + 工具回合执行器（第 46 轮 B12e-1 · 执行层）。
@@ -661,6 +636,48 @@ async function main() {
       const key = kind === 'private' ? 'user_id' : 'group_id';
       return bot.call(action, { [key]: Number(rawId), messages: fwd.data });
     },
+    /**
+     * 发一张图（2026-10-15 修 · 对应「小鱼发不出图片」/ Issue #5 同族）。
+     *
+     * ⚠️ 此前**只有 `sendSegments`，没有 `sendImage`** —— 而图库类扩展包（`自定义图库`）
+     *    的发送代码是 `if (ctx.sender?.sendImage) … else await ctx.onebot.sendImage(…)`：
+     *    前者 `undefined`（跳过），后者也是 `undefined`（`ctx.onebot` 是 `scopedOnebot()`
+     *    的只读代理，**只有 `call` 一个方法**，且 `send_*` 一律拒绝）⇒ 两条路都炸成
+     *    `TypeError`，被包自己的 try/catch 折成"发送失败：…"。**这个工具从装上的那天起
+     *    就发不出图**，而宿主日志里只显示"工具调用成功"。
+     *
+     * ⚠️ 用 `imageSegment()`（`src/onebot.js`）拼图片段 —— 那是**全项目唯一的图片段
+     *    构造器**，注释明写"再在别处另写一个发图的构造器，就等于给同一件事开第二个口子"。
+     * ⚠️ 与 `sendSegments` 现状相同：走 `bot.call` **直发**，不经过发送闸与节奏控制。
+     *    这是**加法**，不动 `sendSegments` 的既有行为。
+     *
+     * @param {string} target 'private:2174370955' / 'group:123456'
+     * @param {{url?:string, file?:string}} payload 图片地址（URL / 本机路径 / file://）
+     */
+    async sendImage(target, payload = {}, _opts = {}) {
+      const [kind, rawId] = String(target ?? '').split(':');
+      const file = String(payload?.url || payload?.file || '').trim();
+      if (!rawId || !file) throw new Error('sendImage 需要 target 与图片地址');
+      const action = kind === 'private' ? 'send_private_msg' : 'send_group_msg';
+      const key = kind === 'private' ? 'user_id' : 'group_id';
+      return bot.call(action, { [key]: Number(rawId), message: [imageSegment(file)] });
+    },
+  };
+
+  /**
+   * 按**清单声明**给某个扩展包发放发送能力（2026-10-15 · 补 MD 遗留的 `send_image` 接线）。
+   *
+   * ⚠️ 它是一个**分发口**，不是又一份 §权限表：判据住 `src/ext-scope.js` 的
+   *    `scopedSender()`（纯函数、带单测），这里只负责"把这个包声明了什么喂给它"。
+   * ⚠️ 权限读的是**加载记录**里的 `permissions.known`（`plugin-host` 归一化后的那两份之一，
+   *    不认识的权限名在 `unknown` 里被报出来）—— 不在这一层再解析一遍清单。
+   * ⚠️ 没有 `owner`（宿主自己的工具）时**原样给 `extSender`**：闸只对扩展包生效。
+   */
+  const senderFor = (owner) => {
+    const id = String(owner || '').trim();
+    if (!id) return extSender;
+    const known = extSnapshot?.items?.find((x) => x.id === id)?.permissions?.known || [];
+    return scopedSender(extSender, { owner: id, permissions: known, log });
   };
 
   /**
@@ -679,7 +696,7 @@ async function main() {
    * 机器人开始回话才发现"我装的包一个都没被认出来"。
    */
   const extHost = createExtensionHost({
-    root: ROOT,
+    root: USER_ROOT,
     registry: toolRegistry,
     bus: hookBus,
     getCustom: () => cfg.custom,
@@ -735,7 +752,7 @@ async function main() {
   // mock 出来的假对话就会落进用户真实的会话存档里（与 QQBOT_TRACE_FILE 同一个道理）。
   const ARCHIVE_FILE = process.env.QQBOT_SESSION_ARCHIVE
     ? path.resolve(process.env.QQBOT_SESSION_ARCHIVE)
-    : path.join(ROOT, 'panel', 'session-archive.json');
+    : panelFile('session-archive.json');
   {
     const r = restoreInto(store, readArchive(ARCHIVE_FILE), { fp: brain.fp });
     if (r.stale) log.info(`会话存档已过期（超过 ${Math.round(DEFAULT_MAX_AGE_MS / 3600000)} 小时）→ 不恢复 ${r.stale} 个会话，从零开始记`);
@@ -833,9 +850,6 @@ async function main() {
     if (!cfg.llm.apiKey && /^https:/.test(cfg.llm.baseUrl)) {
       log.warn('目标是 https 端点但没有配置 apiKey，请求很可能被拒绝');
     }
-    // D14：连上就拉一次收藏表情（只读）。**不 await** —— 它不该拖慢就绪流程，
-    // 拿不到也只是"这一轮用不上收藏表情"（退化成内置表情，即现状）。
-    refreshCustomFaces().catch((e) => log.warn(`收藏表情同步异常: ${e.message}`));
   });
 
   /**
@@ -967,7 +981,7 @@ async function main() {
       //   ① 本机第一手证据 = **0**（`panel/local-trace.jsonl` 与协议端容器日志里一条 poke 都没有）；
       //   ② 协议端静态：`/app/napcat/napcat.mjs` 里 `poke` 只出现在**消息段类型枚举**中，
       //      压缩产物里读不到"事件侧推不推私聊"的直接结论；
-      //   ③ 生态侧（二手）：AstrBot 的 poke 插件按"群友**或私聊用户**的戳一戳"实现，
+      //   ③ 生态侧（二手）：同类实现的 poke 插件按"群友**或私聊用户**的戳一戳"实现，
       //      koishi 那个也说 NapCat 支持私聊发起与响应 ⇒ **倾向"会推"**。
       //
       // 所以之前那条路是**实打实的错路**：`pokeEventOf` 硬编码 `message_type:'group'`，
@@ -1312,6 +1326,10 @@ async function main() {
       // 而作息状态是那个唯一判定点重算出来的快照（`sleepSnap`），不在这一层再算一遍。
       sleep: sleepSnap,
       catchUp: !!evt.isCatchUp,
+      // 扩展包指引（2026-10-15）：由**已加载**的包声明（清单 prompt.sections）收集而来。
+      // 与 tier / sleep / catchUp 同一条纪律 —— 每轮才变的东西由调用方注入，
+      // brain 不在那一层读全局快照。没有扩展包时是空数组 ⇒ 提示词逐字不变。
+      extensionSections: extensionSectionsOf(),
     });
     const messages = built.messages;
 
@@ -1322,7 +1340,7 @@ async function main() {
 
     // 工具 ctx（第 47 轮 B12e-3）：生态约定 execute(ctx, args) 的第一个参数。
     // 字段对照参考实现 orchestrator.js:888 —— 只放**真实在用的包需要**的，
-    // 不 speculative 塞满（memory/stickers/reminders 没有包用时不上，要用再加）。
+    // 不 speculative 塞满（memory/reminders 没有包用时不上，要用再加）。
     //
     // ⚠️ `onebot` **不是**真实客户端，而是 `scopedOnebot()` 的代理（第 48 轮 B12e-4 · EX-SCOPE）：
     //    原始客户端是"绕过宿主一切出站策略"的口子（出口闸门 / 发送节奏 / 主动配额 / 会话存档
@@ -1337,6 +1355,10 @@ async function main() {
       botName: cfg.persona?.botName ?? '',
       onebot: scopedOnebot(bot, { log }),
       sender: extSender,
+      // ⚠️ 扩展包的工具**不直接用 `sender`** —— `plugin-host` 会用这个工厂把 ctx 收成
+      //    "这个包自己的那一份"（按清单声明裁剪，见 `senderFor`）。
+      //    没有它时 `scopedSenderCtx` 原样返回 ⇒ 行为与改造前逐字相同。
+      senderFor,
       // ⚠️ **这里刻意不给 `session`**（P1 修复 → 第 49 轮复审去冗余，两步都走过）：
       //    ① 它起初给的是**整个可变的会话宿主对象** —— 本文件对钩子载荷的纪律是
       //       「只投影可读字段」（见 toolLoop 的 onToolCall）；交出去等于让外来代码
@@ -1520,83 +1542,14 @@ async function main() {
 
     const { silent, chunks, blocked, internal } = brain.parseReply(reply);
 
-    // ── ATI-4：表情习惯（确定性闸，全项目**只在此一处**接线）──
-    // 判据在 face-habit（纯函数，`rng`/`now` 全由入参给）；这里只做"问一次"，
-    // **真的发出去之后**才记账（发送失败的那段不算 —— 与记忆"只记真的发出去的"同一口径）。
-    // 三条：不是每条都带（冷却 + 概率）· 位置不一定在末尾（三种位置）· 类型不单一（最近用过的降权）。
-    // ⚠️ 只开表情开关且模型自己没插过的段落才加 —— 模型自己插的不再叠加（每轮最多 1 个）。
-    let faceId = null;
-    // 观测留档（第 15 轮）：ATI-4 那三张 golden 表（频率 / 位置 / 类型）一直"待真机数据"，
-    // 而真机上唯一能回答"闸到底触发过几次"的东西不在任何日志里 —— 只有一处 `log.info`。
-    // 落进 trace 之后，数据会**自己攒起来**，不用再靠人去等一次偶发。
-    // ⚠️ 只加字段、不改判据：`faceDecision` 的入参与调用时机一个字没动。
-    let facePlace = '';
-    let faceSelf = false;
-    // D14：这一轮用的是内置表情还是收藏表情。**与 faceId 分开存** ——
-    // `faceId` 一个变量一个语义（"用了哪一张"），类别是另一个语义（见"一个变量不许两个语义"）。
-    let faceKind = '';
-    // 本轮用到的自定义表情令牌 → URL。**刻意只活在本轮**：URL 可能带临时签名，
-    // 跨轮留着等于缓存一个过期地址；而且它不进 trace / 日志 / 会话历史 ——
-    // 那些地方只会出现令牌（=URL 的短哈希）本身。
-    const roundCustom = new Map();
-    const outChunks = [];
-    for (const c of chunks) {
-      if (faceId !== null || !cfg.llm?.features?.stickers || hasFaceMark(c)) {
-        // 模型自己写了 [face:N]（含自定义令牌）—— 这正是"代码闸一次都没被用上"的原因，如实记下来
-        if (hasFaceMark(c)) faceSelf = true;
-        outChunks.push(c);
-        continue;
-      }
-      const st = faceHabit.stateOf(session.key);
-      const d = faceDecision({
-        now: Date.now(),
-        lastFaceAt: st.lastFaceAt,
-        recentFaces: st.recentFaces,
-        presets: FACE_PRESETS,
-      });
-      if (!d.attach) {
-        outChunks.push(c);
-        continue;
-      }
-      // ── D14 二级选择：这一轮**已经**决定"要带一个"了，再决定带内置还是带收藏 ──
-      // ⚠️ 这**不是第二道闸**：冷却 / 概率 / 位置仍然只由 `faceDecision` 说了算，
-      //    所以那三张 golden（频率 / 类型轮转 / 位置分布）继续有效。
-      // 一条收藏都没有（或上次拉取失败且无旧值）→ `shouldUseCustom` 恒假 → 退化成内置表情
-      //    = **与今天逐字相同的现状**。接口抖动不会改变它的说话方式。
-      const custom = shouldUseCustom({ has: customFaceCache.urls.length > 0 })
-        ? pickCustomFace(customFaceEntries(customFaceCache.urls), { recent: st.recentFaces })
-        : null;
-      if (custom) {
-        // 令牌进文本（可以被 trace / 历史安全保存），URL 只留在本轮的内存表里
-        roundCustom.set(custom.token, custom.url);
-        faceId = custom.token;
-        faceKind = 'custom';
-      } else {
-        faceId = d.faceId;
-        faceKind = 'builtin';
-      }
-      facePlace = d.place;
-      outChunks.push(applyFaceMark(c, faceId, facePlace));
-    }
-    if (faceId !== null) {
-      log.info(`这一轮带表情 [face:${faceId}]（${faceKind === 'custom' ? '收藏' : '内置'}）(${session.key})`);
-    }
-
+    /* 表情附加（ATI-4 习惯闸 + D14 收藏表情）已于 2026-10-17 **整体删除**。
+       这一段原本做三件事：按冷却 + 概率决定要不要带一个表情、在内置 15 张与 QQ 收藏之间二次选择、
+       然后按 head/mid/tail 把 `[face:N]` 插进某一句话里。
+       删除理由（维护者原话）：它只会发那几个黄豆脸，并不智能 —— 不如不发。
+       ⚠️ `parseReply` 现在**无条件**剥掉残留标记，所以 `chunks` 里不会再有 `[face:…]`；
+          模型凭惯性写出来的那一串也会在那一层被清掉，不会原样发进群里。 */
+    const outChunks = chunks;
     rec.chunks = outChunks;
-    // 三个字段一起才回答得了"闸到底有没有在工作"：
-    //   gateOff = 开关没开（不是闸的问题）· selfWritten = 模型自己插了（闸被短路，第 14 轮的成因）
-    //   attached = 代码闸真的动手了 —— 只有它为真，那三张 golden 才谈得上被真机验过。
-    rec.face = {
-      gateOff: !cfg.llm?.features?.stickers,
-      selfWritten: faceSelf,
-      attached: faceId !== null,
-      faceId: faceId === null ? null : faceId,
-      // D14：'builtin' 还是 'custom'。**空串 = 这一轮没带表情**。
-      // 有它才能回答"收藏表情那条路到底有没有被走通过"——没有这个字段，
-      // 收藏为空与"永远选中内置"在账面上一模一样。
-      kind: faceKind,
-      place: facePlace,
-    };
     // 出口闸门拦下的原因如实落盘：拦了却不留痕，用户只能看到"它突然不理我"。
     rec.blocked = blocked || '';
     // B33：模型复读了内部标记时命中的词干（已从要发的内容里剥掉）。
@@ -1680,12 +1633,6 @@ async function main() {
     const sentTexts = [];
     const guardBlocked = [];
     const lateBlocked = [];
-    // ── 出站媒体护栏（D15 · 报告 E11 ③）──
-    // 图片张数的口径是**整轮**（跨分段），所以计数器必须活在循环**外面**；
-    // 而裁剪判据本身是 `brain.js` 的纯函数 `capImageSegments`（零 IO、smoke 直接钉）。
-    // ⚠️ 只在这里接一处：别在分段的构造器里再判一次 —— 那样"一轮几张"就有了第二份口径。
-    let imagesSent = 0;
-    let imagesSeen = [];
     for (let i = 0; i < outChunks.length; i += 1) {
       // ── 发送时刻复核（第 56 轮 F1-2 · E22）──
       // 「判定通过」到「真的发出去」之间隔着模型生成（秒级）与逐条节奏（每条 1s 起），
@@ -1709,33 +1656,16 @@ async function main() {
         log.warn(`发送闸拦下第 ${i + 1} 条（${verdict.vetoed.owner}）：${verdict.vetoed.reason}`);
         continue;
       }
-      // 把 [face:14] 这类标记拆成真正的 QQ 消息段，和文字一起发。
-      // D14：自定义令牌（`cf-…`）分流成**图片段** —— 收藏表情没有 face id 可寻址，
-      //      协议端给的就是图片 URL（实测 `fetch_custom_face` 返回「表情URL列表」）。
-      // 分类判据在 `classifySegments`（brain.js 里的纯函数，smoke 直接钉它）；
-      // 这里只剩"三态 → 三个 Segment 构造器"。
-      // D15（E11 ③）：分流之前先过**出站媒体护栏**（整轮去重 + 张数上限）。
-      // ⚠️ 裁掉必须留痕 —— 否则表现是"它这一轮少发了一个表情"，日志里什么都没有。
-      const capped = capImageSegments(classifySegments(outChunks[i], (tok) => roundCustom.get(tok)), {
-        used: imagesSent,
-        seen: imagesSeen,
-      });
-      if (capped.dropped) {
-        log.warn(
-          `[${traceId}] 出站媒体护栏裁掉 ${capped.dropped} 张图（本轮已发 ${capped.used} 张，上限 ${IMAGE_CAP_PER_RUN}）` +
-            '—— 同一张图只发一次，且一轮不超过上限'
-        );
+      // 表情段已于 2026-10-17 删除 —— 这里只剩文字段。
+      // `stripFaceMarks` 是**防漏**：历史存档与模型惯性还会写 `[face:14]`，
+      // 不剥就会把那一串字面量原样发进群（本项目实测过这个形态）。
+      // ⚠️ 剥完为空就**跳过这一段**，不补空串：空 text 段会让协议端发一条空消息。
+      const body = stripFaceMarks(outChunks[i]);
+      if (!body) {
+        log.warn(`[${traceId}] 第 ${i + 1}/${outChunks.length} 段剥掉表情标记后为空，跳过`);
+        continue;
       }
-      imagesSent = capped.used;
-      imagesSeen = capped.seen;
-      const parts = capped.parts
-        .map((s) => {
-          if (s.type === 'face') return faceSegment(s.id);
-          if (s.type === 'image') return imageSegment(s.url);
-          return textSegment(s.text);
-        });
-      // 兜底也用 `stripFaceMarks`：原样兜底会把认不出的令牌当文字发出去。
-      if (!parts.length) parts.push(textSegment(stripFaceMarks(outChunks[i])));
+      const parts = [textSegment(body)];
       const payload = sentTexts.length === 0 ? [...segments, ...parts] : parts;
       try {
         // M-4：把自己发出去的 message_id 记下来，供"引用了我的话"判定用。
@@ -1750,17 +1680,15 @@ async function main() {
         if (remaining > 0) log.warn(`发送中断：本次还有 ${remaining} 段未发出（协议端可能断连）`);
         break;
       }
-      sentTexts.push(outChunks[i]);
+      /* 记**真的发出去的那一版**（`body`，已剥掉表情标记），不是 `outChunks[i]`：
+         两者在"模型写了 [face:14]"那一轮不同 —— 记原文会让下一轮的历史里
+         留下一串群里谁都没见过的字面量。 */
+      sentTexts.push(body);
       // D6：记"这一轮真的发出去了" —— 重试判据靠它挡住"重复刷屏"。
       // ⚠️ 位置必须在 sendMsg **成功之后**：记在发送前的话，一次发送失败也会被
       //    当成"已发言"，于是那一轮就永远不许重试了（可重试性凭空消失）。
       sessionCtl.markSent(session.key);
       if (i < outChunks.length - 1) await sleep(sendDelayFor(outChunks[i], cfg.reply));
-    }
-
-    // ATI-4 记账：**只在真的发出去之后**（发送中断的话表情没落地，不算）
-    if (faceId !== null && sentTexts.length) {
-      faceHabit.note(session.key, faceId, Date.now());
     }
 
     // ⚠️ 记忆里记的必须是**真的发出去的**那几条。记 `chunks` 的话，
@@ -2088,8 +2016,6 @@ async function main() {
     // ⚠️ 这里**不推进** `lastProactiveAt`（与"被限流不推进"同一取舍）：醒来立刻就能开口，
     //    而不是"再等一个间隔"。
     // ⚠️ 记忆判官不需要单独挡 —— 它只在主链路尾部被调，而主链路已被门禁挡住。
-    // ⚠️ 收藏表情刷新**照跑**（它是协议端只读拉取、不是模型调用）：停掉会变成
-    //    "睡觉期间收藏不同步"的静默退化，而那是另一件事。
     if (sleepSnap?.asleep) return;
 
     const groups = (cfg.allow.groups || []).filter(Boolean);
@@ -2573,12 +2499,7 @@ async function main() {
       void sayGoodnight();
     }
 
-    // D14：**先**刷新收藏表情（只读），再跑主动链。
-    // ⚠️ 顺序不能反 —— `tickProactive()` 内部有好几条提前 return
-    //    （主动发言总闸关着 / 免打扰时段 / 没有白名单群…），挂在它后面会被那些分支吃掉，
-    //    表现是"白天能用、晚上（免打扰）就不刷新了"。
-    // 两者都是 fire-and-forget，各自 catch —— 一个的异常不许影响另一个。
-    refreshCustomFaces().catch((e) => log.warn(`收藏表情同步异常: ${e.message}`));
+    // 主动链（表情刷新已于 2026-10-17 随表情能力一起删除）。
     tickProactive().catch((e) => log.error(`定时任务异常: ${e.message}`));
   }, 30000);
 

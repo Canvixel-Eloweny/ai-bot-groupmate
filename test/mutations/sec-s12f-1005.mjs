@@ -48,13 +48,13 @@ const APP = 'panel/next/app.js';
 const F1 = {
   id: 'F1',
   note: 'panel/lib/paths.js 里重新导出 `PARTS_DIR` —— 旧机制回到运行时的**最可能形态**（那正是它原来的住处）。本批把 §66 的豁免集清空了，这条证明它现在真的被扫。预期 BLOCKED（§66）',
-  anchor: /export const NEXT_DIR = path\.join\(ROOT, 'panel', 'next'\);/,
+  anchor: /export const NEXT_DIR = programFile\('panel\/next'\);/,
   count: 1,
   file: PATHS,
   apply: (s) => s.replace(
-    /export const NEXT_DIR = path\.join\(ROOT, 'panel', 'next'\);/,
-    "export const PARTS_DIR = path.join(ROOT, 'panel', 'parts');\n"
-      + "export const NEXT_DIR = path.join(ROOT, 'panel', 'next');"
+    /export const NEXT_DIR = programFile\('panel\/next'\);/,
+    "export const PARTS_DIR = programFile('panel/parts');\n"
+      + "export const NEXT_DIR = programFile('panel/next');"
   ),
   layer: 'check-wb',
   expect: 'BLOCKED',

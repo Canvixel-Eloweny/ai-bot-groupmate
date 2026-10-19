@@ -1,14 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { panelFile } from './user-root.js';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_LINES = 2000;
 
 function probeFile() {
   return process.env.QQBOT_FORWARD_PROBE_FILE
     ? path.resolve(process.env.QQBOT_FORWARD_PROBE_FILE)
-    : path.join(ROOT, 'panel', 'forward-probe.jsonl');
+    : panelFile('forward-probe.jsonl');
 }
 
 function summarize(seg) {

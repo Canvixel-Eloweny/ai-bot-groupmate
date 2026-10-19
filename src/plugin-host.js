@@ -291,6 +291,21 @@ export function loadExtensions({ root, enabled = [], log = {} } = {}) {
  */
 export const LIFECYCLE = Object.freeze(['setup', 'activate', 'deactivate', 'dispose']);
 
+/**
+ * 把宿主的工具 ctx 收成**某个包自己的** ctx：`sender` 按本包清单声明裁剪。
+ *
+ * ⚠️ 宿主没给 `senderFor` 时**原样返回同一个对象**（不是拷贝）——
+ *    这是"零行为改变"的实现基础：老宿主、以及只用手搓 ctx 调 `buildApi` 的测试，
+ *    拿到的 ctx 与改造前**逐字相同**。
+ * ⚠️ `senderFor` 本身**不交给包**：它是宿主的分发口，交出去等于让包自己给自己发权限。
+ */
+function scopedSenderCtx(ctx, owner) {
+  if (!ctx || typeof ctx !== 'object' || typeof ctx.senderFor !== 'function') return ctx;
+  const { senderFor, ...rest } = ctx;
+  rest.sender = senderFor(owner);
+  return rest;
+}
+
 /** 宿主状态（给日志 / 面板读）。`pending` 与 `skipped` 的区别见 `createExtensionHost`。 */
 export const HOST_STATE = Object.freeze({
   PENDING: 'pending',   // 发现了、但没在 config 白名单里启用（正常状态，不是错误）
@@ -386,6 +401,12 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
       permissions: fields.permissions ?? { known: [], unknown: [] },
       settingsKeys: fields.settingsKeys ?? [],
       toolErrors: [],
+      /**
+       * 该包声明的**提示词指引**（清单 `prompt.sections` 归一化后）。
+       * ⚠️ 只随 `LOADED` 记录带出 —— 没加载成功（或没启用）的包不该往提示词里塞话。
+       * 消费方 `src/index.js` 收集后交给 `src/brain.js` 注入系统提示词。
+       */
+      promptSections: fields.promptSections ?? [],
       ...(fields.patch || {}),
     });
   }
@@ -477,7 +498,14 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
         fetch: extFetch,
         registerTool: (def, { owner }) => {
           const name = scopedToolId(owner, def?.id ?? def?.name);
-          const r = registry.register({ ...def, id: name, owner });
+          // ⚠️ 把宿主 ctx 收成**这个包自己的**：`sender` 换成按本包清单声明裁剪过的那一份。
+          //    这就是 `send_image` 权限的接线点（2026-10-15 · 补 MD 遗留）——
+          //    裁剪逻辑本身在 `src/ext-scope.js` 的 `scopedSender()`（纯函数，可单测）。
+          const rawExec = def?.execute;
+          const execute = typeof rawExec === 'function'
+            ? (ctx, args) => rawExec(scopedSenderCtx(ctx, owner), args)
+            : rawExec;
+          const r = registry.register({ ...def, id: name, owner, execute });
           if (!r.ok) {
             // ★ 不抛：**一个工具注册不上，不该把整个包判死**（其余钩子 / 工具照常用）。
             //   但必须**可见** —— 静默丢弃的表现是"某个工具永远调不到，而日志里什么都没有"。
@@ -538,7 +566,10 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
       state: HOST_STATE.LOADED,
       reason: 'ok',
       detail: '',
-      patch: { life, tools, hooks, toolErrors },
+      // `tools` 一起带出去：提示词注入时要用**真实注册名**（带 owner 前缀，
+      // 如 `image-lib__image_lib_search`）告诉模型"这个包有哪些工具可调"——
+      // 清单作者写的是裸 id，真实名字只有这里算得出来（`scopedToolId`）。
+      patch: { life, tools, hooks, toolErrors, promptSections: Array.isArray(m.promptSections) ? m.promptSections : [] },
     });
     info(
       `扩展包 ✓ ${p.dirName}（id ${p.id} v${base.version || '?'}）：已加载` +

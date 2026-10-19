@@ -36,7 +36,7 @@ export const DECISION_KINDS = ['private', 'named', 'keyword', 'interject'];
  * kind → 档位。**这是全项目唯一的一份映射**。
  *
  * 三档而不是四档：`private`（私聊）与 `named`（被 @ / 叫名）共用 `direct` 档 ——
- * 两者都是"明确点名"，带同样多的历史才合理（QQ-Agent 也是"私聊恒 4 档"）。
+ * 两者都是"明确点名"，带同样多的历史才合理（同类实现也是"私聊恒 4 档"）。
  */
 export const TIER_OF_KIND = {
   private: 'direct',

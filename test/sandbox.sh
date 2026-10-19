@@ -118,6 +118,8 @@ rsync -a --exclude 'napcat/' --exclude '.backup/' --exclude '.backup-*' \
   --exclude 'panel/forward-probe.jsonl' \
   --exclude 'panel/*.tmp' \
   --exclude 'panel/usage*.jsonl' \
+  --exclude 'panel/window-state.json' \
+  --exclude 'panel/console-profile/' \
   --exclude '/plugins/' --exclude '/skills/' \
   --exclude '/data/' \
   --exclude '/.env' \
@@ -301,6 +303,7 @@ JSONEOF
 import os, subprocess, sys
 sb, fake_home, port, node = sys.argv[1:5]
 env = dict(os.environ, HOME=fake_home, QQBOT_PANEL_PORT=port, QQBOT_SANDBOX="1",
+           QQBOT_MODE="dev", QQBOT_USER_ROOT=sb,
            # 端口重映射（B11b-1 起走环境变量，不再 perl 改源码，见上面 ①）
            # @sync-with sandbox-port-env
            #   这两个变量名必须与 `panel/lib/paths.js` 读的**逐字相同** —— 由

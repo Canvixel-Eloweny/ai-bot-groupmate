@@ -7,13 +7,13 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 // 模型能力档案与「自定义工作台」的配置结构 —— 与机器人进程共用同一份，
 // 面板绝不自己再写一份默认值/判定规则（写两份必然漂移，这是本项目反复踩过的坑）
 import { ZHIPU_MODEL_META, capabilitiesOf, resolveFeatures, FEATURE_LABEL, THINK } from '../src/model-caps.js';
 import {
-  readCustom, patchCustom, SIMILAR_THRESHOLD, SCENES, REPLY_LENGTHS, FACE_PRESETS, PLAY_RULES,
+  readCustom, patchCustom, SIMILAR_THRESHOLD, SCENES, REPLY_LENGTHS, PLAY_RULES,
   ENHANCE, ENHANCE_KEYS, ENHANCE_GROUPS,
   SKILL_IN_PROMPT, MANUAL_MEMORY_IN_PROMPT, similarity,
 } from '../src/custom-config.js';
@@ -67,6 +67,9 @@ import { parseLock, LOCK_REFUSE_EXIT_CODE } from '../src/bridge-lock.js';
 import { readHistory, configAt, popHistory } from '../src/config-history.js';
 import { thinkingIsLive } from '../src/ephemeral.js';
 import { sweepStaleTemps, truncateLinesAtomic } from '../src/atomic-write.js';
+// 窗口记忆（2026-10-16）：窗口几何的**值域判据**与落点只有 `src/launch-mode.js` 一份 ——
+// 面板只做"收下 → 过判据 → 写盘"，不许在这里再写一遍范围检查（两份必然漂移）。
+import { normalizeWinState, windowStatePath, launchLogPath, readLaunchLog } from '../src/launch-mode.js';
 // 当月账本的「今天」判据：与机器人侧共用 `dayKeyOf` 一份，不在本地再拼一个
 // （本地那份月份/日不补零，9 月会算出 `2026-9-1`，与 src 侧的 `2026-09-01`
 //   对不上 —— 注释自称同口径，实现却已经漂了）。
@@ -75,19 +78,25 @@ import { sweepStaleTemps, truncateLinesAtomic } from '../src/atomic-write.js';
 import { dayKeyOf } from '../src/holidays.js';
 // ── 底座层（B11b-1 · AR-SERVERSPLIT）──────────────────────────────────────
 // 路径 / 端口 / 运行状态 / HTTP 收发这四类东西搬到了 panel/lib/ 下，见各自的模块注释。
-// ⚠️ `ROOT` 必须从这里来 —— 它是**搬了就静默失效**的那个常量（在 panel/lib/ 下
-//    用 import.meta.url 退两级才是仓库根，写错会让整台面板用着默认配置继续跑）。
+// ⚠️ 三根必须从这里来 —— 它们由 src/user-root.js 解析一次；写错会让整台面板
+//    用着默认配置继续跑，且不会报错。
 import {
-  ROOT, PORT, SANDBOX, NODE, BACKEND_SOURCES,
+  PROGRAM_ROOT, INSTALL_ROOT, USER_ROOT, PANEL_STATE_DIR, MODE, NAPCAT_DIR, DATA_DIR, UPDATE_DIR, ensureUserDirs,
+  PORT, SANDBOX, NODE, BACKEND_SOURCES,
+  APP_ID, APP_VERSION,
   IS_WIN,
   HOME, QWEN_SERVER, QWENCHAT_SERVER, MLX_PY,
   NAPCAT_WEBUI_PORT,
   DOCKER, DOCKER_APP,
+  CONFIG_FILE,
   EFFECTIVE_FILE, THINKING_FILE, HISTORY_FILE, AUDIT_FILE, TOKEN_FILE,
   TRACE_FILE, ARCHIVE_FILE, USAGE_DIR, USAGE_FILE_RE, PIDFILE, BRIDGE_LOG, LOCAL_LOG, PANEL_LOG,
   BRIDGE_LOCK_FILE,
   DEBUG_FLAG,
 } from './lib/paths.js';
+import { createUpdater } from './lib/update.js';
+import { makeUpdateRoute } from './lib/update-routes.js';
+import { makeOfflineInstallerRoute, makeOfflinePrepareRoute } from './lib/update-offline.js';
 // ── 控制台页面是哪一套（2026-10-02 · 新版成为**唯一**控制台）───────────────
 //
 // 历史：旧页面曾是 `panel/parts/` 下 16 个片段按 `PARTS` 拼装的一份 HTML（`GET /`），
@@ -124,7 +133,8 @@ import { sendJson, readBody, readBodyBuffer } from './lib/http-io.js';
 //    `app\napcat\` 的原生进程。面板原来只认 docker exec ⇒ 便携包上二维码永远裂图、
 //    「重启协议端」点了没反应。详见那片叶子文件头的记录。
 import {
-  nativePresent, readNativeWebuiToken, readNativeWebuiPort, readLocalQr, startNativeNapcat, restartNativeNapcat,
+  nativePresent, nativeLogFile, readNativeWebuiToken, readNativeWebuiPort, panelLocalQr,
+  startNativeNapcat, restartNativeNapcat,
 } from './lib/napcat-native.js';
 // ── `config.json` 的唯一所有者（B11b-2 · AR-SERVERSPLIT）────────────────────
 // 读配置 / 写配置 / 记配置历史这三件事只有这一处实现。搬了实现就要**把契约也搬过去**
@@ -142,6 +152,10 @@ import {
   ZHIPU_DEFAULT_CHAIN, MAX_CHAIN_LEN, CLOUD_PRESETS, BUILTIN_MODELS, PRESET_KEYS,
   MODEL_LABELS,
   normalizeThinking, buildModelCaps, readPresets, stashCurrentPreset, readZhipuPackages,
+  // 2026-10-17：降级链必须属于**当前这家**（自定义大脑与切换两条路都要用它）
+  chainForProvider,
+  // 2026-10-17：添加模型时按地址识别厂商 ⇒ 带出默认线路（唯一实现，前端不重算）
+  defaultChainOf,
 } from './lib/models.js';
 // H-10 第二半：状态聚合与导出包（第 19 轮搬出）。判据由主文件注入，理由见下方接线处。
 // ── 第 22 轮 H-10：审计与用量两族整块搬进 lib（实现只在新家一份）────────────
@@ -149,6 +163,7 @@ import { makeBeginAudit, readAudit, readArchive } from './lib/audit-log.js';
 import { makeUsageReport } from './lib/usage-report.js';
 
 import { makeStateCollector } from './lib/state-collector.js';
+import { maybeSyncModelCatalog } from './lib/model-sync.js';
 import { makeExportBundle } from './lib/export-bundle.js';
 // 「保存配置」这条路由的逻辑（第 18 轮搬出 · L3）。四个判据由主文件注入，理由见下方接线处。
 import { makeConfigRoute } from './lib/config-route.js';
@@ -162,7 +177,7 @@ import { providerOf, isLocalBase, providerHostOk, consoleHostReject } from '../s
 // 加千问之前，"免费"这件事在三个地方各有一份名单；再加一家会让份数从 3 涨到 4。
 // ⚠️ 它**不是**给这里新增的依赖 —— 是原来那两份（lib/models.js 的
 //    `CREDIT_CLOUD_MODELS` / `isZhipuModel`）换了个住处，调用点一个没多。
-import { quotaOf, QUOTA_KIND } from '../src/free-quota.js';
+import { quotaOf, quotaPlanOf, QUOTA_KIND } from '../src/free-quota.js';
 // 自定义大脑（2026-10-07）：判据与物化都在 `src/custom-brain.js`（零依赖叶子），
 // 这里只放**接线**（三条路由 + `/api/switch` 的那一支）—— 与 config-route 同款分工。
 import {
@@ -198,8 +213,11 @@ import {
 
 // `PANEL_FILE` 与上面那批**放在一起是为了对照**：它同样是"我这个文件在哪"，
 // 但语义完全不同 —— 它必须是 **server.js 自己的路径**（重启看门狗要 exec 它）。
-// 所以它**不许**跟着 ROOT 一起搬走，也**不许**用它去做自检（见 panelInfo 的 stale）。
+// 所以它**不许**跟着 PROGRAM_ROOT 一起搬走，也**不许**用它去做自检（见 panelInfo 的 stale）。
 const PANEL_FILE = fileURLToPath(import.meta.url);
+
+// 首次启动/只读程序目录：token 与日志必须先有 USER_ROOT/panel 可写。
+ensureUserDirs();
 
 /**
  * ══════════════════════════════════════════════════════════════════════
@@ -261,10 +279,16 @@ const WRITE_ROUTES = new Set([
   '/api/local-model/start', '/api/local-model/stop',
   '/api/onekey/start', '/api/onekey/stop',
   '/api/stop-all', '/api/napcat/restart', '/api/panel/restart',
+  // P11（2026-10-19）：协议端没装时，面板自己去找 / 打开目录 ——
+  // 前者会往 userdata\napcat 里**写文件**（复用安装器的放置逻辑），后者会拉起进程。
+  '/api/napcat/import-auto', '/api/napcat/open-folder',
   // 退出控制台（2026-10-11 · 网页内置终端）：它**结束本进程**，是最彻底的进程控制。
   // ⚠️ 少了这一行，任何人（含 DNS Rebinding 过来的页面）都能一句话把控制台干掉，
   //    而它连审计都不会记（审计挂在 `isWriteRequest` 上的同一张表）。
   '/api/panel/quit',
+  // 窗口记忆（2026-10-16）：面板页面把独立窗口的位置/尺寸存回来（下次开窗还原）。
+  // 它**写盘**（panel/window-state.json）⇒ 照规矩进这张表 —— 少了这行会绕过鉴权与审计。
+  '/api/panel/window',
   // 🟡 破坏性写 / 有副作用的开关
   '/api/debug', '/api/qrcode/refresh',
   '/api/trace/clear', '/api/logs/clear', '/api/usage/reset',
@@ -275,6 +299,10 @@ const WRITE_ROUTES = new Set([
   // D21：插件 ZIP 导入（往 `plugins/` / `skills/` 落目录）。它是**破坏性写**
   // （会新建、可覆盖已有包）→ 与 trace/logs 清理同桌，必须受鉴权与审计。
   '/api/extensions/install',
+  // P3 应用内更新：检查/下载/取消/安装都会写状态或启动安装器；全部走 token + 审计。
+  '/api/update/check', '/api/update/download', '/api/update/cancel', '/api/update/install',
+  // P4 离线更新：prepare 验签/暂存，installer 收原始 EXE 并校验；都会落盘。
+  '/api/update/offline/prepare', '/api/update/offline/installer',
 ]);
 
 /** 这次请求是不是"一次改动"。审计与将来的鉴权共用它。 */
@@ -396,6 +424,8 @@ const HTTP_TIMEOUT_MS = 8000;
 const MODEL_READY_TIMEOUT_MS = 120000;
 /** 单次本机模型请求的硬超时（fetch 的 abort）。它是"最后一次机会"，故比轮询上限更长。 */
 const MODEL_REQUEST_ABORT_MS = 180000;
+/** P11：「自动查找并安装」的总时限（扫目录 + 复制最多 90MB，正常几秒级）。 */
+const NAPCAT_IMPORT_TIMEOUT_MS = 180000;
 /** 清掉占用端口的旧进程之后，等它真的把端口让出来。 */
 const PORT_RELEASE_WAIT_MS = 2500;
 /** 协议端 `get_login_info` 就绪探测：单次超时 / 两轮之间的间隔 / 总期限。 */
@@ -550,7 +580,7 @@ function fileMtimeMs(file) {
 function newestCodeMtime() {
   let newest = 0;
   for (const rel of BACKEND_SOURCES) {
-    const t = fileMtimeMs(path.join(ROOT, rel));
+    const t = fileMtimeMs(path.join(PROGRAM_ROOT, rel));
     if (t > newest) newest = t;
   }
   return newest;
@@ -637,7 +667,7 @@ function readThinking() {
 
 function napcatToken() {
   try {
-    return fs.readFileSync(path.join(ROOT, 'napcat', '.webui_token'), 'utf8').trim();
+    return fs.readFileSync(path.join(NAPCAT_DIR, '.webui_token'), 'utf8').trim();
   } catch {
     return '';
   }
@@ -697,7 +727,9 @@ async function refreshNapcatQrcode() {
       ok: false,
       degrade: true,
       msg: IS_WIN && !nativePresent()
-        ? '读不到 NapCat 的 token —— 协议端还没装好（先双击「一键安装.bat」）'
+        ? (MODE === 'installed'
+          ? '读不到 NapCat 的 token —— 协议端未安装：打开「总览 → 运行 → 运行状态」，点『自动查找并安装』；找不到就点『打开协议端文件夹』把文件拖进去'
+          : '读不到 NapCat 的 token —— 协议端还没装好（先双击「一键安装.bat」）')
         : '读不到 NapCat 的 token —— 协议端没在运行，换不了码',
     };
   }
@@ -756,7 +788,7 @@ async function containerMountStale() {
   if (!r.ok) return false;
   const srcs = (r.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
   if (!srcs.length) return false;
-  const bad = srcs.filter((s) => !s.startsWith(ROOT + path.sep));
+  const bad = srcs.filter((s) => !s.startsWith(NAPCAT_DIR + path.sep));
   return bad.length ? bad : false;
 }
 
@@ -1051,6 +1083,25 @@ function readLogTail(file, n = 8) {
  * **两个实例都订阅 OneBot，同一条群消息会被回复两次**。
  * 所以凡是要判断"到底有没有在跑"，都得落到系统进程上，不能只看 pidfile。
  */
+/**
+ * 安装版的进程认领根：current + previous。
+ *
+ * 升级后旧版机器人可能仍在跑（它从旧版本目录的 runtime/node 启动），而安装器/
+ * 面板必须认得出它才能停掉；只认 PROGRAM_ROOT 会把它判成"不是我们的"。
+ * dev/portable 没有 current.json ⇒ 只认 PROGRAM_ROOT，行为不变。
+ */
+const BRIDGE_ROOTS = (() => {
+  try {
+    const cur = JSON.parse(fs.readFileSync(path.join(INSTALL_ROOT, 'current.json'), 'utf8'));
+    const roots = [cur.current, cur.previous]
+      .filter((v) => typeof v === 'string' && v)
+      .map((v) => path.join(INSTALL_ROOT, 'versions', v, 'app'));
+    return roots.length ? [...new Set(roots.map((p) => path.resolve(p)))] : [PROGRAM_ROOT];
+  } catch {
+    return [PROGRAM_ROOT];
+  }
+})();
+
 async function findBridgeProcesses(exceptPids = []) {
   // ⚠️ pgrep 在这里**只用来提名候选** —— 判定全部交给 isOurBridge()，本函数返回什么，
   //    就等于"哪些 pid 会被 killTree 掉"，所以提名必须**宁可宽**。
@@ -1081,7 +1132,7 @@ async function findBridgeProcesses(exceptPids = []) {
       cmd: hit.cmd,
       cwd: firstPathOf(cwdHit.stdout),
       execPath: firstPathOf(execHit.stdout),
-      root: ROOT,
+      roots: BRIDGE_ROOTS,
     });
     if (verdict.ours) { out.push(hit.pid); continue; }
     // 跳过的也要说一句 —— 否则"我以为它该被清理、它没动"又会变成一个静默失效
@@ -1203,7 +1254,7 @@ async function findBridgeProcessesWin(exceptPids = []) {
   for (const proc of nodeProcs) {
     if (proc.pid === process.pid || exceptPids.includes(proc.pid)) continue;
 
-    const verdict = isOurBridge({ cmd: proc.cmd, cwd: '', execPath: proc.execPath, root: ROOT });
+    const verdict = isOurBridge({ cmd: proc.cmd, cwd: '', execPath: proc.execPath, roots: BRIDGE_ROOTS });
     if (verdict.ours) { out.push(proc.pid); continue; }
 
     // 提名池是整个 node 进程表，比 pgrep 那一侧宽得多（那边至少还要求命令行里提到入口）。
@@ -1386,15 +1437,18 @@ async function startBridge() {
     //
     //   ② `windowsHide: true`（B1）。面板自己没有控制台（win-launcher 用
     //      `detached + windowsHide` 起它），不隐藏就会为机器人**多弹一个常驻黑窗**。
-    const entry = path.join(ROOT, 'src', 'index.js');
+    const entry = path.join(PROGRAM_ROOT, 'src', 'index.js');
     child = spawn(NODE, [`--max-old-space-size=${BRIDGE_MAX_OLD_SPACE_MB}`, entry], {
-      cwd: ROOT,
+      cwd: PROGRAM_ROOT,
       detached: true, // 脱离控制台，控制台关掉了它也能活
       windowsHide: true,
       env: {
         ...process.env,
         FORCE_COLOR: '0',
         QQBOT_LOG_LEVEL: readDebugFlag() ? 'debug' : 'info',
+        QQBOT_USER_ROOT: USER_ROOT,
+        QQBOT_MODE: MODE,
+        QQBOT_CONFIG: CONFIG_FILE,
       },
       stdio: ['ignore', fd, fd],
     });
@@ -1956,8 +2010,41 @@ function makeSay(steps) {
  *    「忘了进 WRITE_ROUTES / READ_ONLY_POST」仍然会被当场点名。
  */
 
+/**
+ * 安装器/启动器唯一的就绪信号（P2）。
+ *
+ * 只读、无鉴权（仅 localhost）；**不读配置、不依赖机器人**，所以配置坏了也能答。
+ * 不返回路径、token、Key、群号 —— 启动器只拿 appId/version 判断“起来的是不是这一版”。
+ */
+async function apiHealth(req, res, url) {
+  void req;
+  void url;
+  // 规格 §7.4：启动成功 = 200；正在退出 = 503（启动器只把 200+身份匹配当成健康）。
+  const body = {
+    ok: !PANEL_SHUTTING_DOWN,
+    appId: APP_ID,
+    version: APP_VERSION,
+    pid: process.pid,
+    uptimeSec: Math.floor(process.uptime()),
+  };
+  return sendJson(res, body, PANEL_SHUTTING_DOWN ? 503 : 200);
+}
+
 async function apiState(req, res, url) {
-  return sendJson(res, await collectState());
+  /* 用户"打开控制面板"这件事在真机上是**反复发生**的（页面刷新 / 重开标签页），
+     而面板进程可能已经跑了好几天。所以除了启动那一次，这里也顺带跑一次对账 ——
+     6 小时节流在模块里，**不节流的代价是每 3 秒读一遍配置**。
+     ⚠️ 不 await：`/api/state` 是每 3 秒轮询一次的读路由，不能让它等 IO。
+     ⚠️ 它自己也**永不抛**（内部 try/catch），不会把读路由带崩。
+     ⚠️ 沙箱里不跑 —— 理由同启动处那条（它会写 config.json，而测试用的是真机配置）。 */
+  if (!SANDBOX) maybeSyncModelCatalog();
+  // P11：协议端"装没装 + 该放哪儿"必须**每次轮询都现算**（页面每 3 秒拉一次），
+  // 不能只在启动时 pushLog 一句 —— 用户装好后不重启面板也要立刻看到状态翻转。
+  return sendJson(res, {
+    ...(await collectState()),
+    napcat: { present: nativePresent(), dir: NAPCAT_DIR, win32: IS_WIN },
+    update: UPDATE.snapshot(),
+  });
 }
 
 // 审计日志（B9 · AU-AUDIT）。只读路由 —— 不鉴权、不审计。
@@ -2145,6 +2232,18 @@ async function apiSwitch(req, res, url) {
   // 再把这套扁平配置整个存回「它所属的大脑」的预设，切走之后什么都不丢
   const presets = stashCurrentPreset(cfg);
 
+  // ⚠️ 切到**非自定义**目标（本机 / 云端预设）时，必须清掉自定义大脑的残留标记
+  //    （2026-10-15 修 · A3 / Issue #5）。不清的后果是"界面说切了、实际没切"：
+  //    `loadConfig()`（src/config.js:457）会拿残留的 `activeCustomId` 再去
+  //    `materializeBrain()`，把自定义大脑的 baseUrl / model / apiKey **覆盖回扁平字段**。
+  //    于是磁盘 config.json 写着 glm-5.3-flash + 智谱、面板也显示智谱，而机器人实际
+  //    还在用自定义中转 —— 三个地方三个说法，且**都不报错**，最难查的一类。
+  //    只在真的离开自定义大脑时清（target==='custom' 那个分支走不到这里）。
+  if (target !== 'custom') {
+    cfg.llm.activeCustomId = '';
+    cfg.llm.declaredFeatures = undefined;
+  }
+
   // ── 自定义大脑（2026-10-07）────────────────────────────────────────────
   // ⚠️ 它**不进 `presets`**：那张表是"服务商 → 一套设置"，而自定义是"用户命名的多套"。
   //    所以这里只做**物化**（把那套摊平到扁平字段）；切走时靠 `stashCurrentPreset`
@@ -2158,6 +2257,17 @@ async function apiSwitch(req, res, url) {
     }
     stashCurrentPreset(cfg);
     materializeBrain(cfg, one);
+    /* ⚠️ 旧数据可能带着**别家的降级链**（2026-10-17 实测：一套千问大脑里躺着 8 条 GLM，
+       来源是"恢复实测最优"曾经写死智谱的链）。物化会把它原样摊到扁平字段，
+       机器人就会拿着一条**必然全部失败**的链去重试。
+       所以切换这一下顺手按服务商过一遍：只剩这家的模型，并**说清去掉了什么**
+       （静默改用户的配置是本项目最忌的一类）。链为空是合法的：就是"不降级"。 */
+    const chain = chainForProvider(cfg.llm.fallbackModels, providerOf(cfg.llm.baseUrl || one.baseUrl));
+    if (chain.dropped.length) {
+      cfg.llm.fallbackModels = chain.kept;
+      cfg.llm.customBrains[id] = { ...one, fallbackModels: [...chain.kept] };
+      say(`· 已清掉 ${chain.dropped.length} 个不属于这家的降级模型：${chain.dropped.join('、')}`);
+    }
     writeConfig(cfg);
     say(`✔ 已切到自定义大脑「${one.name}」（${one.model}）`);
     // ⚠️ 只有它**不跑在本机**时才收掉本机模型 —— 自定义大脑也可能指同一台机器的
@@ -2284,6 +2394,44 @@ async function apiSwitch(req, res, url) {
  *    它能挡 http 明文外泄、挡自称某家却不是其官方域名、**挡控制台网址**
  *    （用户照着浏览器地址栏填的那一个，见 `consoleHostReject`）。
  */
+/**
+ * GET `/api/provider-info?baseUrl=…` —— 添加模型时的**厂商识别**（2026-10-17 · 维护者点名）。
+ *
+ * 一次回答三件事：这是哪家、这家的优先线路长什么样、这家的额度/余额去哪看。
+ * 全部复用既有判据（`providerOf` / `defaultChainOf` / `quotaPlanOf`），这里**不新增规则**：
+ * 前端在表单里只是把结论显示出来，保存时后端还会用同一套判据再填一次。
+ *
+ * ⚠️ 纯读、**不落盘**，也不碰任何进程。
+ * ⚠️ 地址像不像 URL 要当场说清：用户最容易填的是**控制台网页**，那会得到一个
+ *    看不出所以然的 404（`baseUrlReject()` 在保存时才拦，这里先给一句人话）。
+ */
+async function apiProviderInfo(req, res, url) {
+  const raw = String(url.searchParams.get('baseUrl') || '').trim();
+  if (!raw) return sendJson(res, { ok: false, error: 'baseUrl 不能为空' }, 400);
+  let host = '';
+  try { host = new URL(raw).hostname; } catch { host = ''; }
+  if (!host) {
+    return sendJson(res, { ok: false, error: '这不像一个接口地址 —— 要写成 https://… 或本机 http://127.0.0.1:端口/v1', reason: 'bad-url' }, 400);
+  }
+  const provider = providerOf(raw);
+  const known = PRESET_KEYS.includes(provider);
+  const plan = quotaPlanOf(provider) || null;
+  return sendJson(res, {
+    ok: true,
+    provider,
+    known,
+    vendor: CLOUD_PRESETS[provider]?.label
+      || (provider === 'local' ? '本机模型' : '自建 / 中转网关'),
+    officialBaseUrl: CLOUD_PRESETS[provider]?.baseUrl || '',
+    // 这家认不认输入的这个地址（自建网关没有"官方地址"可言，恒 true）
+    official: !!CLOUD_PRESETS[provider]?.baseUrl,
+    chain: defaultChainOf(provider),   // **含主模型**，前端显示时按当前模型名剔掉
+    quota: plan
+      ? { label: plan.label, kindNote: plan.kindNote, controlUrl: plan.controlUrl, liveBalance: plan.liveBalance, mustDo: plan.mustDo }
+      : null,
+  });
+}
+
 async function apiCustomBrainSave(req, res, url) {
   const body = await readBody(req);
   const cfg = readConfig() || {};
@@ -2344,12 +2492,22 @@ async function apiCustomBrainSave(req, res, url) {
   }
 
   const id = editing ? editing.id : newBrainId(brains, String(Date.now()));
+  /* 降级链：**属于这家的才留**（2026-10-17）。保存这条路上以前完全不看服务商 ——
+     复制一份别家的链进来（或编辑一套老大脑时把它原样带回去），就会得到一条
+     "全是别家模型、一条都打不通"的链。判据复用 `chainForProvider`（与 /api/config 同源）。 */
+  const chainRaw = Array.isArray(body.fallbackModels)
+    ? body.fallbackModels.map((s) => String(s).trim()).filter(Boolean)
+    : (editing?.fallbackModels || []);
+  /* 新建时**没有**任何链 ⇒ 按这家的默认线路自动填一条（2026-10-17 维护者点名）。
+     以前新建出来的大脑链是空的，用户以为"没有降级"是设计如此；
+     而千问那类"额度按模型发"的平台，链长本身就是它的一半价值。
+     ⚠️ 只在**新建**且链为空时填 —— 编辑时用户的链（哪怕是空的，他手动清过）一律尊重。 */
+  const autoChain = (!editing && !chainRaw.length) ? defaultChainOf(provider).filter((m) => m !== model) : [];
+  const chainPick = chainForProvider(chainRaw.length ? chainRaw : autoChain, provider);
   const one = normalizeCustomBrain({
     id, name, baseUrl, model,
     apiKey: (typeof body.apiKey === 'string' && body.apiKey.trim()) ? body.apiKey.trim() : (editing?.apiKey || ''),
-    fallbackModels: Array.isArray(body.fallbackModels)
-      ? body.fallbackModels.map((s) => String(s).trim()).filter(Boolean)
-      : (editing?.fallbackModels || []),
+    fallbackModels: chainPick.kept,
     features,
     maxTokens: Number.isFinite(body.maxTokens) && body.maxTokens > 0
       ? Math.round(body.maxTokens) : (editing?.maxTokens ?? 400),
@@ -2374,7 +2532,9 @@ async function apiCustomBrainSave(req, res, url) {
   return sendJson(res, {
     ok: true, id, name: one.name,
     switched: wantSwitch, applied,
-    msg: `${editing ? '已修改' : '已添加'}「${one.name}」${wantSwitch ? '并已切到它' : '（当前没在用它，点一下即可切换）'}`,
+    msg: `${editing ? '已修改' : '已添加'}「${one.name}」${wantSwitch ? '并已切到它' : '（当前没在用它，点一下即可切换）'}`
+      + (autoChain.length ? `，已按这家的默认线路填了 ${one.fallbackModels.length} 条备用模型` : '')
+      + (chainPick.dropped.length ? `（已去掉 ${chainPick.dropped.length} 个不属于这家的降级模型）` : ''),
   });
 }
 
@@ -2421,7 +2581,11 @@ async function apiCustomBrainDelete(req, res, url) {
   if (String(cfg.llm.activeCustomId || '') === id) {
     cfg.llm.activeCustomId = '';
     cfg.llm.declaredFeatures = undefined;
-    stashCurrentPreset(cfg);
+    /* ⚠️ 这里**不能** `stashCurrentPreset(cfg)`（2026-10-17 删掉的那一行）：
+       走得到这一步就说明"刚才用的是这套自定义大脑"⇒ 扁平字段是它物化出来的，
+       不属于任何内置预设。存回去的后果是 `presets[qwen]` 被这套的模型名 +
+       它自己那条（常为空的）降级链覆盖 —— 之后切回内置千问就是这个残缺状态，
+       而且不报错。与 `models.js` 里 `stashCurrentPreset` 的守卫是同一条判据。 */
     const P = readPresets(cfg).zhipu || {};
     cfg.llm.baseUrl = P.baseUrl || CLOUD_PRESETS.zhipu.baseUrl;
     cfg.llm.model = P.model || CLOUD_PRESETS.zhipu.model;
@@ -2558,6 +2722,44 @@ async function apiOnekeyStart(req, res, url) {
  * 结束本次运行：机器人 + 本机模型 + 容器 + （可选）Docker Desktop 全关，
  * 回到启动之前的干净状态，内存一次性释放干净。
  */
+
+/**
+ * P7：收掉"我们开的那只控制台窗口"。
+ *
+ * 只认启动跟踪里记的 openedPid，且**命令行必须同时含 --app= 与控制台端口**才杀 ——
+ * 误杀用户自己的浏览器是不可接受的事故，校验不过就宁可留着窗口。
+ * 非 win32 一律不动：标签页归用户自己的浏览器托管。
+ */
+async function closeConsoleWindowIfOurs() {
+  if (process.platform !== 'win32') return { ok: true, reason: '非 Windows：标签页归用户浏览器托管，不杀' };
+  let entry = null;
+  try {
+    entry = (readLaunchLog(launchLogPath(CONFIG_FILE, PANEL_STATE_DIR), { limit: 1 }) || [])[0] || null;
+  } catch { entry = null; }
+  const pid = Number(entry && entry.openedPid);
+  if (!entry || entry.kind !== 'window' || !pid) return { ok: true, reason: '启动跟踪里没有独立窗口 pid，无需关窗' };
+  let cmd = '';
+  try {
+    const ps = spawnSync('powershell', ['-NoProfile', '-Command',
+      `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`],
+      { windowsHide: true, timeout: 8000, encoding: 'utf8' });
+    cmd = String(ps.stdout || '').trim();
+  } catch { cmd = ''; }
+  if (!cmd.includes('--app=') || !cmd.includes(String(PORT))) {
+    return { ok: false, reason: `pid ${pid} 的命令行不像我们开的控制台窗口，不杀` };
+  }
+  spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 8000 });
+  return { ok: true, reason: `已关控制台窗口（pid ${pid}）` };
+}
+
+/** P7：「结束本次运行」的最后一程：关窗 → 停 HTTP → 退出本进程。 */
+async function exitPanelNow() {
+  const r = await closeConsoleWindowIfOurs();
+  if (r && r.reason) console.log(`· 关控制台窗口：${r.reason}`);
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), BRIDGE_SETTLE_MS);
+}
+
 async function apiOnekeyStop(req, res, url) {
   const body = await readBody(req);
   const quitDocker = body.quitDocker !== false; // 默认连 Docker 一起退，才叫"干净"
@@ -2619,7 +2821,11 @@ async function apiOnekeyStop(req, res, url) {
   try { fs.unlinkSync(EFFECTIVE_FILE); } catch { /* 本来就没有 */ }
   invalidateDockerCache();
   say('✔ 已回到启动前的干净状态');
-  return sendJson(res, { ok: true, steps, msg: '已全部结束，内存已释放' });
+  const exitPanel = body.exitPanel !== false;
+  if (exitPanel) say('· 面板自身与它开的控制台窗口也一起收（约半秒后本进程退出，页面会显示"已退出"）');
+  sendJson(res, { ok: true, steps, msg: exitPanel ? '已全部结束，面板即将退出' : '已全部结束，内存已释放', panelExiting: exitPanel });
+  if (exitPanel) setTimeout(() => { void exitPanelNow(); }, PANEL_EXIT_SETTLE_MS);
+  return;
 }
 
 async function apiBalance(req, res, url) {
@@ -2644,7 +2850,7 @@ async function apiTry(req, res, url) {
   //    这不是命令注入（`panel/lib/proc.js` 用 execFile + 数组传参、没有 shell），
   //    但"一句话"变成"一个开关"就是参数注入。分隔符之后的都被下游当正文 ——
   //    拆分规则只有一份实现（`scripts/lib/cli-args.mjs`），由 smoke 的真值表盯着。
-  const r = await sh(NODE, [path.join(ROOT, 'scripts', 'dryrun.js'), '--json', '--', text], DRYRUN_TIMEOUT_MS);
+  const r = await sh(NODE, [path.join(PROGRAM_ROOT, 'scripts', 'dryrun.js'), '--json', '--', text], DRYRUN_TIMEOUT_MS);
   const lines = (r.stdout || '').trim().split('\n').filter(Boolean);
   let data = null;
   try {
@@ -2817,7 +3023,7 @@ async function apiExtensionsInstall(req, res, url) {
     );
   }
   const overwrite = url.searchParams.get('overwrite') === '1';
-  const r = installArchive({ bytes: got.buf, roots: extensionRoots(ROOT), overwrite });
+  const r = installArchive({ bytes: got.buf, roots: extensionRoots(USER_ROOT), overwrite });
   if (!r.ok) {
     pushLog(`· 插件安装失败：${r.error}`);
     return sendJson(res, { ok: false, error: r.error }, r.code || 400);
@@ -2832,7 +3038,7 @@ async function apiExtensionsInstall(req, res, url) {
 }
 
 // ── 自定义工作台：下载 / 导出 ──
-// what = all | persona | prompt | rules | memory | skills | log | faces
+// what = all | persona | prompt | rules | memory | skills | log | config
 // format = json | txt | zip
 async function apiCustomExport(req, res, url) {
   const what = String(url.searchParams.get('what') || 'all');
@@ -3005,6 +3211,82 @@ async function apiStopAll(req, res, url) {
   });
 }
 
+/**
+ * P10（2026-10-19 群友回执：不想再进文件夹点任何东西）：
+ * 安装形态下双击桌面图标 = 控制台 + 协议端一次到位。面板启动时自查一次 ——
+ * 协议端装了但没跑就用 launch-napcat-hidden.vbs 隐藏拉起（无黑窗、无任务栏按钮）；
+ * 3001 已在听就不重复起（起第二个 = 抢端口 = 掉登录态）；没装就只在日志里如实说出路。
+ * 刻意不 await：协议端慢或缺席，绝不能拖住「控制台已启动」。
+ */
+async function autoStartNapcatIfInstalled() {
+  if (!nativePresent()) {
+    pushLog('· 协议端未安装 —— 打开「总览 → 运行 → 运行状态」，点『自动查找并安装』（会扫描下载/桌面里已解压的 NapCat）');
+    return;
+  }
+  if (await portOpen(3001)) { pushLog('· 协议端已经在运行（3001 有应答）—— 没有重复拉起'); return; }
+  const r = startNativeNapcat({});
+  pushLog(r.ok ? `✔ ${r.msg}` : `✗ ${r.msg}`);
+}
+
+/**
+ * P11（2026-10-19 维护者回执）：协议端没装时，面板自己去找 / 引导，
+ * 不再让用户去 `%LOCALAPPDATA%\EstrellaBot\userdata` 里手动放文件
+ * （原话："一直卡在 AppData 这一块，是没有这个东西的"）。
+ *
+ * 查找逻辑住在 `tools/import-napcat.mjs` —— 它**复用**安装器的 `placeNapcatFromLocal`
+ * （只复制、不移动、已装不覆盖）。面板只负责拉起它，不在这里重写一份位置判据。
+ */
+function toolFile(name) {
+  const cands = [
+    path.join(INSTALL_ROOT, 'tools', name),
+    path.resolve(PROGRAM_ROOT, '..', 'tools', name),
+    path.join(PROGRAM_ROOT, 'packaging', 'windows', 'tools', name),
+  ];
+  for (const p of cands) {
+    try { if (fs.existsSync(p)) return p; } catch { /* 继续找下一个 */ }
+  }
+  return '';
+}
+
+async function apiNapcatImportAuto(req, res, url) {
+  if (!IS_WIN) return sendJson(res, { ok: false, msg: '这个功能只在 Windows 安装版上可用' }, 400);
+  const tool = toolFile('import-napcat.mjs');
+  if (!tool) return sendJson(res, { ok: false, msg: '找不到 import-napcat.mjs（安装件不完整）' }, 500);
+  pushLog('… 正在这台电脑上查找已解压的 NapCat（下载 / 桌面 / 文档）');
+  const r = await new Promise((resolve) => {
+    execFile(NODE, [tool, '--install-root', INSTALL_ROOT, '--user-root', USER_ROOT], {
+      timeout: NAPCAT_IMPORT_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 * 1024 * 1024,
+      // 工具自己会按 --user-root 设 QQBOT_*（必须在它 import common 之前）；
+      // 这里只负责把安装器留下的 ESTRELLA_NSIS 清掉，否则输出会被 ASCII 化成问号。
+      env: { ...process.env, ESTRELLA_NSIS: '' },
+    }, (err, stdout, stderr) => resolve({ err, stdout, stderr }));
+  });
+  const line = String(r.stdout || '').split('\n').reverse().find((l) => l.startsWith('JSON:'));
+  let j = null;
+  try { j = line ? JSON.parse(line.slice(5)) : null; } catch { /* 落到下面统一报错 */ }
+  if (!j) {
+    pushLog('✗ 查找脚本没有给出结果（详见面板日志）');
+    return sendJson(res, { ok: false, msg: '查找脚本没有给出结果', output: String(r.stderr || r.stdout || '').slice(-2000) }, 500);
+  }
+  if (j.action === 'imported') pushLog(`✔ 已从 ${j.from} 装好协议端（${j.status}）`);
+  else if (j.action === 'already') pushLog('· 协议端已经装好，无需重复导入');
+  else if (j.action === 'not-found') pushLog('· 没找到已解压的 NapCat —— 可以点「打开协议端文件夹」自己放进去');
+  else pushLog(`✗ 导入失败：${j.error || j.status || j.action}`);
+  return sendJson(res, j);
+}
+
+async function apiNapcatOpenFolder(req, res, url) {
+  if (!IS_WIN) return sendJson(res, { ok: false, msg: '这个功能只在 Windows 安装版上可用' }, 400);
+  try {
+    fs.mkdirSync(NAPCAT_DIR, { recursive: true });
+    spawn('explorer.exe', [NAPCAT_DIR], { detached: true, windowsHide: true, stdio: 'ignore' }).unref();
+    pushLog(`· 已打开协议端文件夹：${NAPCAT_DIR}`);
+    return sendJson(res, { ok: true, dir: NAPCAT_DIR });
+  } catch (e) {
+    return sendJson(res, { ok: false, msg: `打不开文件夹：${e.message}` }, 500);
+  }
+}
+
 async function apiNapcatRestart(req, res, url) {
   // ── 原生协议端优先（2026-10-12 · Windows 便携包）────────────────────────────
   // 便携包里没有 Docker，协议端是 `app\napcat\` 下的原生进程。原来这里一上来就
@@ -3024,6 +3306,17 @@ async function apiNapcatRestart(req, res, url) {
     const r = await restartNativeNapcat(killTree);
     pushLog(r.ok ? `✔ ${r.msg}` : `✗ ${r.msg}`);
     return sendJson(res, { ok: r.ok, output: r.msg }, r.ok ? 200 : 400);
+  }
+
+  // P10（2026-10-19 群友截图）：Windows 的安装版/便携版都没有 Docker 那一套 ——
+  // 协议端没装时原来会跌进 ensureDocker，两分半后冒出一句莫名其妙的「没找到 Docker Desktop」。
+  // 现在如实报「协议端未安装」并给出路；容器那一支只留给 macOS。
+  if (IS_WIN) {
+    const m = MODE === 'installed'
+      ? '协议端未安装：打开「总览 → 运行 → 运行状态」，点『自动查找并安装』，或点『打开协议端文件夹』自己放'
+      : '协议端未安装：先双击「一键安装.bat」把协议端装进 app\\napcat';
+    pushLog(`✗ ${m}`);
+    return sendJson(res, { ok: false, output: m }, 400);
   }
 
   pushLog('… 重启 NapCat 容器');
@@ -3062,9 +3355,15 @@ async function apiNapcatRestart(req, res, url) {
  *    原来只有 `docker exec` 那一支 ⇒ 便携包上这个接口**必然 404**，
  *    页面上就是一张永远裂着的图（用户报的就是这个现象）。
  *    容器那一支保留在后面：macOS 主线仍然跑容器。
+ * ⚠️ 且"本地优先"必须带**形态前提**（2026-10-16 · Mac 真机修）：
+ *    只看"文件在不在"是不够的 —— macOS 上容器根本没挂 cache，而开发树的 `napcat/` 下
+ *    可能躺着一张历史遗留的 qrcode.png（本机实测：2026-09-16 的孤儿文件），
+ *    只看文件存在就会**永远**发那张陈旧的码：点「换一张」，后端在容器里真换了，
+ *    前端取回的却还是旧图 —— 症状就是"显示已刷新，但二维码切换不了"。
+ *    判据本体在 `panelLocalQr()`（napcat-native.js），这里只接线。
  */
 async function apiQrcode(req, res, url) {
-  const local = readLocalQr();
+  const local = panelLocalQr(nativePresent());
   if (local) {
     res.writeHead(200, {
       'Content-Type': 'image/png',
@@ -3085,7 +3384,9 @@ async function apiQrcode(req, res, url) {
     return res.end(nativePresent()
       ? '还没有二维码 —— 协议端要么没在跑，要么还没开始生成。\n点上面的「重启协议端」把它拉起来，几秒后这张图会自动出现。'
       : (IS_WIN
-        ? '取不到二维码 —— 协议端还没装好。\n先回包的根目录双击「一键安装.bat」（它会把协议端装进 app\\napcat），装完再点「重启协议端」。'
+        ? (MODE === 'installed'
+          ? '取不到二维码 —— 协议端未安装。\n打开「总览 → 运行 → 运行状态」，点『自动查找并安装』（或『打开协议端文件夹』把文件拖进去），再点「重启协议端」。'
+          : '取不到二维码 —— 协议端还没装好。\n先回包的根目录双击「一键安装.bat」（它会把协议端装进 app\\napcat），装完再点「重启协议端」。')
         : '暂时取不到二维码（容器没在运行？）'));
   }
   res.writeHead(200, {
@@ -3157,6 +3458,20 @@ onLog((lines) => {
   }
 });
 
+/** 把一帧 update 推给所有在线页面（与日志共用同一个 SSE 连接）。 */
+function broadcastUpdate(payload) {
+  if (SSE_CLIENTS.size === 0) return;
+  const frame = `event: update\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const res of SSE_CLIENTS) {
+    try { res.write(frame); } catch { SSE_CLIENTS.delete(res); }
+  }
+}
+
+const UPDATE = createUpdater({
+  onUpdate: (snapshot) => broadcastUpdate(snapshot),
+  requestShutdown: () => shutdown(),
+});
+
 /**
  * 终端页的日志流（SSE）。
  *
@@ -3177,6 +3492,7 @@ async function apiConsoleStream(req, res, url) {
     lines: state.logs.slice(-200),
     total: logDropped + state.logs.length,
   })}\n\n`);
+  res.write(`event: update\ndata: ${JSON.stringify(UPDATE.snapshot())}\n\n`);
 
   SSE_CLIENTS.add(res);
   let closed = false;
@@ -3225,17 +3541,15 @@ function tailLines(file, maxLines = 200, maxBytes = 256 * 1024) {
 /**
  * 终端页的"另一半"日志：协议端（NapCat）自己的输出。
  *
- * ⚠️ 路径为什么写成 `ROOT/napcat/napcat.log`：便携包里 `ROOT` 就是 `app/`，
- *    开发树里 `ROOT` 是仓库根 —— **两处正好都对**（便携包把协议端装在 `app/napcat/`，
- *    开发树的协议端在 `napcat/`）。这不是巧合，是当初约定好的同构布局。
+ * 路径从 `nativeLogFile()` 来（P1 起 NapCat 整树在 USER_ROOT/napcat）。
  */
 async function apiConsoleTail(req, res, url) {
   const src = String(url.searchParams.get('src') || 'napcat');
   const n = Math.min(Math.max(Number(url.searchParams.get('lines') || 200), 1), 500);
-  const file = src === 'panel' ? PANEL_LOG : path.join(ROOT, 'napcat', 'napcat.log');
+  const file = src === 'panel' ? PANEL_LOG : nativeLogFile();
   const r = tailLines(file, n);
   return sendJson(res, {
-    src, file: path.relative(ROOT, file),
+    src, file: path.relative(USER_ROOT, file),
     lines: r.lines,
     missing: Boolean(r.missing),
     hint: r.missing ? '这个文件还不存在（协议端第一次跑起来之后才会写它）' : '',
@@ -3251,6 +3565,31 @@ async function apiConsoleTail(req, res, url) {
  * ⚠️ 先把响应发出去再退 —— 立刻 `process.exit` 的话浏览器只会看到"连接被掐断"，
  *    而用户需要的是一句"已退出"。
  */
+/**
+ * 窗口几何上报（2026-10-16）：独立窗口里的页面在 resize / 移动 / 关闭前把
+ * screenX / screenY / outerWidth / outerHeight POST 到这里 ⇒ 写进
+ * `panel/window-state.json`；下次启动由启动器 `--window-size/--window-position` 还原。
+ *
+ * ⚠️ 值域判据（normalizeWinState）只有 `src/launch-mode.js` 一份 —— 这里只接线。
+ *    不合格就 400，**绝不把脏值落盘**（宁可不记，也不要"记住一个开不出来的位置"）。
+ * ⚠️ 写盘失败如实回 500：本次开窗本来就不受影响，但页面那边会看到 ——
+ *    将来排"为什么没记住"时，能分辨是"页面没报"还是"盘写不进去"。
+ */
+async function apiPanelWindow(req, res, url) {
+  void url; // 统一签名（§81）：本 handler 用不到 url，但形状必须与全表一致 —— 少一个形参静态判据直接红
+  const body = await readBody(req);
+  const st = normalizeWinState(body);
+  if (!st) return sendJson(res, { ok: false, error: '窗口几何不合法（尺寸越界或形状不对）' }, 400);
+  try {
+    const file = windowStatePath(CONFIG_FILE, PANEL_STATE_DIR);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify({ ...st, updatedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
+  } catch (e) {
+    return sendJson(res, { ok: false, error: `窗口状态写不进去：${e && e.message ? e.message : e}` }, 500);
+  }
+  return sendJson(res, { ok: true });
+}
+
 async function apiPanelQuit(req, res, url) {
   pushLog('■ 正在退出控制台（页面点了「退出控制台」）—— 机器人不受影响');
   sendJson(res, { ok: true, msg: '控制台正在退出，约 1 秒后页面不再响应' });
@@ -3258,7 +3597,26 @@ async function apiPanelQuit(req, res, url) {
   return undefined;
 }
 
+const apiUpdateState = makeUpdateRoute({ updater: UPDATE, action: 'state' });
+const apiUpdateCheck = makeUpdateRoute({ updater: UPDATE, action: 'check' });
+const apiUpdateDownload = makeUpdateRoute({ updater: UPDATE, action: 'download' });
+const apiUpdateInstall = makeUpdateRoute({ updater: UPDATE, action: 'install' });
+const apiUpdateCancel = makeUpdateRoute({ updater: UPDATE, action: 'cancel' });
+const apiUpdateOfflinePrepare = makeOfflinePrepareRoute({ updater: UPDATE });
+const apiUpdateOfflineInstaller = makeOfflineInstallerRoute({ updater: UPDATE });
+
 const API_ROUTES = [
+  // 安装器/启动器就绪信号（P2）：只读、无鉴权；启动器只认它来判断版本。
+  { path: '/api/health', handler: apiHealth },
+  // 应用内更新（P3）：GET state 只读；4 个 POST 在 WRITE_ROUTES。
+  { path: '/api/update/state', handler: apiUpdateState },
+  { path: '/api/update/check', method: 'POST', handler: apiUpdateCheck },
+  { path: '/api/update/download', method: 'POST', handler: apiUpdateDownload },
+  { path: '/api/update/install', method: 'POST', handler: apiUpdateInstall },
+  { path: '/api/update/cancel', method: 'POST', handler: apiUpdateCancel },
+  // P4 离线更新：两段式，先清单/签名，再原始 EXE 字节。
+  { path: '/api/update/offline/prepare', method: 'POST', handler: apiUpdateOfflinePrepare },
+  { path: '/api/update/offline/installer', method: 'POST', handler: apiUpdateOfflineInstaller },
   { path: '/api/state', handler: apiState },
   { path: '/api/audit', handler: apiAudit },
   { path: '/api/logs', handler: apiLogs },
@@ -3276,6 +3634,8 @@ const API_ROUTES = [
   { path: '/api/local-model/start', method: 'POST', handler: apiLocalModelStart },
   { path: '/api/local-model/stop', method: 'POST', handler: apiLocalModelStop },
   { path: '/api/switch', method: 'POST', handler: apiSwitch },
+  // 2026-10-17：添加模型时按地址识别厂商（纯读：厂商名 / 默认线路 / 额度官网）
+  { path: '/api/provider-info', handler: apiProviderInfo },
   { path: '/api/custom-brain/save', method: 'POST', handler: apiCustomBrainSave },
   { path: '/api/custom-brain/rename', method: 'POST', handler: apiCustomBrainRename },
   { path: '/api/custom-brain/delete', method: 'POST', handler: apiCustomBrainDelete },
@@ -3297,6 +3657,9 @@ const API_ROUTES = [
   { path: '/api/debug', method: 'POST', handler: apiDebug },
   { path: '/api/stop-all', method: 'POST', handler: apiStopAll },
   { path: '/api/napcat/restart', method: 'POST', handler: apiNapcatRestart },
+  // P11：协议端没装时的两条自助路（自动查找导入 / 打开目录）。
+  { path: '/api/napcat/import-auto', method: 'POST', handler: apiNapcatImportAuto },
+  { path: '/api/napcat/open-folder', method: 'POST', handler: apiNapcatOpenFolder },
   { path: '/api/qrcode', handler: apiQrcode },
   { path: '/api/qrcode/refresh', method: 'POST', handler: apiQrcodeRefresh },
   { path: '/api/logs/clear', method: 'POST', handler: apiLogsClear },
@@ -3305,6 +3668,8 @@ const API_ROUTES = [
   { path: '/api/console/stream', handler: apiConsoleStream },
   { path: '/api/console/tail', handler: apiConsoleTail },
   { path: '/api/panel/quit', method: 'POST', handler: apiPanelQuit },
+  // 窗口记忆（2026-10-16）：独立窗口的位置与尺寸上报（页面 resize / 移动 / 关窗前发）。
+  { path: '/api/panel/window', method: 'POST', handler: apiPanelWindow },
 ];
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
@@ -3450,11 +3815,25 @@ server.listen(PORT, '127.0.0.1', async () => {
   // 判据（"不是我的 && 够旧"）保证不会删掉另一个**活着**进程正在写的那一份。
   // ⚠️ 清扫面**必须含插件的两个根**（D21）：插件安装的 staging / 备份临时目录
   //    就落在 `plugins/` 与 `skills/` 里（与目标同根同级，rename 才是原子的）。
-  const swept = sweepStaleTemps([ROOT, path.join(ROOT, 'panel'), ...extensionRoots(ROOT).map((r) => r.dir)]);
+  const swept = sweepStaleTemps([PANEL_STATE_DIR, DATA_DIR, UPDATE_DIR, ...extensionRoots(USER_ROOT).map((r) => r.dir)]);
   if (swept.length) pushLog(`清理了 ${swept.length} 个残留的原子写临时文件（上次被强杀时留下的）`);
 
   await adoptExistingBridge();
   pushLog('控制台已启动');
+  UPDATE.start();
+  // P10：安装形态（桌面图标那条链）启动时把协议端顺手带起来，见函数头注释。
+  if (IS_WIN && MODE === 'installed' && !SANDBOX) void autoStartNapcatIfInstalled();
+  /* 官方模型目录对账（2026-10-17 · 2026-10-19 P10 修）：启动这一下跑一次 —— DeepSeek 之类改了版本/地址，
+     会在这里被对齐，并把一条事件留给页面弹右下角提示。
+     ⚠️ `maybeSyncModelCatalog()` 是**同步且永不抛**的叶子（model-sync.js 头部写着）——
+        原来这里挂着 `.catch(() => {})`：对非 Promise 调 .catch 直接 TypeError，
+        真机每次启动在日志里红一条"面板未处理的 Promise 拒绝"（沙箱跳过这行，所以回归一直没吭声）。
+        用 setImmediate 挪出 listen 回调 = 原注释"不拖住首屏"的本意。
+     ⚠️ 节流 6 小时在模块里，`/api/state` 也会调它（用户天天开着面板也能覆盖到）。
+     ⚠️ **沙箱里不跑**：它会**写 config.json**，而 `test/panel-dom.mjs` / `panel-boot.mjs`
+        起的是"沙箱标志 + 真机配置"（沙箱只挡进程，不挡文件）。让它在那儿跑，
+        等于每次跑一遍回归就改一次用户配置 —— 那类副作用以前踩过（见 sandbox.sh 顶部的注释）。 */
+  if (!SANDBOX) setImmediate(() => maybeSyncModelCatalog());
   console.log(`\n  Estrella Bot Console 已启动`);
   console.log(`  → http://127.0.0.1:${PORT}\n`);
   console.log('  这个窗口保持开着即可，关掉窗口 = 控制台停止');
@@ -3505,6 +3884,8 @@ function psQuote(s) {
 }
 
 let restarting = false;
+/** 正在退出时 /api/health 回 503（规格 §7.4）；启动器只认 200 + 身份匹配。 */
+let PANEL_SHUTTING_DOWN = false;
 function restartPanel() {
   if (restarting) return { ok: true, restarted: false, msg: '面板正在重启中，稍等它自己回来' };
   const info = panelInfo();
@@ -3522,12 +3903,12 @@ function restartPanel() {
   try {
     if (IS_WIN) {
       const ps = `Wait-Process -Id ${BOOT.pid} -ErrorAction SilentlyContinue; `
-        + `Set-Location -LiteralPath ${psQuote(ROOT)}; `
+        + `Set-Location -LiteralPath ${psQuote(PROGRAM_ROOT)}; `
         + `& ${psQuote(NODE)} ${psQuote(PANEL_FILE)} *>> ${psQuote(log)}`;
       spawn(POWERSHELL, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePwshCommand(ps)], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     } else {
       const cmd = `while kill -0 ${BOOT.pid} 2>/dev/null; do sleep 0.2; done; `
-        + `cd ${JSON.stringify(ROOT)} && exec ${JSON.stringify(NODE)} ${JSON.stringify(PANEL_FILE)} `
+        + `cd ${JSON.stringify(PROGRAM_ROOT)} && exec ${JSON.stringify(NODE)} ${JSON.stringify(PANEL_FILE)} `
         + `>> ${JSON.stringify(log)} 2>&1`;
       spawn('/bin/sh', ['-c', cmd], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     }
@@ -3542,6 +3923,8 @@ function restartPanel() {
 }
 
 function shutdown() {
+  PANEL_SHUTTING_DOWN = true;
+  try { UPDATE.stop(); } catch { /* 退出路径不许再抛 */ }
   // 故意不杀机器人：控制台只是「面板」，机器人是独立进程。
   // 要停机器人请用面板里的「一键全停」。
   server.close(() => process.exit(0));

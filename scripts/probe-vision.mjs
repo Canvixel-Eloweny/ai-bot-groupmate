@@ -48,6 +48,10 @@ import {
   VISION_TEST_CASES, VISION_TEST_IMAGES, probeVerdictOf, visionTestBody, verifyPng,
 } from '../src/vision-probe.js';
 import { isVisionRejection } from '../src/llm.js';
+// 各家的官方接口地址（唯一实现，面板也用它）—— 探测**别家**时必须用那家的地址，
+// 拿智谱的 baseUrl 去发 `deepseek-flash` 会得到 1211「模型不存在」，
+// 而那条 400 会被判成"看不见"（2026-10-17 实测踩到，误写了一条 unknown 记录）。
+import { CLOUD_PRESETS } from '../panel/lib/models.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TIMEOUT = 90000;
@@ -146,7 +150,13 @@ async function probeOne(baseUrl, key, model) {
 async function main() {
   const argv = process.argv.slice(2);
   const outIdx = argv.indexOf('--out');
-  const only = argv.filter((x, i) => !x.startsWith('--') && argv[i - 1] !== '--out');
+  /* `--provider <名字>`（2026-10-17）：默认智谱（历史行为逐字不变）。
+     为什么需要它：这张表不只智谱一家了 —— 拿智谱的地址去探 deepseek-flash 会得到
+     「模型不存在」，而那条 400 会被判成"看不见"。
+     ⚠️ 它的**值**不能被当模型名（下面那个 filter 要把 `--provider` 的下一项排除）。 */
+  const pIdx = argv.indexOf('--provider');
+  const provider = (pIdx >= 0 ? String(argv[pIdx + 1] || '') : 'zhipu').trim() || 'zhipu';
+  const only = argv.filter((x, i) => !x.startsWith('--') && argv[i - 1] !== '--out' && argv[i - 1] !== '--provider');
 
   // ① 先把要发的两张图**按规范读回来核对**。不合法就当场停 ——
   //    发一张非法图出去，得到的是"这个模型看不见"这种**错得看不出来**的结论。
@@ -163,22 +173,24 @@ async function main() {
   }
 
   const cfg = readCfg();
-  const key = cfg?.llm?.keys?.zhipu || '';
-  const baseUrl = cfg?.llm?.presets?.zhipu?.baseUrl || cfg?.llm?.cloudBaseUrl
-    || cfg?.llm?.baseUrl || 'https://open.bigmodel.cn/api/paas/v4/';
+  // 智谱沿用历史读法（先看它自己的预设地址）；别家用官方地址表。
+  const key = cfg?.llm?.keys?.[provider] || '';
+  const baseUrl = (provider === 'zhipu' && (cfg?.llm?.presets?.zhipu?.baseUrl || cfg?.llm?.cloudBaseUrl))
+    || CLOUD_PRESETS[provider]?.baseUrl
+    || cfg?.llm?.baseUrl || '';
   if (!key) {
-    console.error('config.json 里没有 zhipu 的 API Key（llm.keys.zhipu），没法探测');
+    console.error(`config.json 里没有 ${provider} 的 API Key（llm.keys.${provider}），没法探测`);
     process.exit(2);
   }
 
   const models = only.length ? only : VISION_CANDIDATES;
-  console.log(`视觉能力实测：${models.length} 个模型 × ${VISION_TEST_CASES.length} 张图（真实计费，量很小）\n`);
+  console.log(`视觉能力实测：${provider} · ${models.length} 个模型 × ${VISION_TEST_CASES.length} 张图（真实计费，量很小）\n`);
 
   const results = [];
   for (const m of models) {
-    process.stdout.write(`  zhipu/${m} … `);
+    process.stdout.write(`  ${provider}/${m} … `);
     const r = await probeOne(baseUrl, key, m);
-    results.push({ provider: 'zhipu', ...r });
+    results.push({ provider, ...r });
     const mark = r.verdict === 'yes' ? '✓ 看得见' : r.verdict === 'no' ? '✗ 看不见' : '? 未能判定';
     const detail = VISION_TEST_CASES.map((c) => `${c.id}:${r.perImage[c.id].status}/${r.perImage[c.id].content || '—'}`).join(' ');
     console.log(`${mark}（${detail}）`);
@@ -187,7 +199,15 @@ async function main() {
   }
 
   const out = outIdx >= 0 ? String(argv[outIdx + 1]) : path.join(ROOT, 'scripts', 'vision-probe-result.json');
-  fs.writeFileSync(out, JSON.stringify({ at: new Date().toISOString(), results }, null, 2) + '\n');
+  /* ⚠️ **合并**而不是整份覆盖（2026-10-17）：只探一家 / 一两个模型时覆盖，
+     会把别家那十条记录一起抹掉 —— 而 `check-wb` §45 正是拿这份文件核对
+     `vision: true` 有没有实测依据（抹掉 ⇒ 一堆模型变成"凭空标的 true"）。
+     同 `provider/model` 的旧记录被这次结果替换，其余原样保留。 */
+  let prev = [];
+  try { prev = JSON.parse(fs.readFileSync(out, 'utf8')).results || []; } catch { prev = []; }
+  const fresh = new Set(results.map((r) => `${r.provider}/${r.model}`));
+  const merged = [...prev.filter((r) => !fresh.has(`${r.provider}/${r.model}`)), ...results];
+  fs.writeFileSync(out, JSON.stringify({ at: new Date().toISOString(), results: merged }, null, 2) + '\n');
 
   const yes = results.filter((r) => r.verdict === 'yes').map((r) => r.model);
   const no = results.filter((r) => r.verdict === 'no').map((r) => r.model);

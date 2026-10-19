@@ -678,10 +678,14 @@ a:hover { text-decoration: underline; }
 .banners:not(:empty) { display: grid; gap: var(--s2); padding: var(--s3) var(--s5) 0; }
 .banner {
   display: flex; align-items: center; gap: var(--s3);
+  /* 窄窗口（<400px）时标题 + 长提示放不进一行：以前不换行 ⇒ 提示被挤出可视区，
+     只剩一个"莫名很高的黄条"（2026-10-17 实测到）。允许换行，提示会落到标题下面。 */
+  flex-wrap: wrap;
   padding: 10px var(--s4);
   border: 1px solid var(--c-warn-line); background: var(--c-warn-bg); color: var(--c-warn);
   border-radius: var(--r2); font-size: var(--t-md); line-height: var(--lh-2);
 }
+.banner .hint { min-width: 0; }
 .banner.bad { border-color: var(--c-danger-line); background: var(--c-danger-bg); color: var(--c-danger); }
 .banner.ok { border-color: var(--c-ok-line); background: var(--c-ok-bg); color: var(--c-ok); }
 .banner.info { border-color: var(--c-info-line); background: var(--c-info-bg); color: var(--c-info); }
@@ -1021,6 +1025,22 @@ body.eg-on .nav-inner {
 .card.span-4  { grid-column: span 4; }
 .card.span-8  { grid-column: span 8; }
 @media (max-width: 1180px) { .card.span-4, .card.span-6, .card.span-8 { grid-column: span 12; } }
+/* 列容器（`cardsHtml` · 2026-10-17）：把**连续**同 `col` 的卡片装进一格，
+   让它们按内容高度彼此紧跟，而不是被左列的行高推下去。
+   —— 起因：右列「拉黑」291px、左列「被叫到」507px，第三张 span-6 卡若直接放
+      在 `#page` 里，它只能从 507px 的底部开始 ⇒ 与「拉黑」之间空出 216px，
+      而维护者要的是紧贴「拉黑」下方（截图红框那块）。
+   ⚠️ `.card-col > .card` 必须解除 `grid-column: span 12`：那是给 12 列页面栅格用的，
+      在**单列**容器里它会建 12 条隐式列（页面横向溢出，且不报错）。
+   ⚠️ `align-content: start`：容器自身在 `#page` 的行里默认 stretch，
+      不写它会在下方多撑一截空白。
+   ⚠️ 窄屏（≤1180px）整列容器退回整行 —— 与 `.card.span-6` 的断点保持一致。 */
+.card-col {
+  grid-column: 7 / span 6;
+  display: grid; gap: var(--s4); align-content: start; min-width: 0;
+}
+.card-col > .card { grid-column: auto; }
+@media (max-width: 1180px) { .card-col { grid-column: span 12; } }
 
 /* 卡头**去掉着色底**（Ant Design / shadcn 的 Card 都是"纯底 + 一道分隔线"）。
    原来那层 `--c-surface-2` 让每张卡看起来像"表格里套表格"，32 页叠起来很吵。 */
@@ -1048,6 +1068,96 @@ body.eg-on .nav-inner {
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
 .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); }
 @media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── 进度条（`range` 控件 · 2026-10-17）─────────────────────────────────────
+   形态：一根内凹的玻璃管 + 一段 accent 液面 + 一颗白色水滴把手。
+   为什么把手与液面是**画的**、而 `<input type=range>` 是**透明的**：
+     原生的 `::-webkit-slider-thumb` 只能改外观，改不了"液面到把手为止"的长度，
+     而这条进度条的全部信息就在"液面有多长"。所以视觉层交给 CSS 的 `--p`，
+     交互层保留原生 input（键盘 ←/→、读屏、点击跳位全部免费）。
+
+   ⚠️ 不给 `.rng-fill` 加 transition：原生 range 点一下是**瞬移**，
+      加过渡会让液面"慢慢追"把手 —— 拖快时看起来像卡住了。
+   ⚠️ 把手用 `pointer-events: none`：它压在 input 上面，吃到事件就等于拖不动。 */
+.rng { gap: 8px; }
+.rng-head { display: flex; align-items: baseline; gap: var(--s2); min-width: 0; }
+.rng-head .f-lb { flex: 1; min-width: 0; }
+.rng-val {
+  font-size: var(--t-xl); font-weight: 650; line-height: 1.1;
+  color: var(--c-text-1); font-variant-numeric: tabular-nums; letter-spacing: -.01em;
+  white-space: nowrap;
+}
+.rng-track {
+  position: relative; height: 30px; border-radius: var(--r-pill);
+  background: var(--c-sunken);
+  box-shadow: inset 0 1px 2px var(--c-shadow-2), inset 0 0 0 1px var(--c-line);
+  isolation: isolate;
+}
+/* 轨道上那层"玻璃壁"：只加内缘高光，不加 backdrop-filter（30px 高的条上它看不见，
+   却要为每一帧拖动付一次采样成本） */
+.rng-track::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 1px 0 var(--c-eg-rim-sharp);
+}
+.rng-fill {
+  position: absolute; left: 4px; top: 4px; bottom: 4px;
+  width: calc(var(--p, 0%) - 4px); min-width: 10px; border-radius: var(--r-pill);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--c-accent) 74%, #fff), var(--c-accent));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .42), 0 1px 3px var(--c-shadow-2);
+}
+/* 刻度线：只画线不写字（窄卡里塞六个标签会读成一团）。
+   ⚠️ 位置由 app.js 用**同一张**换算表算（`rngPosOf`）—— 刻线若按线性摆，
+      而滑块是对数刻度，两者会在中途错开，看起来像"刻度是装饰"。 */
+.rng-mark {
+  position: absolute; top: 50%; width: 1px; height: 9px; margin-top: -4.5px;
+  /* `currentColor` + 低透明度：刻线要同时压在两段不同底色上（液面 / 空轨道），
+     写死一个蓝调在深色主题下会消失。 */
+  background: currentColor; opacity: .26; border-radius: 1px;
+  z-index: 2; pointer-events: none;
+}
+.rng-knob {
+  position: absolute; top: 50%; left: var(--p, 0%); z-index: 3;
+  width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%;
+  background: radial-gradient(120% 120% at 34% 24%, #fff 0%, #fff 46%, #e6edf9 100%);
+  box-shadow: 0 2px 6px var(--c-shadow-3), inset 0 0 0 1px rgba(255, 255, 255, .8),
+              inset 0 -2px 4px rgba(49, 68, 108, .18);
+  pointer-events: none;
+}
+/* 原生滑块铺满整条轨道：透明、吃事件、留键盘与读屏语义 */
+.rng-track > input[type="range"] {
+  position: absolute; inset: 0; z-index: 4;
+  width: 100%; height: 100%; margin: 0; padding: 0; border: 0;
+  opacity: 0; cursor: pointer; background: transparent;
+  -webkit-appearance: none; appearance: none;
+}
+/* 焦点环画在把手上（input 自己不可见）。`~` 要求 input 在 DOM 里**先于**把手 ——
+   渲染顺序见 app.js 的 `range`。 */
+.rng-track > input:focus-visible ~ .rng-knob {
+  box-shadow: 0 2px 6px var(--c-shadow-3), 0 0 0 3px var(--c-accent-weak),
+              inset 0 0 0 1px rgba(255, 255, 255, .8);
+}
+.rng-ends {
+  display: flex; justify-content: space-between; gap: var(--s2);
+  font-size: var(--t-xs); color: var(--c-text-3); font-variant-numeric: tabular-nums;
+}
+
+/* ── 「液态玻璃板」（`data-tone="liquid"` · 2026-10-17）─────────────────────
+   ⚠️ 材质**不重写**：底色 / 织纹 / backdrop-filter / 圆角 / 投影全部继承
+      `:where(body.eg-on) .card` 那一档（与本仓"一份材质只许有一处"的纪律一致）。
+      这里只叠一层**只能出现在玻璃上**的东西 —— 顶部液面反光 + 右上角冷色晕。
+   ⚠️ 用 `isolation: isolate` + `z-index:-1` 把反光压在内容**底下**：
+      直接写 `::before`（z-index:auto）会按"定位元素最后绘制"的规则盖住卡里的文字。 */
+.card[data-tone="liquid"] { position: relative; isolation: isolate; }
+.card[data-tone="liquid"]::before {
+  content: ''; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; pointer-events: none;
+  /* ⚠️ 只用令牌，不写就地 rgba（check-wb §60 G5 会红，且深色主题下白色高光会
+     原样留在浅色的权重上 = 一片发灰的雾）。`--c-eg-vol-top` 是玻璃自己的内缘辉光，
+     `--c-accent-weak` 是强调色那一档 —— 两者在深色块里各有一份对应值。 */
+  background:
+    linear-gradient(180deg, var(--c-eg-vol-top), transparent 42%),
+    radial-gradient(85% 55% at 86% -8%, var(--c-accent-weak), transparent 62%);
+}
 
 /* ── 插件板（每个插件一块独立玻璃板 · 2026-10-04）──────────────────────────
    ⚠️⚠️ **材质不重写**：.pcard 同时挂 card 类，玻璃（底色 / 织纹 / backdrop-filter /
@@ -1703,6 +1813,11 @@ details.det pre { margin: 0; }
   box-shadow: 0 24px 60px -20px var(--c-shadow-4);
 }
 .modal-box h3 { font-size: var(--t-xl); margin-bottom: var(--s3); }
+/* 标题行（2026-10-17）：标题右侧可以挂一个模式切换（添加模型时的「云端 ⇄ 本地」）。
+   它必须与标题**同一行** —— 放进表单里会被读成"第一个字段"。 */
+.modal-box .modal-h { display: flex; align-items: center; gap: var(--s3); margin-bottom: var(--s3); }
+.modal-box .modal-h h3 { margin-bottom: 0; }
+.modal-box .modal-h .spacer { flex: 1; }
 .modal-box .modal-body { max-height: 56vh; overflow: auto; }
 .modal-box pre { white-space: pre-wrap; font-size: var(--t-sm); margin: 0; }
 
@@ -2263,3 +2378,65 @@ html[data-vt="circle-blur"]::view-transition-new(root) {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   大脑页重做（2026-10-17 · 维护者点名）
+   · 顶部切换从「四颗固定按钮」改成**数据驱动的标签行**：自定义模型排最前；
+   · 自定义模型条目给**灰底卡片**（原来是 `.row.flat`，没有底色，糊成一片）；
+   · 免费额度收成**底部一条**可折叠入口（智谱 / 千问默认展开）。
+   ══════════════════════════════════════════════════════════════════════ */
+.brain-tags { display: flex; flex-wrap: wrap; gap: var(--s2); min-width: 0; }
+.brain-tag {
+  display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center;
+  gap: 2px; min-height: 42px; padding: 7px 12px;
+  border: 1px solid var(--c-line); border-radius: var(--r2);
+  background: var(--c-surface-2); color: var(--c-text);
+  font: inherit; text-align: left; cursor: pointer;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.brain-tag .nm { font-weight: 600; font-size: var(--t-md); line-height: 1.15; }
+.brain-tag .sub {
+  font-size: var(--t-xs); color: var(--c-text-3);
+  max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.brain-tag:hover { border-color: var(--c-accent-line); background: var(--c-hover); }
+.brain-tag.on {
+  border-color: var(--c-accent-line); background: var(--c-accent-weak);
+  box-shadow: inset 0 0 0 1px var(--c-accent-line);
+}
+.brain-tag.on .nm { color: var(--c-accent); }
+.brain-tag.add { border-style: dashed; justify-content: center; color: var(--c-text-3); }
+.brain-tag.add .nm { font-weight: 500; font-size: var(--t-sm); color: inherit; }
+/* 选中的那一颗写一个「在用」：只靠底色不够 —— 用户的原话是"看不出点没点上"
+   （2026-10-17 截图：选中态跟的是机器人有没有重读，于是刚切完是虚线的「待生效」）。
+   ⚠️ 上一版的 `.brain-tag.pend` / `.pend-tag` 已随那个中间态一起删除。 */
+.use-tag {
+  margin-left: 5px; font-size: 10px; font-weight: 600;
+  color: var(--c-accent); vertical-align: 1px;
+}
+
+/* 免费额度：**一颗按钮**（2026-10-17 维护者第二次点名，整块折叠条已删）。
+   它在「一键切换」卡右下角，只写"哪家 + 会不会花钱"，细节全在 title 里。
+   小红点 = 那家有个"不打开就静默扣钱"的开关（千问的「用完即停」）。 */
+.quota-btn { gap: 4px; color: var(--c-text-3); }
+.quota-btn:hover { color: var(--c-text); }
+.quota-btn .q-go { font-size: 10px; opacity: .7; }
+.quota-btn .q-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--c-warn); box-shadow: 0 0 0 2px var(--c-warn-bg);
+}
+
+/* ── P3 应用内更新（2026-10-18）────────────────────────────────────────────
+   卡片内的状态行/进度条。只用语义 token；不写就地 rgba（§60 G5）。 */
+.upd { display: flex; flex-direction: column; gap: var(--s2); }
+.upd-row { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+.upd-row .spacer { flex: 1; }
+.upd-bar { height: 8px; border-radius: 999px; background: var(--c-line); overflow: hidden; }
+.upd-bar > i { display: block; height: 100%; background: var(--c-accent); transition: width .2s linear; }
+.upd .bad { color: var(--c-danger); }
+.upd-off { margin-top: var(--s2); padding-top: var(--s2); border-top: 1px dashed var(--c-line); }
+.upd-off summary { cursor: pointer; font-size: 13px; color: var(--c-text-2); }
+.upd-off label { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; margin-top: 6px; font-size: 12px; }
+.upd-off input[type="file"] { max-width: 280px; font-size: 12px; }
+.upd-off > .hint { margin-top: 6px; }
+.upd-off #upd-off-status.bad { color: var(--c-danger); }

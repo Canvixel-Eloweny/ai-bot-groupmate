@@ -92,6 +92,8 @@ token 的注入落点**只有这一处**（`injectPanelToken`，只替换 `<meta
     所以前端**不许把 `ok:false` 画成红色故障**（"那个包还没被用到过"是正常状态）。
   - `zhipuPackages`（带 60s 缓存）、`models`（本机已装规格）
   - `zhipuMeta` / `zhipuDefaultChain` / `modelCaps`（按服务商算好的能力表 —— 面板**不自己抄模型名单**）、
+    `defaultChain`（**当前这家**的默认链路，含它自己的主模型；2026-10-17 新增，面板「恢复实测最优」用它，
+    以前写死取 `zhipuDefaultChain` ⇒ 在千问页面上会提交一条 GLM 链）、
     `quotaPlans`（**各家的免费额度是什么性质**，2026-10-07 接千问时新增）。
     唯一实现住 `src/free-quota.js`，是「这笔花不花钱」的判据；它回答**规则**（永久免费 / 限时额度 / 计费），
     **不是余额**。余额只有智谱查得到（`liveBalance: 'api'`）—— 千问的用量查询要账号级签名，
@@ -199,13 +201,18 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
   - `baseUrl` / `apiKey` / `model` / `fallbackModels[]` / `thinking`（`{mode,level}` 或 `"auto"|"on"|"off"`）/ `maxTokens`
   - `localChannel`（`mlx`|`qwenchat`，只在本机大脑有意义）
   - `context.recentTurns` / `context.ambientMessages`
-  - `features.{webSearch,vision,stickers}`（第三道闸，落盘前按模型能力收敛）
+  - `features.{webSearch,vision}`（第三道闸，落盘前按模型能力收敛）
+    ⚠️ `stickers`（发 QQ 表情）已于 2026-10-17 随该能力整体下线删除 —— 传入会被忽略。
   - `groups[]` / `denyGroups[]` / `denyUsers[]` / `requireAtInGroup` / `interjectChance` / `aliases[]` / `personaName`
   - `custom` —— 工作台那一块（走 `patchCustom` 局部合并）
+  - `launch.{mode,openOnStart}` —— 桌面端「启动方式」（`mode` 只收 `browser` | `window`；`openOnStart` 只收布尔）。
+    ⚠️ 它由**启动器**（Windows 快捷方式 / Mac 图标 / 命令行）在启动时读取一次 ——
+    **保存成功 ≠ 立刻生效，下次启动才换形态**（面板上的提示语照此措辞）。
 - **出参**：`{ ok, bridgeRunning, applied, autoDisabled[], autoDisabledMsg, msg }`
   - `applied`：机器人是否已真正读入新配置（热重载约 1s 延迟，会 `await` 后再返回）
   - `autoDisabledMsg`：换到不支持的模型时**如实告知**被自动关掉的能力（如「已自动关闭 识图」）
-- **校验失败返回 400**：跨服务商模型、降级链含「始终思考」模型、链超长（`MAX_CHAIN_LEN`）。
+- **校验失败返回 400**：跨服务商模型、降级链含「始终思考」模型、链超长（`MAX_CHAIN_LEN`）、
+  `launch.mode` 越界 / `openOnStart` 非布尔（值域与判定唯一一份在 `src/launch-mode.js`）。
 - **副作用**：写 `config.json`、物化到对应大脑预设、可能触发 `stashCurrentPreset`、等待机器人热重载。
 - **幂等**：否（会覆盖落盘配置；重复提交同值 = 幂等效果，但本身是写操作）。
 
@@ -633,5 +640,21 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 - **副作用**：detached shell 看门狗「等旧 pid 死 → exec 新进程」；前端用 **pid 变了** 判定「换好了」（而非「接口能通」）。
 - **幂等**：是（看门狗保证；顺序反了会 EADDRINUSE 把面板搞没）。
 
+
+---
+
+## 40. POST `/api/panel/window`
+
+窗口几何上报（2026-10-16）：独立窗口里的页面在 resize / 移动 / 关闭前把
+`{x, y, w, h}`（screenX / screenY / outerWidth / outerHeight）POST 回来，
+写进 `panel/window-state.json`（与 `config.json` 同辈）—— 下次启动由启动器
+`--window-size` / `--window-position` 还原：窗口回到上次的位置与尺寸（两端一致）。
+
+- **入参**：`{x, y, w, h}` 都是数字；`w`/`h` 取整后必须落在 `400×300 … 10000×10000`，位置限 ±20000
+  （多显示器在主屏左侧时坐标为负 —— 合法）。值域判据唯一一份在 `src/launch-mode.js` 的 `normalizeWinState`（写侧 / 读侧共用）。
+- **出参**：`{ ok:true }`；几何不合法 **400**；写盘失败 **500**（本次开窗不受影响 —— 只是"没记住"）。
+- **副作用**：写 `panel/window-state.json`。
+- **幂等**：是（同值重复上报 = 覆盖同样的内容）。
+- **谁在发**：只有独立窗口的页面（URL 带启动器加的 `__win=1` 标记时才上报）—— 标签页不上报。
 
 ---

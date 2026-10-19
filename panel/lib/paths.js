@@ -1,46 +1,57 @@
 /**
  * 面板进程的**路径与端口常量**（第 37 轮 B11b-1 · AR-SERVERSPLIT）
  * ══════════════════════════════════════════════════════════════════════════
- *  为什么单独抽一个模块 —— 因为 `ROOT` 是**搬了就静默失效**的东西
+ *  为什么路径要单独抽一个模块 —— 因为 `ROOT` 是**搬了就静默失效**的东西
  * ══════════════════════════════════════════════════════════════════════════
- *  搬之前它在 `panel/server.js` 里：
- *
- *      const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
- *
- *  `..` 正好等于仓库根，因为文件就在 `panel/` 下面。
- *  **一旦某个 helper 被搬到 `panel/lib/`，同一个表达式算出来的就是 `panel/`** ——
- *  于是 config.json / panel/*.json 全部指向不存在的路径。
- *  而这个错误**不报错**：读不到 config.json 的路径本来就是「用默认配置继续跑」
- *  （见 `readConfig()` 的 try/catch），所以表现是"面板突然变回默认配置"，
- *  没人会往"路径算错了"上想。
- *
- *  所以：**ROOT 只在这里算一次**，任何模块要用都从这里 import。
- *  本文件里那句 `'..', '..'` 是本仓库唯一一处"用相对层级推导仓库根"的地方。
+ *  P1（2026-10-18）起，根解析的唯一实现在 `src/user-root.js`：它同时服务
+ *  面板、机器人与打包工具，并区分 program / install / user 三根。本文件只消费结果。
+ *  历史上这里推导过 ROOT；搬动 helper 会让相对层级算错，而错误表现为
+ *  “面板突然变回默认配置”——不报错，所以根解析必须只有一处。
  *
  *  ⚠️ 下面这个自检**故意做成抛错**而不是打日志：
  *     路径全错的情况下继续启动，只会得到一台"配置全是默认值、写盘也写错地方"的面板，
  *     那比启动失败更难查。宁可当场崩，也不要静默跑错。
  *
  *  ⚠️ 本模块**不许 import 面板里的其它模块** —— 它是依赖图的最底层（F.3 的 L0）。
- *     一旦它开始依赖别人，B11b 辛苦消掉的那些循环就会从底部长回来。
+ *     `src/user-root.js` 是零业务依赖叶子（已登记 `LIB_SRC_ALLOW`），可以 import。
  */
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolveRoots, ensureUserDirs, programFile, userFile, panelFile, UPDATE_DIR } from '../../src/user-root.js';
 
-/** 仓库根。本文件位于 `panel/lib/`，所以要在本文件目录上退**两级**。 */
-export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+// 根解析的唯一实现在 src/user-root.js（P1 · 2026-10-18）。
+// 这里只消费结果，不再导出 ROOT 别名。
+const ROOTS = resolveRoots();
 
-// 自检：仓库根一定有 package.json（`"type": "module"` 就写在里面，本文件能当 ESM 跑全靠它）。
-// 算错了 ROOT 时这里会立刻炸，而不是让整台面板用着默认配置继续跑。
-if (!fs.existsSync(path.join(ROOT, 'package.json'))) {
+export const PROGRAM_ROOT = ROOTS.programRoot;
+export const INSTALL_ROOT = ROOTS.installRoot;
+export const USER_ROOT = ROOTS.userRoot;
+export const MODE = ROOTS.mode;
+export const PANEL_STATE_DIR = ROOTS.panelStateDir;
+export const NAPCAT_DIR = ROOTS.napcatDir;
+export { ensureUserDirs, UPDATE_DIR };
+
+// 自检：程序根一定有 package.json（`"type": "module"` 就写在里面）。
+// 根算错时立刻炸，而不是让整台面板用着默认配置继续跑。
+if (!fs.existsSync(programFile('package.json'))) {
   throw new Error(
-    `ROOT 算错了：${ROOT} 下没有 package.json。` +
-      ' 这几乎一定是 panel/lib/paths.js 的相对层级写错（应为 ../..），别再往下跑。'
+    `PROGRAM_ROOT 算错了：${PROGRAM_ROOT} 下没有 package.json。` +
+      ' 检查 src/user-root.js 与 package.json 的层级。'
   );
 }
+
+/**
+ * 安装器/健康端点的身份字段。**只从程序根的 package.json 读一次** ——
+ * 这是版本与 appId 的唯一来源（P2 §108）；另写一份常量就会在升级后漂移。
+ */
+const PKG = JSON.parse(fs.readFileSync(programFile('package.json'), 'utf8'));
+if (typeof PKG.appId !== 'string' || !PKG.appId.trim() || typeof PKG.version !== 'string' || !PKG.version.trim()) {
+  throw new Error('package.json 必须同时有非空的 appId 与 version（安装器/健康端点依赖它们）');
+}
+export const APP_ID = PKG.appId.trim();
+export const APP_VERSION = PKG.version.trim();
 
 /** 面板监听端口。`QQBOT_PANEL_PORT` 让沙箱/多实例能改（既有约定，不变）。 */
 export const PORT = Number(process.env.QQBOT_PANEL_PORT) || 8788;
@@ -91,7 +102,10 @@ export const IS_WIN = process.platform === 'win32';
 export const HOME = process.env.HOME || os.homedir() || '';
 export const QWEN_SERVER = path.join(HOME, 'models', 'bin', 'qwen-server');
 export const QWENCHAT_SERVER = path.join(HOME, 'models', 'app', 'server.py');
-export const MLX_PY = path.join(HOME, '.workbuddy', 'binaries', 'python', 'envs', 'mlx', 'bin', 'python');
+// ⚠️ 2026-10-17 从 ~/.workbuddy/binaries/python/envs/mlx 迁出（WorkBuddy 平台目录已删）。
+// 迁移方式是整份复制 base 解释器 + venv 后重指符号链接，docstring 见
+// memory/logs/2026-10-17.md；换机器时按同样结构重建即可。
+export const MLX_PY = path.join(HOME, 'Library', 'Application Support', 'estrella-mlx', 'venv', 'bin', 'python');
 
 // ── docker 可执行文件：按候选表找第一个真的存在的 ─────────────────────────
 /**
@@ -129,21 +143,23 @@ export const DOCKER_APP_CANDIDATES = IS_WIN
 export const DOCKER_APP = DOCKER_APP_CANDIDATES.find((p) => p && fs.existsSync(p))
   || (IS_WIN ? '' : '/Applications/Docker.app');
 
-// ── 数据文件 ──────────────────────────────────────────────────────────────
-// 集中在一处的理由与 ROOT 相同：这些路径散落在各节时，搬动任何一节都要重新核对一遍。
+// ── 数据文件（P1：全部落 USER_ROOT/panel）────────────────────────────────
+// 这些常量原先都挂在 ROOT/panel 下；现在根由 src/user-root.js 解析一次。
 /** 机器人的配置（面板是它的**唯一所有者**，见 src/index.js 的单一所有者契约） */
-export const CONFIG_FILE = path.join(ROOT, 'config.json');
-export const EFFECTIVE_FILE = path.join(ROOT, 'panel', 'effective.json');
-export const THINKING_FILE = path.join(ROOT, 'panel', '.thinking.json');
-export const HISTORY_FILE = path.join(ROOT, 'panel', 'config-history.jsonl');
-export const AUDIT_FILE = path.join(ROOT, 'panel', 'audit.jsonl');
-export const TOKEN_FILE = path.join(ROOT, 'panel', '.token');
-export const TRACE_FILE = path.join(ROOT, 'panel', 'local-trace.jsonl');
+export const CONFIG_FILE = process.env.QQBOT_CONFIG
+  ? ROOTS.configFile
+  : userFile('config.json');
+export const EFFECTIVE_FILE = panelFile('effective.json');
+export const THINKING_FILE = panelFile('.thinking.json');
+export const HISTORY_FILE = panelFile('config-history.jsonl');
+export const AUDIT_FILE = panelFile('audit.jsonl');
+export const TOKEN_FILE = panelFile('.token');
+export const TRACE_FILE = panelFile('local-trace.jsonl');
 /** 会话存档（机器人侧 `src/session-archive.js` 写，面板**只读**）。不入库：里面是真实聊天内容。 */
-export const ARCHIVE_FILE = path.join(ROOT, 'panel', 'session-archive.json');
-export const USAGE_DIR = path.join(ROOT, 'panel');
+export const ARCHIVE_FILE = panelFile('session-archive.json');
+export const USAGE_DIR = PANEL_STATE_DIR;
 export const USAGE_FILE_RE = /^usage(-\d{4}-\d{2})?\.jsonl$/;
-export const PIDFILE = path.join(ROOT, 'panel', '.bridge.pid');
+export const PIDFILE = panelFile('.bridge.pid');
 /**
  * 机器人**进程侧**的实例互斥锁（D19 · E19）。面板**只读**它 —— 谁持锁、心跳多新，
  * 用于在"点了启动会被拒"之前就把这件事说出来。
@@ -154,7 +170,7 @@ export const PIDFILE = path.join(ROOT, 'panel', '.bridge.pid');
  */
 export const BRIDGE_LOCK_FILE = process.env.QQBOT_BRIDGE_LOCK_FILE
   ? path.resolve(process.env.QQBOT_BRIDGE_LOCK_FILE)
-  : path.join(ROOT, 'panel', '.bridge.lock');
+  : panelFile('.bridge.lock');
 /**
  * 面板 → 机器人 的**命令文件**（D6b · Q7 裁决①「命令文件轮询」）。
  *
@@ -165,11 +181,11 @@ export const BRIDGE_LOCK_FILE = process.env.QQBOT_BRIDGE_LOCK_FILE
  */
 export const CONTROL_FILE = process.env.QQBOT_CONTROL_FILE
   ? path.resolve(process.env.QQBOT_CONTROL_FILE)
-  : path.join(ROOT, 'panel', '.bridge-cmd.json');
-export const BRIDGE_LOG = path.join(ROOT, 'panel', 'bridge.log');
-export const LOCAL_LOG = path.join(ROOT, 'panel', 'local-model.log');
-export const PANEL_LOG = path.join(ROOT, 'panel', 'panel.log');
-export const DEBUG_FLAG = path.join(ROOT, 'panel', '.debug');
+  : panelFile('.bridge-cmd.json');
+export const BRIDGE_LOG = panelFile('bridge.log');
+export const LOCAL_LOG = panelFile('local-model.log');
+export const PANEL_LOG = panelFile('panel.log');
+export const DEBUG_FLAG = panelFile('.debug');
 
 /**
  * 控制台前端的目录（2026-10-02 · 新版是**唯一**控制台）。
@@ -187,17 +203,14 @@ export const DEBUG_FLAG = path.join(ROOT, 'panel', '.debug');
  * ⚠️ 它也是"页面由哪些文件构成"的**唯一声明处**（`next-page.js` 的 `NEXT_ASSETS`）——
  *    旧的那份声明（`PARTS`）已删除，"清单只有一处"这条纪律没有变，只是换了载体。
  */
-export const NEXT_DIR = path.join(ROOT, 'panel', 'next');
+export const NEXT_DIR = programFile('panel/next');
 
 /**
  * 扩展包的**数据目录**（2026-10-02 · 让情绪 / 群友档案可见）。
  *
- * ⚠️ 这是 `src/config.js` 的 `DATA_DIR` 的**镜像**，故意不 import 它：
- *    `src/config.js` 是重型模块（读 env、拼整份配置），而 `panel/lib/*` 只许引
- *    **零依赖叶子**（见 `check-wb` 的 `LIB_SRC_ALLOW`）—— 引进来会把机器人进程的
- *    启动链拖进面板。所以这里按**同一条规则**自己推：env 优先，否则 `<root>/data`。
- *    `QQBOT_DATA_DIR` 这个名字是与 `src/config.js` 共用的约定（沙箱靠它把数据指去 tmp），
- *    两处**必须同名** —— 不同名时沙箱里会读到真机的数据，而不会有任何报错。
+ * 根与 `QQBOT_DATA_DIR` 的解析统一在零依赖叶子 `src/user-root.js`（P1）；
+ * 面板与机器人读同一份结果，不再各推一次。`QQBOT_DATA_DIR` 只覆盖
+ * `DATA_DIR` 这一棵子树，不改变 config / panel / napcat 的位置。
  *
  * 下面的文件名与子目录名来自**各个扩展包自己的约定**（不是本项目的发明）：
  *   · `data/bot-state.json`         ← `plugins/本体情绪`（跨群共享的心情/精力/压力）
@@ -207,9 +220,8 @@ export const NEXT_DIR = path.join(ROOT, 'panel', 'next');
  * ⚠️ 这些文件**不是我们写的**，形状不归我们管 —— 所以 `bot-data.js` 里的读取
  *    一律"认不出就不显示"，绝不猜、绝不补默认值。
  */
-export const DATA_DIR = process.env.QQBOT_DATA_DIR
-  ? path.resolve(process.env.QQBOT_DATA_DIR)
-  : path.join(ROOT, 'data');
+export const DATA_DIR = ROOTS.dataDir;
+export const PERSONA_DIR = ROOTS.personaDir;
 export const BOT_STATE_FILE = path.join(DATA_DIR, 'bot-state.json');
 export const PEOPLE_DIR = path.join(DATA_DIR, 'memory', 'people');
 export const GALLERY_FILE = path.join(DATA_DIR, 'images-lib', 'index.json');
@@ -231,6 +243,7 @@ export const API_DEALS_FILE = path.join(DATA_DIR, 'api-deals.json');
  *    改了立刻生效，不存在"改了没重启"这回事；进来了反而会让面板每次无谓地报 stale。
  */
 export const BACKEND_SOURCES = [
+  'src/user-root.js',
   'panel/server.js',
   'panel/lib/paths.js',
   'panel/lib/runtime-state.js',
@@ -284,5 +297,18 @@ export const BACKEND_SOURCES = [
   // （`audit.jsonl` / `usage-*.jsonl` 一直在变，进来会让 stale 常年误报）。
   'panel/lib/audit-log.js',
   'panel/lib/usage-report.js',
+  // 官方模型目录对账（2026-10-17）。进表理由同上 —— 改了它得重启面板才生效，
+  // 否则会出现"页面说已同步、实际还是旧的对账逻辑"。
+  // 读/写拆成两个文件是为了层次单向（L3 只许 import 更低层，见 check-wb §06）。
+  'panel/lib/model-sync-state.js',
+  'panel/lib/model-sync.js',
+  // P3 更新协议（2026-10-18）：改了任意一个都要重启面板才生效。
+  'panel/lib/update-version.js',
+  'panel/lib/update-manifest.js',
+  'panel/lib/update-signature.js',
+  'panel/lib/update-download.js',
+  'panel/lib/update.js',
+  'panel/lib/update-routes.js',
+  'panel/lib/update-offline.js',
 ];
 

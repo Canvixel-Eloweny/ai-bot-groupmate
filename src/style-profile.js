@@ -16,10 +16,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { panelFile } from './user-root.js';
 import { writeJsonAtomic } from './atomic-write.js';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * 落盘位置。`QQBOT_STYLE_PROFILE` 与 `QQBOT_AUTO_MEMORY_FILE` 同款：让测试指去临时目录。
@@ -28,7 +27,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  */
 const STYLE_FILE = process.env.QQBOT_STYLE_PROFILE
   ? path.resolve(process.env.QQBOT_STYLE_PROFILE)
-  : path.join(ROOT, 'panel', 'style-profile.json');
+  : panelFile('style-profile.json');
 
 /** 只统计 ≤60 字的消息：长文里切出来的片段没有意义 */
 const MSG_MAX = 60;

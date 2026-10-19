@@ -141,65 +141,8 @@ export default [
     layer: 'check-wb',
     expect: 'BLOCKED',
   },
-  {
-    id: 'M9',
-    note: '图片上限常量抄第二份到调用方（改叶子里的值不再生效）',
-    file: 'src/index.js',
-    anchor: /    let imagesSent = 0;/,
-    count: 1,
-    apply: (s) => s.replace(
-      '    let imagesSent = 0;',
-      '    const IMAGE_CAP_PER_RUN = 3; // 变异：抄第二份\n    let imagesSent = 0;'
-    ),
-    layer: 'check-wb',
-    expect: 'BLOCKED',
-  },
-  {
-    id: 'M10',
-    note: '整轮图片计数器挪进发送循环（每分段重置 → 上限等于没有，而用例照样全绿）',
-    file: 'src/index.js',
-    anchor: /    let imagesSent = 0;\n    let imagesSeen = \[\];\n/,
-    count: 1,
-    apply: (s) => {
-      const decl = '    let imagesSent = 0;\n    let imagesSeen = [];\n';
-      const rest = s.replace(decl, '');
-      const loop = '    for (let i = 0; i < outChunks.length; i += 1) {\n';
-      const at = rest.indexOf(loop);
-      if (at < 0) return s;
-      const insertAt = at + loop.length;
-      return rest.slice(0, insertAt) + decl + rest.slice(insertAt);
-    },
-    layer: 'check-wb',
-    expect: 'BLOCKED',
-  },
-  {
-    id: 'M11',
-    note: '裁掉图片时不留痕（"它这一轮少发了一个表情"，日志里什么都不剩）',
-    file: 'src/index.js',
-    anchor: /      if \(capped\.dropped\) \{\n/,
-    count: 1,
-    apply: (s) => {
-      const from = s.indexOf('      if (capped.dropped) {');
-      const to = s.indexOf('      imagesSent = capped.used;');
-      if (from < 0 || to < 0 || to < from) return s;
-      return s.slice(0, from) + s.slice(to);
-    },
-    layer: 'check-wb',
-    expect: 'BLOCKED',
-  },
-  {
-    id: 'M12',
-    note: '去重被摘掉（同一张图在同一轮里发两遍 —— 收藏表情刷屏的最短路径）',
-    file: 'src/face-marks.js',
-    anchor: /    if \(already\.has\(key\) \|\| base \+ added\.length >= cap\) \{/,
-    count: 1,
-    apply: (s) => s.replace(
-      '    if (already.has(key) || base + added.length >= cap) {',
-      '    if (base + added.length >= cap) {'
-    ),
-    layer: 'smoke',
-    expect: 'BLOCKED',
-  },
+  /* M9–M12（出站媒体护栏：图片上限 / 整轮计数 / 裁剪留痕 / 去重）已于 2026-10-17 删除 ——
+     它的唯一输入是表情令牌分流出来的图片段，随表情能力一起下线。 */
   {
     id: 'M13',
     note: '子域边界写成裸 endsWith（`notexample.com` 会被当成 `example.com` 的子域放行）',

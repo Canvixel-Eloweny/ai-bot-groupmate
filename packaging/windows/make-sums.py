@@ -28,6 +28,9 @@ ITEMS = [
     "一键安装.bat",
     "launch-hidden.vbs",
     "launch-napcat-hidden.vbs",
+    # P2 安装版启动件（便携包也随 launcher/ 一起带，便于手工复用）
+    "Estrella-Bot.vbs",
+    "run-hidden.vbs",
     "4-DIAG.bat",
     "estrella-bot.ico",
     "README.html",
@@ -38,6 +41,13 @@ ITEMS = [
     # 工具层
     "tools/onekey.mjs",
     "tools/setup.mjs",
+    "tools/migrate.mjs",
+    "tools/stop.mjs",
+    "tools/install-commit.mjs",
+    "tools/launcher.mjs",
+    "tools/bootstrap.mjs",
+    "tools/import-napcat.mjs",
+    "tools/lib/install-layout.mjs",
     "tools/start.mjs",
     "tools/start-napcat.mjs",
     "tools/check-env.mjs",
@@ -45,8 +55,17 @@ ITEMS = [
     "tools/diag.mjs",
     "tools/napcat.json",
     "tools/lib/common.mjs",
+    "tools/lib/user-root-loader.mjs",
     "tools/lib/versions.mjs",
     "tools/lib/repair.mjs",
+    # P6：`napcat-local.mjs` 会读用户自己选中的路径并往 userdata/napcat 落件，
+    # `napcat-shape.mjs` 是"协议端长什么样"的唯一定义。点名它们的理由与上面
+    # napcat-native.js 那条一样：包内这份是旧的，必须被清单挡住，而不是靠人记得。
+    "tools/lib/napcat-local.mjs",
+    "tools/lib/napcat-shape.mjs",
+    "tools/lib/rollback.mjs",
+    "tools/lib/retention.mjs",
+    "tools/rollback-restore.ps1",
     "tools/lib/console.mjs",
     # 程序本体的关键件（改了这些 = 换了一份行为）
     "app/node_modules/ws/index.js",
@@ -57,10 +76,25 @@ ITEMS = [
     #    表现为"点重启协议端没有任何反应"。它现在就住在启动链的清单里。
     "app/panel/lib/napcat-native.js",
     "app/panel/lib/runtime-state.js",
+    # P3 更新协议（2026-10-18）：清单/验签/下载/状态机的关键文件
+    "app/panel/lib/update-version.js",
+    "app/panel/lib/update-manifest.js",
+    "app/panel/lib/update-signature.js",
+    "app/panel/lib/update-download.js",
+    "app/panel/lib/update.js",
+    "app/panel/lib/update-routes.js",
+    "app/panel/lib/update-offline.js",
     "app/panel/next/schema.js",
     "app/panel/next/app.js",
+    "app/src/user-root.js",
     "app/src/config.js",
     "app/src/net-rules.js",
+    # ⚠️ 2026-10-17（回退后重新定性）：`app/src/launch-mode.js` **仍须随包** —— 但理由变了。
+    #    它不再被 Windows 启动链调用（启动链已退回"spawn + 开浏览器"），而是
+    #    `app/panel/server.js` 的 `/api/panel/window` 要 import 它拿值域判据
+    #    （`normalizeWinState` / `windowStatePath`）。**删了它面板会当场 import 失败**，
+    #    所以它留在这份清单里。（先例：上面 `app/panel/lib/napcat-native.js` 那条。）
+    "app/src/launch-mode.js",
 ]
 
 

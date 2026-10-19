@@ -41,7 +41,7 @@ export function sampleConfig() {
     persona: { name: '小鱼', text: '（示例人格文本）' },
     context: { recentTurns: 6, ambientMessages: 8 },
     reply: { maxChunks: 4 },
-    llm: { model: 'sample-model', provider: 'zhipu', features: { vision: false, stickers: false, webSearch: false } },
+    llm: { model: 'sample-model', provider: 'zhipu', features: { vision: false, webSearch: false } },
     trigger: { requireAtInGroup: true, aliases: [], interjectChance: 0, interjectCooldownMs: 0 },
     throttle: { minIntervalMs: 0, perMinutePerSession: 100, globalConcurrency: 1 },
     allow: { private: [], groups: ['100000001'], allowAllWhenEmpty: false },

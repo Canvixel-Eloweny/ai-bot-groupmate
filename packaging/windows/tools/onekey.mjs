@@ -23,8 +23,8 @@
 
 import path from 'node:path';
 import {
-  ROOT, SETUP_MARKER, IS_WIN,
-  say, ok, warn, bad, title, dim, ask, writeJson, isMain,
+  ROOT, PROGRAM_ROOT, USER_ROOT, SETUP_MARKER, IS_WIN, VERSION,
+  say, ok, warn, bad, title, dim, ask, writeJson, isMain, diag,
   loadNapcatSource, napcatHome, NAPCAT_DIR,
 } from './lib/common.mjs';
 import { collectEnv } from './check-env.mjs';
@@ -34,8 +34,8 @@ import { ensureConsole, PANEL_URL } from './lib/console.mjs';
 import { makeShortcut } from './make-shortcut.mjs';
 import { ensureConfigJson, writeOnebotConfig } from './setup.mjs';
 import { startNapcat } from './start-napcat.mjs';
+import { migrateIfNeeded } from './migrate.mjs';
 
-const VERSION = '0.1.2';
 const PROTOCOL_PORT = 3001;
 
 const argOf = (name) => {
@@ -72,6 +72,7 @@ async function main() {
   say(`  Estrella Bot 一键安装 v${VERSION}`);
   say('  ' + '─'.repeat(48));
   dim('  一条命令做完：检测 → 校验 → 自动修复 → 打开控制台。');
+  diag(`一键安装启动 v${VERSION}（参数：${process.argv.slice(2).join(' ') || '无'}）`);
 
   const yes = has('--yes', '-y');
   const onlyCheck = argOf('--only') === 'check';
@@ -91,19 +92,23 @@ async function main() {
   if (fatal.length > 0) {
     say('');
     bad(`有 ${fatal.length} 项硬错误必须先解决（上面带 ↳ 的行就是怎么解决）。`);
+    diag(`① 环境检测：${fatal.length} 项硬错误，已中止`);
     process.exitCode = 1;
     return;
   }
   ok('基础环境就绪（包体完整、内嵌运行时在位）');
+  diag(`① 环境检测通过（ok=${env.filter((i) => i.level === 'ok').length} · warn=${env.filter((i) => i.level === 'warn').length}）`);
 
   const src = loadNapcatSource();
   const { items, offline } = await collectVersions(src);
   printVersionTable(items, offline);
+  diag(`② 版本：${items.map((i) => `${i.id}=${i.installed || 'none'}`).join(' · ')}${offline ? ' · 离线' : ''}`);
 
   if (onlyCheck) {
     const blocking = items.filter((i) => i.state === 'missing' || i.state === 'outdated');
     say('');
     say(blocking.length === 0 ? '  结论：全部合格，无需修复。' : `  结论：${blocking.length} 项待修复（跑不带 --only=check 的同一条命令即可自动修）。`);
+    diag(`--only=check 结论：${blocking.length === 0 ? '全部合格' : `${blocking.length} 项待修复`}`);
     process.exitCode = blocking.length === 0 ? 0 : 1;
     return;
   }
@@ -115,6 +120,20 @@ async function main() {
     return;
   }
 
+  // ── ②.5 旧数据迁移（必须在装/升级 NapCat 与生成配置之前）──────────────────
+  title('②.5 旧数据迁移');
+  const mig = migrateIfNeeded({ source: PROGRAM_ROOT, userRoot: USER_ROOT });
+  if (mig.status === 'failed') {
+    bad(`旧数据迁移失败：${mig.error || mig.reason}`);
+    bad('旧数据仍在原处；先处理上面的原因，再重跑一键安装。');
+    process.exitCode = 1;
+    return;
+  } else if (mig.status === 'complete') {
+    ok(`旧数据已复制到 userdata（${mig.files} 个文件，冲突 ${mig.conflicts.length}）`);
+  } else {
+    dim(`旧数据迁移：${mig.reason || '无需迁移'}`);
+  }
+
   // ── ③ 自动修复 ────────────────────────────────────────────────────────────
   title('③ 自动修复');
   const repairLog = [];
@@ -122,16 +141,25 @@ async function main() {
   // ③-1 Node（包内自带）
   try {
     const r = await ensureNodeRuntime({ updateToLatest: updateNode });
-    repairLog.push(`Node ${r.version}：${r.state === 'fixed' ? '已自动修复' : '无需改动'}${r.note ? `（${r.note}）` : ''}`);
+    const line = `Node ${r.version}：${r.state === 'fixed' ? '已自动修复' : '无需改动'}${r.note ? `（${r.note}）` : ''}`;
+    repairLog.push(line);
+    diag(`③-1 ${line}`);
   } catch (e) {
     bad(`Node 这一步没修好：${e.message}`);
     repairLog.push('Node：修复失败（见上面的说明）');
+    diag(`③-1 Node 修复失败：${String(e.message || e).split('\n')[0]}`);
   }
 
   // ③-2 NapCat（协议端）
   try {
     const r = await ensureNapcat({ update: true });
-    repairLog.push(`NapCat：${{ installed: '已安装', updated: '已更新', unchanged: '无需改动' }[r.state] || r.state}`);
+    const stateWord = { installed: '已安装', updated: '已更新', unchanged: '无需改动' }[r.state] || r.state;
+    const shaWord = r.sha256Source
+      ? `（sha256：${r.sha256Source === 'unverified' ? '**未校验**（没拿到官方哈希）' : `已校验 · ${r.sha256Source}`}）`
+      : '';
+    const line = `NapCat：${stateWord}${shaWord}`;
+    repairLog.push(line);
+    diag(`③-2 ${line}`);
   } catch (e) {
     bad(`NapCat 这一步没修好：${e.message}`);
     if (/所有下载源都失败了/.test(e.message)) {
@@ -140,13 +168,16 @@ async function main() {
       say(`  页面：${src.manual.page}`);
     }
     repairLog.push('NapCat：修复失败（见上面的说明）');
+    diag(`③-2 NapCat 修复失败：${String(e.message || e).split('\n')[0]}`);
   }
 
   // ③-3 QQ（只引导 —— 见 lib/repair.mjs 文件头纪律 ①）
   const qqItem = items.find((i) => i.id === 'qq');
   if (qqItem && qqItem.state === 'missing') {
     const r = await ensureQQ({ yes });
-    repairLog.push(`QQ：${{ fixed: '已安装', guided: '已引导安装（需你确认一次）', 'need-confirm': '待你确认', skip: '跳过' }[r.state] || r.state}`);
+    const line = `QQ：${{ fixed: '已安装', guided: '已引导安装（需你确认一次）', 'need-confirm': '待你确认', skip: '跳过' }[r.state] || r.state}`;
+    repairLog.push(line);
+    diag(`③-3 ${line}`);
   }
 
   // ③-4 运行配置（首次）
@@ -169,24 +200,31 @@ async function main() {
   ok(`已写入模板 ${path.relative(ROOT, tplDest)}（任何 QQ 号首次登录都能直接用）`);
   dim('      WebSocket 服务端 3001 · HTTP 服务端 3000 · 仅监听 127.0.0.1');
   writeJson(SETUP_MARKER, { version: VERSION, installedAt: new Date().toISOString(), napcatHome: path.relative(ROOT, napcatHome() || NAPCAT_DIR) });
+  diag(`④ 运行配置：config ${cfgCreated ? '已生成' : '已存在'} · onebot 模板已写入`);
 
   // ── ④ 拉起控制台 ──────────────────────────────────────────────────────────
   title('⑤ 拉起控制台');
+  let napcatWord = '未重新拉起（大概率已在运行）';
   try {
     const r = await startNapcat();
     if (r.error === 'no-launcher') {
+      napcatWord = '未装好（no-launcher）';
       warn('协议端还没装好 —— 控制台照样打开，但机器人连不上 QQ');
     } else if (r.started) {
+      napcatWord = '已后台拉起';
       dim('  协议端已在后台拉起（**没有黑窗口**，日志进 app\\napcat\\napcat.log）');
     }
   } catch (e) {
+    napcatWord = `出错：${String(e.message || e).split('\n')[0]}`;
     warn(`协议端这一步出错：${e.message}`);
     dim('  不影响打开控制台；首次登录需要扫码，网页里的「终端」页会显示二维码。');
   }
+  diag(`⑤ 协议端：${napcatWord}`);
 
   const c = await ensureConsole({ open: !noBrowser });
   say('');
   ok(c.opened ? `已打开浏览器：${PANEL_URL}` : `控制台地址：${PANEL_URL}`);
+  diag(`⑤ 界面：opened=${c.opened} · ${c.reused ? '复用已在跑的面板' : '新拉起面板'}`);
   say('  控制台在**后台**跑，没有黑窗口；要停它就在页面里点「退出控制台」。');
 
   // ── ⑤ 桌面快捷方式 ────────────────────────────────────────────────────────
@@ -196,10 +234,17 @@ async function main() {
       def: 'y', validate: (v) => (/^[yn]/i.test(v) ? null : '请输入 y 或 n'),
     })).toLowerCase().startsWith('y');
     if (want) {
+      // ⚠️ 这行在 makeShortcut() **之前**打（2026-10-16 维护者点名）：建快捷方式要走一次
+      //    PowerShell（冷启动 + 写 .lnk 有一两秒），按完 Y 干等着会让人以为卡死了。
+      say('  正在创建快捷方式，请勿关闭窗口……');
       const r = makeShortcut();
-      if (r.ok) { ok('已建好 —— 以后双击桌面图标即可进入控制台'); dim(`      ${r.path}`); }
-      else warn(`没建成：${r.msg}`);
+      if (r.ok) { ok(`已建好 —— 以后双击桌面图标即可进入控制台（耗时 ${r.ms} ms）`); dim(`      ${r.path}`); diag(`⑥ 快捷方式：已建（${r.ms} ms）`); }
+      else { warn(`没建成（耗时 ${r.ms} ms）：${r.msg}`); diag(`⑥ 快捷方式：未建成 —— ${r.msg}`); }
+    } else {
+      diag('⑥ 快捷方式：用户跳过');
     }
+  } else {
+    diag('⑥ 快捷方式：按参数 --no-shortcut 跳过');
   }
 
   // ── 收尾 ──────────────────────────────────────────────────────────────────
@@ -210,6 +255,7 @@ async function main() {
   say('');
   for (const line of repairLog) dim(`  · ${line}`);
   say('');
+  diag(`收尾：exit=${process.exitCode || 0} · 共 ${repairLog.length} 条修复记录`);
   dim('  提醒：一定要用小号。第三方协议端存在封号风险，别拿主号冒险。');
 }
 
@@ -220,6 +266,7 @@ if (isMain(import.meta.url)) {
     say('');
     bad(`一键安装中断：${e && e.message ? e.message : e}`);
     say('  把上面这段原样贴出来即可；或先跑 一键安装.bat --only=check 只看检测结果。');
+    diag(`一键安装中断：${String(e && e.message ? e.message : e).split('\n')[0]}`);
     process.exitCode = 2;
   }
 }

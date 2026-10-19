@@ -36,16 +36,20 @@ export const DEMO = {
     pid: 0, since: Date.now(), alive: false, model: 'glm-4.6v', baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
     isLocal: false, fallbackModels: ['glm-4.5-air', 'glm-4.7', 'glm-4-flash'], temperature: 1, maxTokens: 400,
     extensions: { sum: { loaded: 0, pending: 0, skipped: 0, failed: 0 }, items: [] },
-    customFaces: null, sleep: null,
+    sleep: null,
   },
   config: {
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4/', model: 'glm-4.6v', provider: 'zhipu',
     fallbackModels: ['glm-4.5-air', 'glm-4.7', 'glm-4-flash'],
-    features: { webSearch: false, vision: true, stickers: true },
+    features: { webSearch: false, vision: true },
     thinking: { mode: 'on', level: 'low' }, hasKey: true, keyMasked: 'ab12••••••••cd34', keyNotNeeded: false,
     maxTokens: 400, localChannel: 'mlx', localSize: '4b', activePreset: 'zhipu',
     presets: { zhipu: { context: { recentTurns: 6, ambientMessages: 8 } } },
     groups: [], denyGroups: [], denyUsers: [], requireAtInGroup: true, interjectChance: 0,
+    /* 插话冷却（2026-10-17）：与真后端 `state-collector.js` 同名同单位（毫秒）。
+       演示态缺这一格时滑块会回落到 `min`（1 分钟）—— 看起来像"默认值改小了"，
+       而那正是"演示页与真机两套默认值"这类最难发现的漂移。 */
+    interjectCooldownMs: 300000,
     aliases: ['小鱼'], personaName: '小鱼',
   },
   custom: {
@@ -124,6 +128,10 @@ export const DEMO = {
       keys: ['values', 'decide', 'stress', 'emotion', 'habits', 'speech', 'lines', 'secrets', 'limits', 'relation', 'growth', 'meters'],
       groups: ['他怎么想', '他怎么表现', '他知道什么', '他会怎么变'],
     },
+    // 套用角色卡时的归属名单（与 /api/state 的真实下发逐字一致）：
+    // 'persona.' 12 项 / 'enhance.' 12 项 / 卡里的 'scenes' 另算。
+    personaKeys: ['age', 'role', 'world', 'traits', 'tone', 'catch', 'desire', 'fear', 'logic', 'attitude', 'status'],
+    enhanceKeys: ['values', 'decide', 'stress', 'emotion', 'habits', 'speech', 'lines', 'secrets', 'limits', 'relation', 'growth', 'meters'],
   },
   usage: {
     calls: 692, paidCalls: 17, freeCalls: 675, prompt: 1246625, completion: 78310, reasoning: 25140,
@@ -153,10 +161,10 @@ export const DEMO = {
   modelCaps: {
     zhipu: {
       'glm-4.6v': { known: true, think: 'on', thinkModes: { auto: true, off: true, on: true }, levels: ['low', 'high'],
-        features: { webSearch: true, vision: true, stickers: true, functions: true }, reasons: {} },
+        features: { webSearch: true, vision: true, functions: true }, reasons: {} },
     },
   },
-  featureLabels: { webSearch: '联网查询', vision: '识图', stickers: '发 QQ 表情' },
+  featureLabels: { webSearch: '联网查询', vision: '识图' },
   modelLabels: { 'glm-4.6v': 'GLM-4.6V', 'glm-4.5-air': 'GLM-4.5-Air' },
   extensions: {
     ok: true,

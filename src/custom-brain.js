@@ -154,7 +154,6 @@ function declaredFeaturesOf(brain) {
     thinking: f.thinking === true,
     // 这一位不在用户的勾选项里，恒 false —— 理由见上面那条注释
     functions: false,
-    stickers: true,
   };
 }
 
@@ -190,7 +189,6 @@ export function materializeBrain(cfg, brain) {
   cfg.llm.features = {
     webSearch: brain.features?.webSearch === true,
     vision: brain.features?.vision === true,
-    stickers: cfg.llm.features?.stickers === true,
   };
   if (!brain.features?.thinking) cfg.llm.thinking = { mode: 'off', level: 'medium' };
   // 给下游（llm.js）把"用户声明"带进能力判定用 —— 见 model-caps 的 `declared` 参数。

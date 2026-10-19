@@ -110,8 +110,8 @@ export default [
     anchor: /const THINKING_FILE = process\.env\.QQBOT_THINKING_FILE/,
     count: 1,
     apply: (src) => src.replace(
-      /const THINKING_FILE = process\.env\.QQBOT_THINKING_FILE\n  \|\| path\.join\(ROOT, 'panel', '\.thinking\.json'\);/,
-      "const THINKING_FILE = path.join(ROOT, 'panel', '.thinking.json');",
+      /const THINKING_FILE = process\.env\.QQBOT_THINKING_FILE\n {2}\|\| panelFile\('\.thinking\.json'\);/,
+      "const THINKING_FILE = panelFile('.thinking.json');",
     ),
     layer: 'check-wb',
     expect: 'BLOCKED',

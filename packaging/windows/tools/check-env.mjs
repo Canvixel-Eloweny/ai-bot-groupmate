@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  APP, NODE_EXE, NAPCAT_ZIP, CONFIG_JSON, CONFIG_EXAMPLE,
+  APP, NODE_EXE, NAPCAT_ZIP, CONFIG_JSON, CONFIG_EXAMPLE, USER_ROOT,
   ROOT, IS_WIN, MIN_NODE, exists, portOpen, readJson, findQQExe,
   findNapcatLauncher, findOnebotConfigs,
   // 第 58 轮：把「哪个账号还没配上 3001/3000」直接报出来（见下面"协议端口"那一项的理由）。
@@ -133,7 +133,8 @@ export async function collectEnv() {
     }
   } else {
     out.push(item(LEVEL.warn, 'QQ 协议端', zipPresent ? '已下载 NapCat 包，但还没解压' : '尚未安装 NapCat',
-      '双击 1-SETUP.bat —— 它会在联网状态下自动下载并装好（约 30MB）。'));
+      '双击 1-SETUP.bat —— 它会在联网状态下自动下载并装好（约 30–36MB，随版本变化）。'
+      + '没网也行：把官方 NapCat.Shell.zip 放到协议端目录再重跑一次即可。'));
   }
 
   // ⑦ QQ 客户端
@@ -159,7 +160,7 @@ export async function collectEnv() {
   out.push(item(LEVEL.ok, '端口状态', lines.join(' · ')));
 
   // ⑨ 磁盘
-  const free = diskFree(ROOT);
+  const free = diskFree(USER_ROOT);
   if (free !== null) {
     const enough = free > 500 * 1024 * 1024;
     out.push(item(enough ? LEVEL.ok : LEVEL.warn, '剩余磁盘',

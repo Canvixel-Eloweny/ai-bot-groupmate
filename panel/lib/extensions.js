@@ -24,7 +24,7 @@
 
 import { loadExtensions } from '../../src/plugin-host.js';
 import { settingsSpec } from '../../src/plugin-settings.js';
-import { ROOT } from './paths.js';
+import { USER_ROOT } from './paths.js';
 
 /**
  * 缓存时长。
@@ -82,7 +82,7 @@ function projectItem(p) {
 function scan(enabled) {
   let r;
   try {
-    r = loadExtensions({ root: ROOT, enabled, log: {} });
+    r = loadExtensions({ root: USER_ROOT, enabled, log: {} });
   } catch (e) {
     // 与 `/api/state` 那条纪律一致：这个模块**不许抛**。
     // 一个坏掉的扩展包目录让整页停止刷新，是比"扩展包列表空着"严重得多的错误。

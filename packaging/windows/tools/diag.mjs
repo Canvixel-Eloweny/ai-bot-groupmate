@@ -24,10 +24,10 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
-  ROOT, APP, NAPCAT_DIR, exists, readJson,
+  ROOT, APP, USER_ROOT, NAPCAT_DIR, CONFIG_JSON, SETUP_MARKER, exists, readJson,
 } from './lib/common.mjs';
 
-const OUT = path.join(ROOT, 'diag-out');
+const OUT = path.join(USER_ROOT, 'diag-out');
 const SHARE = path.join(process.env.USERPROFILE || '', 'Documents', 'UTM-Share');
 const lines = [];
 const say = (s = '') => { lines.push(s); console.log(s); };
@@ -133,6 +133,9 @@ head('②b 关键词探针（弱判据 —— 别拿它判新旧，见 ②）');
 const probes = {
   'tools/start-napcat.mjs': 'wscript',
   'tools/lib/common.mjs': 'knownAccountsByMtime',
+  // 2026-10-16（P0-1）：这个包带没带「NapCat 供应链 digest 校验」——有它 = 下载件/手动放包
+  // 都会被逐字节核对；没有 = 老包。
+  'tools/lib/versions.mjs': 'assetSha256',
   'app/panel/lib/next-page.js': 'blob:',
   'app/panel/lib/napcat-native.js': 'wscript',
   'app/panel/next/app.js': 'startNapTailTimer',
@@ -144,7 +147,31 @@ for (const [rel, needle] of Object.entries(probes)) {
   const src = fs.readFileSync(p, 'utf8');
   say(`${rel.padEnd(34)} ${src.includes(needle) ? `含「${needle}」` : `**不含「${needle}」**`}`);
 }
-say(`桌面快捷方式  ${exists(path.join(process.env.USERPROFILE || '', 'Desktop', 'Estrella Bot.lnk')) ? '在' : '不在'}`);
+/**
+ * 桌面**真实**目录。
+ *
+ * ⚠️ 为什么不能直接写 `%USERPROFILE%\Desktop`（2026-10-16 定位到的假红）：
+ *    建快捷方式那边（`make-shortcut.mjs`）用的是 PowerShell 的
+ *    `[Environment]::GetFolderPath('Desktop')` —— 它认 **OneDrive 重定向**与
+ *    **用户改过桌面位置**这两种常见情形；而这里若只认 `%USERPROFILE%\Desktop`，
+ *    就会在那些机器上出现「**图标明明建好了，diag 却报"不在"**」。
+ *    两边必须读**同一个真相源**，所以这里从注册表的 User Shell Folders 取。
+ */
+function desktopDir() {
+  try {
+    const out = execFileSync('reg', ['query',
+      'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders',
+      '/v', 'Desktop'], { encoding: 'utf8', stdio: 'pipe' });
+    const m = /Desktop\s+REG_(?:EXPAND_)?SZ\s+(.+)/.exec(out);
+    if (m) {
+      const v = m[1].trim().replace(/%USERPROFILE%/gi, process.env.USERPROFILE || '');
+      if (v) return v;
+    }
+  } catch { /* 读不到注册表就退回默认（至少不比旧行为更差） */ }
+  return path.join(process.env.USERPROFILE || '', 'Desktop');
+}
+const DESKTOP = desktopDir();
+say(`桌面快捷方式  ${exists(path.join(DESKTOP, 'Estrella Bot.lnk')) ? '在' : `不在（查的是 ${DESKTOP}）`}`);
 
 // ── ③ 协议端 ────────────────────────────────────────────────────────────────
 head('③ 协议端（NapCat）');
@@ -201,16 +228,16 @@ function pad(label, width) {
 }
 
 head('③b 安装痕迹 / 启动器日志');
-const marker = path.join(APP, '.qqbot-portable-setup.json');
+const marker = SETUP_MARKER;
 if (exists(marker)) {
   try {
     const m = readJson(marker) || {};
     say(`${pad('安装标记', 16)}在 · 版本 ${m.version} · 装于 ${m.installedAt} · napcatHome ${m.napcatHome || '-'}`);
   } catch { say(`${pad('安装标记', 16)}在，但解析失败`); }
 } else say(`${pad('安装标记', 16)}**不在**（一键安装没跑完）`);
-say(`${pad('app\\config.json', 16)}${exists(path.join(APP, 'config.json')) ? '在' : '**不在**'}`);
-for (const [label, rel] of [['面板启动日志', ['app', 'panel', 'start.log']], ['面板运行日志', ['app', 'panel', 'panel.log']]]) {
-  const p = path.join(ROOT, ...rel);
+say(`${pad('userdata/config.json', 16)}${exists(CONFIG_JSON) ? '在' : '**不在**'}`);
+for (const [label, rel] of [['面板启动日志', ['panel', 'start.log']], ['面板运行日志', ['panel', 'panel.log']]]) {
+  const p = path.join(USER_ROOT, ...rel);
   say(`${pad(label, 16)}${exists(p) ? '在' : '**不在**'}`);
 }
 // QQ.exe 是否真的在注册表指向的目录里（NapCat 起不来的常见原因之一）
@@ -246,9 +273,22 @@ if (!exists(cfgDir)) {
 
 // ── ⑥ 日志尾部 ──────────────────────────────────────────────────────────────
 head('⑥ 面板日志尾部（最后 80 行）');
-say(tail(path.join(APP, 'panel', 'panel.log'), 80));
-head('⑥b 面板启动日志尾部（最后 40 行 —— launch-hidden.vbs 写的那个）');
-say(tail(path.join(APP, 'panel', 'start.log'), 40));
+say(tail(path.join(USER_ROOT, 'panel', 'panel.log'), 80));
+head('⑥b 面板启动日志尾部（最后 40 行 —— 启动器写的那个）');
+say(tail(path.join(USER_ROOT, 'panel', 'start.log'), 40));
+// ── ⑥c 一键安装的逐阶段 boot 日志（2026-10-16 · Windows P0-3）───────────────
+// "双击之后卡在哪一步"最省事的证据：onekey 每一步都往 `diag-out/boot-<日期>.log`
+// 同步追一行（唯一实现住 `lib/common.mjs` 的 diag()）。这里把**最新那份**的尾部一起收走。
+head('⑥c 最近一次 boot 日志（一键安装逐阶段 · 最后 60 行）');
+{
+  let newest = '';
+  try {
+    for (const n of fs.readdirSync(OUT)) if (/^boot-.*\.log$/.test(n) && n > newest) newest = n;
+  } catch { /* OUT 还不存在：下面按"没有"如实说 */ }
+  if (newest) { say(`boot 文件：${newest}`); say(tail(path.join(OUT, newest), 60)); }
+  else say('**还没有 boot 日志**（这台机器还没跑过一键安装 / 或日志被清过）');
+}
+
 head('⑦ 协议端日志尾部（最后 120 行）');
 say(tail(path.join(NAPCAT_DIR, 'napcat.log'), 120));
 
@@ -265,7 +305,11 @@ if (exists(SHARE)) {
     say(`也已复制到共享目录：${SHARE}\\${path.basename(file)}（AI 侧读这里就能看到）`);
   } catch (e) { say(`共享目录写失败：${e.message}`); }
 } else {
-  say(`没找到 ${SHARE} —— 把上面那个文件整个发我也行`);
+  // ⚠️ 2026-10-16：客户机里**没有挂载的共享目录**（维护者的传件方式是"把文件夹直接拖进
+  //    虚拟机窗口"）⇒ 这一支走到的概率是 100%。所以正文要写清"该往哪儿放"，
+  //    而不是旧那句含糊的"发我也行"。
+  say(`没找到 ${SHARE} —— 这台机器没有挂载的共享目录（**正常现象**，不是坏了）`);
+  say('  请把上面那个文件**从虚拟机窗口直接拖出来**，放到 Mac 的 ~/Documents/UTM-Share');
 }
 }
 

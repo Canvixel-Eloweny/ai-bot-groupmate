@@ -22,11 +22,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { APP, NODE_EXE, IS_WIN, exists, ok, warn, dim, say } from './common.mjs';
+import { APP, USER_ROOT, MODE, CONFIG_JSON, NODE_EXE, IS_WIN, exists, ok, warn, dim, say } from './common.mjs';
 
 export const PANEL_PORT = Number(process.env.QQBOT_PANEL_PORT) || 8788;
 export const PANEL_URL = `http://127.0.0.1:${PANEL_PORT}/`;
-export const PANEL_LOG = path.join(APP, 'panel', 'panel.log');
+export const PANEL_LOG = path.join(USER_ROOT, 'panel', 'panel.log');
 
 /** 端口上有没有东西应答（与面板自己的判据同一口径：只问在不在）。 */
 export function panelUp(timeout = 1500) {
@@ -65,7 +65,16 @@ export async function startPanel() {
   const log = fs.openSync(PANEL_LOG, 'a');
   const exe = exists(NODE_EXE) && IS_WIN ? NODE_EXE : process.execPath;
   const child = spawn(exe, [path.join(APP, 'panel', 'server.js')], {
-    cwd: APP, detached: true, windowsHide: true, stdio: ['ignore', log, log],
+    cwd: APP,
+    detached: true,
+    windowsHide: true,
+    stdio: ['ignore', log, log],
+    env: {
+      ...process.env,
+      QQBOT_USER_ROOT: USER_ROOT,
+      QQBOT_MODE: MODE,
+      QQBOT_CONFIG: CONFIG_JSON,
+    },
   });
   child.once('error', (e) => {
     try { fs.appendFileSync(PANEL_LOG, `[${new Date().toISOString()}] ✗ 控制台起不来：${e.message}\n`); } catch { /* 兜底 */ }
@@ -101,7 +110,7 @@ export async function ensureConsole({ open = true } = {}) {
   dim('  正在拉起控制台（后台运行，**不会有黑窗口**）…');
   const r = await startPanel();
   if (!r.up) {
-    warn(`控制台 25 秒内没应答 —— 看 ${path.relative(APP, PANEL_LOG)} 里的报错`);
+    warn(`控制台 25 秒内没应答 —— 看 ${path.relative(USER_ROOT, PANEL_LOG)} 里的报错`);
     return { url: PANEL_URL, reused: false, opened: false };
   }
   ok('控制台已就绪');

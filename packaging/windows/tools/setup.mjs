@@ -14,17 +14,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  NAPCAT_DIR, NAPCAT_ZIP, CONFIG_JSON, CONFIG_EXAMPLE, SETUP_MARKER, ROOT, IS_WIN,
+  NAPCAT_DIR, NAPCAT_ZIP, CONFIG_JSON, CONFIG_EXAMPLE, SETUP_MARKER, ROOT, PROGRAM_ROOT, USER_ROOT, IS_WIN, VERSION,
   say, ok, warn, bad, title, dim, exists, readJson, writeJson,
-  downloadWithMirrors, unzip, loadNapcatSource, isMain, humanSize,
+  downloadWithMirrors, unzip, loadNapcatSource, isMain, humanSize, napcatUrls,
   findOnebotConfigs, napcatHome, napcatConfigDir, findNapcatLauncher, flattenSingleDir,
   // 第 58 轮：OneBot11 配置的形状与"补服务端"只有 `lib/common.mjs` 那一份实现 ——
   // `start-napcat.mjs`（为已登录账号补配置）读的也是同一批函数。
   FALLBACK_ONEBOT11, withOnebotServers, isOwnOnebotFile,
 } from './lib/common.mjs';
 import { collectEnv, printEnv } from './check-env.mjs';
-
-const VERSION = '0.1.2';
+// 2026-10-16（P0-1）：NapCat 的版本/校验值解析只许住 `lib/versions.mjs` ——
+// 本文件原来自带一份 resolveLatestTag（没有超时、也不带 digest），已改用共享件。
+import { latestNapcatRelease, napcatDigestForTag, verifyNapcatZip } from './lib/versions.mjs';
+import { migrateIfNeeded } from './migrate.mjs';
 
 // ── ① 配置：生成 config.json ────────────────────────────────────────────────
 /**
@@ -52,31 +54,14 @@ export function ensureConfigJson() {
   return { created: true };
 }
 
-// ── ③ 协议端：下载 + 解压 ───────────────────────────────────────────────────
-function napcatUrls(src, tag) {
-  const base = src.downloadTemplate
-    .replace('{repo}', src.repo)
-    .replace('{tag}', tag)
-    .replace('{asset}', src.asset);
-  // 直连排最后：实测它常常只有 ~20KB/s 甚至挂死，镜像反而更快。
-  const list = (src.mirrors || []).map((m) => (m.endsWith('/') ? m + base : `${m}/${base}`));
-  list.push(base);
-  return list;
-}
-
-async function resolveLatestTag(src) {
-  try {
-    const res = await fetch(src.api, { headers: { 'user-agent': 'qqbot-portable-setup' } });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const j = await res.json();
-    if (j && typeof j.tag_name === 'string' && j.tag_name) return j.tag_name;
-    throw new Error('响应里没有 tag_name');
-  } catch (e) {
-    warn(`查最新版本失败（${e.message}）—— 回退到清单里记的 ${src.fallbackTag}`);
-    return src.fallbackTag;
-  }
-}
-
+// ── ③ 协议端：下载 + 校验 + 解压 ─────────────────────────────────────────────
+/**
+ * 装协议端。2026-10-16（P0-1）起，与一键安装走**同一套**取证与校验：
+ *   · 版本/校验值解析 ← `lib/versions.mjs`（本文件原来那份 resolveLatestTag 已删）
+ *   · zip 候选 URL ← `lib/common.mjs` 的 napcatUrls（原来这里也有一份）
+ *   · 完整性校验 ← `lib/versions.mjs` 的 verifyNapcatZip —— **手动放包与下载件
+ *     走同一条校验路**（"用户自己放一份 zip"不再是一个绕过校验的口子）。
+ */
 async function installNapcat() {
   if (findNapcatLauncher()) {
     ok('NapCat 已经装好了 —— 跳过下载');
@@ -84,14 +69,26 @@ async function installNapcat() {
   }
 
   const src = loadNapcatSource();
+  const rel = await latestNapcatRelease(src);
+  if (!rel) warn(`查最新版本失败 —— 回退到清单里记的 ${src.fallbackTag}`);
+  const tag = rel ? rel.tag : src.fallbackTag;
+  const expected = (rel && rel.sha256)
+    ? { sha256: rel.sha256, source: 'github-api' }
+    : await napcatDigestForTag(src, tag);
+
   if (!exists(NAPCAT_ZIP)) {
-    const tag = await resolveLatestTag(src);
-    say(`  准备下载 NapCat ${tag}（官方包，约 30MB）。国内镜像优先，可断点续传。`);
-    const r = await downloadWithMirrors(napcatUrls(src, tag), NAPCAT_ZIP);
+    say(`  准备下载 NapCat ${tag}（官方包约 30–36MB，随版本变化）。国内镜像优先，可断点续传。`);
+    const r = await downloadWithMirrors(napcatUrls(src, tag), NAPCAT_ZIP, {
+      expectedSha256: expected ? expected.sha256 : '',
+      expectedSize: expected && expected.size ? expected.size : 0,
+    });
     ok(`下载完成：${humanSize(r.bytes)}（来源 ${new URL(r.url).host}）`);
   } else {
     ok(`发现你手动放好的 NapCat 包：${humanSize(fs.statSync(NAPCAT_ZIP).size)}`);
   }
+
+  // 校验放在解压**之前**：可疑的包绝不拿去解压执行（两个入口同一条路）。
+  verifyNapcatZip(NAPCAT_ZIP, expected);
 
   const tool = unzip(NAPCAT_ZIP, NAPCAT_DIR);
   ok(`解压完成（用 ${tool}）`);
@@ -201,6 +198,20 @@ async function main() {
     say('  如果你是在 macOS 上校验这个包，请只跑：runtime/node/node.exe 之外的检查。');
     process.exitCode = 1;
     return;
+  }
+
+  // ② 旧数据迁移：必须在创建新 config / 装 NapCat 之前
+  title('旧数据迁移');
+  const mig = migrateIfNeeded({ source: PROGRAM_ROOT, userRoot: USER_ROOT });
+  if (mig.status === 'failed') {
+    bad(`旧数据迁移失败：${mig.error || mig.reason}`);
+    bad('旧数据仍在原处；先处理上面的原因，再重跑 1-SETUP.bat。');
+    process.exitCode = 1;
+    return;
+  } else if (mig.status === 'complete') {
+    ok(`旧数据已复制到 userdata（${mig.files} 个文件，冲突 ${mig.conflicts.length}）`);
+  } else {
+    dim(`旧数据迁移：${mig.reason || '无需迁移'}`);
   }
 
   // ② 配置

@@ -88,5 +88,27 @@ export function writeConfig(cfg, { via = '', history = true } = {}) {
   // 原子写（B10a · O-ATOMIC）。config.json 是最不该被写坏的那个文件：
   // 原地覆盖时读到半个 JSON，面板会把它当成"配置损坏"，
   // 而用户刚刚明明点的是"保存成功"。
-  writeJsonAtomic(configPath(), cfg);
+  // ⚠️ `mode` 必须传（2026-10-17）：不传就用进程默认（0666 & umask = **644**），
+  //    于是**每次面板保存都会把这份含明文 Key 的文件放宽一次** —— 以前只靠
+  //    机器人下次加载时那条"自动收紧为 600"兜回来，中间那段窗口同机任何用户都能读。
+  //    这里按"只收不放"取：超过 600 的部分一律砍掉，原本就是 400 的保持 400。
+  writeJsonAtomic(configPath(), cfg, { mode: configMode() });
+}
+
+/**
+ * config.json 该用的权限：**只收不放**。
+ *
+ * - 原文件存在 ⇒ 取它的权限，再把 group/other 那几位清掉（400 / 600 都合法地保留下来）；
+ * - 读不到（第一次写 / 文件不在）⇒ 600。
+ *
+ * ⚠️ 为什么不是写死 600：用户可能刻意把它设成 0400（只读）。写死 600 等于**放宽**了
+ * 他有意收紧过的权限，与"只收紧、不放宽"那条规矩正好相反。
+ */
+function configMode() {
+  try {
+    const m = fs.statSync(configPath()).mode & 0o777;
+    return (m & 0o600) || 0o600;
+  } catch {
+    return 0o600;
+  }
 }

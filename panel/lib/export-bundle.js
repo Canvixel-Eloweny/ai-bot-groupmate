@@ -21,11 +21,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  SCENES, REPLY_LENGTHS, ENHANCE, ENHANCE_KEYS, PLAY_RULES, SKILL_IN_PROMPT, FACE_PRESETS, readCustom,
+  SCENES, REPLY_LENGTHS, ENHANCE, ENHANCE_KEYS, PLAY_RULES, SKILL_IN_PROMPT, readCustom,
 } from '../../src/custom-config.js';
 import { listAutoMemory, readRecords } from '../../src/memory-store.js';
 import { isSafeRelPath } from '../../src/plugin-manifest.js';
-import { ROOT } from './paths.js';
+import { USER_ROOT, PERSONA_DIR, BRIDGE_LOG } from './paths.js';
 import { readTrace } from './trace-io.js';
 
 export function makeExportBundle() {
@@ -42,7 +42,7 @@ export function makeExportBundle() {
     // ⚠️ 不可利用 ≠ 不用防：`/api/config` 目前写不了 `persona.file`，但那属于"输入面恰好很窄"，
     //    不是"这条路径是安全的" —— 判据要按路径本身写，不按"今天谁能改它"写。
     const personaSafe = !!personaFile && isSafeRelPath(personaFile);
-    const personaAbs = personaSafe ? path.join(ROOT, personaFile) : '';
+    const personaAbs = personaSafe ? path.join(PERSONA_DIR, personaFile) : '';
     const personaText = personaAbs && fs.existsSync(personaAbs)
       ? fs.readFileSync(personaAbs, 'utf8')
       : '（人格文件不存在或未设置）';
@@ -66,7 +66,6 @@ export function makeExportBundle() {
       `- 对群里人的态度：${custom.persona.attitude || '(未填)'}`,
       `- 当前状态：${custom.persona.status || '(未填)'}`,
       `- 口头禅：${custom.persona.catch || '(未填)'}`,
-      `- 爱用表情：${custom.persona.faces || '(未填)'}`,
       ``,
       `## 增强项（填了的才会写进提示词）`,
       ``,
@@ -111,7 +110,6 @@ export function makeExportBundle() {
       `- 对群里人的态度：${custom.persona.attitude || '(未填)'}`,
       `- 当前状态：${custom.persona.status || '(未填)'}`,
       `- 口头禅：${custom.persona.catch || '(未填)'}`,
-      `- 爱用表情：${custom.persona.faces || '(未填)'}`,
       ``,
       `## 回复方式`,
       `- 长短：${REPLY_LENGTHS[custom.replyStyle.length]?.label || custom.replyStyle.length}`,
@@ -207,21 +205,11 @@ export function makeExportBundle() {
       ].join('\n');
     }
 
-    files['QQ表情ID表.md'] = [
-      `# QQ 内置表情 ID 表（机器人用 [face:ID] 这种写法发送）`,
-      ``,
-      '| ID | 表情 |',
-      '|---|---|',
-      ...FACE_PRESETS.map(([id, name]) => `| ${id} | ${name} |`),
-      ``,
-      `> 只有在「能力开关 → 发送表情包」打开时才会真的发出去。`,
-    ].join('\n');
-
     if (what === 'all' || what === 'log') {
       let logText = '(没有日志)';
       try {
         logText = fs
-          .readFileSync(path.join(ROOT, 'panel', 'bridge.log'), 'utf8')
+          .readFileSync(BRIDGE_LOG, 'utf8')
           .split('\n')
           .slice(-400)
           .join('\n');
@@ -261,12 +249,11 @@ export function makeExportBundle() {
       rules: ['规则与触发.md'],
       memory: ['记忆.md'],
       skills: ['技能.md'],
-      faces: ['QQ表情ID表.md'],
       log: ['运行日志-末尾400行.txt'],
       config: ['config-已脱敏.json'],
     }[what];
     const picked = only ? Object.fromEntries(Object.entries(files).filter(([k]) => only.includes(k))) : files;
 
-    return { generatedAt: stamp, root: ROOT, files: picked };
+    return { generatedAt: stamp, root: USER_ROOT, files: picked };
   };
 }

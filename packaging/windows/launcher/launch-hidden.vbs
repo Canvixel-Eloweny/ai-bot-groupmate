@@ -25,7 +25,9 @@ Set ws = CreateObject("WScript.Shell")
 root = fso.GetParentFolderName(WScript.ScriptFullName)
 node = root & "\runtime\node\node.exe"
 script = root & "\tools\start.mjs"
-logFile = root & "\app\panel\start.log"
+' P1: never write runtime logs into the program tree. The panel writes its own
+' log under USER_ROOT/panel; this early bootstrap log goes to TEMP.
+logFile = ws.ExpandEnvironmentStrings("%TEMP%") & "\Estrella-Bot-start.log"
 
 If Not fso.FileExists(node) Then
   ' Last resort: use whatever node is on PATH so the user still gets an error

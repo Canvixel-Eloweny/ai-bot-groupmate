@@ -33,21 +33,8 @@ export default [
     layer: 'check-wb',
     expect: 'BLOCKED',
   },
-  {
-    id: 'C40',
-    note: '§40 出站分流：认不出的令牌不再丢掉（classifySegments 的 filter(Boolean) 被换成恒真）—— §40-② 应红',
-    file: 'src/face-marks.js',
-    anchor: /export function classifySegments/,
-    count: 1,
-    apply: (s) => {
-      const i = s.indexOf('export function classifySegments');
-      const j = s.indexOf('.filter(Boolean);', i);
-      if (i < 0 || j < 0) return s; // 命中数校验兜不住这里 → 内容不变会被判 INVALID
-      return s.slice(0, j) + '.filter(() => true); // 变异：认不出的令牌不再被丢掉' + s.slice(j + '.filter(Boolean);'.length);
-    },
-    layer: 'check-wb',
-    expect: 'BLOCKED',
-  },
+  /* C40 与 G-40-ANCHOR（§40 出站分流 / 令牌判据）已于 2026-10-17 删除：
+     表情能力整体下线，`src/face-marks.js` 与 `src/custom-faces.js` 一并删除。 */
   {
     id: 'C41',
     note: '§41 掷骰子绕过因子（plan.chance → trigger.interjectChance）—— §41-② 反向判据应红',
@@ -107,16 +94,6 @@ export default [
       "\n        exec: () => ({ ok: true, msg: '已执行' }),\n"
     ),
     layer: 'smoke',
-    expect: 'BLOCKED',
-  },
-  {
-    id: 'G-40-ANCHOR',
-    note: '假绿通道实证：令牌判据的锚被拿掉（^…$ → 无锚）—— §40-⑥ 与 T243 的样本都不含"尾部带垃圾"形态，拦不住',
-    file: 'src/custom-faces.js',
-    anchor: /\/\^\[0-9a-f\]\{8\}\$\//,
-    count: 1,
-    apply: (s) => s.replace('/^[0-9a-f]{8}$/', '/[0-9a-f]{8}/'),
-    layer: 'check-wb',
     expect: 'BLOCKED',
   },
 ];

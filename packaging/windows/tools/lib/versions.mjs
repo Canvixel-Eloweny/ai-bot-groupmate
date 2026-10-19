@@ -25,7 +25,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   NODE_EXE, NAPCAT_DIR, IS_WIN, MIN_NODE, exists, readJson, writeJson,
-  findQQExe, napcatHome, run,
+  findQQExe, findNapcatLauncher, napcatHome, run, sha256File, ok, warn, diag,
 } from './common.mjs';
 
 /** 网络探测的兜底超时。宁可"查不到"，也不要让安装卡在一台断网的机器上。 */
@@ -158,11 +158,16 @@ export async function nodeZipSha(version) {
  */
 export function napcatInstalled() {
   const rec = readJson(path.join(NAPCAT_DIR, 'INSTALLED.json'));
-  const home = napcatHome();
+  // ⚠️ "装没装"只认**看得见的启动器**。napcatHome() 在找不到启动器时会回落成
+  //    "目录存在即返回"—— 那是给"配置写到哪儿"用的，不是安装判据。
+  //    2026-10-19 群友真机：下载失败留下的 .part 让目录存在 ⇒ 重跑安装器被判
+  //    "已装" ⇒ 静默不装还写 OK（VM 实测可复现）。
+  const launcher = findNapcatLauncher();
+  const home = launcher ? path.dirname(launcher) : null;
   const pkgVer = home ? readJson(path.join(home, 'package.json'))?.version : null;
   const version = rec?.tag?.replace(/^v/, '') || pkgVer || '';
   return {
-    found: Boolean(home),
+    found: Boolean(launcher),
     version,
     tag: rec?.tag || '',
     installedAt: rec?.installedAt || '',
@@ -182,15 +187,108 @@ export function writeNapcatRecord(info) {
   } catch { /* 记录写不进去：下次会被判成"版本不明"，不会装错 */ }
 }
 
-/** 最新的 NapCat Release tag。查不到回 null。 */
-export async function latestNapcatTag(src) {
+/**
+ * 从 Release JSON 里取某份 asset 的官方 SHA-256（`assets[].digest`，形如 `sha256:<hex>`）。
+ * 取不到返回 null —— 调用方必须把"没有校验值"如实说出来，**不许**静默当成通过。
+ * ⚠️ 同一个 Release 下几个 zip 的 digest **互不相同** ⇒ 必须按 `napcat.json` 里
+ *    实际用的那个 asset 名取（由调用方传 `src.asset`）。
+ */
+export function assetSha256(release, assetName) {
+  const assets = Array.isArray(release?.assets) ? release.assets : [];
+  const hit = assets.find((a) => a && a.name === assetName);
+  const m = hit && typeof hit.digest === 'string' ? /^sha256:([0-9a-f]{64})$/i.exec(hit.digest) : null;
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * 最新 Release 的 `{tag, sha256}` —— **一次响应**同时拿两个值。
+ * ⚠️ 必须同一次拿：分两次请求之间 Release 可能刚换代，tag 与 digest 就会来自
+ *    两个版本 —— 那样的校验错得比不校验更隐蔽。查不到（离线 / 限流）返回 null。
+ */
+export async function latestNapcatRelease(src) {
   try {
     const j = await fetchJson(src.api);
-    if (j && typeof j.tag_name === 'string' && j.tag_name) return j.tag_name;
-    return null;
+    if (!j || typeof j.tag_name !== 'string' || !j.tag_name) return null;
+    return { tag: j.tag_name, sha256: assetSha256(j, src.asset) };
   } catch {
     return null;
   }
+}
+
+/** 最新的 NapCat Release tag。查不到回 null。 */
+export async function latestNapcatTag(src) {
+  const rel = await latestNapcatRelease(src);
+  return rel ? rel.tag : null;
+}
+
+/**
+ * 指定 tag 那份资产的官方 SHA-256：先问 tags API，再回落到 `napcat.json` 的兜底值。
+ *
+ * ⚠️ 为什么要有 tags API 这一路：走 `fallbackTag`（查不到最新版时的固定版本）时，
+ *    校验链不能因为"最新版查不到"就整条失效 —— 那份包同样是会被解压执行的。
+ * ⚠️ 兜底值只对 `fallbackTag` 有效（换 tag 必须同步换它，napcat.json 里已注明）。
+ * @returns {{sha256:string, source:'github-api'|'napcat.json'}|null}
+ */
+export async function napcatDigestForTag(src, tag) {
+  try {
+    const u = new URL(src.api);
+    const j = await fetchJson(`${u.origin}/repos/${src.repo}/releases/tags/${encodeURIComponent(tag)}`);
+    const sha = assetSha256(j, src.asset);
+    if (sha) return { sha256: sha, source: 'github-api' };
+  } catch { /* 落到下面 */ }
+  // 离线兜底：按 knownGood 查**这一版**（以前只认 fallbackTag 一行，于是别的版本
+  // 一律返回 null ⇒ "下载一份没有期望哈希的 35MB 可执行件"，校验形同不存在）。
+  const rows = Array.isArray(src?.knownGood) ? src.knownGood : [];
+  const hit = rows.find((r) => r && String(r.tag) === String(tag) && /^[0-9a-f]{64}$/i.test(String(r.sha256 || '')));
+  if (hit) {
+    return {
+      sha256: String(hit.sha256).toLowerCase(), source: 'napcat.json-list',
+      size: Number.isInteger(hit.size) ? hit.size : 0,
+    };
+  }
+  if (tag === src.fallbackTag && /^[0-9a-f]{64}$/i.test(String(src.fallbackSha256 || ''))) {
+    return { sha256: String(src.fallbackSha256).toLowerCase(), source: 'napcat.json' };
+  }
+  return null;
+}
+
+/**
+ * NapCat 安装素材（zip）的完整性校验 —— 两个安装入口（`setup.mjs` / `lib/repair.mjs`）
+ * 共用这一份，谁都不许再写第二个版本。
+ *
+ * expected：`{sha256, source}` 或 null。
+ *   · 有期望值且一致 ⇒ 打一行 ok，返回记录值；
+ *   · 有期望值但不一致 ⇒ **中止**（可疑的包绝不拿去解压/执行），错误里带下一步；
+ *   · 没有期望值（离线 / API 拿不到 digest）⇒ 打印实测 SHA-256 并放行，
+ *     **如实说"没做校验"** —— 宁可明说没验，也不许假装验过。
+ * @returns {{sha256:string, source:string, verified:boolean}} 供 INSTALLED.json 记录
+ */
+export function verifyNapcatZip(zipPath, expected, { strict = true } = {}) {
+  const got = sha256File(zipPath);
+  if (expected && expected.sha256) {
+    if (got === expected.sha256) {
+      ok(`SHA-256 与官方记录一致（来源：${expected.source}）`);
+      diag(`NapCat zip 校验通过（${expected.source} · ${got.slice(0, 12)}…）`);
+      return { sha256: got, source: expected.source, verified: true };
+    }
+    if (!strict) {
+      // 用户自己带来的包 ⇒ 不中止：他比我们对"该装什么"更有决定权。
+      // 但"没对上官方哈希"必须留在记录里并当面说清，日后排查就靠这一条。
+      warn(`! 这份包的 SHA-256 不在已知-good 清单里（期望 ${expected.sha256.slice(0, 12)}… 实测 ${got.slice(0, 12)}…）—— 按**未校验**继续`);
+      diag(`NapCat zip 未命中清单（本地选件，不中止）：实测 ${got.slice(0, 12)}…`);
+      return { sha256: got, source: 'unverified-mismatch', verified: false };
+    }
+    diag(`NapCat zip 校验不过（期望 ${expected.sha256.slice(0, 12)}… 实测 ${got.slice(0, 12)}…）已中止`);
+    throw new Error(
+      `这个 NapCat 包与官方记录对不上（期望 ${expected.sha256.slice(0, 12)}… · 实测 ${got.slice(0, 12)}…，来源：${expected.source}）\n`
+      + '      已中止，**没有解压**。下一步二选一：\n'
+      + '      ① 删掉 app\\napcat\\NapCat.Shell.zip 后重新双击一键安装（会自动重新下载）；\n'
+      + '      ② 到官方 Releases 页换一份原件再放回来。',
+    );
+  }
+  warn(`没拿到官方哈希，这份包**没做**完整性校验（实测 SHA-256：${got}）`);
+  diag(`NapCat zip 未校验（无期望值），实测 SHA-256 ${got}`);
+  return { sha256: got, source: 'unverified', verified: false };
 }
 
 // ── ③ QQ ────────────────────────────────────────────────────────────────────

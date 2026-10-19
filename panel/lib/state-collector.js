@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import {
-  ENHANCE, ENHANCE_KEYS, ENHANCE_GROUPS, PLAY_RULES, REPLY_LENGTHS, SCENES,
+  ENHANCE, ENHANCE_KEYS, ENHANCE_GROUPS, PERSONA_KEYS, PLAY_RULES, REPLY_LENGTHS, SCENES,
   SKILL_IN_PROMPT, MANUAL_MEMORY_IN_PROMPT, SIMILAR_THRESHOLD, readCustom,
 } from '../../src/custom-config.js';
 import {
@@ -11,6 +11,10 @@ import { FEATURE_LABEL, ZHIPU_MODEL_META } from '../../src/model-caps.js';
 import { LOCK_REFUSE_EXIT_CODE } from '../../src/bridge-lock.js';
 import { fieldMeta } from '../../src/field-schema.js';
 import { isLocalBase, onebotEndpointOf, providerOf } from '../../src/net-rules.js';
+// 桌面端「启动方式」（2026-10-16）：唯一判据住 `src/launch-mode.js` ——
+// 面板这里只下发**结论**（与启动器执行的那一个值逐字一致），不许自己再判一遍；
+// 启动跟踪（launch-log）的读口也在这里，卡片上的「上次启动」就是它。
+import { LAUNCH_ENTRY_LABELS, launchLogPath, launchOfConfig, readLaunchLog } from '../../src/launch-mode.js';
 // 「这家的免费额度长什么样」（额度类型 / 能不能查实时余额 / 该去哪个页面看）。
 // 唯一实现住 src/free-quota.js —— 面板**不要**自己再写一份文案：
 // 千问那句"用完即停开关默认是关的"是**真会让人被扣钱**的提醒，抄一份就多一处会腐烂的地方。
@@ -20,11 +24,12 @@ import { activeBrainOf, brainListOf, visibleFeatureKeysOf } from '../../src/cust
 import { listAutoMemory } from '../../src/memory-store.js';
 import { readHistory } from '../../src/config-history.js';
 import {
-  DOCKER, DOCKER_APP, HISTORY_FILE, IS_WIN, MLX_PY, NAPCAT_WEBUI_PORT, QWENCHAT_SERVER, QWEN_SERVER,
+  CONFIG_FILE, DOCKER, DOCKER_APP, HISTORY_FILE, IS_WIN, MLX_PY, NAPCAT_WEBUI_PORT,
+  PANEL_STATE_DIR, QWENCHAT_SERVER, QWEN_SERVER,
 } from './paths.js';
 import {
   LOCAL_CHANNELS, LOCAL_MODELS, LOCAL_MODEL_SUPPORTED, LOCAL_MODEL_UNSUPPORTED_WHY,
-  MODEL_LABELS, ZHIPU_DEFAULT_CHAIN, buildModelCaps,
+  MODEL_LABELS, ZHIPU_DEFAULT_CHAIN, buildModelCaps, defaultChainOf,
   localChannelOf, localKeyOf, localModelExists, normalizeThinking, readPresets,
   resolveLocalKey, PRESET_KEYS,
 } from './models.js';
@@ -33,6 +38,7 @@ import { CONTROL_LABELS, controlStateOf } from './control.js';
 import { extensionsOf } from './extensions.js';
 import { readBotData } from './bot-data.js';
 import { readConfig } from './config-io.js';
+import { readModelSync } from './model-sync-state.js';
 import { readTrace, TRACE_AGGREGATE } from './trace-io.js';
 import { state } from './runtime-state.js';
 
@@ -264,6 +270,11 @@ export function makeStateCollector(deps) {
       // 可撤销的次数（B10b · O-CFGHIST）。只下發**条数**，不下发历史内容 ——
       // 那份文件里是完整的 config.json（含 API Key），不该被轮询反复搬来搬去。
       configHistory: readHistory(HISTORY_FILE).length,
+      /* ★ 官方模型目录对账的结果（2026-10-17）：只读，页面拿它弹右下角提示。
+         事件由 `panel/lib/model-sync.js` 在启动 / 6 小时节流时写入；
+         页面自己按事件 id 去重（`localStorage`），所以同一个版本只弹一次。
+         ⚠️ 它在**顶层**而不是 `config` 里：对账记录是面板的运行态，不是用户的配置。 */
+      modelSync: readModelSync(),
       // 机器人真正在用的配置；null 表示机器人没在跑
       effective: eff,
       // 正在生成回复？（本机模型慢，面板要能显示"它在干活"）
@@ -304,8 +315,7 @@ export function makeStateCollector(deps) {
         features: {
           webSearch: cfg?.llm?.features?.webSearch === true,
           vision: cfg?.llm?.features?.vision === true,
-          stickers: cfg?.llm?.features?.stickers === true,
-        },
+          },
         thinking: normalizeThinking(cfg?.llm?.thinking),
         hasKey: isLocalBrain || !!llmKey,
         keyNotNeeded: isLocalBrain,
@@ -333,6 +343,10 @@ export function makeStateCollector(deps) {
           name: b.name,
           baseUrl: b.baseUrl,
           model: b.model,
+          // 这套大脑属于哪家（2026-10-17）：**判据仍然只有一份**（`providerOf`）。
+          // 前端要在标签/条目上写「DeepSeek / 智谱 / 千问 / 自定义」，但它不该
+          // 自己再按域名判一次 —— 那会变成第二份会漂的规则（本项目踩过）。
+          provider: providerOf(b.baseUrl),
           hasKey: !!String(b.apiKey || '').trim(),
           fallbackModels: b.fallbackModels,
           features: b.features,
@@ -369,11 +383,30 @@ export function makeStateCollector(deps) {
         requireAtInGroup: cfg?.trigger?.requireAtInGroup !== false,
         aliases: cfg?.trigger?.aliases || [],
         interjectChance: cfg?.trigger?.interjectChance ?? 0,
+        /* 插话冷却（2026-10-17）：与 interjectChance 同一族 —— 机器人一直按它判
+           「插话冷却中」（`src/brain.js`），但面板既没下发也没写入入口，
+           于是它是**唯一一条只能手改 config.json 的发言闸门**。
+           下发的是**毫秒原值**：换算成分钟只发生在前端控件那一处（`scale`）。 */
+        interjectCooldownMs: cfg?.trigger?.interjectCooldownMs ?? 300000,
         personaName: cfg?.persona?.name || '',
         // 分段标记（第 53 轮 · B4）：以前面板上一个入口都没有，于是它坏掉（空串）时
         // 用户**看不见也改不了** —— 而空串的后果是"一条回复被逐字发出去"。
         // 下发给页面是 `""` 时界面按"要用默认值"提示（后端 normalizeSplitToken 已兜底）。
         splitToken: cfg?.reply?.splitToken || '',
+        // 桌面端「启动方式」（2026-10-16）：`{ mode, openOnStart, unknownMode, last }`。
+        // 下发的是**结论** —— 认不出的 mode 在启动时按 browser 执行，面板也照这个
+        // 结论显示；否则两格单选会"一个都不选中"（看起来像面板坏了，其实是配置写错了）。
+        // `last` = 最近一次**启动跟踪**（哪个入口 + 用什么形态 + 有没有回落）：
+        // 三个启动器每次都会往这个文件写一行（见 src/launch-mode.js 的 recordLaunch），
+        // 让"双击了却没按我选的来"在现场就能看见，而不用去猜。
+        launch: {
+          ...launchOfConfig(cfg),
+          last: (() => {
+            const e = readLaunchLog(launchLogPath(CONFIG_FILE, PANEL_STATE_DIR), { limit: 1 })[0] || null;
+            if (!e) return null;
+            return { ...e, entryLabel: LAUNCH_ENTRY_LABELS[e.entry] || e.entry || '未知入口' };
+          })(),
+        },
       },
       // 「自定义工作台」那一整块。归一化逻辑在 src/custom-config.js（与机器人共用一份），
       // 面板只负责渲染 —— 不自己写默认值，才不会出现"面板上填了、机器人没读"。
@@ -396,6 +429,14 @@ export function makeStateCollector(deps) {
         // 前端只负责按分组摆出来 —— 它不再自存任何一个中文名（本项目"一份数据
         // 维护两遍"踩过四次，每一次都是这样开始的）。
         enhance: { table: ENHANCE, keys: ENHANCE_KEYS, groups: ENHANCE_GROUPS },
+        // 人格 12 项 / 增强 12 项的**键名**，供「套用角色卡」按归属分派用
+        // （2026-10-15 · B3 / Issue #5）。角色卡里那份快照是「人格 12 + 增强 12 +
+        // 场景 9」混在一个扁平对象里，前端必须知道每个键该写回 `persona.*` 还是
+        // `enhance.*` —— 此前一律写进 `persona.*`，增强那 12 个是非法键、
+        // 被归一化（personaFields）当场丢掉，表现就是"语气对了、演法没换"。
+        // 归属名单只此一份（来自 src/custom-config.js），前端不自抄。
+        personaKeys: PERSONA_KEYS,
+        enhanceKeys: ENHANCE_KEYS,
         // 导入白名单：前端渲染「导入到此为止」的说明和导入本身都用它，只有这一份
         importableKeys: IMPORTABLE_KEYS,
         // 技能相关上限：界面上要写明"最多同时上几条"，不然用户会以为填了就一定生效
@@ -429,7 +470,7 @@ export function makeStateCollector(deps) {
       // 模型 id → 显示名。前端**不要**再自己抄一份：以前前后端各存一份，
       // 改一个忘一个（前端那份至今少着 glm-ocr）。以后加模型只改后端这张表。
       modelLabels: MODEL_LABELS,
-      // 能力开关的**显示名**（联网查询 / 识图 / 发 QQ 表情）。
+      // 能力开关的**显示名**（联网查询 / 识图）。
       // 唯一真相源是 src/model-caps.js 的 FEATURE_LABEL —— 机器人侧自动关掉某个能力时
       // 的提示语用的也是它。面板上「发言与时机 → 触发方式」与「自定义工作台」两处摆的是**同一份配置**，
       // 文字也必须逐字一致：一边写"联网查询"、另一边写"联网搜索"，用户会以为这是两个功能。
@@ -440,6 +481,12 @@ export function makeStateCollector(deps) {
       zhipuMeta: ZHIPU_MODEL_META,
       // 默认链路顺序。前端只在"配置里链是空的"时拿它当兜底展示。
       zhipuDefaultChain: ZHIPU_DEFAULT_CHAIN,
+      /* ★ **当前这家**的默认链（含它自己的主模型）。2026-10-17 加：
+         面板的「恢复实测最优」以前**写死**取 `zhipuDefaultChain` —— 于是在千问页面上点一下，
+         提交上去的是一条 GLM 链（而 `/api/config` 对千问刻意放行跨家名字），
+         结果就是"选了千问、降级链全是 GLM、一条都打不通"。
+         ⇒ 判据收到 `defaultChainOf(provider)`（唯一一份），前端不再自己挑名单。 */
+      defaultChain: defaultChainOf(providerOf(baseUrl)),
       // ★ 按（服务商，模型）算好的能力表 —— 面板靠它决定哪个开关能点、哪个要灰掉。
       //   派生逻辑在 src/model-caps.js，机器人发请求前用的是同一套函数；
       //   前端只渲染结论，不重复实现判定（重复实现过一次，就是"前后端说的不一样"）。

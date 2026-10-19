@@ -1,0 +1,5 @@
+purpose=P5 formal release
+createdAt=2026-10-18T08:24:45.659Z
+fingerprint=sha256:20a9a6b2f509fcedadb8544d8c41e4ef4a30e098c169fb36768fce2f73122f0d
+rotateBefore=2027-10-18
+publicKey=resources/update-pubkey.pem

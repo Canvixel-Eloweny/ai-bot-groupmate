@@ -61,6 +61,39 @@ jobs:
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq lsof
       - run: NODE_OPTIONS= node test/smoke.js
 
+  # ── ★ Windows 契约（2026-10-15 新增 · 对应 Issue #5 里 ROI 最高的一条）────────────
+  #
+  # 为什么必须有它：此前三个 job **全跑 `ubuntu-latest`**，而 C 组的 41 条红
+  # （`check-wb` 的路径分隔符 / `.pathname` 未解码）**只在 Windows 上出现** ⇒
+  # 在 CI 上永远看不见、只能靠人在本机跑。加一个 job 就把边界从"人记得跑"挪回"机器会跑"，
+  # 与本文件开头那条纪律同源。
+  #
+  # ⚠️ 两个总根因（本轮已修，这个 job 就是防它们复发的哨兵）：
+  #    ① `path.relative(REPO, f)` 在 Windows 回**反斜杠**（`src\holidays.js`），
+  #       而判据比的是正斜杠字面量（`src/holidays.js`）⇒ Map 查空、`===` 恒假。
+  #       修法：统一走 `scripts/check-wb.mjs` 的 `relOf()`。
+  #    ② `new URL(`../src/${f}`, import.meta.url).pathname` 在 Windows 回 `/F:/…`
+  #       （前导斜杠 + 正斜杠），`fs.existsSync` 恒 false ⇒ fail-closed。
+  #       修法：`fileURLToPath()` 解码（该文件第 23 行的自证也在防它）。
+  #
+  # ⚠️ **pre-commit 钩子那一步刻意不跑**：它是 bash 脚本 + 符号链接语义，在 Windows
+  #    runner 上装不起来（"换机器要重装"是正常状态，不是缺陷），且与路径判据无关。
+  #    本 job 只验 `check-wb` 这一层契约。
+  # ⚠️ 一律用 `env: NODE_OPTIONS: ''` 而不是 `NODE_OPTIONS= node …`：后者是 bash 前缀语法，
+  #    windows-latest 的默认 shell 是 pwsh，跑不通（R39：不带这个前缀会出现假红）。
+  windows-contracts:
+    name: 契约（check-wb · Windows）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: node scripts/check-wb.mjs
+        env:
+          NODE_OPTIONS: ''
+
   # 真值闸门：别让真实 QQ 号 / 群号 / 本机用户名 / API Key 进仓库
   publish-audit:
     name: 发布审计（真值闸门）

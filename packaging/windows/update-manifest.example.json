@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "appId": "com.estrellabot.windows",
+  "channel": "stable",
+  "version": "0.0.0-example",
+  "minVersion": "0.1.0",
+  "minWindows": "10.0.17763",
+  "generatedAt": "2026-10-17T00:00:00Z",
+  "expiresAt": "2026-12-31T00:00:00Z",
+  "notesUrl": "https://github.com/Canvixel-Eloweny/ai-bot-groupmate/releases/tag/v0.0.0-example",
+  "installer": {
+    "kind": "nsis",
+    "url": "https://github.com/Canvixel-Eloweny/ai-bot-groupmate/releases/download/v0.0.0-example/Estrella-Bot-Setup-0.0.0-example.exe",
+    "mirrors": [],
+    "size": 94371840,
+    "sha256": "REPLACE_WITH_64_HEX_SHA256"
+  }
+}

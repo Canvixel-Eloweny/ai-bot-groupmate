@@ -33,10 +33,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import net from 'node:net';
-import { ROOT, IS_WIN } from './paths.js';
+import { INSTALL_ROOT, PROGRAM_ROOT, NAPCAT_DIR, IS_WIN } from './paths.js';
 
-/** 便携包里 `ROOT` 就是 `app/`，协议端装在 `app\napcat\`；开发树同理。 */
-export const NAPCAT_NATIVE_DIR = path.join(ROOT, 'napcat');
+/** 协议端是用户级组件：程序/登录态/配置都在 USER_ROOT/napcat（P1）。 */
+export const NAPCAT_NATIVE_DIR = NAPCAT_DIR;
 
 export const nativeLogFile = () => path.join(NAPCAT_NATIVE_DIR, 'napcat.log');
 export const nativeWebuiJson = () => path.join(NAPCAT_NATIVE_DIR, 'config', 'webui.json');
@@ -161,6 +161,25 @@ export function readLocalQr() {
 }
 
 /**
+ * 面板取二维码时的**来源判据**：本地盘那张图只属于「原生形态」。
+ *
+ * ⚠️ 为什么"文件存在就优先"不够（2026-10-16 · Mac 真机修复）：
+ *    macOS 主线上 NapCat 跑在容器里，二维码写在**容器内**的 `/app/napcat/cache/qrcode.png`；
+ *    而 compose 只挂载 `napcat/config` 与 `napcat/QQ`，**cache 不在挂载里**。
+ *    可 `NAPCAT_NATIVE_DIR` 在开发树里同样是 `<仓库>/napcat` —— 那个目录里只要躺着一张
+ *    历史遗留的 `cache/qrcode.png`（本机实测：2026-09-16 的孤儿文件，597 字节），
+ *    "本地存在就优先"就会让面板**永远**发那张陈旧的码：
+ *    点「换一张」，后端在容器里真的换了（实测容器内哈希当场变化），前端取回的却还是旧图
+ *    —— 用户看到的现象正是"显示已刷新，但二维码切换不了"。
+ * ⇒ 判据收紧为：**只有原生形态才认本地盘那张图**，容器形态一律走容器内那份。
+ *
+ * 纯判据：形态与读盘函数都由入参注入，便于回归里断言（见 smoke T386）。
+ */
+export function panelLocalQr(isNative, readDisk = readLocalQr) {
+  return isNative ? readDisk() : null;
+}
+
+/**
  * 把**包内的** runtime\node 前置进 PATH（NapCat 的启动器要 `node`，而用户机器上
  * 不该、也没有）装 Node）。判据与 `packaging/windows/tools/start-napcat.mjs` 的
  * `withBundledNodeOnPath()` 一致 —— 那一份是包外层启动器用的，这里是面板内用的，
@@ -170,9 +189,9 @@ export function readLocalQr() {
 function withBundledNodeOnPath() {
   const env = { ...process.env };
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
-  // 便携包里 ROOT = app/ ⇒ 运行时在 ROOT/../runtime/node；开发树里没有这个目录，
+  // 安装版的运行时在 INSTALL_ROOT/runtime/node；开发树/便携包没有这个目录时
   // exists 判不过就原样返回（不凭空造路径）。
-  const runtimeNode = path.resolve(ROOT, '..', 'runtime', 'node');
+  const runtimeNode = path.join(INSTALL_ROOT, 'runtime', 'node');
   try {
     if (fs.existsSync(runtimeNode)) env[key] = `${runtimeNode}${path.delimiter}${env[key] || ''}`;
   } catch { /* 读不到就按原样用，缺 node 的症状由协议端自己的报错暴露 */ }
@@ -182,13 +201,15 @@ function withBundledNodeOnPath() {
 /**
  * `launch-napcat-hidden.vbs` 的落点。**两份候选，都要维护**（改一个不改另一个，
  * 症状是"工具层无窗口、面板点重启又弹一个"）：
- *   ① 便携包里：`ROOT` 就是 `app/`，vbs 在**包根**（与 `launch-hidden.vbs` 并排）
- *   ② 开发树里：`ROOT` 是仓库根，vbs 在 `packaging/windows/launcher/` 下
+ *   ① 安装版：`<InstallRoot>/launcher/launch-napcat-hidden.vbs`
+ *   ② 当前便携包：包根（与 `launch-hidden.vbs` 并排）
+ *   ③ 开发树：`packaging/windows/launcher/` 下
  */
 function hiddenLauncherVbs() {
   const cands = [
-    path.resolve(ROOT, '..', 'launch-napcat-hidden.vbs'),
-    path.join(ROOT, 'packaging', 'windows', 'launcher', 'launch-napcat-hidden.vbs'),
+    path.join(INSTALL_ROOT, 'launcher', 'launch-napcat-hidden.vbs'),
+    path.resolve(PROGRAM_ROOT, '..', 'launch-napcat-hidden.vbs'),
+    path.join(PROGRAM_ROOT, 'packaging', 'windows', 'launcher', 'launch-napcat-hidden.vbs'),
   ];
   for (const p of cands) {
     try { if (fs.existsSync(p)) return p; } catch { /* 继续找下一个 */ }

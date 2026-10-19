@@ -1,6 +1,8 @@
 {
   "name": "ai-bot-groupmate",
-  "version": "0.1.2",
+  "version": "0.1.3",
+  "appId": "com.estrellabot.windows",
+  "configSchema": 1,
   "private": true,
   "description": "QQ 群 AI 仿真群友桥接层：OneBot v11 <-> OpenAI 兼容模型",
   "license": "Apache-2.0",
@@ -18,7 +20,7 @@
     "test:panel": "bash test/sandbox.sh --run",
     "panel:boot": "node test/panel-boot.mjs",
     "panel:dom": "node test/panel-dom.mjs",
-    "verify": "node scripts/check-wb.mjs && node test/smoke.js && bash test/sandbox.sh --run && node test/panel-boot.mjs && node test/panel-dom.mjs",
+    "verify": "node scripts/check-wb.mjs && node test/installer-p1.mjs && node test/installer-p2.mjs && node test/installer-p3.mjs && node test/installer-p4.mjs && node test/installer-p5.mjs && node test/installer-p6.mjs && node test/smoke.js && bash test/sandbox.sh --run && node test/panel-boot.mjs && node test/panel-dom.mjs",
     "publish:audit": "node scripts/publish-audit.mjs",
     "config:example": "node scripts/make-config-example.mjs"
   },

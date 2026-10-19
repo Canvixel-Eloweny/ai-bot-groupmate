@@ -27,33 +27,28 @@ import { triggerTextOf } from './onebot.js';
 // 触发档位 ↔ 上下文条数（D9a · 报告 E23）。零依赖叶子：
 // 档位定义与「只压紧不放宽」的收窄规则都住在那里，这里只负责接线。
 import { contextLimitsOf, tierOfKind } from './tier.js';
-// D14：出站分段的**分类判据**（"这个 `face` 段是内置还是收藏"）住在零依赖叶子里。
-// 方向是 brain → 叶子，不会成环（叶子只 import trace-id 的短哈希）。
-import { isCustomFaceToken } from './custom-faces.js';
 // B33：内部标记（「本轮没有接话」这类系统批注）的**唯一形态定义**，以及
 // 「模型把批注复读出来 → 剥掉再发」的判据。它有两个消费者：这里（主链路出口）
 // 与 `index.js`（主动链出口 + 四处记忆占位文案），所以住在零依赖叶子里。
 import { scanInternalMarks, stripInternalMarks } from './internal-marks.js';
 
-// ── H-10 第 22 轮：文本工具与表情标记两族**整块搬出** ──────────────────────
+// ── H-10 第 22 轮：文本工具**整块搬出** ────────────────────────────────────
 // 实现只在新家一份；这里 import 之后**原样转出** —— 外部引用（src/index.js、
 // test/smoke.js、scripts/dryrun.js）一个字都不用改（`memory.js` → `memory-store.js`
 // 的先例）。判据的取源改指新家，**不是**复制一份判据。
+//
+// ⚠️ 2026-10-17：`face-marks.js` 已整体删除（表情能力下线）。唯一留下来的是
+//    `stripFaceMarks` —— 它现在是**防漏**（旧存档 / 模型惯性还会写 `[face:14]`），
+//    住在 `reply-text.js` 的文本清理族里，不属于任何"功能"。
 import {
   renderSpeakerLine, trailingBlankLines, lateSendReason,
   REST_LINE_WOKE, REST_LINE_EMERGENCY, REST_LINE_DROWSY, CATCHUP_LINE, restLineOf,
-  isBareMedia, escapeRe, stripLinks, stripThink, hardWrap,
+  isBareMedia, escapeRe, stripLinks, stripThink, hardWrap, stripFaceMarks,
 } from './reply-text.js';
-import {
-  FACE_MARK_SRC, faceMarkRe, hasFaceMark, stripFaceMarks, splitFaceMarks,
-  classifySegments, IMAGE_CAP_PER_RUN, capImageSegments,
-} from './face-marks.js';
 export {
   renderSpeakerLine, trailingBlankLines, lateSendReason,
   REST_LINE_WOKE, REST_LINE_EMERGENCY, REST_LINE_DROWSY, CATCHUP_LINE, restLineOf,
-  isBareMedia, escapeRe, stripLinks, stripThink, hardWrap,
-  FACE_MARK_SRC, faceMarkRe, hasFaceMark, stripFaceMarks, splitFaceMarks,
-  classifySegments, IMAGE_CAP_PER_RUN, capImageSegments,
+  isBareMedia, escapeRe, stripLinks, stripThink, hardWrap, stripFaceMarks,
 };
 
 const log = scoped('brain');
@@ -363,6 +358,8 @@ export class Brain {
    *        ⚠️ 档位**只影响"这一轮带多少"**，不影响 `remember()` / `rememberAmbient()`
    *        的记账容量（那两处仍读全局配置）—— 「留多少」与「带多少」是两件事，
    *        合成一个就会变成"插话一多，历史就被压着不留了"。
+   *        `extensionSections`（2026-10-15）：已加载扩展包的提示词指引，形状
+   *        `[{title, content, tools:string[], priority:number}]`（由 `src/index.js` 收集）。
    * @returns {{messages:object[], dropped:object[], ambient:{count:number,refreshed:boolean}}}
    */
   buildMessagesWithMeta(session, evt, parsed, opts = {}) {
@@ -400,20 +397,11 @@ export class Brain {
     // B33：对话历史里会夹着系统批注（「（系统标记：本轮没有接话）」这类）。
     // 不给这一句的话，模型会把批注当成"我说过的话"照抄出来 —— 真机实测过一次
     // （2026-10-04 10:27，`raw` 就是那句批注、直接发进了群）。
-    // ⚠️ 刻意**不编号**：第 9 条是**条件出现**的表情规则（只有开了贴纸才有），
-    //    插一条进去会让那一条的序号随开关漂移，而序号既是模型读序也是既有断言的锚点。
+    // ⚠️ 刻意**不编号**：它是"关于历史里那些批注"的元指令，不属于「怎么说话」的第 N 条。
+    //    插进编号序列会让后面几条的序号随版本漂移，而序号既是模型读序也是既有断言的锚点。
     // ⚠️ 出口还有 B33 的硬闸兜底（`src/internal-marks.js`）—— 这一句只负责**少让它复读**，
     //    不承担"拦住"的责任：靠提示词拦住的事，本项目已经吃过太多次亏。
     base.lines.push('（另外：历史里出现的「（系统标记：…）」是系统加的批注，不是你该说的内容，不要照着写出来。）');
-    if (this.cfg.llm?.features?.stickers) {
-      // ⚠️ 第 14 轮定案：**表情不由模型自己插**，交给 face-habit 那道闸统一决定。
-      //   之前这句是"想发表情就直接插 [face:ID]"—— 结果它每次都自己插同一个
-      //   （真机上三次全是 face:22）、且全在句末；而 `applyFaceMark` 那条
-      //   「模型自己插过的不再叠加」又把代码闸短路了，闸**一次都没触发过**。
-      //   于是规划 §6 要的三张 golden（频率 / 类型轮转 / 位置分布）根本测不出来。
-      //   现在只让它专心说话：要不要带、带哪张、放哪儿，全部由代码按判据决定。
-      base.lines.push('9. 表情不用你操心（**不要自己写 [face:ID]**）—— 该带的时候系统会替你加上。');
-    }
 
     // ── 人设：人格文件是"底子"，工作台里填的是"日常人设"，两段一起给 ──
     // 顺序按"模型理解的顺序"排：先"我是谁"，再"我想要什么 / 怕什么"，然后才是怎么说话。
@@ -434,7 +422,9 @@ export class Brain {
     if (cp.logic) personaBits.push(`遇事的反应逻辑：${cp.logic}`);
     if (cp.attitude) personaBits.push(`你对群里这些人现在的态度：${cp.attitude}`);
     if (cp.status) personaBits.push(`你现在的状态：${cp.status}`);
-    if (cp.faces) personaBits.push(`爱用的表情：${cp.faces}`);
+    /* 「爱用的表情」那一行已于 2026-10-17 删除：表情能力整体下线，
+       留着它等于在提示词里暗示"你可以发表情"，而发送侧已经不会拼表情段。
+       `persona.faces` 这个字段本身不动（旧 config.json 里可能还留着值），只是不再读。 */
     const personaSec = sec('persona', '人物设定', { minLines: 1 });
     if (persona.text || personaBits.length) {
       personaSec.lines.push('## 你的人物设定');
@@ -541,6 +531,29 @@ export class Brain {
       skillSec.lines.push('## 你现在用得上的一些本事');
       skillSec.lines.push('（下面是你确实懂的东西。自然地用，不要宣告"我有个技能"，也不要硬塞。）');
       for (const s of picked) skillSec.lines.push(...skillLines(s));
+    }
+
+    // ── 扩展包指引：清单声明的 `prompt.sections`（2026-10-15 · 修「模型不知道何时用工具」）──
+    // 由调用方（`src/index.js`）从**已加载**的扩展包收集后经 `opts` 注入 —— 与 `tier` /
+    //  `sleep` / `catchUp` 同一条纪律：每轮才变的东西由调用方给，不在这一层读全局。
+    //
+    // ⚠️ 这一节补的是一个**静默**的洞：工具定义发给了模型（API 层面），但没有任何一句话
+    //    告诉它"什么时候该用哪个"。表现是模型继续演角色、甚至编出"我翻了，是空的" ——
+    //    日志里没有任何异常。清单作者写的指引此前**从未**进过提示词。
+    // ⚠️ 每条的 `tools` 是**真实注册名**（带 owner 前缀）：清单里写的是裸 id，
+    //    而模型只认注册表里的名字，写裸 id 等于让它去调一个不存在的工具。
+    const extSecs = Array.isArray(opts.extensionSections) ? opts.extensionSections : [];
+    if (extSecs.length) {
+      const extSec = sec('extensions', '扩展包指引');
+      extSec.lines.push('## 你可以用的额外能力');
+      extSec.lines.push('（下面这些是你确实能做的事。需要的时候直接去用，不要凭空编造结果。）');
+      for (const s of extSecs) {
+        extSec.lines.push(`### ${s.title}`);
+        extSec.lines.push(s.content);
+        if (Array.isArray(s.tools) && s.tools.length) {
+          extSec.lines.push(`（对应的工具名：${s.tools.join('、')}）`);
+        }
+      }
     }
 
     // ── 表达规范（ATI-1）──
@@ -746,10 +759,10 @@ export class Brain {
       // 小模型经常把 [SILENT] 混在中间某一段里输出，混进来就整段丢掉，
       // 否则群里会真的冒出一句「[SILENT] 上班被骂确实烦…」
       .map((s) => (s.includes(SILENT) ? s.replace(new RegExp(escapeRe(SILENT), 'g'), '').trim() : s))
-      // 表情开关关着的时候，别把 [face:14] 这种标记原样发到群里。
-      // ⚠️ 用 `stripFaceMarks`（唯一形态定义）—— 自己写 `/\[face:\d+\]/` 会漏掉
-      //    自定义令牌 `[face:cf-…]`，于是它在关掉表情时**原样发进群里**（实测过这个坑的形状）。
-      .map((s) => (this.cfg.llm?.features?.stickers ? s : stripFaceMarks(s)))
+      // 表情能力已于 2026-10-17 下线（维护者：它只会发那几个黄豆脸）。
+      // 这里**无条件**剥掉残留标记 —— 历史记忆与旧会话存档里还留着 `[face:14]`，
+      // 模型自己也会凭惯性写；不剥就会原样发进群里。
+      .map((s) => stripFaceMarks(s))
       .filter(Boolean);
 
     // ── 工作台「安全设置」的三道过滤 ──

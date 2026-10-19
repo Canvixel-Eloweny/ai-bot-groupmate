@@ -38,13 +38,15 @@
  * ⚠️ 不许在别处再抄一份目录名 —— 抄一份就多一个能悄悄对不上的地方
  *   （正是本条的成因）。
  * ══════════════════════════════════════════════════════════════════════ */
-export const SELF_OWNED_PLUGIN_DIRS = [
-  'plugins/本体情绪/',
-  'plugins/复读拦截/',
-  'plugins/定时文案推送/',
-  'plugins/角色卡工具同步/',
-  'plugins/远程价格表/',
-];
+/**
+ * ⚠️ 2026-10-17：这张表**已清空** —— 维护者裁决把这 13 个包全部删除（插件整体下线）。
+ *
+ * 表本身留着（不是删文件），因为两个消费者还在读它：
+ *   · `publish-audit.mjs` 拿它把"整块判死"收窄成"只排除第三方包"；
+ *   · `check-wb.mjs` 断言"`.gitignore` 的例外 == 这里逐条相等" —— 两边都为空时那条仍然成立。
+ * 将来若再有本仓自写的包要随仓库分发，往这里加目录名 + 在 `.gitignore` 加两条例外即可。
+ */
+export const SELF_OWNED_PLUGIN_DIRS = [];
 
 /**
  * 自用**技能**（2026-10-07 用户裁决 · 与上面同一条理由）。
@@ -53,13 +55,5 @@ export const SELF_OWNED_PLUGIN_DIRS = [
  *    （第 131 行的 `/skills/*`），`check-wb` 的口径对齐判据也按两张表分别比对 ——
  *    混成一张会让"哪个目录归哪条规则"这件事重新变成口头约定。
  */
-export const SELF_OWNED_SKILL_DIRS = [
-  'skills/AI额度情报/',
-  'skills/B站视频解析/',
-  'skills/百科查询/',
-  'skills/合并转发发送/',
-  'skills/群友印象/',
-  'skills/自定义图库/',
-  'skills/自我印象/',
-  'skills/记忆管理/',
-];
+/** 同上（2026-10-17 随插件整体下线清空）。 */
+export const SELF_OWNED_SKILL_DIRS = [];

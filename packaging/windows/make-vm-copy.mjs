@@ -8,7 +8,7 @@
  *     NapCat 是第三方项目，按它自己的许可**不能随本包分发**，所以首装时现下。
  *     要打 zip 就打这一份（`make-zip.py` 会**硬拦**另一份，见它的 refuse_vm_bundle）。
  *   · `Estrella-Bot-napcat/`（**带 -napcat 后缀**）—— **只在虚拟机/本机自用**。
- *     内容 = 上面那份 + 把 `NapCat.Shell` 预先装进 `app\napcat`，
+ *     内容 = 上面那份 + 把 `NapCat.Shell` 预先装进 `userdata\napcat`，
  *     于是 VM 里跑「一键安装」时**不再联网下载**（`installNapcat()` 见到启动器就跳过）。
  *
  *  为什么要整份复制而不是"就地塞进同一份"：对外那份必须保持**不含第三方协议端**，
@@ -26,6 +26,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isNapcatLauncherName } from './tools/lib/napcat-shape.mjs';
 
 const HOME = process.env.HOME || '';
 const DIST = path.join(HOME, 'Desktop', 'estrella-dist');
@@ -49,18 +50,20 @@ const say = (s) => console.log(s);
 const ok = (s) => console.log(`✔ ${s}`);
 const bad = (s) => { console.error(`✗ ${s}`); process.exitCode = 1; };
 
-/** 目录里有没有像样的协议端启动器（与 lib/common.mjs 的候选表同形，这里只求"像不像"）。 */
+/**
+ * 目录里有没有像样的协议端启动器。
+ * 判据**不再自己写一份**（2026-10-18 · P6）：以前这里抄了一份正则，
+ * 于是"官方改了启动器名字"会出现 tools 侧认得、构建脚本认不得的分叉。
+ * 现在两边共用 `tools/lib/napcat-shape.mjs` 那张候选表。
+ */
 function hasLauncher(dir) {
   if (!fs.existsSync(dir)) return false;
-  const re = /^(launcher[\w-]*\.bat|NapCatWinBootMain\.exe|napcat[\w.-]*\.bat)$/i;
-  const notLauncher = /(install|uninstall|kill|stop|remove)/i;
   try {
     for (const name of fs.readdirSync(dir)) {
-      if (re.test(name) && !notLauncher.test(name)) return true;
-      if (name === 'NapCat.Shell' || name.toLowerCase().includes('napcat')) {
-        const sub = path.join(dir, name);
-        if (fs.statSync(sub).isDirectory() && hasLauncher(sub)) return true;
-      }
+      if (isNapcatLauncherName(name)) return true;
+      const sub = path.join(dir, name);
+      if ((name === 'NapCat.Shell' || name.toLowerCase().includes('napcat'))
+        && fs.statSync(sub).isDirectory() && hasLauncher(sub)) return true;
     }
   } catch { /* 读不了就当没有 */ }
   return false;
@@ -114,16 +117,16 @@ say('');
 copyInto(SRC, OUT);
 ok('已复制 ④（覆盖式，未删除任何东西）');
 
-// ── ③ 注入协议端：NapCat.Shell 的**内容**平铺进 app/napcat ──────────────────
-// ⚠️ 平铺（而不是留一层 NapCat.Shell/ 子目录）：这样与「安装脚本自己解压」的结果
-//    同形 —— napcatHome() 求出来的家就是 app\napcat，排障时两边看到的东西一致。
-const destNap = path.join(OUT, 'app', 'napcat');
+// ── ③ 注入协议端：NapCat.Shell 的**内容**平铺进 userdata/napcat ──────────────
+// ⚠️ P1 起 NapCat 整个是用户级组件（程序 + config + QQ 登录态），不再放 app/。
+//    平铺（不留 NapCat.Shell/ 子目录）与「安装脚本自己解压」的结果同形。
+const destNap = path.join(OUT, 'userdata', 'napcat');
 copyInto(NAPCAT, destNap);
 if (!hasLauncher(destNap)) {
   bad(`注入后 ${destNap} 里仍然找不到启动器 —— 这份包的协议端是坏的`);
   process.exit(1);
 }
-ok(`已注入协议端 → app\\napcat（VM 上「一键安装」会跳过下载）`);
+ok(`已注入协议端 → userdata\\napcat（VM 上首装会认出已装好，不再下载）`);
 
 // ── ④ 打标记：这份包不许对外分发 ────────────────────────────────────────────
 const marker = path.join(OUT, 'VM-ONLY.txt');
@@ -135,7 +138,7 @@ fs.writeFileSync(marker, [
   '⚠️⚠️ 不许压缩、不许对外发布、不许发给任何人：',
   '   NapCat 是第三方项目，按它自己的许可**不能随本包分发**。',
   '   要打对外分发的 zip，请用同目录下不带后缀的那一份：Estrella-Bot/',
-  '   （make-zip.py 里有硬闸，见到本文件或 app/napcat 里的启动器会直接拒绝打包）。',
+  '   （make-zip.py 里有硬闸，见到本文件或 userdata/napcat 里的启动器会直接拒绝打包）。',
   '',
   `生成时间：${new Date().toISOString().replace('T', ' ').slice(0, 19)}`,
   `由 packaging/windows/make-vm-copy.mjs 生成 —— 每次更新 ④ 之后重跑一次即可。`,
@@ -157,13 +160,13 @@ if (fs.existsSync(buildInfo)) {
   const block = [
     `⚠️ ${stamp} · ${VM_HEAD}`,
     '----------------------------------------------------------------',
-    '组成    Estrella-Bot/ 的全部内容 + 预装协议端（NapCat.Shell → app\\napcat）',
+    '组成    Estrella-Bot/ 的全部内容 + 预装协议端（NapCat.Shell → userdata\\napcat）',
     '用途    只在本机/虚拟机里跑 —— 一键安装时不再联网下载协议端',
     '⛔ 禁止  压缩 / 对外发布 / 发给他人（第三方协议端不许随包分发）',
     '         要打 zip 请用不带后缀的那一份（make-zip.py 有硬闸拦着这一份）',
     '',
     '关于真值复扫：扫**这一份**会看到 1 处命中 ——',
-    '  app/napcat/static/assets/index-*.js 里有 NapCat 自带 WebUI 某个表单的',
+    '  userdata/napcat/static/assets/index-*.js 里有 NapCat 自带 WebUI 某个表单的',
     '  placeholder 文本（长得很像私钥块的那串标记），',
     '不是真私钥，也不在我们能改的代码里。对外那份（不含协议端）扫出来是 0 命中。',
     '  ⚠️ 本文件**刻意不写出**那串标记的字面量：写了会让发布面的真值复扫命中',

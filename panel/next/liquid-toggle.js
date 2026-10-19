@@ -1,11 +1,10 @@
 /* ══════════════════════════════════════════════════════════════════════════
    liquid-toggle.js · 液态开关（双 blob metaball）
    ──────────────────────────────────────────────────────────────────────────
-   方法论来源：bencho.dev「Liquid toggle」。原配方基于 framer-motion + React，
-   本文件把它落到面板的零构建环境：改用 `motion.js`（同目录），
-   **参数与手感刻意保持一致**，所以从Bencho 抄其它配方时也能原样搬。
+   ── 落地方案 ─────────────────────────────────────────────────────────
+   不引任何动画库（本项目零构建，依赖只有 `ws`）：动效全部走同目录的 `motion.js`。
 
-   ── 这个组件演示的四条判据（Bencho 注释里最有价值的部分）──────────────
+   ── 这个组件演示的四条判据 ──────────────────────────────────────────
 
    ① **一个位置，两种写法**（ONE POSITION, WRITTEN TWO WAYS）
       滑块 x 是一个运动值。拖拽时手指直接 set（硬写、跟手），松手时弹簧接管。
@@ -138,8 +137,8 @@
   /* ══ 组件 ══════════════════════════════════════════════════════════════ */
   /**
    * @param {object} opts
-   * @param {number} opts.stretch 0..100  液滴沿运动方向的拉长程度（Bencho 的 Stretch）
-   * @param {number} opts.speed   0..100  滑块穿越速度（Bencho 的 Speed）
+   * @param {number} opts.stretch 0..100  液滴沿运动方向的拉长程度
+   * @param {number} opts.speed   0..100  滑块穿越速度
    * @param {boolean} opts.on     初始状态
    * @param {Function} opts.onChange 状态变化回调
    * @param {string}  opts.label  无障碍标签
@@ -229,8 +228,7 @@
     var swell = M.motionValue(1);
     var swellSpring = { x: 1, v: 0 };
 
-    /* Bencho 注释里的那条关键数字：
-       「除数就是全部调参空间」。44px 行程峰值约 150px/s，
+    /* 那条关键数字：「除数就是全部调参空间」。44px 行程峰值约 150px/s，
        除以 1400 时峰值拉伸只有 1.039 —— 算术上存在，视觉上不可见。
        除以 600 → 峰值约 1.09，才是"恰好能看出来的弹性"，
        且 0.4 的上限给旋钮留出余量。 */
@@ -309,7 +307,7 @@
     }
 
     /* ── 落位弹簧 ──
-       Bencho：**Bounce 是阻尼，Speed 是刚度**，两个拨盘都是**同一个弹簧的属性**，
+       **Bounce 是阻尼，Speed 是刚度** —— 两个拨盘都是**同一个弹簧的属性**，
        不是两条不同的曲线。
        damping 写死（21.5，ζ≈0.87）：开关不该有"回弹旋钮"——
        从死板到活泼的整个范围，区别只在"一个能用的控件"和"一个在表演的控件"之间，
@@ -353,7 +351,7 @@
     function onMove(e) {
       if (!grab || grab.id !== e.pointerId) return;
       var at = M.localX(track, e.clientX);
-      /* ⚠️ 抓取偏移在**第一次 move** 才取，不在 down 里取。这是 Bencho 修掉的一个真 bug：
+      /* ⚠️ 抓取偏移在**第一次 move** 才取，不在 down 里取。这条路径上踩过一个真 bug：
          原本在 down 里取，命中滑块外时偏移取"半颗滑块宽"、意图是"液滴主动靠到手指下"，
          但 x.set() 是无弹簧的硬写 → 首次 pointermove 一步之内把液滴挪 46px（瞬移）。
          改成第一次 move 取偏移后，**那次 move 位移为 0**，之后每一步只跟增量 ——
@@ -421,7 +419,7 @@
        *    但**回环风险不该靠那个早退来兜** —— 语义上它就是一次用户操作。） */
       sync: function (v) { setOn(v, false); },
       get: function () { return on; },
-      /** 实时改旋钮，不重挂组件 —— 对应 Bencho 右侧那个面板 */
+      /** 实时改旋钮，不重挂组件（实验室页面右侧那排拨盘） */
       setKnobs: function (k) {
         if (k && k.stretch != null) stretchKnob = M.clamp(k.stretch, 0, 100);
         if (k && k.speed != null) {

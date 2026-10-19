@@ -12,7 +12,7 @@
  *   ③ **草稿只在显式保存时提交**；切页不丢草稿（草稿按路径存，不按页面存）。
  */
 
-import { GROUPS, CTRL_KINDS, $ } from './schema.js';
+import { GROUPS, CTRL_KINDS, $, brainPickOf } from './schema.js';
 import { DEMO } from './demo-state.js';
 // `href` 的协议白名单（第 10 轮 · 开源前审查 H-01）。⚠️ 与 `esc` 是**两件事**：
 // esc 防"跳出属性"，它防"协议可执行"。`javascript:` 一个待转义字符都不含，
@@ -32,6 +32,26 @@ const S = {
   extra: {},              // 按需拉取：sessions / chats / trace / logs / audit / models / balance / packages / groups / tryOut
   reg: new Map(),         // 当前页面的控件登记表：id → ctrl
   logCursor: 0,
+};
+
+/**
+ * 更新状态（P3）。刻意放在 S 之外：`refresh()` 每 3 秒整份替换 S.state，
+ * 而下载进度比 3 秒密 —— 放进 S 会被轮询打回旧值，进度条会来回跳。
+ */
+const UPD = { state: null, es: null, lastPhase: '', loaded: false };
+const fmtBytes = (n) => {
+  const v = Math.max(0, Number(n) || 0);
+  if (v < 1024) return `${v} B`;
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+  return `${(v / 1024 / 1024).toFixed(1)} MB`;
+};
+/** 离线清单只有 64 KiB 级；分块转 base64，避免大参数展开把调用栈打爆。 */
+const bytesToB64 = (bytes) => {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let s = '';
+  const CH = 0x8000;
+  for (let i = 0; i < u8.length; i += CH) s += String.fromCharCode(...u8.subarray(i, i + CH));
+  return btoa(s);
 };
 
 const TOKEN = (document.querySelector('meta[name="panel-token"]')?.content || '').trim();
@@ -95,9 +115,13 @@ function busy(on, txt = '处理中…') {
   b.hidden = busyDepth === 0;
   $id('busyTxt').textContent = txt;
 }
-function modal(title, html, actions = []) {
+/* `head`（2026-10-17）：标题右侧的附加控件。
+   加它的直接原因是「添加自定义模型」要在标题旁摆云端/本地切换 —— 那是**表单的模式**，
+   不属于表单内容；塞进 body 第一行会让人以为它是"第一个字段"。 */
+function modal(title, html, actions = [], head = '') {
   const box = $id('modalBox');
-  box.innerHTML = `<h3>${esc(title)}</h3><div class="modal-body">${html}</div>
+  box.innerHTML = `<div class="modal-h"><h3>${esc(title)}</h3>${head ? `<span class="spacer"></span>${head}` : ''}</div>
+    <div class="modal-body">${html}</div>
     <div class="btn-row" style="margin-top:18px;justify-content:flex-end;">
       ${actions.map((a, i) => `<button class="btn ${a.style || 'btn-ghost'}" data-a="__modal" data-idx="${i}">${esc(a.label)}</button>`).join('')}
       <button class="btn btn-ghost" data-a="__modal-close">关闭</button>
@@ -165,7 +189,30 @@ async function refresh(silent = false) {
   paintTop();
   softPaint();
   announceLogin();
+  announceModelSync();
   if (!silent && !S.online) return;
+}
+
+/**
+ * 官方模型目录对账的**一次性提示**（2026-10-17 · 维护者点名）。
+ *
+ * 事件由后端在启动 / 6 小时节流时写进 `panel/model-sync.json`，`/api/state` 原样下发。
+ * 这里只负责"没见过的弹一次"：事件 id 记在 `localStorage`。
+ * ⚠️ 换一个浏览器会再弹一次 —— 可接受（它说的是"你的模型更新了"，
+ *    不是"提醒你去点某个按钮"，重复一次不误导）。
+ * ⚠️ 弹完就记账，**不依赖后端回执**：读路由不该因为一条提示而变成写路由。
+ */
+const SYNC_SEEN_KEY = 'modelSyncSeen';
+function announceModelSync() {
+  const evs = Array.isArray(S.state?.modelSync?.events) ? S.state.modelSync.events : [];
+  if (!evs.length) return;
+  let seen = [];
+  try { seen = JSON.parse(localStorage.getItem(SYNC_SEEN_KEY) || '[]'); } catch { seen = []; }
+  if (!Array.isArray(seen)) seen = [];
+  const fresh = evs.filter((e) => e && e.id && !seen.includes(e.id));
+  if (!fresh.length) return;
+  for (const e of fresh) toast(`${e.title}${e.detail ? ` · ${e.detail}` : ''}`, 'ok');
+  try { localStorage.setItem(SYNC_SEEN_KEY, JSON.stringify([...seen, ...fresh.map((e) => e.id)].slice(-20))); } catch { /* 无痕模式 */ }
 }
 
 /**
@@ -269,13 +316,21 @@ function valueOf(ctrl) {
   if (ctrl.pct && raw !== '' && raw != null && Number.isFinite(Number(raw))) {
     return String(Math.round(Number(raw) * 100));
   }
+  /* `scale`（2026-10-17）：界面单位 ≠ 盘上单位，且差一个**乘数**（插话冷却：分钟 ↔ 毫秒）。
+     与 `pct` 同一条纪律 —— 换算只许住在这里，控件自己只声明 `scale`。
+     不合并进 `pct` 的理由：`pct` 的语义是"百分比"，写死 /100，读回时还要 round；
+     把它改成通用乘数会让 6 处百分比控件的语义跟着一起变（它们只声明了 `pct: true`）。 */
+  if (ctrl.scale && raw !== '' && raw != null && Number.isFinite(Number(raw))) {
+    return String(Math.round(Number(raw) / Number(ctrl.scale)));
+  }
   return raw;
 }
 function setValue(ctrl, v) {
   // 写口是读口的逆运算，同样只在这里做一次（理由见 valueOf）
-  const stored = (ctrl.pct && v !== '' && v != null && Number.isFinite(Number(v)))
+  const numv = v !== '' && v != null && Number.isFinite(Number(v));
+  const stored = (ctrl.pct && numv)
     ? Number(v) / 100
-    : v;
+    : (ctrl.scale && numv ? Number(v) * Number(ctrl.scale) : v);
   if (ctrl.bind) { setPath(S.draft.custom, ctrl.bind, stored); touchC(ctrl.bind); }
   else if (ctrl.bindSys) { S.draft.sys[ctrl.bindSys] = stored; touchS(ctrl.bindSys); }
   else S.volatile[ctrl.id] = stored;
@@ -331,7 +386,24 @@ const DEMO_BLOCK = () => { toast('演示模式：这一页没有连上后端，�
 
 const ACTIONS = {
   'onekey.start': async () => { busy(true, '一键启动中…'); try { const r = await post('/api/onekey/start'); stepsOf(r); toastResult(r, '已启动'); await refresh(true); } catch (e) { toast(`启动失败：${e.message}`, 'bad'); } finally { busy(false); } },
-  'onekey.stop': async () => { if (!confirm('结束本次运行？机器人 + 本机模型 + 容器一起停。')) return; busy(true, '结束中…'); try { const r = await post('/api/onekey/stop'); stepsOf(r); toastResult(r, '已结束'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  /* P11：协议端没装时的两条自助路 —— 不再让用户去 AppData 里放文件。 */
+  'napcat.importAuto': async () => {
+    busy(true, '正在查找已解压的 NapCat…');
+    try {
+      const r = await post('/api/napcat/import-auto');
+      if (r.ok) toast(r.action === 'already' ? '协议端已经装好了' : `已从 ${r.from} 装好协议端`, 'ok');
+      else if (r.action === 'not-found') toast('没找到 —— 点「打开协议端文件夹」把 NapCat.Shell 里的文件拖进去', 'bad');
+      else toast(`失败：${r.msg || r.error || r.action}`, 'bad');
+      await refresh(true);
+    } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); }
+  },
+  'napcat.openFolder': async () => {
+    try {
+      const r = await post('/api/napcat/open-folder');
+      toast(r.ok ? '已打开文件夹 —— 把 NapCat.Shell 里的文件拖进去即可，页面会自动检测' : (r.msg || '打不开'), r.ok ? 'ok' : 'bad');
+    } catch (e) { toast(`失败：${e.message}`, 'bad'); }
+  },
+  'onekey.stop': async () => { if (!confirm('结束本次运行？机器人 + 本机模型 + 容器一起停，面板也会退出。')) return; busy(true, '结束中…'); try { const r = await post('/api/onekey/stop'); stepsOf(r); if (r && r.panelExiting) { document.body.innerHTML = '<div style="font:16px/1.8 system-ui,sans-serif;padding:48px;text-align:center"><h2>已结束并退出</h2><p>机器人、模型、容器与控制台进程都已停止。</p><p>这个窗口可以关掉了；下次双击图标会重新拉起。</p></div>'; return; } toastResult(r, '已结束'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'bridge.start': async () => { busy(true, '启动机器人…'); try { const r = await post('/api/bridge/start'); toastResult(r, '已启动'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'bridge.stop': async () => { if (!confirm('停止机器人？')) return; busy(true, '停止中…'); try { const r = await post('/api/bridge/stop'); toastResult(r, '已停止'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'cmd.sleep': () => bridgeCmd('sleep'), 'cmd.wake': () => bridgeCmd('wake'),
@@ -341,6 +413,81 @@ const ACTIONS = {
   'open.webui': () => openTab('/api/qrcode', '二维码', true),
   'open.qwenchat': () => { const p = j(S.state, ['localModel', 'ports', 'qwenchat'], 8765); window.open(`http://127.0.0.1:${p}`, '_blank'); },
   'open.home': () => window.open('/', '_blank'),
+  'update.goto': () => {
+    const gi = GROUPS.findIndex((g) => g.id === 'sys');
+    const si = gi >= 0 ? GROUPS[gi].subs.findIndex((x) => x.id === 'panel') : -1;
+    if (gi >= 0 && si >= 0) { S.gi = gi; S.si = si; paintPage(true); }
+  },
+  'update.check': async () => {
+    try {
+      const r = await post('/api/update/check');
+      UPD.state = r;
+      paintUpdateBox();
+      renderBanners();
+      if (!r.ok) toast(r.error || '检查更新失败', 'bad');
+      else toast(r.phase === 'up_to_date' ? '已是最新版本' : (r.phase === 'available' ? `发现新版本 ${r.latest?.version || ''}` : '检查完成'), 'ok');
+    } catch (e) { toast(`检查更新失败：${e.message}`, 'bad'); }
+  },
+  'update.download': async () => {
+    try {
+      const r = await post('/api/update/download');
+      UPD.state = r;
+      paintUpdateBox();
+      if (!r.ok) toast(r.error || '下载启动失败', 'bad');
+      else toast('开始下载更新…', 'ok');
+    } catch (e) { toast(`下载失败：${e.message}`, 'bad'); }
+  },
+  'update.cancel': async () => {
+    try {
+      const r = await post('/api/update/cancel');
+      UPD.state = r;
+      paintUpdateBox();
+      toast('已取消下载', 'warn');
+    } catch (e) { toast(`取消失败：${e.message}`, 'bad'); }
+  },
+  'update.install': async () => {
+    if (!confirm('应用将关闭，安装完成后重新打开。现在安装？')) return;
+    try {
+      const r = await post('/api/update/install');
+      if (!r.ok) { toast(r.error || '安装启动失败', 'bad'); return; }
+      UPD.state = r;
+      paintUpdateBox();
+      busy(false);
+      modal('正在安装', '<div class="empty">安装器已启动，应用即将关闭。安装完成后请重新打开控制台。</div>', [{ label: '知道了', style: 'btn-primary' }]);
+    } catch (e) { toast(`安装失败：${e.message}`, 'bad'); }
+  },
+  'update.offline.verify': async () => {
+    const m = $id('upd-off-manifest')?.files?.[0];
+    const s = $id('upd-off-sig')?.files?.[0];
+    const e = $id('upd-off-exe')?.files?.[0];
+    const status = $id('upd-off-status');
+    const set = (t, bad = false) => {
+      if (status) { status.textContent = t; status.classList.toggle('bad', bad); }
+    };
+    if (!m || !s || !e) { set('请先选齐 latest.json、.sig 和安装包', true); return; }
+    busy(true, '校验离线包…');
+    try {
+      set('读取并校验清单…');
+      const manifestBase64 = bytesToB64(new Uint8Array(await m.arrayBuffer()));
+      const sigBase64 = await s.text();
+      const prep = await post('/api/update/offline/prepare', { manifestBase64, sigBase64 });
+      if (!prep.ok) { set(prep.error || '离线清单校验失败', true); return; }
+      set(`清单 OK（${prep.offline?.version || ''}），上传安装包…`);
+      const exeBytes = await e.arrayBuffer();
+      const done = await api('/api/update/offline/installer', {
+        method: 'POST', body: new Blob([exeBytes]), timeout: 300000,
+      });
+      if (!done.ok) { set(done.error || '离线安装包校验失败', true); return; }
+      UPD.state = done;
+      paintUpdateBox();
+      renderBanners();
+      toast(`离线更新 ${done.latest?.version || ''} 已校验，可立即安装`, 'ok');
+    } catch (err) {
+      set(`离线校验失败：${err.message}`, true);
+    } finally {
+      busy(false);
+    }
+  },
   'napcat.restart': async () => { busy(true, '重启容器…'); try { const r = await post('/api/napcat/restart'); toast(r.output || '已重启', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'qrcode.refresh': async () => { await doQrRefresh(); },
   'stopall': async () => { if (!confirm('一键全停：机器人 + 本机模型 + QQ 容器？')) return; busy(true, '全停中…'); try { const r = await post('/api/stop-all'); toastResult(r, '已全停'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
@@ -352,6 +499,24 @@ const ACTIONS = {
      `brain.add` 弹表单（新增与编辑共用同一个表单，靠 id 区分）。 */
   'brain.use': (id) => switchBrain('custom', id),
   'brain.add': () => brainForm(null),
+  /* 表单里的「云端 ⇄ 本地」切换（2026-10-17）。就地重画**同一个弹窗**：
+     保留名字 / Key / 勾选，地址与模型名清空 —— 两套形态的地址不通用，
+     把云端 URL 带进本地表单只会让人填错后得到一次看不懂的 fetch 失败。 */
+  'brain.mode': (id) => {
+    const mode = bfVal('mode') === 'local' ? 'cloud' : 'local';
+    brainForm(id || '', {
+      mode,
+      name: bfVal('name'),
+      baseUrl: '',
+      model: '',
+      apiKey: mode === 'cloud' ? bfVal('apiKey') : '',
+      features: {
+        vision: bfChecked('vision'),
+        thinking: bfChecked('thinking'),
+        webSearch: bfChecked('webSearch'),
+      },
+    });
+  },
   /* 打开这家服务商的「额度页」。地址**不在前端**：它随 `state.quotaPlans` 下发
      （唯一实现住 `src/free-quota.js`）—— 额度页地址是会变的（改版就换路径），
      写在页面里等于埋一个迟早失效、且失效时**没有任何提示**的链接。 */
@@ -431,8 +596,20 @@ async function bridgeCmd(cmd) {
     await refresh(true);
   } catch (e) { toast(`下发失败：${e.message}`, 'bad'); }
 }
+/**
+ * 切模型（2026-10-17 · 维护者第三轮）：**先改界面，再等后端**。
+ *
+ * ⚠️ 为什么必须乐观：`/api/switch` 会等机器人热重载确认（`waitEffectiveApplied`，
+ *    最长 12 秒）才返回。这十几秒里如果界面一动不动，用户看到的就是"点了没反应" ——
+ *    而实际情况是"正在切"。（维护者给的那张截图就是这个窗口：横幅还写着 DeepSeek、
+ *    选中的千问挂着「待生效」。）
+ *
+ * ⚠️ 失败必须**回滚**：否则"切失败了、界面却显示切成功"就是本项目最忌的那种
+ *    「失败伪装成成功」。回滚的是内存里的 state，盘上由后端负责（它没写就是没写）。
+ */
 async function switchBrain(target, id = '') {
   // 自定义大脑要带上"是哪一套" —— 内置那几套靠 target 就够了。
+  const undone = patchPick(target, id);
   busy(true, `切到 ${target} …`);
   try {
     const r = await post('/api/switch', id ? { target, id } : { target });
@@ -442,8 +619,43 @@ async function switchBrain(target, id = '') {
     // ★ 切换成功后**顺带**把新服务商的模型清单读出来（用户报的 bug：不点「读取」
     //   下拉里就只剩当前那一个）。静默执行 —— 拉不到不算切换失败。
     await refreshModelsAfterSwitch();
-  } catch (e) { toast(`切换失败：${e.message}`, 'bad'); }
-  finally { busy(false); }
+  } catch (e) {
+    if (undone) { Object.assign(S.state.config, undone); paintPage(false); }
+    toast(`切换失败：${e.message}`, 'bad');
+  } finally { busy(false); }
+}
+
+/**
+ * 把「刚点了哪一套」立刻写进**页面用的那份 state**（`S.state`，纯内存、不落盘）。
+ *
+ * 只做自定义大脑：内置预设（本机 / 智谱 / 千问）那几套的扁平值由后端算
+ * （地址、Key、降级链、上下文长度都要一起换），前端照抄一份就是第二份会漂的规则。
+ *
+ * @returns {object|null} 回滚用的旧值；null = 这次没法乐观更新（按原样等后端）
+ */
+function patchPick(target, id) {
+  if (target !== 'custom' || !S.online) return null;
+  const cfg = S.state && S.state.config;
+  const b = (cfg?.customBrains || []).find((x) => x.id === id);
+  if (!cfg || !b) return null;
+  const before = {
+    activeCustomId: cfg.activeCustomId,
+    model: cfg.model,
+    baseUrl: cfg.baseUrl,
+    provider: cfg.provider,
+    fallbackModels: cfg.fallbackModels,
+  };
+  cfg.activeCustomId = b.id;
+  cfg.model = b.model;
+  cfg.baseUrl = b.baseUrl;
+  // 服务商由后端算好下发（`brain.provider` 就是 `providerOf(baseUrl)` 的结论），
+  // 前端不按域名重算 —— 那会变成第二份「哪家算千问」的规则。
+  cfg.provider = b.provider || cfg.provider;
+  cfg.fallbackModels = Array.isArray(b.fallbackModels) ? [...b.fallbackModels] : [];
+  /* ⚠️ 有未保存的改动 / 正在输入时**不重画**：那会把输入框连同里面的字一起重建
+     （`softPaint` 的守卫是同一个理由）。这种情况下界面会在下一次刷新对齐。 */
+  if (!busyTyping() && dirtyKeys() === 0) paintPage(false);
+  return before;
 }
 
 /* ═══ 自定义大脑（2026-10-07）═════════════════════════════════════════════
@@ -489,17 +701,30 @@ function brainPresetRows() {
     }));
 }
 
-function brainForm(id) {
+/* 添加 / 编辑自定义模型（2026-10-17 加「云端 ⇄ 本地」切换）。
+   ⚠️ 两种形态**填的东西不一样**：云端要接口地址 + Key + 模型名；本地不要 Key，
+      地址是本地推理服务（LM Studio / llama.cpp / MLX）的 `/v1`。
+      以前只有云端一套字段，本地用户只能硬填 —— 现在按模式换字段，
+      并在标题右侧摆一个「切换到本地模型 / 切换到云端」的标签（维护者点名的位置）。 */
+function brainForm(id, draft = null) {
   const b = brainById(id);
-  const f = b?.features || {};
+  const mode = draft?.mode || (b?.provider === 'local' ? 'local' : 'cloud');
+  const cloud = mode === 'cloud';
+  const v = {
+    name: draft ? draft.name : (b?.name || ''),
+    baseUrl: draft ? draft.baseUrl : (b?.baseUrl || ''),
+    model: draft ? draft.model : (b?.model || ''),
+    apiKey: draft ? draft.apiKey : '',
+  };
+  const f = draft?.features || b?.features || {};
   const chk = (k, label, hint) => `<label class="row flat f-inline" style="gap:8px;">
       <input type="checkbox" data-bf="${k}" ${f[k] === true ? 'checked' : ''}>
       <span class="grow">${label}</span><span class="hint">${hint}</span></label>`;
 
-  // 「接口地址 → 默认模型」的一键填入清单。
+  // 「接口地址 → 默认模型」的一键填入清单（**只在云端模式**下有意义）。
   // ⚠️ 值全部来自 `state.config.presets`（服务端 `panel/lib/models.js` 的 CLOUD_PRESETS 下发的那份），
-  //    前端不抄第二份地址 / 模型名 —— 那张表改了这里自动跟着改（理由见 brainPresetRows 的注释）。
-  const rows = brainPresetRows();
+  //    前端不抄第二份地址 / 模型名 —— 那张表改了这里自动跟着改。
+  const rows = cloud ? brainPresetRows() : [];
   const fillHint = rows.length ? `<div class="hint" style="margin-top:8px;">
       常见服务商（点「填入」= <b>接口地址与默认模型一起写好</b>，模型可以再改）：
       <div style="margin-top:4px;">${rows.map((r) => `<div class="row flat" style="gap:8px;align-items:center;flex-wrap:wrap;">
@@ -515,32 +740,98 @@ function brainForm(id) {
       </div>
     </div>` : '';
 
+  const localHint = !cloud ? `<div class="hint" style="margin-top:8px;">
+      本地模型：先把推理服务开起来（LM Studio / llama.cpp / MLX / QwenChat 都行），
+      地址填它的 <code>/v1</code> 接口（默认 <code>http://127.0.0.1:8080/v1</code>）。
+      <b>不需要 API Key</b>，也不产生费用；模型名带 <code>VL</code> 的才能看图。
+    </div>` : '';
+
   const html = `<div class="f">
-    <input type="text" data-bf="name" value="${esc(b?.name || '')}" placeholder="名字，例如「公司网关」" />
-    <input type="text" data-bf="baseUrl" value="${esc(b?.baseUrl || '')}" placeholder="接口地址 https://…（要填 API 地址，不是控制台网页）" />
-    <input type="password" data-bf="apiKey" value="" placeholder="${b?.hasKey ? '已保存过，留空则不改' : 'API Key'}" />
-    <input type="text" data-bf="model" value="${esc(b?.model || '')}" placeholder="模型名，例如 gpt-4o-mini" />
-    ${fillHint}
+    <input type="hidden" data-bf="mode" value="${mode}" />
+    <input type="text" data-bf="name" value="${esc(v.name)}" placeholder="名字，例如「公司网关」${cloud ? '' : ' / 「本机 Qwen」'}" />
+    <input type="text" data-bf="baseUrl" value="${esc(v.baseUrl || (cloud ? '' : 'http://127.0.0.1:8080/v1'))}" placeholder="${cloud
+      ? '接口地址 https://…（要填 API 地址，不是控制台网页）'
+      : '本地服务地址，例如 http://127.0.0.1:8080/v1'}" />
+    <!-- 按地址识别厂商（2026-10-17）：填完地址就告诉你是哪家、备用链会填几条、额度去哪看 -->
+    <div class="hint" data-bf-info style="margin:0;"></div>
+    ${cloud ? `<input type="password" data-bf="apiKey" value="${esc(v.apiKey)}" placeholder="${b?.hasKey ? '已保存过，留空则不改' : 'API Key'}" />` : ''}
+    <input type="text" data-bf="model" value="${esc(v.model)}" placeholder="${cloud
+      ? '模型名，例如 gpt-4o-mini'
+      : '本地服务里加载的模型名，例如 qwen3.5-vl-7b-instruct'}" />
+    ${fillHint}${localHint}
     <div class="hint" style="margin-top:6px;">它能做什么（勾了才生效，界面上也<b>只显示勾过的</b>）：</div>
     ${chk('vision', '能看图', '勾了才会把群里的图片发给它')}
     ${chk('thinking', '能思考', '勾了才带思考参数；服务端不认会自动去掉重发，不会卡住')}
-    ${chk('webSearch', '能联网', '勾了才带联网工具 —— 只有支持智谱那套形状的服务商认')}
+    ${cloud ? chk('webSearch', '能联网', '勾了才带联网工具 —— 只有支持智谱那套形状的服务商认') : ''}
   </div>`;
+  // 切换标签的文案 = **点一下会去哪个模式**（维护者原话：现在云端就写"切换到本地模型"）。
+  const head = `<button class="btn btn-ghost btn-sm" data-a="brain.mode" data-p="${esc(id || '')}"
+    title="${cloud ? '改成填本地推理服务的地址（不需要 Key）' : '改成填云端 API 地址（需要 Key）'}">${cloud ? '切换到本地模型' : '切换到云端'}</button>`;
   modal(id ? `改设置：${b?.name || ''}` : '添加自定义模型', html, [
     { label: '取消' },
     { label: '保存', style: 'btn-primary', run: () => brainFormSubmit(id) },
-  ]);
+  ], head);
+  mountBrainProbe();
+}
+
+/**
+ * 表单里的「按地址识别厂商」（2026-10-17 · 维护者点名）。
+ *
+ * 输入地址 → 300ms 防抖 → `GET /api/provider-info` → 一行结论：
+ * 「识别为 千问云端 · 备用链 7 条（保存时自动填）· 额度官网」。
+ *
+ * ⚠️ 判据**不在前端**：哪家、默认链、额度页全部来自后端（`providerOf` / `defaultChainOf` /
+ *    `quotaPlanOf` 的唯一实现）。前端只负责显示 —— 再写一份域名判断必然漂。
+ * ⚠️ 用 `seq` 丢掉"先发后到"的旧响应：用户连续改地址时，慢的那次不能盖掉新的。
+ */
+function mountBrainProbe() {
+  const el = document.querySelector('[data-bf="baseUrl"]');
+  const box = document.querySelector('[data-bf-info]');
+  if (!el || !box || !S.online) return;
+  let timer = null;
+  let seq = 0;
+  const run = async () => {
+    const raw = String(el.value || '').trim();
+    if (!raw) { box.innerHTML = ''; return; }
+    const my = ++seq;
+    box.innerHTML = '<span class="hint" style="margin:0;">识别中…</span>';
+    try {
+      const r = await api(`/api/provider-info?baseUrl=${encodeURIComponent(raw)}`);
+      if (my !== seq) return;
+      const model = String(document.querySelector('[data-bf="model"]')?.value || '').trim();
+      const backup = (r.chain || []).filter((m) => m !== model);
+      const bits = [`识别为 <b>${esc(r.vendor)}</b>`];
+      if (backup.length) bits.push(`备用链 ${backup.length} 条（保存时自动填）`);
+      if (r.quota?.controlUrl) {
+        bits.push(`<a href="${safeHref(r.quota.controlUrl)}" target="_blank" rel="noreferrer">额度官网</a>`);
+      }
+      if (r.quota?.mustDo) bits.push('<span class="tag warn">有个开关要自己开</span>');
+      box.innerHTML = `<span class="hint" style="margin:0;">${bits.join(' · ')}</span>`;
+    } catch (e) {
+      if (my === seq) box.innerHTML = `<span class="hint bad" style="margin:0;">${esc(e.message)}</span>`;
+    }
+  };
+  el.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 350); });
+  run();  // 编辑已有大脑时，打开就该看到结论
 }
 
 async function brainFormSubmit(id) {
+  const mode = bfVal('mode') === 'local' ? 'local' : 'cloud';
   const baseUrl = bfVal('baseUrl');
   const model = bfVal('model');
-  if (!baseUrl || !model) return toast('接口地址和模型名都要填', 'warn');
+  if (!baseUrl || !model) return toast(mode === 'local' ? '本地服务地址和模型名都要填' : '接口地址和模型名都要填', 'warn');
   busy(true, '保存中…');
   try {
     const r = await post('/api/custom-brain/save', {
-      id: id || '', name: bfVal('name'), baseUrl, model, apiKey: bfVal('apiKey'),
-      features: { vision: bfChecked('vision'), thinking: bfChecked('thinking'), webSearch: bfChecked('webSearch') },
+      id: id || '', name: bfVal('name'), baseUrl, model,
+      // 本地模型不需要 Key —— 明确发空串，避免把上一个模式的 Key 带进来。
+      apiKey: mode === 'cloud' ? bfVal('apiKey') : '',
+      features: {
+        vision: bfChecked('vision'),
+        thinking: bfChecked('thinking'),
+        // `web_search` 是智谱那套形状；本地服务收到必然 400，所以本地模式不发。
+        webSearch: mode === 'cloud' ? bfChecked('webSearch') : false,
+      },
     });
     closeModal();
     toastResult(r, '已保存');
@@ -739,17 +1030,65 @@ function draftArr(path) {
   }
   return a;
 }
+/**
+ * 把当前草稿的人格 / 增强 / 场景拍成一张角色卡快照。
+ * 形状与后端 `cardFields()`（src/custom-config.js）逐字对齐：人格 12 + 增强 12 + scenes。
+ * 键名一律从 `customMeta` 取（前端不自存任何一份名单）。
+ */
+function snapshotPersonaFields() {
+  const meta = (S.state || DEMO).customMeta || {};
+  const personaKeys = meta.personaKeys || [];
+  const enhanceKeys = meta.enhanceKeys || meta.enhance?.keys || [];
+  const out = {};
+  for (const k of personaKeys) out[k] = String(getPath(S.draft.custom, `persona.${k}`) ?? '');
+  for (const k of enhanceKeys) out[k] = String(getPath(S.draft.custom, `enhance.${k}`) ?? '');
+  out.scenes = {};
+  for (const k of Object.keys(meta.scenes || {})) out.scenes[k] = String(getPath(S.draft.custom, `scenes.${k}`) ?? '');
+  return out;
+}
 function addSkill(kind) {
+  // ⚠️ 建**角色卡**时快照当前人格（2026-10-15 · B4 / Issue #5）：
+  //    面板上没有任何地方能编辑卡内字段，不快照的话新建出来就是一张永远填不进去的
+  //    空卡（`.fields` 恒为 undefined，"套用"直接劝退）。快照 = 让"存多张卡、一键换人"
+  //    这个功能真的成立，也顺带给「场景」一个来源（否则卡里永远没有 scenes）。
+  const fields = kind === 'persona' ? snapshotPersonaFields() : undefined;
   draftArr('skills').push({ id: `k${Date.now().toString(36)}`, kind, name: kind === 'persona' ? '新角色卡' : '新知识包',
-    enabled: true, scope: { type: 'global', id: '' }, triggers: [], background: '', examples: [] });
+    enabled: true, scope: { type: 'global', id: '' }, triggers: [], background: '', examples: [],
+    ...(fields ? { fields } : {}) });
   touchC('skills'); markDirty(); paintPage(false);
+  if (fields) toast('已新建角色卡（快照了当前人格 / 增强 / 场景）—— 记得点底部「保存并生效」', 'ok');
 }
 function applyPersonaCard(i) {
   const sk = draftArr('skills')[i];
   if (!sk?.fields) return toast('这张卡没有存人格快照，套用不了', 'warn');
-  for (const k of Object.keys(sk.fields)) setPath(S.draft.custom, `persona.${k}`, sk.fields[k]);
-  touchC('persona'); markDirty(); paintPage(false);
-  toast('已套用到人格设定 —— 记得点底部的「保存并生效」', 'ok');
+  const meta = (S.state || DEMO).customMeta || {};
+  const personaKeys = new Set(meta.personaKeys || []);
+  const enhanceKeys = new Set(meta.enhanceKeys || meta.enhance?.keys || []);
+  const sceneKeys = Object.keys(meta.scenes || {});
+  // 归属名单缺失（老面板缓存）时退回老行为：一律写 persona.*。
+  // 宁可"增强项没换"也不要"整张卡一点没生效"——后者是完全静默的假成功。
+  const hasRouting = personaKeys.size > 0 || enhanceKeys.size > 0;
+  let nP = 0, nE = 0, nS = 0;
+  for (const k of Object.keys(sk.fields)) {
+    if (k === 'scenes') {
+      // 场景是**单份全局状态**、卡里存的是快照。只有卡里真的存过（非空）才覆盖 ——
+      // 卡里没存就原样留着，绝不把当前场景整片清空（那比"没换"更糟：静默丢用户填的东西）。
+      const snap = sk.fields.scenes && typeof sk.fields.scenes === 'object' ? sk.fields.scenes : {};
+      if (Object.keys(snap).some((x) => String(snap[x] || '').trim())) {
+        for (const key of sceneKeys) setPath(S.draft.custom, `scenes.${key}`, String(snap[key] ?? ''));
+        nS = sceneKeys.length;
+      }
+      continue;
+    }
+    if (!hasRouting) { setPath(S.draft.custom, `persona.${k}`, sk.fields[k]); nP += 1; continue; }
+    if (personaKeys.has(k)) { setPath(S.draft.custom, `persona.${k}`, sk.fields[k]); nP += 1; }
+    else if (enhanceKeys.has(k)) { setPath(S.draft.custom, `enhance.${k}`, sk.fields[k]); nE += 1; }
+  }
+  touchC('persona');
+  if (nE) touchC('enhance');
+  if (nS) touchC('scenes');
+  markDirty(); paintPage(false);
+  toast(`已套用（人格 ${nP} 项 / 增强 ${nE} 项${nS ? ` / 场景 ${nS} 项` : ''}）—— 记得点底部的「保存并生效」`, 'ok');
 }
 function balanceText(r) {
   if (!r || typeof r !== 'object') return '—';
@@ -893,10 +1232,95 @@ function renderBanners() {
     out.push(`<div class="banner"><b>实例锁被占着</b><span class="spacer"></span>
       <span>pid ${j(s, ['bridge', 'lock', 'pid'])} 持有锁，而面板这边没在跑机器人 —— 这种情况下点「启动机器人」会被拒。清锁是危险动作，交脚本或人工。</span></div>`);
   }
+  const upd = UPD.state || j(s, ['update'], null);
+  if (upd && upd.enabled && (upd.phase === 'available' || upd.phase === 'ready')) {
+    const latest = upd.latest && upd.latest.version ? ` ${upd.latest.version}` : '';
+    out.push(`<div class="banner info"><b>${upd.phase === 'ready' ? '更新已下载' : `新版本${esc(latest)} 可用`}</b><span class="spacer"></span>
+      <span>${upd.phase === 'ready' ? '已校验通过，等你点「立即安装」；不会自动安装。' : '在「系统 → 面板维护」里下载并安装；不会自动安装。'}</span>
+      <button class="btn btn-sm" data-a="update.goto">查看更新</button></div>`);
+  }
   const html = out.join('');
   if (html === bannersHtml) return; // 没变就别重建 —— 那颗「重启面板」会被整块换掉（见上方注释）
   bannersHtml = html;
   box.innerHTML = html;
+}
+
+/**
+ * 更新卡片的 HTML。读 `UPD.state`（SSE 实时）并回落到 `/api/state` 的 `update`，
+ * 这样首屏（SSE 还没连上）也不会空白。
+ */
+function offlineHtml(u) {
+  if (!u || !u.enabled) return '';
+  if (!['idle', 'up_to_date', 'available', 'error'].includes(u.phase)) return '';
+  const pending = u.offline && u.offline.version
+    ? `<div class="hint">已读取离线清单 <b>${esc(u.offline.version)}</b>（${fmtBytes(u.offline.size)}），请选择安装包。</div>`
+    : '';
+  return `<details class="upd-off"${pending ? ' open' : ''}>
+    <summary>离线更新（EXE + latest.json + .sig）</summary>
+    <div class="hint">三件套只在本机校验：先验签、再验哈希；不会联网，也不会绕过任何校验。</div>
+    <label>latest.json <input type="file" id="upd-off-manifest" accept=".json,application/json"></label>
+    <label>.sig <input type="file" id="upd-off-sig" accept=".sig,text/plain"></label>
+    <label>安装包 <input type="file" id="upd-off-exe" accept=".exe,application/octet-stream"></label>
+    ${pending}
+    <div class="upd-row"><button class="btn btn-sm btn-ghost" data-a="update.offline.verify">校验离线包</button><span class="spacer"></span></div>
+    <div class="hint" id="upd-off-status"></div>
+  </details>`;
+}
+
+function updateHtml() {
+  const u = UPD.state || j(S.state, ['update'], null);
+  if (!u) return '<div class="hint">正在读取更新状态…</div>';
+  if (!u.enabled) return `<div class="hint">${esc(u.reason || '应用内更新不可用')}</div>`;
+  const cur = esc(u.currentVersion || '—');
+  const latest = u.latest ? esc(u.latest.version || '—') : '';
+  const p = u.progress || {};
+  const notes = u.latest && u.latest.notesUrl ? safeHref(u.latest.notesUrl) : '';
+  const tail = offlineHtml(u);
+  const btn = (label, action, cls = 'btn-ghost') =>
+    `<button class="btn btn-sm ${cls}" data-a="${action}">${esc(label)}</button>`;
+  switch (u.phase) {
+    case 'checking':
+      return '<div class="upd-row"><span>正在检查更新…</span></div>';
+    case 'up_to_date':
+      return `<div class="upd-row"><span>当前版本 <b>${cur}</b> · 已是最新</span><span class="spacer"></span>${btn('再检查一次', 'update.check')}</div>${tail}`;
+    case 'available':
+      return `<div class="upd-row"><span>当前 <b>${cur}</b> → 最新 <b>${latest}</b></span><span class="spacer"></span>${notes ? `<a class="btn btn-sm btn-ghost" href="${esc(notes)}" target="_blank" rel="noreferrer">更新说明</a>` : ''}${btn('下载更新', 'update.download', 'btn-primary')}</div>${tail}`;
+    case 'downloading':
+      return `<div class="upd-row"><span>正在下载 <b>${latest}</b> · ${p.percent == null ? '…' : `${p.percent}%`}</span><span class="spacer"></span>${btn('取消', 'update.cancel')}</div><div class="upd-bar"><i style="width:${Math.max(0, Math.min(100, Number(p.percent) || 0))}%"></i></div><div class="hint">${fmtBytes(p.received)} / ${fmtBytes(p.total)}${p.bytesPerSec ? ` · ${fmtBytes(p.bytesPerSec)}/s` : ''}</div>`;
+    case 'ready':
+      return `<div class="upd-row"><span>更新 <b>${latest}</b> 已下载 · 大小/哈希校验通过</span><span class="spacer"></span>${btn('立即安装', 'update.install', 'btn-primary')}</div><div class="hint">点「立即安装」后应用会关闭，安装完成后重新打开。没有自动安装。</div>`;
+    case 'installing':
+      return '<div class="upd-row"><span>正在启动安装器…应用即将关闭。</span></div>';
+    case 'error':
+      return `<div class="upd-row"><span class="bad">${esc(u.error || '更新失败')}</span><span class="spacer"></span>${btn('重试', 'update.check')}</div>${tail}`;
+    default:
+      return `<div class="upd-row"><span>当前版本 <b>${cur}</b></span><span class="spacer"></span>${btn('检查更新', 'update.check')}</div>${tail}`;
+  }
+}
+
+function paintUpdateBox() {
+  const box = $id('upd-box');
+  if (box) box.innerHTML = updateHtml();
+}
+
+/** 更新进度走现有 SSE（/api/console/stream）的 `update` 事件，不新开端口。 */
+function openUpdateStream() {
+  if (UPD.es || typeof EventSource === 'undefined') return;
+  const es = new EventSource('/api/console/stream');
+  UPD.es = es;
+  es.addEventListener('update', (ev) => {
+    try {
+      UPD.state = JSON.parse(ev.data);
+      UPD.loaded = true;
+      const phase = UPD.state && UPD.state.phase ? UPD.state.phase : '';
+      if (phase !== UPD.lastPhase) {
+        UPD.lastPhase = phase;
+        renderBanners();
+      }
+      paintUpdateBox();
+    } catch { /* 坏帧丢掉即可 */ }
+  });
+  es.onerror = () => { /* EventSource 自带重连 */ };
 }
 
 /* ════════════════════════════════════════════════ 7. 导航 ═══ */
@@ -1112,7 +1536,7 @@ function paintPage(rebuildNav = true) {
       ${su.desc ? `<p class="hint" style="margin:6px 0 0;max-width:80ch;">${su.desc}</p>` : ''}
       <p class="hint" style="margin:4px 0 0;">${esc(g.label)} → ${esc(su.label)}</p>
     </div>
-    ${(su.cards || []).filter((c) => !c.when || c.when(S.state || DEMO)).map((c) => cardHtml(c)).join('')}`;
+    ${cardsHtml(su.cards || [])}`;
   const keep = keepPageState();   /* ⚠️ 必须在 `innerHTML =` **之前**采集 */
   $id('page').innerHTML = html;
   restorePageState(keep);         /* ⚠️ 必须在**之后**恢复 —— 顺序反了就等于没修 */
@@ -1121,12 +1545,41 @@ function paintPage(rebuildNav = true) {
   onPageShown(su);
 }
 
+/**
+ * 卡片列表 → HTML。**连续**同 `col` 的卡片会被聚进一个列容器。
+ *
+ * 为什么需要这一层（2026-10-17 · 「插话冷却」落点）：
+ *   `span-6` 只表达"多宽"，两张 span-6 之后的第三张会按 auto-flow 回到**左列**；
+ *   更糟的是同一行的两张卡被**行高对齐**——左列 507px、右列 291px 时，
+ *   第三张卡只能从 507px 的底部开始，于是它离上一张（拉黑）有 216px 的空洞。
+ *   红框要的是"紧贴拉黑下方"，那就得让右列两张卡成为**同一个列容器里的兄弟**，
+ *   各自按内容高度堆叠。
+ *
+ * ⚠️ 只聚合**相邻**的 `col`：`[A, B(r), C, D(r)]` 会得到 A / B / C / D 四块
+ *    （两个单卡容器），不会把不相邻的右列卡硬凑成一个块 —— 那会静默改变
+ *    作者在 schema 里写下的顺序。
+ */
+function cardsHtml(cards) {
+  const list = cards.filter((c) => !c.when || c.when(S.state || DEMO));
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    if (!list[i].col) { out.push(cardHtml(list[i])); continue; }
+    const col = list[i].col;
+    const group = [];
+    while (i < list.length && list[i].col === col) group.push(list[i++]);
+    i--;
+    out.push(`<div class="card-col">${group.map((c) => cardHtml(c)).join('')}</div>`);
+  }
+  return out.join('');
+}
+
 function cardHtml(c) {
   if (c.bare) return bareHtml(c);
   const span = c.span === 6 ? 'span-6' : c.span === 4 ? 'span-4' : c.span === 8 ? 'span-8' : '';
+  const tone = c.tone ? ` data-tone="${esc(c.tone)}"` : '';
   const badge = c.badge ? `<span class="${c.badge.cls || 'tag'}">${esc(c.badge.text)}</span>` : '';
   const body = (c.ctrls || []).filter((x) => !x.when || x.when(S.state || DEMO)).map((x) => ctrlHtml(x)).join('');
-  return `<section class="card ${span}" id="card-${esc(c.id)}">
+  return `<section class="card ${span}" id="card-${esc(c.id)}"${tone}>
     <div class="card-h"><h2>${esc(c.title)}</h2>${badge}<span class="spacer"></span></div>
     ${c.desc ? `<div class="card-d">${mdBold(c.desc)}</div>` : ''}
     <div class="card-b">${body}</div>
@@ -1168,6 +1621,39 @@ function ctrlHtml(x) {
 }
 
 const lb = (x, extra = '') => `<span class="f-lb"><span>${esc(x.label || '')}</span>${extra}</span>`;
+/* ── 进度条的刻度换算（`range` 控件 · 2026-10-17）───────────────────────────
+   位置用 **0–1000 的整数**，不用 0–100 的小数：原生 `input[type=range]` 的 value
+   是字符串，整数步进能保证"拖到同一格 ⇒ 同一个值"，也省掉浮点在 aria 文案里冒出来的尾数。
+
+   ⚠️ `log: true` 时**必须** min > 0 —— `Math.log(0)` 是 -Infinity，那条分母会把整条
+      刻度压成 NaN，而 NaN 在 CSS 里是"无值"：滑块会照常渲染、位置却回到最左，
+      症状与"保存失败"一模一样。所以这里显式回落成线性。 */
+function rngPosOf(x, v) {
+  const lo = Number(x.min ?? 0), hi = Number(x.max ?? 100);
+  const n = Math.min(hi, Math.max(lo, Number(v) || 0));
+  if (!(hi > lo)) return 0;
+  const log = !!x.log && lo > 0;
+  const t = log
+    ? (Math.log(n) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))
+    : (n - lo) / (hi - lo);
+  return Math.round(Math.min(1, Math.max(0, t)) * 1000);
+}
+function rngValOf(x, pos) {
+  const lo = Number(x.min ?? 0), hi = Number(x.max ?? 100);
+  const t = Math.min(1, Math.max(0, Number(pos) / 1000));
+  const log = !!x.log && lo > 0;
+  const v = log ? Math.exp(Math.log(lo) + t * (Math.log(hi) - Math.log(lo))) : lo + t * (hi - lo);
+  return Math.round(v);
+}
+/** 分钟 → 人话。`fmtDur` 喂的是毫秒、且会把整点说成"1 小时 0 分"，这里要的是"1 小时"。 */
+function fmtMin(n) {
+  const m = Math.round(Number(n) || 0);
+  if (m < 60) return `${m} 分钟`;
+  const h = Math.floor(m / 60), rest = m % 60;
+  return rest ? `${h} 小时 ${rest} 分` : `${h} 小时`;
+}
+/** 控件声明的单位 → 读数字。目前只有「分钟」一种（毫秒级的量不该用滑块表达）。 */
+const rngFmt = (x, v) => (x.unit === '分钟' ? fmtMin(v) : `${v} ${x.unit || ''}`.trim());
 const hintOf = (x) => {
   const h = typeof x.hint === 'function' ? x.hint(S.state || DEMO) : x.hint;
   return h ? `<span class="hint">${mdBold(h)}</span>` : '';
@@ -1296,6 +1782,11 @@ function readyChecklist(s) {
   return out;
 }
 
+/* 服务商 → 短名。**只做显示映射** —— 判据是后端下发的 `provider`
+   （`providerOf` 唯一实现，前端不按域名再判一次）。 */
+const VENDOR_SHORT = { local: '本机', deepseek: 'DeepSeek', zhipu: '智谱', qwen: '千问' };
+const vendorShort = (p) => VENDOR_SHORT[String(p || '')] || '自定义';
+
 const RENDER = {
   /* ── 只读展示 ── */
   /* `text` 允许是**函数**（按状态算），与 `hint` / `metric` / `ports.label` 同款
@@ -1364,7 +1855,10 @@ const RENDER = {
     }).join('');
     return `${label}<ol class="steps">${items}</ol>`;
   },
-  modebar: (x) => { const m = x.calc(S.state || DEMO); return `<div class="banner ${m.cls || 'info'}" style="margin:0;"><b>${esc(m.title)}</b><span class="spacer"></span><span class="hint" style="margin:0;">${esc(m.hint || '')}</span></div>`; },
+  /* `data-mb`：页面上不止一条横幅（大脑 / 计费），`data-ui` 让 DOM 守卫能精确指到
+     "现在在用哪套模型"那一条 —— 否则断言只能在整页文本里搜，搜到别处的同名字就假绿。 */
+  modebar: (x) => { const m = x.calc(S.state || DEMO); return `<div class="banner ${m.cls || 'info'}" data-mb="${esc(x.id || '')}" style="margin:0;"><b>${esc(m.title)}</b><span class="spacer"></span><span class="hint" style="margin:0;">${esc(m.hint || '')}</span></div>`; },
+  update: () => `<div class="upd" id="upd-box">${updateHtml()}</div>`,
   pill: (x) => { const p = x.calc(S.state || DEMO); return `<span class="pill ${p.cls || ''}"><span class="dot"></span>${esc(p.text)}</span>`; },
 
   /* ── 状态卡组（2026-10-02 运行总览页重排）────────────────────────────
@@ -1476,7 +1970,7 @@ const RENDER = {
     return `<div class="f">${regd(x)}${lb(x)}<div class="seg">${opts.map((o) => `
       <label${o.title ? ` title="${esc(o.title)}"` : ''}><input type="radio" name="${esc(x.id)}" value="${esc(o.v)}" ${String(o.v) === cur ? 'checked' : ''} ${ctlA(x)}><span>${esc(o.l)}</span></label>`).join('')}</div>${hintOf(x)}</div>`;
   },
-  /* ── 档位刻度（2026-10-02 · 抄 bencho.dev「Progress ticks」）──────────
+  /* ── 档位刻度（2026-10-02）────────────────────────────────────────────
      ⚠️ **它是 `seg` 的另一种呈现，不是新的一套数据契约**：
         读值走 `valueOf(x)`、写值走 `setValue(x, v)`、选项来源与 `seg` **同一个**
         `x.options`（多半是函数，从后端 `customMeta` 取）。所以任何一处改数据
@@ -1540,6 +2034,39 @@ const RENDER = {
       </div>${hintOf(x)}</div>`;
   },
 
+  /* ── 进度条（`range` · 2026-10-17）──────────────────────────────────────
+     它是一个**真滑块**，不是"画得像滑块的 div"：原生 `<input type="range">` 铺在轨道上
+     （透明、可点可拖、自带 role=slider 与键盘 ←/→），视觉层（填充 / 水滴把手 / 刻线）
+     全部由 CSS 按 `--p` 画。这样做的好处是**无障碍不用另写一套**，坏处是
+     必须在 `input` 事件里同步 `--p` 与读数字 —— 见下面的 document 级委托。
+
+     ⚠️ 读数字的文本**只由 `rngFmt` 生成**（渲染时一次、拖动时一次）：两处各写一份
+        格式化，就会出现"拖着是 5 分钟、松手变 0.08 小时"这种同一格说两套话。 */
+  range: (x) => {
+    S.reg.set(x.id, x);
+    /* ⚠️ 不能用 `Number(valueOf(x))` 一句话：`Number('')` 是 0，而 0 **是**一个合法的
+       业务值 ⇒ "没读到配置" 会被画成"0 分钟"，看起来像默认值被改矮了。
+       空 / null / 非数 一律回落到 `min`，那是这张卡在老后端上的正确样子。 */
+    const got = valueOf(x);
+    const raw = Number(got);
+    const v = (got === '' || got == null || !Number.isFinite(raw)) ? Number(x.min ?? 0) : raw;
+    const pos = rngPosOf(x, v);
+    const marks = (x.marks || []).map((m) => `<i class="rng-mark" style="left:${(rngPosOf(x, m) / 10).toFixed(2)}%"></i>`).join('');
+    return `<div class="f rng" data-rng="${esc(x.id)}" style="--p:${(pos / 10).toFixed(2)}%">
+      <div class="rng-head">
+        <span class="f-lb">${esc(x.label || '')}</span>
+        <b class="rng-val">${esc(rngFmt(x, v))}</b>
+      </div>
+      <div class="rng-track">
+        <input type="range" min="0" max="1000" step="1" value="${pos}" ${did(x)} data-a="field"
+               aria-label="${esc(x.label || '')}" aria-valuetext="${esc(rngFmt(x, v))}" />
+        <span class="rng-fill"></span>${marks}<span class="rng-knob"></span>
+      </div>
+      <div class="rng-ends"><span>${esc(rngFmt(x, x.min ?? 0))}</span><span>${esc(rngFmt(x, x.max ?? 100))}</span></div>
+      ${hintOf(x)}
+    </div>`;
+  },
+
   tags: (x) => {
     const v = valueOf(x);
     const arr = Array.isArray(v) ? v : String(v ?? '').split(/[,，\s]+/).filter(Boolean);
@@ -1596,25 +2123,64 @@ const RENDER = {
       <div class="hint">降级链（机器人按顺序试，被限流/超时就换下一个）：<b>${esc((j(s, ['config', 'fallbackModels'], []) || []).map((m) => s.modelLabels?.[m] || m).join(' → ') || '无')}</b></div>
     </div>`;
   },
-  brainList: (x) => {
+  /* ── 免费额度：**一颗按钮**（2026-10-17 · 维护者第二次点名）────────────
+     它要回答的只有一句：「这家会不会扣钱、额度去哪看」。
+     形态：卡片右下角一颗 ghost 按钮 —— 「免费额度 · 限时赠送 ↗」；点一下直接去那家的
+     额度/余额官网。解释文案（额度规则 / 面板查不到实时余额 / 千问那句"用完即停要自己开"）
+     全部塞进 `title`，鼠标停一下就有，不占版面。
+     ⚠️ 文案仍全部来自 `state.quotaPlans`（`src/free-quota.js` 是唯一实现），
+        前端不写规则 —— 那句提醒是真会让人被扣钱的，抄一份就多一处会烂的地方。
+     ⚠️ 「必须手动处理」用一颗小红点表示，不用一段文字。 */
+  quotaBtn: (x) => {
+    const q = x.calc(S.state || DEMO);
+    /* ⚠️ 两个 `width:100%` 是必须的：`.f` 在卡片里是 flex 列，
+       `.btn-row` 不自带宽度 ⇒ 它会缩到内容宽，`justify-content:flex-end` 就无处可对齐
+       （实拍：按钮跑到左下角去了。维护者要的是**右下角**）。 */
+    return `<div class="f" style="margin:0;width:100%;"><div class="btn-row" style="justify-content:flex-end;margin:0;width:100%;">
+      <button class="btn btn-ghost btn-sm quota-btn" data-a="quota.open" title="${esc(q.title)}"${q.hasUrl ? '' : ' data-no-url="1"'}>
+        ${esc(q.label)}${q.mustDo ? '<i class="q-dot" title="这家有个开关要你自己打开，不打开会静默扣钱"></i>' : ''}<span class="q-go">↗</span>
+      </button></div></div>`;
+  },
+  /* ── 大脑切换标签（2026-10-17 · 维护者第三轮定稿）────────────────────
+     一句话：**这一行就是"我建过的模型"，亮着的那一颗就是"现在在用的"**。
+       · 不再摆 本机 / DeepSeek / 智谱 / 千问 这些预设标签 —— 它们不是用户建的；
+       · 新建（云端 / 本地都行）之后自动出现在这里，点一下就切；
+       · 右键弹改名 / 改设置 / 删除（与原来列表行的菜单同一份实现）。
+     ⚠️⚠️ 选中态跟 **`config.activeCustomId`**（面板已选定），**不再跟 `effective`**。
+        上一版是"高亮 = 机器人已读入；已选未读 = 虚线 +「待生效」"——于是切换之后
+        要等机器人热重载（`waitEffectiveApplied` 最长 12 秒）界面才有反应，
+        用户看到的就是"点了没反应"。维护者 2026-10-17 点名去掉这个中间态：
+        **点了就是它，用户自己会测**。
+     判据只有一份，住 `schema.js` 的 `brainPickOf()` —— 横幅、标签、下面那几行 kv
+     全从它取，所以它们不可能各说一套。 */
+  brainTags: () => {
     const s = S.state || DEMO;
-    const list = j(s, ['config', 'customBrains'], []) || [];
-    const active = j(s, ['config', 'activeCustomId'], '');
-    const rows = list.length
-      ? list.map((b) => `<div class="row flat f-inline" data-brain="${esc(b.id)}">
-          <span class="grow">${esc(b.name)}</span>
-          <span class="hint mono">${esc(b.model)}</span>
-          ${b.id === active
-            ? '<span class="tag accent">在用</span>'
-            : `<button class="btn btn-xs" data-a="brain.use" data-p="${esc(b.id)}" title="切到这套">用</button>`}
-        </div>`).join('')
-      : '<div class="empty">还没有自定义模型。点下面「添加」，填自己的接口地址、密钥和模型名就行。</div>';
-    return `<div class="f">${lb({ label: '自定义模型（右键可改名 / 删除）' }, '<span class="spacer"></span>')}
-      <div class="rows">${rows}</div>
-      <div class="btn-row"><button class="btn btn-ghost btn-sm" data-a="brain.add">+ 添加自定义模型</button></div>
-      <div class="hint" style="margin-top:6px;">哪家都行，只要接口是 OpenAI 兼容的（<code>/chat/completions</code>）。
-        添加时会让你勾它能做什么 —— 勾了才生效，界面上也<b>只显示勾过的那几项</b>。</div>
-    </div>`;
+    const pick = brainPickOf(s);
+    const customs = j(s, ['config', 'customBrains'], []) || [];
+    /* 选中态**只认 activeCustomId**。不搞"按地址+模型名反查"那种启发式：
+       用户建的千问和内置的千问可以填成一模一样，反查会让"其实在用某套内置"时
+       也亮起一颗自定义标签（一句话两个意思）。没有 activeCustomId ⇒ 就是不亮，
+       同时后端那侧也不会把它当自定义大脑用（`materializeBrain` 每次都写这个字段）。 */
+    const activeId = pick.customId;
+    const tag = (o) => {
+      const on = !!o.id && o.id === activeId;
+      return `<button class="brain-tag${on ? ' on' : ''}${o.add ? ' add' : ''}"
+        data-a="${o.a}"${o.p ? ` data-p="${esc(o.p)}"` : ''}${o.id ? ` data-brain="${esc(o.id)}"` : ''}${o.add ? '' : ` aria-pressed="${on}"`}${o.title ? ` title="${esc(o.title)}"` : ''}>
+        <span class="nm">${esc(o.name)}${on ? '<span class="use-tag">在用</span>' : ''}</span>${o.sub ? `<span class="sub mono">${esc(o.sub)}</span>` : ''}</button>`;
+    };
+    const items = customs.map((b) => tag({
+      id: b.id,
+      name: b.name,
+      sub: b.model,
+      a: 'brain.use',
+      p: b.id,
+      title: `切到「${b.name}」（${vendorShort(b.provider)} · ${b.model}）\n右键：改名 / 改设置 / 删除`,
+    }));
+    items.push(tag({ name: '＋ 自定义模型', add: true, a: 'brain.add', title: '新建一个云端或本地模型' }));
+    const empty = customs.length ? ''
+      : '<div class="hint" style="margin-top:6px;">还没有模型 —— 点「＋ 自定义模型」建一个（云端 / 本地都行）。</div>';
+    return `<div class="f">${lb({ label: '我的模型' }, '<span class="spacer"></span><span class="hint" style="margin:0;">点一下切换 · 右键可改名 / 删除</span>')}`
+      + `<div class="brain-tags">${items.join('')}</div>${empty}</div>`;
   },
   routeBoard: (x) => {
     const s = S.state || DEMO;
@@ -1630,19 +2196,33 @@ const RENDER = {
     //    接千问时它变成硬伤：千问的页面上连候选都拿不到，等于线路加不了模型。
     const provider = j(s, ['config', 'provider'], 'zhipu');
     const pool = Object.keys(j(s, ['modelCaps', provider], null) || {});
+    const known = new Set(pool);
+    /* ⚠️ 这份列表存的是**主模型之后**的那几条（`/api/config` 的约定：主模型由 `config.model`
+       承担，链里再出现一次会被静默剔掉）。以前这里把第 1 行标成「主模型」——
+       于是页面上同时出现「正在使用 qwen3.8-max」和「主模型 GLM-4.5-Air」两句互相打架的话，
+       用户以为面板把主模型换掉了（2026-10-17 截图）。现在主模型单独一行，列表是备用链。 */
+    const main = String(j(s, ['config', 'model'], '') || '');
+    /* 清单里没有的条目 = 这家不会响应它（老数据 / 别家大脑的遗留）。**标出来**，
+       并给一个一键清掉的入口 —— 不标的话它看起来和正常条目一模一样。 */
+    const foreign = known.size ? list.filter((m) => !known.has(m)) : [];
     /* ⚠️ 撤销条**不在这里算**：`_routeUndo` 是模块级状态（活过一次渲染），
        所以「上一次的顺序」是**上一次提交前**的顺序，而不是"从服务端再读一遍"。
        后者做不到 —— 服务端只存当前值，旧值只有前端记得。 */
     const undo = _routeUndo;
     return `<div class="f">${lb({ label: '试模型的顺序' }, '<span class="spacer"></span>')}
+      <div class="row flat f-inline"><span class="tag accent">主模型</span>
+        <span class="grow mono">${esc(s.modelLabels?.[main] || main || '（没设）')}</span>
+        <span class="hint" style="margin:0;">先试它，被限流/超时才往下走</span></div>
       <div class="rows srt" data-rb>${list.length ? list.map((m, i) => `<div class="row flat f-inline srt-item" data-srt-id="${esc(m)}" data-i="${i}">
         <button class="srt-grip" type="button" title="按住拖动改顺序（也可点它后按 ↑↓）" aria-label="调整 ${esc(s.modelLabels?.[m] || m)} 的顺序，当前第 ${i + 1} 位，共 ${list.length} 位">⠿</button>
-        <span class="tag ${i === 0 ? 'accent' : 'plain'}">${i === 0 ? '主模型' : `第 ${i + 1}`}</span>
+        <span class="tag ${known.size && !known.has(m) ? 'warn' : 'plain'}">${known.size && !known.has(m) ? '这家没有' : `第 ${i + 1} 备用`}</span>
         <span class="grow">${esc(s.modelLabels?.[m] || m)}</span>
         <button class="btn btn-xs" data-a="route.up" data-p="${i}" title="上移" aria-label="把 ${esc(s.modelLabels?.[m] || m)} 上移">↑</button>
         <button class="btn btn-xs" data-a="route.down" data-p="${i}" title="下移" aria-label="把 ${esc(s.modelLabels?.[m] || m)} 下移">↓</button>
         <button class="btn btn-xs btn-danger" data-a="route.del" data-p="${i}" title="从线路里删掉" aria-label="把 ${esc(s.modelLabels?.[m] || m)} 从线路里删掉">×</button>
-      </div>`).join('') : '<div class="empty">线路是空的。</div>'}</div>
+      </div>`).join('') : '<div class="empty">还没有备用模型 —— 下面是候选。</div>'}</div>
+      ${foreign.length ? `<div class="btn-row"><button class="btn btn-ghost btn-sm" data-a="route.clean">清掉不属于这家的 ${foreign.length} 条</button>
+        <span class="hint warn">这家的模型清单里没有：${esc(foreign.join('、'))}（换模型时会连续撞墙）</span></div>` : ''}
       ${undo ? `<div class="btn-row"><button class="btn btn-ghost btn-sm" data-a="route.undo">撤销上一次改顺序</button>
         <span class="hint">上一次把「${esc(undo.label)}」挪到了第 ${undo.at + 1} 位。</span></div>` : ''}
       <details class="det"><summary>候选模型（点一下加进线路）</summary>
@@ -1652,7 +2232,7 @@ const RENDER = {
           : '官方永久免费的 Flash 档在晚高峰很挤（实测 429），所以默认排在最后 —— 让它们先试会让每条消息都白等一次超时。'}</div>
       </details>
       <div class="btn-row"><button class="btn btn-ghost btn-sm" data-a="route.reset">恢复实测最优</button>
-        <span class="hint">改完点底部「保存并生效」。</span></div></div>`;
+        <span class="hint">按<b>当前这家</b>的默认链路重排；点完立即生效，不用另点保存。</span></div></div>`;
   },
   packages: (x) => {
     const p = S.extra.packages;
@@ -2029,16 +2609,7 @@ const RENDER = {
         </tbody></table></div>
       <div class="hint">这套边界在 <code>src/ext-scope.js</code> 里是<b>闭集合</b>：要加新动作必须去改那一处并补契约，不能在这里加一行 if。</div>
     </div>`,
-  faces: (x) => {
-    const s = S.state || DEMO;
-    const f = j(s, ['effective', 'customFaces'], null);
-    const n = Array.isArray(f) ? f.length : f?.count ?? null;
-    return `<div class="f">
-      <div class="metric"><div class="n">${n == null ? '—' : n}</div><div class="l">已接入的收藏表情</div></div>
-      ${Array.isArray(f) && f.length ? `<div class="chip-list">${f.slice(0, 40).map((t) => `<span class="chip mono">${esc(String(t.token || t).slice(0, 12))}</span>`).join('')}</div>` : ''}
-      <div class="hint">${n == null ? '机器人没在跑（或这一版还没下发收藏快照）—— 所以这里不显示数字。' : ''}</div>
-    </div>`;
-  },
+  /* `faces` 渲染器已于 2026-10-17 删除：收藏表情随「发 QQ 表情」能力一起下线。 */
   /**
    * 群友档案：**真数据**（2026-10-02 起）。
    * 数据源 `data/memory/people/*.json`（插件 群友印象 在写），
@@ -2535,7 +3106,7 @@ function markTiltables() {
 /* ══════════════════════════════════════════════════════════════════════════
    档位刻度的交互挂载（2026-10-02）
    ══════════════════════════════════════════════════════════════════════════
-   ⚠️ **整行一个 handler，不是每格一个** —— 这条是 Bencho 原文的判例，值得抄：
+   ⚠️ **整行一个 handler，不是每格一个** —— 这条判例值得记住：
 
      每格各挂 onPointerEnter 是最顺手的写法，而它**只对鼠标有效**。
      触摸会被"起始命中"的那一格捕获：手指从一端划到另一端，浏览器把后续所有
@@ -2915,7 +3486,7 @@ const INLINE_ACTIONS = [
   'tag.del', 'models.load', 'model.pick', 'model.free',
   'sessions.load', 'sessions.open', 'chats.load', 'chats.open',
   'logs.load', 'audit.load', 'packages.load',
-  'route.up', 'route.down', 'route.del', 'route.add', 'route.reset', 'route.undo',
+  'route.up', 'route.down', 'route.del', 'route.add', 'route.reset', 'route.undo', 'route.clean',
   'plugin.toggle', 'plugin.set', 'memlist.set', 'memlist.del', 'memlist.add',
   'sched.set', 'skill.set', 'skill.del',
   'holidays.add', 'holidays.del', 'holidays.kind', 'holidays.ren',
@@ -3016,7 +3587,7 @@ document.addEventListener('click', async (ev) => {
     try { const r = await api('/api/zhipu/packages?refresh=1'); S.extra.packages = r; paintPage(false); toast('已刷新', 'ok'); } catch (e) { toast(e.message, 'bad'); } return;
   }
   if (a === 'route.up' || a === 'route.down' || a === 'route.del' || a === 'route.add'
-    || a === 'route.reset' || a === 'route.undo') {
+    || a === 'route.reset' || a === 'route.undo' || a === 'route.clean') {
     return routeAction(a, p);
   }
   if (a === 'plugin.toggle') {
@@ -3069,11 +3640,35 @@ document.addEventListener('click', async (ev) => {
   if (a === 'zip.pick') { document.querySelector('[data-a="zip.file"]')?.click(); return; }
   if (a === 'export.all') return doExport('all');
   if (a.startsWith('export.')) return doExport(a.slice(7));
-  if (a === 'field' || a === 'field-local') return; // 由 change 处理
+  // ⚠️ `feat` 与 `holidays.ren` 同样由 change 处理（2026-10-15 修 · B1 / Issue #5）：
+  //    它们是 `data-a` 动作，click 会先于 change 冒到这里；此前只登记了 `field` 两个，
+  //    于是点任一能力开关（识图 / 联网 / 表情）都会**同时**弹一条红字
+  //    「未实现的动作：feat」—— 设置其实由 change 正常保存了（另一条 toast 是真的），
+  //    但红字会让用户以为功能坏了。这两个名字必须与 `INLINE_ACTIONS` 逐项对齐。
+  if (['field', 'field-local', 'feat', 'holidays.ren'].includes(a)) return; // 由 change 处理
 
   const fn = ACTIONS[a];
   if (!fn) { toast(`未实现的动作：${a}`, 'bad'); return; }
   return fn(p, ev);
+});
+
+/* 进度条拖动中的**视觉**同步（2026-10-17）。
+   ⚠️ 只改视觉，不写草稿：`change` 才是提交点（与输入框一致 —— 拖到一半就登记改动，
+      会让保存条在用户还在拖的时候闪，也会让"拖出去又拖回来"留下一条假改动）。
+   ⚠️ 用 document 级委托而不是逐元素绑：`paintPage()` 每 3 秒重建 `#page`，
+      绑在节点上的监听会随节点一起消失（本项目在终端滚动条上踩过同款）。 */
+document.addEventListener('input', (ev) => {
+  const el = ev.target;
+  if (!el || el.type !== 'range' || el.dataset.a !== 'field') return;
+  const x = S.reg.get(el.dataset.id);
+  if (!x || x.t !== 'range') return;
+  const box = el.closest('.rng');
+  if (!box) return;
+  const v = rngValOf(x, el.value);
+  box.style.setProperty('--p', `${(rngPosOf(x, v) / 10).toFixed(2)}%`);
+  const out = box.querySelector('.rng-val');
+  if (out) out.textContent = rngFmt(x, v);
+  el.setAttribute('aria-valuetext', rngFmt(x, v));
 });
 
 document.addEventListener('change', async (ev) => {
@@ -3087,6 +3682,13 @@ document.addEventListener('change', async (ev) => {
       toast(r.autoDisabledMsg || `${j(S.state, ['featureLabels', feat], feat)} 已${el.checked ? '打开' : '关闭'}`,
         r.autoDisabledMsg ? 'warn' : 'ok');
       await refresh(true);
+      // ⚠️ 服务端驳回（当前模型不支持该能力，已自动关回去）时，重画会被**自己**挡住
+      //    （2026-10-15 修 · B2 / Issue #5）：`softPaint` 的守卫判到 `busyTyping()`
+      //    为真就跳过重画（防打字时光标被吞）—— 而刚点的复选框正好就是
+      //    `document.activeElement` ⇒ 重画被自己挡住，开关仍显示为"开"，
+      //    要等焦点移开 + 一轮轮询（3 秒）才自己变回关。
+      //    这里主动 `el.blur()` 再刷一次，让界面立刻与后端一致。
+      if (r.autoDisabledMsg) { el.blur(); await refresh(true); }
     } catch (e) { toast(`失败：${e.message}`, 'bad'); await refresh(true); }
     return;
   }
@@ -3095,6 +3697,10 @@ document.addEventListener('change', async (ev) => {
     if (!x) return;
     let v = el.type === 'checkbox' ? el.checked : el.value;
     if (el.type === 'number' || (x.t === 'number')) v = Number(v);
+    /* 进度条的 `value` 是**位置**（0–1000），不是业务值 —— 提交前必须经同一张
+       换算表落回分钟，否则会把"位置"当"分钟"存进配置（拖到最右 = 300 分钟，
+       而不是 5 小时；症状是"拖满了却只有 5 小时以外的某个值"）。 */
+    if (x.t === 'range') v = rngValOf(x, el.value);
     if (x.t === 'tags') v = String(v).split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
     if (a === 'field-local' || (!x.save && !x.bind && !x.bindSys)) { S.volatile[x.id] = v; paintPage(false); return; }
     if (x.save) {
@@ -3102,7 +3708,10 @@ document.addEventListener('change', async (ev) => {
         const req = x.save(v, S.state || DEMO);
         if (!req) return;
         await post(req.url, req.body);
-        toast('已生效', 'ok');
+        // ⚠️ 提示语可由控件声明（`savedMsg`）覆盖 —— "下次启动生效"这类设置上，
+        //    通用文案「已生效」是句**假话**（保存成功 ≠ 立刻换了形态），
+        //    而它会直接误导用户去刷新找变化。没声明的照旧用「已生效」。
+        toast(x.savedMsg || '已生效', 'ok');
         await refresh(true);
       } catch (e) { toast(`失败：${e.message}`, 'bad'); await refresh(true); }
       return;
@@ -3306,12 +3915,50 @@ function routeAction(a, p) {
     return saveRoute(u.ids);
   }
   else if (a === 'route.reset') return resetRoute();
+  else if (a === 'route.clean') return cleanRoute();
   saveRoute(list);
 }
+/**
+ * 「恢复实测最优」。
+ *
+ * ⚠️ 以前写死取 `state.zhipuDefaultChain` —— 在**千问**页面上按一下，提交上去的是一条
+ *    GLM 链（`/api/config` 对千问刻意放行跨家名字，见 `modelProviderMismatch`），
+ *    于是得到"选了千问、降级链全是 GLM、一条都打不通"这种状态（2026-10-17 用户截图）。
+ *    现在按**当前这家**取默认链（`state.defaultChain`，判据住 `models.js` 的 `defaultChainOf`）。
+ * ⚠️ `defaultChain` **含主模型**，而线路板存的是主模型**之后**的那几条
+ *    （`/api/config` 会再把与主模型重复的静默剔掉），所以这里先把它滤掉。
+ */
 async function resetRoute() {
-  const def = j(S.state, ['zhipuDefaultChain'], null);
-  if (!Array.isArray(def)) return toast('后端没下发默认线路', 'warn');
-  saveRoute(def.slice());
+  const s = S.state || DEMO;
+  let def = j(s, ['defaultChain'], null);
+  if (!Array.isArray(def) && j(s, ['config', 'provider']) === 'zhipu') {
+    def = j(s, ['zhipuDefaultChain'], null);   // 老后端没下发 defaultChain 时的回落
+  }
+  if (!Array.isArray(def) || !def.length) {
+    return toast('这家没有「实测最优」的默认线路 —— 从下面的候选模型里挑几条加进来', 'warn');
+  }
+  const cur = String(j(s, ['config', 'model'], '') || '');
+  saveRoute(def.filter((m) => m !== cur));
+}
+/**
+ * 「清掉不属于这家的」：把链里那些**这一家的模型清单里没有**的条目剔掉再存。
+ *
+ * 只为已经存坏的老数据准备（新数据在 `/api/config` 就被拦了）。
+ * 判据与后端同源：`state.modelCaps[provider]` 的键（后端 `modelsOfProvider()` 下发的同一份）。
+ */
+async function cleanRoute() {
+  const s = S.state || DEMO;
+  const provider = j(s, ['config', 'provider'], '');
+  /* ⚠️ 本机 / 自建网关**不清**：模型名是那边的推理服务自己起的，我们手上没有名单，
+     "清单里没有"在这两种场合不构成依据（与后端 `chainForProvider` 同一条判据）。 */
+  if (provider === 'local' || provider === 'other') {
+    return toast('这家（本机 / 自建网关）的模型名由服务自己定，没有"不属于这家"这回事', 'warn');
+  }
+  const known = new Set(Object.keys(j(s, ['modelCaps', provider], null) || {}));
+  const list = j(s, ['config', 'fallbackModels'], []) || [];
+  const kept = known.size ? list.filter((m) => known.has(m)) : list;
+  if (kept.length === list.length) return toast('这条链里都是这家的模型，不用清', 'warn');
+  await saveRoute(kept);
 }
 async function saveRoute(list) {
   if (!S.online) return DEMO_BLOCK();
@@ -3436,5 +4083,52 @@ window.addEventListener('resize', () => {
 
   paintPage(true);
   refresh();
+  openUpdateStream();
   setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 3000);
+})();
+
+/* ════════════════════════════════════════ 窗口几何跟踪（2026-10-16）════
+   独立窗口里（启动器在 URL 上带了 `__win=1` 标记）把「窗口的位置与尺寸」持续回报给
+   面板 —— 下次启动由 src/launch-mode.js 用 --window-size / --window-position 还原：
+   关掉再开，窗口回到你上次放的地方，不再每次都被重置。
+
+   ⚠️ 只在带标记的窗口里启用：普通标签页的"窗口"是**整个浏览器**（含标签栏与地址栏），
+      上报它会把"上次独立窗口的位置"污染成浏览器窗口的样子 —— 两端都会觉得诡异。
+   ⚠️ 三条纪律：① 节流（resize 后 400ms / 位置没有事件可听所以 2.5s 轮询 / 关闭前
+      pagehide 补最后一枪）；② 值没变不发；③ **任何失败都吞掉** —— 跟踪是锦上添花，
+      绝不许打断页面。
+   ⚠️ 标记字面量 `__win` 与 src/launch-mode.js 的 WIN_QUERY 必须逐字相容 —— check-wb §104 钉着。 */
+(function trackWindowGeometry() {
+  let marked = false;
+  try { marked = location.search.includes('__win'); } catch { marked = false; }
+  if (!marked) return;
+
+  let last = '';
+  const send = () => {
+    try {
+      const g = {
+        x: Math.round(window.screenX), y: Math.round(window.screenY),
+        w: Math.round(window.outerWidth), h: Math.round(window.outerHeight),
+      };
+      const s = JSON.stringify(g);
+      if (s === last) return; // 值没变不发（2.5s 轮询因此几乎不产生流量）
+      last = s;
+      fetch('/api/panel/window', {
+        method: 'POST',
+        headers: Object.assign(
+          { 'Content-Type': 'application/json' },
+          HAS_TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+        ),
+        body: s,
+        keepalive: true, // 关窗那一刻也能把最后一枪打出去
+      }).catch(() => {});
+    } catch { /* 纪律 ③：永不打断页面 */ }
+  };
+
+  let t = 0;
+  const soon = () => { clearTimeout(t); t = setTimeout(send, 400); };
+  window.addEventListener('resize', soon);
+  window.addEventListener('pagehide', send);
+  setTimeout(send, 1500); // 首报：窗口刚开出来，几何已定型
+  setInterval(send, 2500); // 位置变化没有事件可听，靠轮询兜底
 })();

@@ -56,8 +56,11 @@ export const THINK = {
 
 /** 智谱认的思考强度档（就是官方 reasoning_effort 的取值域） */
 const ZHIPU_LEVELS = ['low', 'high', 'max'];
-/** DeepSeek 的 reasoning_effort 档位不同，它没有 max、有 medium */
-const DEEPSEEK_LEVELS = ['low', 'medium', 'high'];
+/** DeepSeek 的 reasoning_effort 三档（2026-10-17 按官方《思考模式》页核对：
+ *  取值是 `low / high / max`，**没有 medium**；medium 会被服务端映射到 high。
+ *  旧表写的是 low/medium/high —— 于是界面上"中档"发出去是 medium（被映射成 high），
+ *  "最高档"根本不存在（`max` 发不出去）⇒ "选强度其实没发生什么"。 */
+const DEEPSEEK_LEVELS = ['low', 'high', 'max'];
 
 /**
  * 智谱模型档案。
@@ -166,11 +169,23 @@ export const QWEN_MODEL_META = {
   'qwen-long': { functions: false, think: THINK.OFFABLE, efforts: QWEN_LEVELS, webSearch: false },
 };
 
-/** DeepSeek 现役模型：都没有联网内置工具，也都没有视觉模型 */
+/**
+ * DeepSeek 现役模型（2026-10-17 按官方《模型 & 价格》《图像理解》页核对）。
+ *
+ * ⚠️ **`deepseek-flash` 能看图**（= V4.1-Flash-1017，2026-09-10 起原生多模态；
+ *    官方给的就是 OpenAI 的 `image_url` 内容块 —— 与 `brain.js` 发的形状完全一致）。
+ *    旧表写 `vision: false`，于是群里有人发图，它永远只收到 `[图片]`。
+ * `deepseek-v4-pro` 仍是纯文本（官方表里"图像理解：不支持"），别顺手也打开。
+ *
+ * ⚠️ 联网：DeepSeek **没有** chat 里的 `web_search` 工具。它 2026-10-17 上线的是
+ *    **独立接口** `POST /v1/tools/search`（5 元/1000 次）—— 与这个能力位表达的不是同一件事，
+ *    所以 `webSearch` 仍是 false（开了会 400）。要接它得单独写一条调用链。
+ */
 const DEEPSEEK_MODEL_META = {
-  'deepseek-flash': { functions: true, think: THINK.OFFABLE, efforts: DEEPSEEK_LEVELS, webSearch: false, vision: false },
+  'deepseek-flash': { functions: true, think: THINK.OFFABLE, efforts: DEEPSEEK_LEVELS, webSearch: false, vision: true },
   'deepseek-v4-pro': { functions: true, think: THINK.OFFABLE, efforts: DEEPSEEK_LEVELS, webSearch: false, vision: false },
-  // 官方已停用，会静默跳到 flash。留着是为了让历史配置不报错
+  // 旧名（官方 2026-07-24 起停用，请求会被路由到 V4.1 Flash）。留着是为了让历史配置不报错，
+  // 不再进可选项（见 BUILTIN_MODELS / §目录）。
   'deepseek-chat': { functions: true, think: THINK.OFFABLE, efforts: DEEPSEEK_LEVELS, webSearch: false, vision: false },
   'deepseek-reasoner': { functions: true, think: THINK.ALWAYS, efforts: [], webSearch: false, vision: false },
 };
@@ -205,7 +220,7 @@ function metaOf(provider, model) {
  *   think: string,             THINK 三态
  *   thinkModes: {auto:boolean, off:boolean, on:boolean},
  *   levels: string[],          可用的强度档（空 = 不分档，界面上那一排整行不显示）
- *   features: {webSearch:boolean, vision:boolean, stickers:boolean, functions:boolean},
+ *   features: {webSearch:boolean, vision:boolean, functions:boolean},
  *   reasons: Object<string,string>  不可用的原因（给界面直接显示，中文）
  * }}
  *
@@ -276,7 +291,8 @@ export function capabilitiesOf(provider, model, declared) {
     reasons.webSearch = provider === 'zhipu'
       ? '这个模型实测不认联网工具：参数会被收下、也不报错，但搜索结果不会进上下文（等于白开）。'
       : provider === 'deepseek'
-        ? 'DeepSeek 的接口没有联网工具，开了会让每个请求被服务端 400 拒掉。'
+        ? 'DeepSeek 的对话接口没有内置搜索工具，开了会让每个请求被服务端 400 拒掉。'
+          + '（它 2026-10 上线的「网页搜索与抓取」是**独立接口**、按次计费，不在这个开关里。）'
         : provider === 'qwen'
           // ⚠️ 文案要与事实相符：千问**有**联网能力，只是它那套接口形状不是这个能力位
           //    能表达的东西（这个位只管智谱那个 `{type:'web_search'}`）。写成"千问不能联网"
@@ -288,7 +304,7 @@ export function capabilitiesOf(provider, model, declared) {
     reasons.vision = provider === 'zhipu'
       ? '这个模型不能看图（实测发图会返回 400「content.type 参数非法」）。'
       : provider === 'deepseek'
-        ? 'DeepSeek 现役两款都是纯文本模型，看不了图。'
+        ? '这个型号不支持图像理解（DeepSeek 表里只有 deepseek-flash 标了"图像理解：支持"，v4-pro 不支持）。'
         : provider === 'qwen'
           // 与 webSearch 那条同一取向：说清楚是"我们没验证过"，不是"它做不到"。
           ? '千问的能力表里还没有登记过能看图的型号（接入时只登记了文本档），所以按保守取 false。要用识图得先实测一个 VL 型号。'
@@ -303,7 +319,6 @@ export function capabilitiesOf(provider, model, declared) {
         ? '千问这张表是文档口径（不是实测），没登记的型号一律按保守取 false 不携带 tools —— 在表里的那 8 个型号都给了 true。'
         : '这个模型没有通过 function calling 实测（或未能判定），按保守取 false 不携带 tools。';
   }
-  reasons.stickers = '';
 
   return {
     known,
@@ -317,7 +332,7 @@ export function capabilitiesOf(provider, model, declared) {
       on: think !== THINK.NONE,
     },
     levels: think === THINK.NONE ? [] : [...levels],
-    features: { webSearch, vision, stickers: true, functions },
+    features: { webSearch, vision, functions },
     reasons,
   };
 }
@@ -386,7 +401,6 @@ export function resolveFeatures(provider, model, features, declared) {
   const want = {
     webSearch: features?.webSearch === true,
     vision: features?.vision === true,
-    stickers: features?.stickers === true,
   };
   const dropped = [];
   const out = { ...want };
@@ -400,4 +414,4 @@ export function resolveFeatures(provider, model, features, declared) {
 }
 
 /** 给面板用的中文名（提示语里要能直接读） */
-export const FEATURE_LABEL = { webSearch: '联网查询', vision: '识图', stickers: '发 QQ 表情' };
+export const FEATURE_LABEL = { webSearch: '联网查询', vision: '识图' };

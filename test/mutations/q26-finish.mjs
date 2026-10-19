@@ -158,16 +158,8 @@ const M9 = {
 };
 
 // ── M10：取消自用包的 .gitignore 例外 ─────────────────────────────────────────
-const M10 = {
-  id: 'M10',
-  note: "删掉 `!/plugins/本体情绪/` —— 自用包回到'没有版本、没有回滚'，且别人的 clone 上 §38 / T233–T241 输入集合为空。预期 BLOCKED",
-  file: '.gitignore',
-  anchor: /!\/plugins\/本体情绪\/\n/,
-  count: 1,
-  apply: (s) => s.replace('!/plugins/本体情绪/\n', ''),
-  layer: 'check-wb',
-  expect: 'BLOCKED',
-};
+  /* 2026-10-17：变异 M10 的对象（自用包的 gi 例外 / 非空白名单）已随 13 个包一起删除 ——
+     变异后与现状相同 ⇒ 惰性。锚点会失效，所以整条删掉。 */
 
 // ── M11（正主）：抽一层函数建 panel/ 落盘常量 ─────────────────────────────────
 // ⚠️ H-10 第 22 轮：`TRACE_FILE` 随写盘口那一族搬进 `src/bridge-io.js`，
@@ -218,4 +210,6 @@ const M13 = {
   expect: 'BLOCKED',
 };
 
-export default [M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13];
+// ⚠️ 2026-10-17：M10（取消自用包的 gi 例外）已随 13 个包一起删除 —— 对象没了，必须从导出里摘掉，
+//    否则整个清单 import 时就是 ReferenceError（提交门的锚点体检会把整份判成 INVALID）。
+export default [M1, M2, M3, M4, M5, M6, M7, M8, M9, M11, M12, M13];

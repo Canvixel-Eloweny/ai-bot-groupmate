@@ -122,7 +122,7 @@ export async function startNapcat({ qq = '' } = {}) {
   const launcher = findNapcatLauncher();
   if (!launcher) {
     bad('找不到 NapCat 的启动器 —— 协议端还没装好');
-    say('  双击 1-SETUP.bat 会自动把它装好（约 30MB，需要联网）。');
+    say('  双击 1-SETUP.bat 会自动把它装好（约 30–36MB，需要联网；离线可自己放包，见 napcat.json 的 manual）。');
     say(`  装好后应该能在 ${path.relative(ROOT, NAPCAT_DIR)}\\ 下看到启动器。`);
     return { started: false, error: 'no-launcher' };
   }
@@ -181,9 +181,14 @@ export async function startNapcat({ qq = '' } = {}) {
   //    正解是 `launch-napcat-hidden.vbs`：`WScript.Shell.Run(cmd, 0, True)` 建的是
   //    **隐藏的控制台**（不是没有控制台），协议端继承它 ⇒ 全程无窗口。
   //    这与 launch-hidden.vbs（面板自己那条链）是同一套机制，已在生产验证过。
-  const vbs = path.join(ROOT, 'launch-napcat-hidden.vbs');
-  if (!exists(vbs)) {
-    appendLog(`✗ 包里找不到 launch-napcat-hidden.vbs（应在包根目录）—— 协议端没起`);
+  const vbsCands = [
+    path.join(ROOT, 'launcher', 'launch-napcat-hidden.vbs'),
+    path.join(ROOT, 'launch-napcat-hidden.vbs'),
+    path.join(ROOT, 'packaging', 'windows', 'launcher', 'launch-napcat-hidden.vbs'),
+  ];
+  const vbs = vbsCands.find((p) => exists(p));
+  if (!vbs) {
+    appendLog(`✗ 找不到 launch-napcat-hidden.vbs（试过：${vbsCands.join(' / ')}）—— 协议端没起`);
     return { started: false, error: 'no-vbs' };
   }
   const wscript = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'wscript.exe');

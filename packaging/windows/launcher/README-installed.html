@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estrella Bot —— 使用说明（Windows 安装版）</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1b1f24; --dim:#5b6672; --line:#e3e7ec;
+    --accent:#2f6feb; --accent-soft:#eaf1ff; --ok:#1a7f4b; --ok-soft:#e8f6ee;
+    --danger:#c02626; --danger-soft:#fdecec; --code:#f2f4f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.7 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;}
+  .wrap{max-width:880px;margin:0 auto;padding:32px 20px 72px}
+  header{border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:24px}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:.2px}
+  .sub{color:var(--dim);font-size:14px}
+  h2{font-size:19px;margin:34px 0 12px;padding-left:10px;border-left:3px solid var(--accent)}
+  p{margin:8px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin:14px 0}
+  .banner{border-radius:12px;padding:14px 18px;margin:16px 0;font-weight:600}
+  .banner.bad{background:var(--danger-soft);color:var(--danger);border:1px solid #f3c8c8}
+  .banner.note{background:var(--accent-soft);color:#1b3f86;border:1px solid #cddffb;font-weight:500}
+  code{background:var(--code);padding:1px 6px;border-radius:5px;font-family:"SF Mono",Consolas,monospace;font-size:13px}
+  .steps{counter-reset:s;list-style:none;padding:0;margin:14px 0}
+  .steps>li{counter-increment:s;position:relative;padding:14px 18px 14px 62px;background:var(--card);
+    border:1px solid var(--line);border-radius:12px;margin:10px 0}
+  .steps>li::before{content:counter(s);position:absolute;left:16px;top:14px;width:30px;height:30px;
+    border-radius:50%;background:var(--accent);color:#fff;font-weight:700;font-size:15px;
+    display:flex;align-items:center;justify-content:center}
+  .steps b{display:block;margin-bottom:2px}
+  .muted{color:var(--dim);font-size:13px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;background:var(--card);
+    border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:14px}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#f0f3f7;font-weight:600;font-size:13px;color:var(--dim)}
+  tr:last-child td{border-bottom:none}
+  ul{margin:8px 0 8px 22px;padding:0}
+  li{margin:4px 0}
+  footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Estrella Bot <span class="muted">Windows 安装版</span></h1>
+  <div class="sub">安装器一键装好 · 桌面图标一键起全套 · 开源免费 · 不需要激活</div>
+</header>
+
+<div class="banner bad">
+  开始前只需记住两条：① <b>一定用小号</b>（第三方协议端存在封号风险，别拿主号冒险）；
+  ② <b>第一次扫码前，先把电脑端 QQ 完全退出</b>（连右下角托盘一起退）。
+</div>
+
+<h2>一、第一次使用（3 步）</h2>
+<ol class="steps">
+  <li><b>双击桌面上的「Estrella Bot」图标</b>
+    浏览器会打开控制台；协议端（NapCat）同时被<b>自动在后台拉起</b> ——
+    没有黑窗口、任务栏上也不会多按钮，你完全不用管它，更<b>不需要进任何文件夹</b>。</li>
+  <li><b>在控制台的「协议端」页，用手机 QQ 扫码登录小号</b>
+    扫过这一次，以后开机自动登录，不用再扫。</li>
+  <li><b>填好「放行的群号」和「模型 API Key」，点右上角「一键启动」</b>
+    机器人不会自己开口说话 —— 要你点这一次「一键启动」（这是刻意的安全设计，不是坏了）。</li>
+</ol>
+
+<div class="banner note">
+  以后每天：双击桌面图标就行。要停：在控制台里点「结束本次运行」—— 它是真退出，不留后台进程。
+</div>
+
+<h2>二、提示「协议端未安装」怎么办</h2>
+<div class="card">
+  安装时没选下载、或下载因网速中途收工，会看到这句。两条出路，都不用联网之外的额外操作：
+  <ul>
+    <li><b>重跑安装器</b>（<code>Estrella-Bot-Setup-…exe</code>，群文件里有）：在「协议端」那一页
+      二选一 —— 已经有包就选<b>解压好的文件夹</b>（全程离线），没有就勾<b>现在下载</b>（有进度和速度显示）。</li>
+    <li>或者手动放包：把解压好的 <code>NapCat.Shell</code> 文件夹整个放进
+      <code>%LOCALAPPDATA%\EstrellaBot\userdata\napcat\</code>，再双击桌面图标。</li>
+  </ul>
+  <span class="muted">注意：NapCat 官方发布的是 <code>NapCat.Shell.zip</code>（约 30–36MB）；
+  名字里带 <code>OneKey</code> 的那个只有 994KB，是安装壳，不是本体。</span>
+</div>
+
+<h2>三、更新与回滚</h2>
+<div class="card">
+  控制台会自动检查新版本，提示后<b>点两次确认才会安装</b> —— 它绝不会背着你更新。
+  新版本万一连续启动失败，会自动退回上一个版本继续用；你的配置和聊天记录在更新、回滚、
+  重装全程都不动（程序和-data 是分开存放的）。
+</div>
+
+<h2>四、卸载</h2>
+<div class="card">
+  在 Windows「设置 → 应用」里卸载，或双击安装目录里的 <code>uninstall.exe</code>。
+  <b>默认保留</b>你的配置与聊天记录（换台电脑登录同一个号还能接着用）；
+  只有你在卸载最后一步明确勾「同时删除用户数据」并二次确认，数据才会被删。
+</div>
+
+<h2>五、常用入口</h2>
+<table>
+  <tr><th>想做什么</th><th>点哪里</th></tr>
+  <tr><td>启动全套（控制台 + 协议端）</td><td>★ 桌面「Estrella Bot」图标</td></tr>
+  <tr><td>看运行状态 / 日志</td><td>控制台页面（<code>http://127.0.0.1:8788</code>）</td></tr>
+  <tr><td>停掉一切</td><td>控制台右上角「结束本次运行」</td></tr>
+  <tr><td>补装 / 换协议端来源</td><td>重跑安装器，在「协议端」页选</td></tr>
+  <tr><td>卸载（保留数据）</td><td>设置 → 应用 → Estrella Bot → 卸载</td></tr>
+</table>
+
+<footer>
+  Estrella Bot 0.1.3 · 本文件对应<b>安装版</b>（装进「本地磁盘 → 用户目录」的那种）。
+  第三方组件与许可见同目录 <code>THIRD-PARTY-NOTICES.md</code> 与 <code>LICENSE</code>。
+</footer>
+
+</div>
+</body>
+</html>

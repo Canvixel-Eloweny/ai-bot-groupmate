@@ -118,6 +118,11 @@ export class LlmClient {
      */
     this._toolsGated = new Set();
     /**
+     * 已就"联网开关开着、这个模型不认"告警过的模型集合（2026-10-17）。
+     * 与 `_toolsGated` 同款：只去重告警，不参与任何业务判定。
+     */
+    this._webSearchGated = new Set();
+    /**
      * 最近一次**成功**的请求里，图片是不是被剥掉了（Q26b）。
      * `null` = 这次没剥（图片正常发了，或压根没图）。
      * 与 `lastUsage` 同族：只在 `chat()` 里对外发布，`chatWithUsage()` 旁路各取各的。
@@ -154,6 +159,8 @@ export class LlmClient {
      * 不限一次的告警等于把日志刷满，而日志被刷满之后**真正的异常就看不见了**。
      */
     this._toolsGated = new Set();
+    // 联网的"不认"记录同理：换了模型要重新告诉他一次（与上面那条同源）
+    this._webSearchGated = new Set();
     }
     this.cfg = { ...this.cfg, ...cfg };
     return this;
@@ -436,6 +443,20 @@ export class LlmClient {
       );
     }
 
+    // ── 联网开关开着、这个模型却不认：同样必须出声（2026-10-17 补）───────────
+    // 症状与上面那条同一类：用户打开「联网查询」→ `toolsForRequest()` 按能力位把它
+    // 摘掉 → 请求体里没有 `tools`，回答照旧、日志照旧、界面照旧。用户以为"联网开了"，
+    // 实际一次都没搜过（实测 glm-4.6v 就属于这一类：参数收得下，结果不注入）。
+    // ⚠️ 只**说出来**，不改判定方向：能力位是实测出来的，判宽了会被服务端 400。
+    // 降级链换到不支持联网的模型也会命中 —— 每模型一次，不刷屏。
+    if (this.cfg.features?.webSearch === true && !caps?.features?.webSearch && !this._webSearchGated.has(model)) {
+      this._webSearchGated.add(model);
+      log.warn(
+        `${model}（provider=${this.cfg.provider}）不认内置联网工具 → 本轮 web_search **不会发出**，`
+          + '「联网查询」对它等于没开（判据在 src/model-caps.js 的 webSearch 位）。换一个标了 webSearch 的型号才有效。'
+      );
+    }
+
     // ⚠️ **不许给 body 加 `tool_choice`**（第 46 轮实测，见 model-caps.js 的实测记录）。
     //    DeepSeek 三款在思考模式下收到具名 tool_choice 一律 400：
     //      `"Thinking mode does not support this tool_choice"`
@@ -512,9 +533,14 @@ export class LlmClient {
       const t = this.cfg.thinking || {};
       usage = data?.usage
         ? {
-            // 用「实际请求的那个模型」记账。服务端不回 model 字段时，
-            // 至少还能如实记下我们降级到了谁，花费统计才不会被骗。
-            model: data.model || model,
+            // ⚠️ 以**我们请求的** `model` 形参为准（2026-10-15 修 · A4 / Issue #5）。
+            //    它才是权威、也才是计费口径。此前优先信服务端回显 `data.model`，
+            //    而中转站会把模型名截断 / 换别名（`gemini-3.8-flash-high` → `…-n`）
+            //    ⇒ `usage.model` 记成别名 ⇒ `src/index.js` 拿它算
+            //    `downgraded: used !== cfg.llm.model` ⇒ **误报"降级了"**（实际没降级）。
+            //    服务端回显另存 `served`，只作诊断，**不参与任何判定**。
+            model,
+            served: data.model || '',
             base: this.cfg.baseUrl, // 记下来源，才能判断是不是本机（不花钱）
             // 服务商也**写入时定死**：统计时就不必再从 baseUrl 反推，也就不会认错对象。
             // 取 cfg.provider —— 那是 config.js 按 baseUrl 判好之后放进来的唯一那份，

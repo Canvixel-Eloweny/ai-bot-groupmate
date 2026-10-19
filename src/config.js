@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { PROGRAM_ROOT, CONFIG_FILE, PERSONA_DIR } from './user-root.js';
 import scoped from './logger.js';
 import { readCustom } from './custom-config.js';
 import { PACE_DEFAULTS } from './pace.js';
@@ -25,14 +25,13 @@ import { customBrainsOf, materializeBrain } from './custom-brain.js';
 import { stripBom } from './plugin-manifest.js';
 
 const log = scoped('config');
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * 扩展包可以用的**长期数据目录**（第 47 轮 B12e-3 · EX-DATADIR）。
  *
  * ⚠️ 这个名字不是我们起的，是**生态约定**：真实扩展包（13 个里 6 个）直接
- *    `import { DATA_DIR } from '../../src/config.js'` —— 参考实现
- *    （QQ-Agent 0.4 preview · `src/config.js:24`）就是这么导出的。
+ *    `import { DATA_DIR } from '../../src/config.js'` —— 生态里那份实现
+ *    就是这么导出的。
  *    导出名一旦不同，它们**一行都改不了地加载失败**（smoke T125 红的根因）。
  *
  * 语义：**机器人自己的长期数据**（bot-state.json、图库、印象档…），
@@ -46,9 +45,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  *      ③ **本行的 `QQBOT_DATA_DIR` env 覆盖**（测试指去 tmp，不碰用户真数据）
  *    三件都由 `scripts/check-wb.mjs` 的契约盯着。
  */
-export const DATA_DIR = process.env.QQBOT_DATA_DIR
-  ? path.resolve(process.env.QQBOT_DATA_DIR)
-  : path.join(ROOT, 'data');
+export { DATA_DIR } from './user-root.js';
 
 function readJson(file) {
   // ⚠️ 第 58 轮 · 真机实测：**带 BOM 的 config.json 会让机器人以一句看不懂的 JSON 报错起不来**
@@ -206,7 +203,7 @@ function resolveSecretMap(v) {
 export function loadConfig(overridePath) {
   const file = overridePath
     ? path.resolve(overridePath)
-    : path.join(ROOT, fs.existsSync(path.join(ROOT, 'config.json')) ? 'config.json' : 'config.example.json');
+    : (fs.existsSync(CONFIG_FILE) ? CONFIG_FILE : path.join(PROGRAM_ROOT, 'config.example.json'));
 
   if (!fs.existsSync(file)) throw new Error(`配置文件不存在: ${file}`);
   // H-08（第 10 轮 · 开源前审查）：它是**唯一**持仓明文的设置文件，
@@ -345,7 +342,6 @@ export function loadConfig(overridePath) {
   const isLocalLLM = isLocalBase(baseUrl);
 
   const cfg = {
-    root: ROOT,
     onebot: {
       wsUrl: String(raw.onebot?.wsUrl ?? 'ws://127.0.0.1:3001'),
       // 协议端令牌同样是凭据，同样支持 `env:NAME`（B9 · K-ENV）。
@@ -377,14 +373,15 @@ export function loadConfig(overridePath) {
       //   mode  auto=不干预 / off=强制关 / on=强制开
       //   level low|medium|high —— 只有云端(DeepSeek)支持分档，本机模型只有开/关
       thinking: normalizeThinking(raw.llm?.thinking),
-      // 三个能力开关，默认都关，由用户在面板上自己打开
+      // 两个能力开关，默认都关，由用户在面板上自己打开
       features: {
         // 联网搜索：走智谱内置的 web_search 工具，模型能查实时信息（梗、新闻、人物）
         webSearch: raw.llm?.features?.webSearch === true,
         // 识图：群里有人发图时，把图交给多模态模型看（需要模型支持，如 GLM-4.6V-Flash）
         vision: raw.llm?.features?.vision === true,
-        // 表情：允许机器人在回复里插 QQ 内置表情（[face:ID] 语法）
-        stickers: raw.llm?.features?.stickers === true,
+        /* `stickers`（发 QQ 表情）已于 2026-10-17 删除：能力整体下线。
+           旧 config.json 里那一格**读到了也不认**（这里不再映射），
+           机器人不会因为它为 true 就去发表情 —— 发送侧已经不存在那条路。 */
       },
       // ── 自定义大脑（2026-10-07）──
       // ⚠️ **刻意不进 `presets`**：那张表的形状是"服务商 → 一套设置"，而自定义是
@@ -552,7 +549,7 @@ function normalizeThinking(v) {
 
 function loadPersona(relFile) {
   if (!relFile) return '';
-  const file = path.resolve(ROOT, relFile);
+  const file = path.resolve(PERSONA_DIR, relFile);
   if (!fs.existsSync(file)) {
     log.warn(`人格文件不存在，将使用空人格: ${file}`);
     return '';

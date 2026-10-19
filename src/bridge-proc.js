@@ -78,7 +78,11 @@ export function isOurBridge(info = {}) {
   const cmd = String(info.cmd ?? '').trim();
   const cwd = String(info.cwd ?? '').trim();
   const execPath = String(info.execPath ?? '').trim();
-  const root = String(info.root ?? '').trim();
+  // 安装版升级后旧版机器人仍可能活着：同时认 current 与 previous 的程序根。
+  // `root` 保留给单根调用方（测试/旧调用点），两者等价。
+  const roots = (Array.isArray(info.roots) ? info.roots : [info.root])
+    .map((r) => String(r ?? '').trim())
+    .filter(Boolean);
 
   // ① 可执行文件
   const bin = execPath ? execPath.split(/[\\/]/).filter(Boolean).pop() || '' : '';
@@ -89,8 +93,8 @@ export function isOurBridge(info = {}) {
 
   // ③ 工作目录
   //    能取到就照旧比 —— 这是 macOS / Linux 上唯一的身份凭据（`lsof -d cwd`）。
-  if (cwd && root) {
-    if (!pathEq(cwd, root)) return { ours: false, reason: 'cwd-elsewhere' };
+  if (cwd && roots.length) {
+    if (!roots.some((r) => pathEq(cwd, r))) return { ours: false, reason: 'cwd-elsewhere' };
     return { ours: true, reason: 'ok' };
   }
   //    取不到 cwd 时退到一条**窄例外**（Windows 专用，判据在 `absEntryInRoot`）：
@@ -99,7 +103,7 @@ export function isOurBridge(info = {}) {
   //    命令行里的入口必须是**绝对路径**、且解析后正好是本仓的 `src/index.js`。
   //    ⚠️ 它**不放松 fail-closed**：相对入口（`node src/index.js`）在拿不到 cwd 时
   //       仍然判"不是"。松的只是"我们确知它是谁"的那一格。
-  if (absEntryInRoot(cmd, root)) return { ours: true, reason: 'ok-abs-entry' };
+  if (roots.some((r) => absEntryInRoot(cmd, r))) return { ours: true, reason: 'ok-abs-entry' };
   return { ours: false, reason: 'cwd-unknown' };
 }
 

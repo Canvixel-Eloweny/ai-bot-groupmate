@@ -17,7 +17,6 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import scoped from './logger.js';
 import { SIMILAR_THRESHOLD, similarity } from './custom-config.js';
 import { looksInjected } from './injection.js';
@@ -45,7 +44,6 @@ import {
 export { wantsRecall, RECALL_MAX } from './memory-record.js';
 
 const log = scoped('memory');
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // ── 读盘口与文件路径搬进了 `memory-store.js`（第 19 轮 · H-10 第二半）────────
 //

@@ -10,7 +10,8 @@
   · 角色立绘直接用 `assets/appicon-figure.png`（带透明通道，就是 App 图标用的那张）
 
 用法：
-    ~/.workbuddy/binaries/python/envs/default/bin/python scripts/make-social-preview.py <输出.png>
+    python3 scripts/make-social-preview.py <输出.png>
+    （只用 Pillow；系统 python3 已自带 PIL，不需要任何托管 venv —— 2026-10-17 改）
 """
 import sys
 from PIL import Image, ImageDraw, ImageFont

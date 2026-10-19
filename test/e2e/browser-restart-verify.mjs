@@ -65,11 +65,12 @@ console.log('\n【实测 3】新代码生效后，两处能力开关文字一致
     const ls = (id) => [...document.querySelectorAll('#' + id + ' label.chk span:not(.dotmini)')].map((s) => s.textContent.trim());
     return { a: ls('featRow'), b: ls('wbFeatRow'), hint: lastState.featureLabels };
   })()`);
-  check('机器人设置：' + r.a.join(' / '), r.a.length === 4);
-  check('工作台：' + r.b.join(' / '), r.b.length === 4);
+  check('机器人设置：' + r.a.join(' / '), r.a.length === 3);
+  check('工作台：' + r.b.join(' / '), r.b.length === 3);
   check('★ 两处文字逐字一致', JSON.stringify(r.a) === JSON.stringify(r.b), JSON.stringify(r));
   check('★ 文字来自后端下发的 featureLabels',
-    r.hint.webSearch === r.a[0] && r.hint.vision === r.a[1] && r.hint.stickers === r.a[2], JSON.stringify(r.hint));
+    // ⚠️ 2026-10-17：能力开关只剩两格（表情已随能力下线删除），断言同步收窄
+    r.hint.webSearch === r.a[0] && r.hint.vision === r.a[1], JSON.stringify(r.hint));
 }
 
 const { pass, fail } = counts();

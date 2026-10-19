@@ -6,7 +6,7 @@
  *   · §96 的三条新子判据（⑦绝对入口 / ⑧端口来自配置且不被容器门住 / ⑨内存不许拿 0 冒充）
  *   · §97（子进程窗口 · windowsHide）
  *   · §98（配置模板可运行性 · 逐字发送）
- *   · §99（表情 id 表）
+ *   · §99（表情 id 表）—— 2026-10-17 随表情能力下线，该节与两条变异已删
  *
  * 本项目纪律：**每新增一条契约都要配一组"只打它那一条"的变异** ——
  * 变异不只是验收代码，它同时验收"这条契约真的盯住了东西"。
@@ -61,10 +61,10 @@ export default [
     note: 'server.js 的 startBridge 把入口改回**相对路径** —— Windows 上 absEntryInRoot 只认绝对入口，'
       + '于是面板认不出自己刚起的机器人（「实例数」恒 0、孤儿清理也看不见它），而**不报错**',
     file: 'panel/server.js',
-    anchor: /const entry = path\.join\(ROOT, 'src', 'index\.js'\);/,
+    anchor: /const entry = path\.join\(PROGRAM_ROOT, 'src', 'index\.js'\);/,
     count: 1,
     apply: (s) => s.replace(
-      "const entry = path.join(ROOT, 'src', 'index.js');",
+      "const entry = path.join(PROGRAM_ROOT, 'src', 'index.js');",
       "const entry = 'src/index.js';"
     ),
     layer: 'check-wb',
@@ -169,28 +169,5 @@ export default [
     expect: 'BLOCKED',
   },
 
-  // ── §99 表情 id 表（B5）────────────────────────────────────────────────
-  {
-    id: 'M11',
-    note: 'FACE_PRESETS 里塞一个**重复的 id** —— 同一个表情在随机池里出现两次，权重被悄悄改了；'
-      + '这类"复制粘贴时改漏一个"没有断言看着就永远查不出来',
-    file: 'src/custom-config.js',
-    anchor: /\[14, '微笑'\], \[13, '呲牙'\]/,
-    count: 1,
-    apply: (s) => s.replace("[14, '微笑'], [13, '呲牙']", "[14, '微笑'], [14, '呲牙']"),
-    layer: 'check-wb',
-    expect: 'BLOCKED',
-  },
-  {
-    id: 'M12',
-    note: 'FACE_PRESETS 附近**删掉核对方法**（不提 NapCat 的 face_config.json / QSid）——'
-      + '`napcat/` 不入库，注释是唯一能让下一个人不去猜的手段；'
-      + '没有它，这张表在第 53 轮实测漂了 11/15 而**没有任何人发现**',
-    file: 'src/custom-config.js',
-    anchor: /face_config\.json/,
-    count: 3, // 注释里出现三次（那句说明 / 核对方法那句 / 核对命令里各一次）
-    apply: (s) => s.replaceAll('face_config.json', 'FACECONFIG-DISABLED').replaceAll('QSid', 'XXSID'),
-    layer: 'check-wb',
-    expect: 'BLOCKED',
-  },
+  /* §99 表情 id 表（M11 / M12）已于 2026-10-17 删除：FACE_PRESETS 整表删除。 */
 ];

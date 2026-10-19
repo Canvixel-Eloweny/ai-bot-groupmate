@@ -25,13 +25,17 @@ import { patchCustom } from '../../src/custom-config.js';
 import { looksInjected } from '../../src/injection.js';
 import { GATE_ERROR_KIND, isBlocking } from '../../src/gate-scan.js';
 import { providerOf } from '../../src/net-rules.js';
+// 桌面端「启动方式」（2026-10-16）：值域与校验住 `src/launch-mode.js` ——
+// **写侧（这里）与读侧（state-collector / 三个启动器）共用同一份判定**，
+// 不许在这里再手写一遍 ['browser','window']（两份值域必然漂移）。
+import { validateLaunch } from '../../src/launch-mode.js';
 import { applySettingsPatch } from '../../src/plugin-settings.js';
 import { pushLog } from './runtime-state.js';
 import { sendJson, readBody } from './http-io.js';
 import { readConfig, writeConfig } from './config-io.js';
 import { extensionsOf } from './extensions.js';
 import {
-  MAX_CHAIN_LEN, localChannelOf, modelProviderMismatch, normalizeThinking,
+  CLOUD_PRESETS, MAX_CHAIN_LEN, chainModelsOf, localChannelOf, modelProviderMismatch, normalizeThinking,
   readPresets, stashCurrentPreset,
 } from './models.js';
 
@@ -95,6 +99,12 @@ export function makeConfigRoute(deps) {
       // 而前端拖动时并不会特意避开这种情况（直调接口更不会）。
       const seen = new Set([String(cfg.llm.model || '').trim()].filter(Boolean));
       const chain = [];
+      /* ⚠️ **这家清单里没有的模型一条都不许进链**（2026-10-17 维护者截图）。
+         上面那道 `modelProviderMismatch()` 对千问是**刻意放行**的（千问平台代理别家模型，
+         前缀判不了），于是"整条 GLM 链存进千问"能一路无阻 —— 而那条链一条都打不通。
+         清单只有一份（`modelsOfProvider` ⇒ `buildModelCaps`），这里只查成员资格；
+         服务商认不出（local / other / 自建网关）⇒ 清单为空 ⇒ 不判（没有依据说它错）。 */
+      const known = new Set(chainModelsOf(providerNow));
       for (const raw of body.fallbackModels) {
         const m = String(raw || '').trim();
         if (!m || seen.has(m)) continue; // 空项、重复项、与主模型撞车的一律静默丢弃
@@ -102,6 +112,15 @@ export function makeConfigRoute(deps) {
         if (bad) {
           pushLog(`✗ 降级链里有不匹配的模型：${m}`);
           return sendJson(res, { ok: false, error: bad, provider: providerNow }, 400);
+        }
+        if (known.size && !known.has(m)) {
+          const why = `「${m}」不在${CLOUD_PRESETS[providerNow]?.label || providerNow}的模型清单里，`
+            + `放进降级链也不会被这家响应（换模型失败时只会连续撞墙）。`
+            + `它仍然可以当主模型 —— 请把它拖出线路，或者从「候选模型」里换一条这一家的。`;
+          pushLog(`✗ 拒绝把 ${m} 放进降级链（${providerNow} 的清单里没有它）`);
+          return sendJson(res, {
+            ok: false, reason: 'model-not-in-provider', provider: providerNow, model: m, error: why,
+          }, 400);
         }
         if (
           providerNow === 'zhipu' &&
@@ -125,6 +144,17 @@ export function makeConfigRoute(deps) {
         return sendJson(res, { ok: false, error: why, provider: providerNow }, 400);
       }
       cfg.llm.fallbackModels = chain;
+      /* ⚠️ 当前这套是**自定义大脑** ⇒ 链也要写进它自己那一格（2026-10-17）。
+         不写的话：改完链只是改了扁平字段，一旦切走再切回，`materializeBrain()`
+         会把链覆盖回大脑里那条旧的 —— 用户改的东西**静默丢失**（而且界面上
+         一度显示的是"改成功了"）。判据与 `stashCurrentPreset` 同一条：扁平配置属于谁，就存给谁。 */
+      const activeId = String(cfg.llm.activeCustomId || '');
+      if (activeId && cfg.llm.customBrains?.[activeId]) {
+        cfg.llm.customBrains[activeId] = {
+          ...cfg.llm.customBrains[activeId],
+          fallbackModels: [...chain],
+        };
+      }
     }
 
     // 思考配置：既收新的 {mode,level}，也收旧的 "auto"/"on"/"off"
@@ -152,15 +182,21 @@ export function makeConfigRoute(deps) {
         cfg.context = { ...(cfg.context || {}), ambientMessages: Math.max(0, Math.round(body.context.ambientMessages)) };
       }
     }
-    // 三个能力开关（联网 / 识图 / 表情）。
+    // 两个能力开关（联网 / 识图）。
     // 这里是**第三道闸**（前两道：界面上灰显、前端提交前拦）。真正兜底的是它：
     // 不管配置是从界面上改的、还是手改 config.json 的，落盘前都收敛一次。
     if (body.features && typeof body.features === 'object') {
-      cfg.llm.features = {
-        webSearch: body.features.webSearch === true,
-        vision: body.features.vision === true,
-        stickers: body.features.stickers === true,
-      };
+      // ⚠️ **按键局部合并**，不整份覆盖（2026-10-15 修 · A2 / Issue #5）：
+      //    面板点一个开关只发**那一个键**（`{features:{vision:true}}`）。整份重算会把
+      //    没传的两项判成 `undefined === true` → false ⇒「先开识图、再开联网，识图被
+      //    静默改回关」，反过来也一样；而且每一步都弹"已打开"，用户完全无从下手。
+      //    只有同时开多个时才暴露（单开一个时被冲掉的那两个本来就是 false，看着正常）。
+      //    与 `patchCustom` 同一条纪律：只动这次真的传上来的键。
+      const next = { ...(cfg.llm.features || {}) };
+      for (const k of ['webSearch', 'vision']) {
+        if (k in body.features) next[k] = body.features[k] === true;
+      }
+      cfg.llm.features = next;
     }
     // 无论这次有没有传 features，都按**最终落盘的模型**再收敛一次。
     // 为什么必须做：换到纯文本模型时，之前开着的识图/联网会被服务端 400 拒掉 ——
@@ -194,6 +230,16 @@ export function makeConfigRoute(deps) {
     cfg.trigger = cfg.trigger || {};
     if (typeof body.requireAtInGroup === 'boolean') cfg.trigger.requireAtInGroup = body.requireAtInGroup;
     if (typeof body.interjectChance === 'number') cfg.trigger.interjectChance = Math.min(1, Math.max(0, body.interjectChance));
+    /* 插话冷却（`trigger.interjectCooldownMs`，2026-10-17）：
+       机器人侧从 `src/brain.js` 起就一直在读它（`lastInterjectAt < interjectCooldownMs` ⇒ 不插话），
+       而这条路由的 trigger 白名单里**从来没有**它 ⇒ 面板就算画了滑块，保存也会被静默丢掉
+       （症状与 interjectChance 那次一模一样：改了不生效、还查不出原因）。
+       ⚠️ 值域只在这里夹：0 = 不冷却（可被手改的 config.json 用到，面板自己从 1 分钟起）；
+          上限 5 小时 —— 再大就等于"只在被叫到时才说话"，那种需求应该关掉插话（概率调 0），
+          而不是把冷却当开关用。 */
+    if (typeof body.interjectCooldownMs === 'number' && Number.isFinite(body.interjectCooldownMs)) {
+      cfg.trigger.interjectCooldownMs = Math.round(Math.min(5 * 3600e3, Math.max(0, body.interjectCooldownMs)));
+    }
     if (Array.isArray(body.aliases)) cfg.trigger.aliases = body.aliases.map((s) => String(s).trim()).filter(Boolean);
     if (typeof body.personaName === 'string' && body.personaName.trim()) {
       cfg.persona = cfg.persona || {};
@@ -210,6 +256,21 @@ export function makeConfigRoute(deps) {
     cfg.reply = cfg.reply || {};
     if (typeof body.splitToken === 'string' && body.splitToken.trim()) {
       cfg.reply.splitToken = body.splitToken.trim();
+    }
+
+    // ── 桌面端「启动方式」（launch · 2026-10-16）──
+    // 它决定启动器（Windows 快捷方式 / Mac 图标 / CLI）把控制台开成
+    // 浏览器标签页还是独立窗口。**保存成功 ≠ 立刻生效**：启动器只在启动时读一次
+    // （面板上的提示语已经写明"下次启动生效"，schema.js 的 savedMsg）。
+    // 校验失败按本文件的一贯取向**拒绝整次保存并说清原因**，不做静默纠正 ——
+    // 静默纠正会让用户以为"我明明点了独立窗口"。
+    if (body.launch !== undefined) {
+      const r = validateLaunch(body.launch);
+      if (!r.ok) {
+        pushLog(`✗ 启动方式没有保存：${r.error}`);
+        return sendJson(res, { ok: false, error: r.error, reason: 'bad-launch' }, 400);
+      }
+      cfg.launch = { ...(cfg.launch && typeof cfg.launch === 'object' ? cfg.launch : {}), ...r.value };
     }
 
     // ── 自定义工作台那一整块 ──

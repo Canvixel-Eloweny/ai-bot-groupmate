@@ -32,7 +32,7 @@
  *  ────────────────────────────────────────────────────────────────────
  *  ⚠️ 这是**有意的偏差**，别照着"对齐生态"改回去
  *  ────────────────────────────────────────────────────────────────────
- *  参考实现（QQ-Agent 0.4 preview · `src/orchestrator.js:888`）给的是**原始**客户端。
+ *  生态通行的做法是给**原始**客户端。
  *  "外来代码能绕过宿主所有出站策略"换不来任何价值 —— 它只是省了宿主一层适配。
  *  偏差已记在计划附 V.4。
  *
@@ -120,5 +120,51 @@ export function scopedOnebot(bot, { log, owner = '' } = {}) {
       }
       return bot.call(action, params, timeoutMs);
     },
+  };
+}
+
+/**
+ * 把宿主的**发送适配器**（`ctx.sender`）按清单声明裁剪成某个包自己的那一份。
+ *
+ * ── 为什么必须有这一层（2026-10-15 补 · 对应「小鱼发不出图片」的遗留）──────────
+ *  `ctx.sender` 是宿主**唯一**认可的发言通道（`scopedOnebot` 把 `send_*` 一律拒了，
+ *  见上面那张表 —— 发言能力只走这条路）。而这条路此前是**无差别开放**的：
+ *  `sender.sendImage` 一旦补上，**任何**启用中的包都能往任意会话发图。
+ *
+ *  清单里本来就有 `send_image` 这个权限名（`src/plugin-api.js` 的 `PERMISSION_NAMES`），
+ *  但它**从未接线** —— 声明了不生效、不声明也没人拦。这里把它接上，口径与
+ *  `ext-scope` 拒绝 `send_*` 时**逐字同款**：
+ *
+ *    · 拒绝时**既抛错又告警**（抛错会被 tool-loop 折成 `isError` 回灌给模型，
+ *      模型看得见"这条路被宿主关了"；告警保证日志里留得下痕 —— 否则
+ *      "某个包在偷偷尝试发图"在日志里一个字都没有）；
+ *    · **默认拒绝**，不是默认放行（新能力出现时先拒，等有人真的需要再逐个发）。
+ *
+ * ⚠️ **只裁剪 `sendImage`，不动 `sendSegments`**（宁窄勿宽，加法不改默认行为）：
+ *    `sendSegments` 早就在用（「合并转发发送」），而它没有对应的权限名 ——
+ *    现在给它加闸等于**把已经在跑的能力收回**，那不是本条的意图。
+ * ⚠️ 纯函数、零依赖：传进来的 `sender` 原样铺开，**不就地改它**（宿主那份要被复用）。
+ *
+ * @param {object} sender 宿主的发送适配器（`ctx.sender`）
+ * @param {{owner?:string, permissions?:string[], log?:{warn?:Function}}} [opts]
+ * @returns {object} 与入参同形状的副本；未声明的能力被换成一个「拒绝并告警」的函数
+ */
+export function scopedSender(sender, { owner = '', permissions = [], log } = {}) {
+  const who = owner ? `扩展包「${owner}」` : '扩展包';
+  const allow = new Set(Array.isArray(permissions) ? permissions : []);
+  const refuse = (cap) => {
+    const why = `${who}没有声明 ${cap} 权限`;
+    return async () => {
+      const fn = log?.warn;
+      if (typeof fn === 'function') {
+        fn(`✗ ${why} —— 已拒绝：${cap === 'send_image' ? '发图' : cap}只发给声明过它的包`
+          + `（要用请在它的清单里加 "permissions": ["${cap}"]）`);
+      }
+      throw new Error(`${who}不能 ${cap === 'send_image' ? '发图' : cap}：没有声明 ${cap} 权限`);
+    };
+  };
+  return {
+    ...sender,
+    ...(allow.has('send_image') ? {} : { sendImage: refuse('send_image') }),
   };
 }

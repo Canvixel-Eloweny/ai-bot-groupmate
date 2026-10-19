@@ -83,16 +83,23 @@ def refuse_vm_bundle(pkg):
     （打出来的 zip 能解压、能装、能用，只是把不该分发出去的东西发了出去）。
     所以它必须由机器拦，不能靠人记。
     """
-    nap = os.path.join(pkg, "app", "napcat")
+    nap_dirs = [
+        os.path.join(pkg, "app", "napcat"),
+        os.path.join(pkg, "userdata", "napcat"),
+    ]
     has_napcat = False
-    if os.path.isdir(nap):
+    for nap in nap_dirs:
+        if not os.path.isdir(nap):
+            continue
         for _dirpath, _dirnames, filenames in os.walk(nap):
             if any(n.lower().endswith((".bat", ".exe", ".cmd")) for n in filenames):
                 has_napcat = True
                 break
+        if has_napcat:
+            break
     marker = os.path.join(pkg, "VM-ONLY.txt")
     if has_napcat:
-        print(f"✗ 拒绝压缩：{pkg} 的 app/napcat 里含协议端（第三方，不许随包分发）。")
+        print(f"✗ 拒绝压缩：{pkg} 的 app/napcat 或 userdata/napcat 里含协议端（第三方，不许随包分发）。")
         print("  要打对外分发的 zip，请用**不含** NapCat 的那一份（Estrella-Bot/）。")
         sys.exit(1)
     if os.path.exists(marker):

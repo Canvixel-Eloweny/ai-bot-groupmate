@@ -7,7 +7,7 @@
  *  **靠钩子介入**。其中 `复读拦截` 声明的是 `before-tool`：
  *  在"即将发送"这个动作上否决一次调用。
  *
- *  参考实现（QQ-Agent v0.31 · MIT）的对应形状：
+ *  生态通行的对应形状：
  *    · `skillManager.runHook(name, payload)` → 返回一组 `{value}`；
  *    · 调用方 `find(v => v && v.block)` 取**第一个否决**，
  *      并把 `错误：<reason>` 当成工具结果回灌给模型；
@@ -39,7 +39,7 @@
  */
 
 /**
- * 支持的钩子点。名单与参考实现（QQ-Agent 0.4 preview · src/orchestrator.js）
+ * 支持的钩子点。名单与生态通行的那套钩子点
  * 触发的 5 个点**逐一对应**（第 47 轮 B12e-3 拿真实样本核过，不是照规格猜）：
  *   before-context        orchestrator.js:763   组消息之后、建上下文之前（本体情绪靠它读入站情绪）
  *   before-llm-messages   orchestrator.js:857   消息已建好、发给模型之前（可改 messages）

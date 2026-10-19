@@ -11,10 +11,9 @@
   这不是"demo 集合"，是**判据的可视化**。每张卡片回答一个问题，
   并且把"改了哪个数会怎样"做成可以直接拖的旋钮。
 
-  方法论来源：bencho.dev 「Liquid toggle」（React + framer-motion）。
-  本页把它落到零构建环境：framer-motion → `motion.js`（原生替身），
-  React → 原生 DOM。**参数与手感刻意保持一致**，所以从 Bencho 抄的其它
-  配方也能原样搬进本项目。
+  本页是**零构建环境下的落地方案**：framer-motion → `motion.js`（原生替身），
+  React → 原生 DOM。**参数与手感刻意保持一致**，
+  这样外面那套动效配方也能原样搬进本项目。
 
   打开方式：直接双击本文件（零依赖、零构建、零服务）。
   ⚠️ 不要用 file:// 之外的 http 打开来判断"为什么不动" —— 见页底的排错。
@@ -156,7 +155,7 @@
     grid-template-columns: 1fr 1fr; align-items: center; gap: 4px 12px;
   }
   .knob.stack2 .hint { grid-column: 1 / -1; }
-  /* 关键：range 的 track 做成"填充一半"的样子，模拟 Bencho 那种标签+数值的行 */
+  /* 关键：range 的 track 做成"填充一半"的样子，模拟「标签 + 数值」那种行 */
   .knob.stack2 input[type=range] { grid-column: 1 / -1; }
 
   /* ── 判据说明块 ───────────────────────────────────────────────────── */
@@ -243,7 +242,7 @@
     </p>
     <p style="margin-top:12px;padding:12px 14px;background:var(--c-accent-weak);
               border:1px solid var(--c-accent-line);border-radius:var(--r2);color:var(--c-text)">
-      <b>想复刻别的动效？</b>在 Bencho 上点右上角 <b>Copy prompt</b>，整段粘给我，
+      <b>想复刻别的动效？</b>把它的 <b>prompt</b> 整段粘给我，
       再补一句<b>用在哪个控件</b>就能开工。完整委托单见
       <code>docs/MOTION-BRIEF.md</code>。
       <br>
@@ -351,7 +350,7 @@
     <header>
       <h2><span class="num">03</span>三个「看起来能动但其实不对」的反例</h2>
       <p class="why">
-        这三个都是 Bencho 原作者踩过并修掉的。它们的共同点：
+        这三个都是真实的踩坑记录。它们的共同点：
         <b>代码能跑、回归全绿、肉眼在快速动作下才暴露问题</b>。
       </p>
     </header>
@@ -491,8 +490,7 @@
   </section>
 
   <footer>
-    方法论来源 <a href="https://bencho.dev" target="_blank" rel="noreferrer">bencho.dev</a>「Liquid toggle」，
-    原配方基于 React + framer-motion。本页为零依赖重实现，参数与手感保持一致。
+    本页为零依赖重实现。来源与许可登记在仓库根 <code>THIRD-PARTY-NOTICES.md</code> §2.1。
     <div id="diag" style="margin-top:8px;font-family:var(--mono);font-size:var(--t-xs)"></div>
   </footer>
 </div>
@@ -514,7 +512,7 @@
   var M = window.Motion;
 
   /* ── 旋钮工厂：标签 + 数值 + 滑杆 + 一句"改了会怎样" ──────────────
-     Bencho右侧那种面板的核心是「每个旋钮都必须能回答：
+     这种旋钮面板的核心是「每个旋钮都必须能回答：
      我拧它，手感会变成什么」。没有这句提示的旋钮等于没有。
 
      ⚠️ 走oninput 而不是 onchange：onchange 只在**松手**时触发，
@@ -576,7 +574,7 @@
      直接改input.value 会绕过 set()，两处写同一个数字 = 两个能对不上的地方。 */
   var knobs1 = { speed: null, stretch: null };
 
-  /* 卡片 01 的旋钮用 Bencho 右侧那套：Speed 与 Stretch 是两个物理量 */
+  /* 卡片 01 的旋钮用同一套：Speed 与 Stretch 是两个物理量 */
   var k1 = document.getElementById('knobs1');
   knobs1.speed = knob(k1, {
     label: 'Speed', value: 50, min: 0, max: 100,

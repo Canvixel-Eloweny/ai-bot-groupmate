@@ -19,8 +19,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { PROGRAM_ROOT, panelFile } from './user-root.js';
 import { writeJsonAtomic, truncateLinesAtomic } from './atomic-write.js';
 import { shouldClearStale } from './ephemeral.js';
 import { maskSecrets } from './egress.js';
@@ -31,11 +31,8 @@ import { dayKeyOf } from './holidays.js';
 import { unreadEntryOf, pushUnread, pendingOf, consume } from './unread.js';
 import { USAGE_SOURCES } from './usage.js';
 
-/** 仓库根（本模块在 `src/` 下，与 `index.js` 同层 —— 推导方式与它逐字一致）。 */
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
 const THINKING_FILE = process.env.QQBOT_THINKING_FILE
-  || path.join(ROOT, 'panel', '.thinking.json');
+  || panelFile('.thinking.json');
 // 每条回复的完整链路（群消息 → 提示词 → 模型原始输出 → 实际发出的分段）。
 // 控制台有一个卡片读它，让「本地模型的输出流转」看得见、可复盘：
 // 答得不好时不用猜，直接看它到底收到了什么提示词、有没有被 max_tokens 截断。
@@ -43,11 +40,11 @@ const THINKING_FILE = process.env.QQBOT_THINKING_FILE
 // mock 的假对话（「路人: 在吗」）就会落进用户真实的对话流里，那是一种静默污染。
 const TRACE_FILE = process.env.QQBOT_TRACE_FILE
   ? path.resolve(process.env.QQBOT_TRACE_FILE)
-  : path.join(ROOT, 'panel', 'local-trace.jsonl');
+  : panelFile('local-trace.jsonl');
 const TRACE_MAX = 120;
 const JOURNAL_FILE = process.env.QQBOT_BRIDGE_JOURNAL_FILE
   ? path.resolve(process.env.QQBOT_BRIDGE_JOURNAL_FILE)
-  : path.join(ROOT, 'panel', 'bridge-journal.log');
+  : panelFile('bridge-journal.log');
 
 /**
  * 留档一行。**任何失败都吞掉** —— 它是排障用的附属品，
@@ -113,7 +110,7 @@ function probeIsOurBridge(pid) {
   const txt = runQuiet(LSOF, ['-a', '-p', String(pid), '-d', 'txt', '-Fn']);
   const cwd = runQuiet(LSOF, ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']);
   if (!txt.ok || !cwd.ok) return null;
-  return isOurBridge({ cmd: hit.cmd, cwd: firstPathOf(cwd.out), execPath: firstPathOf(txt.out), root: ROOT }).ours;
+  return isOurBridge({ cmd: hit.cmd, cwd: firstPathOf(cwd.out), execPath: firstPathOf(txt.out), root: PROGRAM_ROOT }).ours;
 }
 
 function markThinking(on, info) {

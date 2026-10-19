@@ -72,10 +72,10 @@ export default [
     id: 'M4',
     note: '探针不再复用 isOurBridge（判据写了第二份，R13 的复发形态）',
     file: 'src/bridge-io.js',
-    anchor: /^  return isOurBridge\(\{ cmd: hit\.cmd, cwd: firstPathOf\(cwd\.out\), execPath: firstPathOf\(txt\.out\), root: ROOT \}\)\.ours;$/m,
+    anchor: /^  return isOurBridge\(\{ cmd: hit\.cmd, cwd: firstPathOf\(cwd\.out\), execPath: firstPathOf\(txt\.out\), root: PROGRAM_ROOT \}\)\.ours;$/m,
     count: 1,
     apply: (s) => s.replace(
-      '  return isOurBridge({ cmd: hit.cmd, cwd: firstPathOf(cwd.out), execPath: firstPathOf(txt.out), root: ROOT }).ours;',
+      '  return isOurBridge({ cmd: hit.cmd, cwd: firstPathOf(cwd.out), execPath: firstPathOf(txt.out), root: PROGRAM_ROOT }).ours;',
       '  return /index\\.js$/.test(hit.cmd); // 变异：探针自己抄一份判据'
     ),
     layer: 'check-wb',

@@ -68,7 +68,8 @@
   </li>
   <li><b>双击 <code>一键安装.bat</code></b>
     <div class="muted">它会自动检测环境、缺什么补什么、然后打开控制台（全程无黑窗口）。
-      第一次会联网准备 QQ 协议端（约 30MB，自动，中断后重跑会续传）。
+      协议端（NapCat）第一次会联网准备（约 30–36MB，随版本变化，中断后重跑会续传）；
+      不想等下载的话，它自己已经下好的包也能直接用 —— 见下面「离线怎么办」那一行。
       电脑上还没装 QQ 的话，它会告诉你去哪装 —— 装完再双击一次即可。<br>
       中途只会问你一个问题：要不要在桌面建「Estrella Bot」快捷方式。
       想完全不被打断：<code>一键安装.bat --yes</code></div>
@@ -123,8 +124,9 @@
   <tr><td>登录成功了，过一会儿又显示「未登录」</td>
       <td>多半是有人把电脑端 QQ（主号）登回来了 —— 会把小号挤下线。退出电脑端 QQ 即可。</td></tr>
   <tr><td>协议端下载很慢 / 装不上（离线怎么办）</td>
-      <td>① 自己到 <b>NapCat 官方 Releases</b> 下载 <code>NapCat.Shell.zip</code>（约 30MB）；
-          ② 把它放进 <b><code>app\napcat\</code></b> 这个文件夹（没有就新建一个 —— 名字别改，
+      <td>① 自己到 <b>NapCat 官方 Releases</b> 下载 <code>NapCat.Shell.zip</code>（约 30–36MB，
+          <b>不是</b> <code>NapCat.Shell.Windows.OneKey.zip</code>，那个只有 1MB 是安装壳）；
+          ② 把它放进 <b><code>userdata\napcat\</code></b> 这个文件夹（没有就新建一个 —— 名字别改，
           <b>zip 不用自己解压</b>）；③ 重新双击 <code>一键安装.bat</code>，
           它看到本地已有一份就直接解压继续，<b>不再联网</b>。<br>
           已经解压过的：把里面的东西<b>平铺</b>进 <code>app\napcat\</code>
@@ -155,8 +157,10 @@
 
 <h2>七、许可</h2>
 <div class="card">
-  <p>本程序为 Apache-2.0 开源软件（见 <code>app\LICENSE</code>）；
-    QQ 协议端 <b>NapCat</b> 由第三方提供，按它自己的许可单独分发。</p>
+  <p>本程序为 Apache-2.0 开源软件（见 <code>app\LICENSE</code>）。</p>
+  <p>QQ 协议端 <b>NapCat</b> 是<b>独立的第三方项目</b>（版权归其作者所有），与本程序
+    没有隶属关系；对外分发的本包<b>不包含</b>它的任何代码或文件 —— 安装时由脚本从
+    它的官方发布页下载，或由你自行提供（见上面「离线怎么办」）。</p>
 </div>
 
 <footer>

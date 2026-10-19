@@ -12,7 +12,7 @@
  *  ⚠️ 本轮改写了第 35 轮写下的规格（v2 §4），三条都与原规格不同
  *  ────────────────────────────────────────────────────────────────────
  *  原规格是在**没有看过真实扩展包**的情况下抽象出来的。第 44 轮开工前
- *  拿 13 个真实扩展包（QQ-Agent 扩展包 · MIT）实测，三条对不上：
+ *  拿 13 个真实扩展包实测，三条对不上：
  *
  *  | 规格 v2 §4 原文 | 实测的真形状 | 本文件怎么判 |
  *  |---|---|---|
@@ -147,6 +147,53 @@ function strList(v, max, problems, field) {
 }
 
 /**
+ * 扩展包声明的**提示词指引**（清单里的 `prompt.sections`）。
+ *
+ * ⚠️ 这一段此前**整个被丢掉**（2026-10-15 修 · 对应「小鱼看不到图片」那类 /
+ *    Issue #5 同族缺陷）：`normalizeManifest` 压根不读 `raw.prompt`，于是插件作者
+ *    写的"什么时候该用哪个工具"从来没有进过系统提示词 —— 模型拿到了工具定义
+ *    （API 层面），却**没有任何一句话告诉它何时用**。在一个极重人设、要求
+ *    "像真人打字、15 字以内"的提示词下，它选择继续演角色，甚至编出"我翻了，是空的"。
+ *    **失败完全静默**：日志里没有任何异常（这正是本项目最贵的那一类）。
+ *
+ * 四道上限（经验值，非官方阈值）：条数 / 标题 / 单条正文 / 总字数 ——
+ * 与技能那套（`SKILL_CHARS_IN_PROMPT`）同一取向：这一段一旦比人格还长，
+ * 模型就开始忽略人格了。
+ *
+ * ⚠️ 正文里若出现裸工具名（如 `image_lib_search`），**注入时**由宿主补上真实注册名
+ *    （带 owner 前缀），不在这里改写 —— 归一化层不该知道工具注册表。
+ */
+const PROMPT_SECTIONS_MAX = 5;
+const PROMPT_SECTION_TITLE_MAX = 40;
+const PROMPT_SECTION_CHARS_MAX = 600;
+const PROMPT_SECTIONS_CHARS_TOTAL = 1600;
+
+function promptSectionList(raw) {
+  const list = raw?.prompt && typeof raw.prompt === 'object' && Array.isArray(raw.prompt.sections)
+    ? raw.prompt.sections
+    : [];
+  const out = [];
+  let budget = PROMPT_SECTIONS_CHARS_TOTAL;
+  for (const it of list) {
+    if (out.length >= PROMPT_SECTIONS_MAX) break;
+    if (!it || typeof it !== 'object') continue;
+    const title = String(it.title ?? '').trim().slice(0, PROMPT_SECTION_TITLE_MAX);
+    const content = String(it.content ?? '').trim().slice(0, PROMPT_SECTION_CHARS_MAX);
+    if (!content) continue; // 没有正文的段不注入：空条文只会让模型去猜
+    if (content.length > budget) continue; // 字数不够就跳过这一条（后面可能还有短的能进）
+    budget -= content.length;
+    out.push({
+      id: String(it.id ?? '').trim().slice(0, 40) || `s${out.length}`,
+      title: title || '说明',
+      content,
+      // 排序用；缺省 50。数字越小越靠前（= 越贴近身份段）。
+      priority: Number.isFinite(Number(it.priority)) ? Number(it.priority) : 50,
+    });
+  }
+  return out;
+}
+
+/**
  * 把一份原始清单归一化成宿主认得的结构。
  *
  * @param {unknown} raw 已经 `JSON.parse` 过的对象
@@ -266,6 +313,12 @@ export function normalizeManifest(raw, { fallbackId = '', kind = null } = {}) {
     settings,
     /** 设置项的键名合计（`schemaKeys` ∪ `settings` 的键）。消费方只读这一份。 */
     settingsKeys,
+    /**
+     * 清单声明的**提示词指引**（`prompt.sections`，已归一化 + 限容）。
+     * 消费方：`plugin-host`（进加载记录）→ `src/brain.js`（注入系统提示词）。
+     * ⚠️ 此前**没有这个字段**，作者写的指引全部丢失（见 `promptSectionList` 注释）。
+     */
+    promptSections: promptSectionList(raw),
   };
 
   return { manifest, fatal, problems };

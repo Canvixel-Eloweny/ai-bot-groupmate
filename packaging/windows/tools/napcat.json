@@ -1,18 +1,47 @@
 {
   "_comment": "NapCat 下载源清单。唯一目的是「首装时把协议端拉下来」，不涉及本项目任何代码。改这里就能换源。",
+  "_commentFallback": "fallbackTag / fallbackSha256 = 兜底那一版 NapCat.Shell.zip 的官方 SHA-256（取自 GitHub Release 的 assets[].digest）。⚠️ 换 fallbackTag 必须同步换它；这两项现在也各自在 knownGood 里有一行，清单是唯一真值。",
+  "_commentKnownGood": "knownGood = 我们认得官方哈希的那几版。用途有二：① API 查不到最新版时按这里下载（而不是像以前那样下到『没有期望哈希』的裸装）；② 用户自己带来的包**按哈希反查**这里 —— 命中就按官方件装，没命中就如实标成未校验，绝不再像以前那样把非兜底版本直接判死。条数由 check-wb §114 钉在 2..6，别把它养成杂物抽屉。",
   "repo": "NapNeko/NapCatQQ",
   "api": "https://api.github.com/repos/NapNeko/NapCatQQ/releases/latest",
   "asset": "NapCat.Shell.zip",
+  "assetMinBytes": 8000000,
+  "_commentAssetMinBytes": "尺寸地板：NapCat.Shell.Windows.OneKey.zip 只有 994,134 字节，而且各版本的哈希**完全相同**，是最容易被用户错选的『一键安装壳』，不是协议端本体。",
   "fallbackTag": "v4.18.33",
+  "fallbackSha256": "4b8e20e6d22288586d99eb0b34fff6c7ee1d88b00353039326f8c459a86df667",
+  "knownGood": [
+    {
+      "tag": "v4.18.33",
+      "sha256": "4b8e20e6d22288586d99eb0b34fff6c7ee1d88b00353039326f8c459a86df667",
+      "size": 29500155,
+      "provenance": "github-release-assets-digest"
+    },
+    {
+      "tag": "v4.18.35",
+      "sha256": "009af41683371d83a271e6ae1c81db7b4fd3247b716f14d3c955dd03034be003",
+      "size": 29484382,
+      "provenance": "github-release-assets-digest",
+      "note": "本机 NapCat.Shell/ 解包副本疑似这一版"
+    },
+    {
+      "tag": "v4.18.38",
+      "sha256": "735f2e633247df3ffd6e8ee8b84d7039c315b2655f5807e5f0029f93d2c30016",
+      "size": 35884742,
+      "provenance": "github-release-assets-digest",
+      "note": "本清单编制时（2026-10-18）的 latest"
+    }
+  ],
+  "knownGoodUpdatedAt": "2026-10-18",
   "downloadTemplate": "https://github.com/{repo}/releases/download/{tag}/{asset}",
   "mirrors": [
     "https://gh-proxy.com/",
     "https://ghproxy.net/"
   ],
   "mirrorPrefixIsUrlPrefix": true,
+  "_commentBudgetMs": "超时与预算的**唯一真值住在 tools/lib/common.mjs 的具名常量**（CONNECT_TIMEOUT_MS / STALL_TIMEOUT_MS / MIN_ALIVE_BYTES_SEC / PER_SOURCE_BUDGET_MS / TOTAL_BUDGET_MS），这里刻意不放第二份数字 —— 放过两份数字的地方迟早各说一套。来历：2026-10-18 在 Windows 11 测试机用 3MB Range 探针实测（2026-10-18 18:47，原文见 INSTALLER-SPEC.md §21）：gh-proxy.com 229,064 B/s（≈224KB/s）、ghproxy.net 46,919 B/s（≈46KB/s 且 25s 被 max-time 截断 rc=28）、github.com 与 api.github.com 0 字节 rc=6（DNS 失败）。两个镜像差 5 倍：官方包 35,884,742 B 按第一候选 ≈2.6 分钟、按第二候选 ≈12.7 分钟。NSIS 的进度条在外部进程里不会动，所以宁可在总预算处收工转交，也不要挂着。",
   "manual": {
     "page": "https://github.com/NapNeko/NapCatQQ/releases",
     "asset": "NapCat.Shell.zip",
-    "note": "下载后把 zip 原样放到 app/napcat/NapCat.Shell.zip，再重跑 1-SETUP.bat 即可离线完成安装。"
+    "note": "离线放包：安装版把 zip 原样放到 userdata\\napcat\\NapCat.Shell.zip（即 %LOCALAPPDATA%\\EstrellaBot\\userdata\\napcat\\），便携版放到 app\\napcat\\NapCat.Shell.zip；然后重跑 1-SETUP.bat 或安装器即可，全程不联网。文件名必须是 NapCat.Shell.zip（不是 .Windows.OneKey.zip）。"
   }
 }

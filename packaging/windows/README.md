@@ -2,6 +2,19 @@
 
 这里放的是 **Windows 免安装包的构建素材与构建脚本**。
 
+> **2026-10-17 方向**：Windows 主分发形态转为 NSIS EXE 安装向导（按用户安装、独立窗口、
+> 用户点击更新、数据与程序分离）。本文件的便携 zip 流程保留为备用/VM/离线通道，
+> 不再是主路径。冻结规格见 `INSTALLER-SPEC.md`，路径证据见 `PATH-AUDIT.md`。
+
+## P1 数据分离（2026-10-18）
+
+- 便携包首次运行会把旧 `app/` 里的数据**只复制**到 `userdata/`（`tools/migrate.mjs`）；
+  源目录不移动、不删除，失败保留原样。
+- `config.json`、`panel/` 运行态、`data/`、`plugins/`、`skills/`、`persona/`、`napcat/`
+  全部在 `userdata/`；`app/` 只放程序。
+- NapCat 整树（含 `config/` 与 `QQ/` 登录态）在 `userdata/napcat`；升级不碰它。
+- 安装版 `versions/<ver>` + `current.json` + NSIS 留给 P2；本文件仍是便携构建手册。
+
 ## 为什么会有这个目录
 
 它们此前**只存在于 WorkBuddy 的一个会话目录**（`win-build/final6/_build/`），
@@ -12,13 +25,17 @@
   在工作树里躺成 9 个未提交的 `M`（第 59 轮才补提交为 `db67869`）。
 
 入库解决的是**可重建性**。它与"要不要对外发布"是两件事 ——
-`packaging/` 已被 `scripts/make-publish-copy.mjs` 的 `EXCLUDE` 排除（理由写在那个文件里）。
+⚠️ **2026-10-15 起 `packaging/` 随公开拷贝发布**（`scripts/make-publish-copy.mjs` 已不再整块排除它）；
+但它仍会被 `make-app.mjs` 从包内 `app/` 剔除，不会出现在安装 payload 里。
 
 ## 目录
 
 ```
 packaging/windows/
   README.md            本文件
+  INSTALLER-SPEC.md    ★ P0 冻结的安装/更新架构（P1 起按它实现）
+  PATH-AUDIT.md        P0 路径审计（程序根 vs 用户数据根）
+  update-manifest.example.json  更新清单字段示例（占位值，不是发布文件）
   make-app.mjs         ★ 生成**包内**的 `app/`（对外拷贝 + 剔除 `app/packaging/`，见第 1 步）
   make-zip.py          打 zip（可复现：条目排序 + 固定时间戳 + 校验 SHA256SUMS）
   make-ico.py          从方形图生成 Windows 快捷方式用的 .ico（7 档尺寸）
@@ -91,10 +108,38 @@ Win-v<版本>/
   app/                    ← 由下面第 1 步生成（跟踪文件）
     node_modules/ws/      ← **要手工补**，第 1 步不会带它（见第 3 步）
   tools/                  ← 来自 packaging/windows/tools/
+    migrate.mjs           ← 旧便携数据 → userdata 的只复制迁移（P1）
+    lib/user-root-loader.mjs ← 工具层加载 app/src/user-root.js
   runtime/node/           ← 内嵌的 Node.js 官方 Windows x64 发行版，**不入库**（见第 2 步）
+  userdata/               ← **首次运行后出现**：config/panel/data/plugins/skills/persona/napcat
+                            （便携模式默认根；升级只替换 app/，不碰这里）
 ```
 
 （包内**不会**有 `app/packaging/` —— 那一份是构建素材，由第 1 步的 `make-app.mjs` 剔除，见第 4 步。）
+
+⚠️ **P1 起 NapCat 在 `userdata/napcat`**（程序 + `config/` + `QQ/` 登录态 + 日志），
+不再放 `app/napcat`。④b 由 `make-vm-copy.mjs` 注入到 `userdata/napcat`；
+`make-zip.py` 对 `app/napcat` 与 `userdata/napcat` 两处都做硬闸。
+
+## 数据流（2026-10-16 维护者定：**只常驻 ④b**）
+
+```
+仓库（唯一真源）
+  └─ make-app.mjs ─▶ app/（对外拷贝 + 剔除 app/packaging/）
+                       └─ make-vm-copy.mjs ─▶ ④b Estrella-Bot-napcat/（VM 自用，协议端注入 userdata/napcat）
+                                                 ↑ 常驻的只有这一份
+                                              ④  Estrella-Bot/（对外）—— **按需派生、传完就删**
+                                                 ↑ make-publish-from-vm.mjs（复制 → 剪 napcat → 改回 BUILD-INFO）
+```
+
+为什么改：两份包的 `app/` **完全相同**，常驻两份 = 白占 ~113 MB。
+
+⚠️ **不要"把 NapCat 移出去再移回来"**（维护者最初的想法，已被否）——
+会碰登录态、会绕过 `make-zip.py` 的硬闸、会把「⛔ 禁止对外发布」那段说明带进对外包。
+三条理由都写在 `make-publish-from-vm.mjs` 的文件头。要动就**复制**，让脚本干。
+
+⚠️ `④` 不在时，`make-vm-copy.mjs` 的默认 `--src` 会指空 —— 先用
+`make-publish-from-vm.mjs` 产一份 `④`，再 `--src` 指过去。
 
 ## 构建步骤
 
@@ -149,7 +194,7 @@ cp -R <开发仓>/node_modules/ws  pkg/app/node_modules/ws
 ⚠️ 因为第 1 步的 `make-app.mjs` 会**剔除 `app/packaging/`**，包内不会出现"两份 `setup.mjs`"。
 构建后可以核一下：`ls pkg/app/packaging` 应当不存在。
 
-**5. 重算 `pkg/SHA256SUMS.txt`（30 项 · 点名制）**
+**5. 重算 `pkg/SHA256SUMS.txt`（41 项 · 点名制）**
 
 ```bash
 python3 packaging/windows/make-sums.py <pkg目录>
@@ -192,8 +237,44 @@ node packaging/windows/scan-package.mjs <pkg目录>      # 退出码 0 = 0 命�
 正是第 58 轮 9 个文件"进了包却没进 git"的直接成因。`SHA256SUMS.txt` 只回答"文件有没有被改过"，
 回答不了"这份包是哪棵树打的"。
 
-⚠️ 它**不进** `SHA256SUMS.txt` 的 16 项 —— 清单**无法自证**（把自己的哈希写进自己，
+⚠️ 它**不进** `SHA256SUMS.txt` 的 41 项 —— 清单**无法自证**（把自己的哈希写进自己，
 被改了就看不出来）。这是刻意的，不是漏项。
+
+## P2：NSIS 安装器构建（2026-10-18）
+
+便携 zip 流程保留；安装器构建在 `packaging/windows/installer/`，由 Windows 上的
+`makensis` 执行，macOS 负责 staging、校验、清单。规格见 `INSTALLER-SPEC.md` §6/§11/§16。
+
+```bash
+# 1) macOS：生成 payload（显式白名单 + manifest + 自校验 + 真值复扫）
+node packaging/windows/installer/make-installer-payload.mjs \
+  --out ~/Desktop/estrella-dist/installer-p2/build-0.1.3/stage \
+  --runtime-node ~/Desktop/estrella-dist/Estrella-Bot-napcat/runtime/node
+
+# 2) macOS：NSIS 静态体检（per-user / 版本单源 / stop→commit / 卸载默认保数据）
+node packaging/windows/installer/check-nsi.mjs \
+  --nsi ~/Desktop/estrella-dist/installer-p2/build-0.1.3/Estrella-Bot.nsi \
+  --stage ~/Desktop/estrella-dist/installer-p2/build-0.1.3/stage
+
+# 3) Windows VM：用便携 NSIS 编译（build 目录里已有 .nsi/version.nsh/stage）
+makensis Estrella-Bot.nsi
+# 产物：Estrella-Bot-Setup-0.1.3.exe
+```
+
+- `version.nsh` 由 `package.json` 生成；`.nsi` 里不写死版本/appId。
+- `payload-manifest.json` 逐文件 SHA-256；`install-commit.mjs` 安装前再校验一次。
+- 公开 payload **不含 NapCat/user data**；安装器组件页可选下载 NapCat。
+- `uninstall.exe` 由 NSIS 生成，**不在 payload 里**。
+- 运行时钉在 `installer/toolchain.json`（Node 22.23.3 + 官方 SHA-256）。
+- VM 验收：NSIS 3.13（VM 上 winget 安装）编译的 0.1.3 EXE 已跑通
+  “新装 → health → 运行中重装 → 默认卸载保数据 → 重装 `/DELETEUSERDATA` 删数据”；
+  non-admin Startup 会话，最终 EXE SHA-256 `840287b0…ecc66d`。
+- 静默安装后 `.stage-<ver>` 可能暂留，首次启动由 launcher 清理。
+
+## 2026-10-17 起：NSIS 安装器（方向）
+
+本文件此前记录的是便携 zip 的构建流程；P2 起安装器成为主分发形态，
+但便携 zip 仍保留为备用/VM/离线通道。规格见 `INSTALLER-SPEC.md`。
 
 ## 两条踩过的坑
 
@@ -201,3 +282,58 @@ node packaging/windows/scan-package.mjs <pkg目录>      # 退出码 0 = 0 命�
   ⇒ `ParserError`、**整份不执行**，而症状是"文件没被动过"。同一个坑连踩三次。
 - **`.bat` 必须纯 ASCII / 零 CRLF / 无 label·括号块·for**：仓库 `.gitattributes` 禁止 CRLF，
   而这类极简 bat 在 LF 下才安全。中文说明一律交给 Node（写 UTF-8）或 README.html。
+
+## P3：应用内更新（2026-10-18）
+
+- 规格正本：`INSTALLER-SPEC.md` §8/§9/§11.5/§13；更新器在面板侧
+  `panel/lib/update-version.js` / `update-manifest.js` / `update-signature.js` /
+  `update-download.js` / `update.js` / `update-routes.js`。
+- 清单/签名工具：`packaging/windows/update/`（keygen / make-manifest / sign-manifest /
+  verify-manifest / README）。
+- 公钥：`resources/update-pubkey.pem` 入库；**私钥只在维护者机器上，绝不入库/入包/进对话**。
+  当前公钥是 P3 验收密钥，P5 正式发布前必须轮换；`resources/UPDATE-KEY-INFO.txt` 记指纹与轮换点。
+- 安装器 payload 会把公钥复制到 `<InstallRoot>/resources/update-pubkey.pem`；
+  便携包由 `make-app.mjs` 剔除 `app/resources/`，避免两份公钥漂移。
+- 版本：`package.json` 仍是唯一版本源；清单 `version` 必须高于当前版本；
+  客户端对 `version == current` 显示 up_to_date，`version < current` 仍拒绝。
+- 验收：P3 用一次性 `0.1.4` 作为升级目标（临时构建，不提交/不发布；NSIS
+  `VIProductVersion` 不接受预发布后缀）；最终产品版本仍为 0.1.3。
+
+## P4：回滚 / 离线更新 / 保留策略（2026-10-18）
+
+- 规格正本：`INSTALLER-SPEC.md` §7.2 / §8.8 / §9 / §13 / §18。
+- 启动器：坏版本连续失败 2 次自动回滚；停子进程 → 交换 `runtime/node` 与
+  `runtime/node.previous` → 翻 `current.json` → 写 `USER_ROOT/update/rollback.json`
+  → 用上一版重启。首装无 previous 不循环重试。Windows 上“包含运行中 node.exe 的目录”
+  不能当场改名（实测 EPERM），所以交换由独立计划任务
+  `Estrella-Rollback-<pid>` 在启动器退出后执行（`tools/rollback-restore.ps1`）。
+- 安装事务：`versions/.txn.json` 的 entries 在每个 rename **之前**落盘；断电后下一次
+  安装会先恢复。`runtime` 备份名固定为 `runtime/node.previous`。
+- 保留策略：健康成功后只保留 current + previous；未知目录、软链、`USER_ROOT` 一律不动。
+  失败证据在清理前复制到 `USER_ROOT/update/logs/rollback-<from>-<stamp>/`。
+- 离线更新：面板更新卡片里的“离线更新”区，选择 `latest.json` + `.sig` + EXE；
+  先验签、再校 size+sha256，不联网；仍然只有“立即安装”才运行安装器。
+- 镜像：`installer.url` 与 `installer.mirrors` 都要求固定 tag，`latest` 会被拒绝。
+- 验收：`test/installer-p4.mjs`（22 项）+ `install-p4-1018` 变异（17/17）；
+  Win11 VM 验收表见 `INSTALLER-SPEC.md` §18。
+
+## P5：正式密钥轮换与 0.1.3 发布收尾（2026-10-18）
+
+- 规格正本：`INSTALLER-SPEC.md` §11.5 / §13 / §19。
+- 正式更新密钥：`resources/update-pubkey.pem`，指纹
+  `sha256:20a9a6b2f509fcedadb8544d8c41e4ef4a30e098c169fb36768fce2f73122f0d`；
+  私钥在 `~/Desktop/estrella-dist/update-keys/p5-formal-2026-10-18/private.pem`
+  （0600，仓库外，绝不入库/入包/进对话）。
+- 轮换：`keygen.mjs --rotate` 归档旧公钥/说明到 `<out>/previous/`；P3 验收密钥不再使用。
+  无过渡清单：P3/P4 构建从未公开发布。
+- 当前版本清单：`make-manifest.mjs --allow-current` 只放行
+  `version == package.json.version`；发布 0.1.3 时使用，默认仍要求严格更高版本。
+- 发布资产校验：`release-check.mjs` 校验原始字节签名、版本/tag/文件名、size+sha256、
+  `SHA256SUMS`、过期时间与“目录无私钥”。发布资产在
+  `~/Desktop/estrella-dist/release-v0.1.3/`。
+- Authenticode：本轮无证书，安装器**未签名**；SmartScreen 会提示“未知发布者”。
+  Ed25519 只保证更新完整性。证书采购/签名仍是维护者决定。
+- 边界：G5（压缩 ③）已做；**G3/G4/G6 未执行**（不 push / 不 TAG / 不 Release / 不发布）。
+- 最终版本固定 **0.1.3**；0.1.4 只作一次性升级验收目标，不进正式资产。
+- 验收：`test/installer-p5.mjs`（9 项）；VM 新装/离线升级/恢复表见
+  `INSTALLER-SPEC.md` §19。

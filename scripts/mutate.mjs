@@ -257,30 +257,36 @@ function restore(man) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function selftestPlan() {
-  // 目标层选**当前仓库里已经存在、且与我手工验证过一致的**那一段（D14 的契约 §40），
+  // 目标层选**当前仓库里已经存在、且我手工验证过一致的**那一段（§41 插话时机），
   // 这样自证不依赖"某个补丁有没有收"，任何时刻都能跑。
   //
-  // ① 必被拦住：把令牌判据改成恒假 —— D14 手工跑过这一条，§40 的行为子判据必须报红。
-  // ② 必不被拦住：只加一行注释 —— 哈希变了（证明"生效判据"不是恒真），但任何断言都不读注释。
+  // ⚠️ 2026-10-17：原先这里盯的是 D14 收藏表情（§40），随表情能力下线整段删除 ——
+  //    锚点落在已删除的文件上会让"自证"变成"探针坏了"，所以换成同级的纯函数契约。
+  //
+  //  ① 必被拦住：掷骰子绕过因子改回原概率 —— §41 的反向判据必须报红。
+  //  ② 必不被拦住：只加一行注释 —— 哈希变了（证明"生效判据"不是恒真），但任何断言都不读注释。
   return [
     {
       id: 'SELF-BLOCKED',
-      file: 'src/custom-faces.js',
-      anchor: /export function isCustomFaceToken\(id\) \{/,
+      file: 'src/brain.js',
+      anchor: /if \(roll < plan\.chance\) return ok\('interject', '随机插话', plan\);/,
       count: 1,
-      apply: (s) => s.replace('export function isCustomFaceToken(id) {', 'export function isCustomFaceToken(id) {\n  if (id) return false;'),
+      apply: (s) => s.replace(
+        "if (roll < plan.chance) return ok(",
+        "if (roll < trigger.interjectChance) return ok("
+      ),
       layer: 'check-wb',
       expect: 'BLOCKED',
-      note: '自证用：§40 令牌判据必须红',
+      note: '自证用：§41 掷骰子绕过因子必须红',
     },
     {
       id: 'SELF-PASS',
-      file: 'src/custom-faces.js',
-      anchor: /export function describeCustomFace\(entry\) \{/,
+      file: 'src/brain.js',
+      anchor: /if \(roll < plan\.chance\) return ok\('interject', '随机插话', plan\);/,
       count: 1,
       apply: (s) => s.replace(
-        'export function describeCustomFace(entry) {',
-        '// 变异自证：只加一行注释（任何断言都不读注释）\nexport function describeCustomFace(entry) {'
+        "if (roll < plan.chance) return ok(",
+        "// 变异自证：只加一行注释（任何断言都不读注释）\n    if (roll < plan.chance) return ok("
       ),
       layer: 'check-wb',
       expect: 'NOT-BLOCKED',

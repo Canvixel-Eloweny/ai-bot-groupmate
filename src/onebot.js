@@ -8,7 +8,7 @@ const log = scoped('onebot');
 /**
  * 触发判定该看的正文。
  *
- * D28（QQ-Agent 信号③ · 报告"@ 走 qq 集合，text 只作参考"）：
+ * D28（信号③ · 报告"@ 走 qq 集合，text 只作参考"）：
  * `text` 是**给人/模型看**的那一份，@ 段会被渲染成显示名（「@摸鱼小能手 」）——
  * 群里 @ 一个名字里带「鱼」的群友，别名「小鱼」与关键词「肥鱼」就都会被误命中，
  * 于是它以为有人在叫它。而"是不是在叫我"这件事，**只看 qq 号集合**（`mentionedSelf`）
@@ -305,17 +305,12 @@ export function replySegment(messageId) {
   return { type: 'reply', data: { id: String(messageId) } };
 }
 
-/** QQ 内置表情段。id 是 QQ 的 face id（如 14 = 微笑、124 = 狗头） */
-export function faceSegment(id) {
-  return { type: 'face', data: { id: String(id) } };
-}
-
 /**
- * 图片段（D14）：`file` 既可以是 URL，也可以是协议端认识的资源标识。
+ * 图片段：`file` 既可以是 URL，也可以是协议端认识的资源标识。
  *
- * 为什么和 `faceSegment` 并列放在这里：**「文本里的标记 → OneBot 段」只有这一处**。
- * 收藏表情（QQ 收藏夹里的表情）**没有 face id 可寻址** —— 协议端给的是图片 URL，
- * 所以它只能走图片段；再在别处另写一个"发图"的构造器，就等于给同一件事开第二个口子。
+ * ⚠️ 这是**全项目唯一的图片段构造器** —— 发送循环、扩展工具、面板发图都从这里出。
+ *    再在别处另写一个，就等于给同一件事开第二个口子。
+ *    （`faceSegment` 已于 2026-10-17 随表情能力一起删除：出站不再构造 face 段。）
  */
 export function imageSegment(file) {
   return { type: 'image', data: { file: String(file) } };

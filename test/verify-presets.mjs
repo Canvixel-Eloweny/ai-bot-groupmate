@@ -236,7 +236,7 @@ console.log('\n【3】同页正确模型：正常保存');
 console.log('\n【4】能力开关按**模型**收敛（2026-09-18 起不再是按服务商一刀切）');
 {
   // 前置：【3】刚把模型设成 glm-4-flash —— 纯文本模型，实测发图必 400
-  const r0 = await api('/api/config', { features: { webSearch: true, vision: true, stickers: true } });
+  const r0 = await api('/api/config', { features: { webSearch: true, vision: true } });
   check('保存成功', r0.data.ok === true);
   const c0 = cfg();
   check('★ 联网被存下（glm-4-flash 实测支持 web_search）', c0.llm.features.webSearch === true);
@@ -246,7 +246,7 @@ console.log('\n【4】能力开关按**模型**收敛（2026-09-18 起不再是�
   // 换到视觉模型再开 —— glm-4.6v 实测"认图但搜索结果不注入"，
   // 两个模型各支持一半，正好把"按模型收敛"的两面都测到
   await api('/api/config', { model: 'glm-4.6v' });
-  const r1 = await api('/api/config', { features: { webSearch: true, vision: true, stickers: true } });
+  const r1 = await api('/api/config', { features: { webSearch: true, vision: true } });
   const c1 = cfg();
   check('★ 视觉模型（glm-4.6v）上识图存得下', c1.llm.features.vision === true, JSON.stringify(c1.llm.features));
   check('★ 联网在 glm-4.6v 上被掐掉（实测视觉模型不注入搜索结果，开着等于白开）',
@@ -276,7 +276,7 @@ console.log('\n【5】切到 DeepSeek（前端传的 target 是 "cloud"）：应
 
 console.log('\n【6】在 DeepSeek 页上硬开联网：后端第二道闸应当掐掉');
 {
-  await api('/api/config', { features: { webSearch: true, vision: false, stickers: true } });
+  await api('/api/config', { features: { webSearch: true, vision: false } });
   const c = cfg();
   check('★ 写进配置的联网仍是 false', c.llm.features.webSearch === false);
   check('deepseek 预设里也没有被污染', c.llm.presets.deepseek.features.webSearch === false);
@@ -364,15 +364,22 @@ console.log('\n【11】思考档位「最高」不再被悄悄降级，且不会
 
 console.log('\n【12】换二维码接口：要么换成功，要么给一句人话');
 {
-  // 沙箱里 docker 一定连不上：假 HOME 会让 docker CLI 去找 /var/run/docker.sock，
-  // 而 Docker Desktop 的 socket 在用户目录里 —— 于是所有 docker 分支在沙箱里只可能走
-  // 「容器没在运行」这条路（隔离得干净，顺带也让这条断言是确定的）。
-  // 真机上容器在跑时才会走上面那条分支（会真的换一张码，等价于点一下「换一张」）。
+  // ⚠️ 选支判据是**业务回执 `ok`**，不是 HTTP 状态码（2026-10-17 修的这条假红）。
+  //   这一节原来的前提是「沙箱里 docker 一定连不上 ⇒ 只可能走 400 那条」，
+  //   而 `apiQrcodeRefresh` 在 2026-10-13（群友真机资料第③条）就把契约改了：
+  //   **业务失败也回 200 + ok:false** —— 因为前端 `post()` 一见非 2xx 就 throw，
+  //   响应体整个丢掉 ⇒ 用户只看到「HTTP 400」，那句真因（连不上 WebUI / 已登录 /
+  //   协议端没在运行）一个字都到不了眼前。前提破了之后这里的症状很坏：
+  //   沙箱永远拿到 200 → 按「200 就是成功」断言 → **恒红**，而且下面三条真正要验的
+  //   断言被整段跳过（真机 napcat 在跑也一样红，因为读不到的是 token 不是容器）。
+  //   非 2xx 那一支**不删**：它现在是"接口又退回用状态码表达失败"时的报警器。
   const r = await api('/api/qrcode/refresh', {});
-  if (r.status === 200) {
-    check('容器在跑：换码成功并回传二维码地址', r.data.ok === true && typeof r.data.qr === 'string', JSON.stringify(r.data));
+  check('★ 失败不变成崩溃（任何情况下都不许 5xx）', r.status < 500, String(r.status));
+  if (r.data && r.data.ok === true) {
+    check('容器在跑：换码成功并回传二维码地址', typeof r.data.qr === 'string', JSON.stringify(r.data));
   } else {
-    check('★ 容器没跑时返回 400 而不是 500', r.status === 400, String(r.status));
+    check('★ 业务失败走 200 + ok:false（走 4xx 会让前端 throw、把原因整个丢掉）',
+      r.status === 200, `${r.status} ${JSON.stringify(r.data)}`);
     check('★ 报错内容是可读的原因（不是 undefined/堆栈）',
       typeof r.data.msg === 'string' && r.data.msg.length > 4 && !/at .*\(/.test(r.data.msg),
       JSON.stringify(r.data));
@@ -576,7 +583,7 @@ console.log('\n【17】技能 / 新人设字段 / 免打扰时段 / 黑名单 �
       persona: {
         age: '24', role: '程序员', world: '近未来都市', desire: '想被认可', fear: '被无视',
         traits: '毒舌、心软', tone: '短句', logic: '先观察再动手', attitude: '试探', status: '刚进群',
-        catch: '那没事了', faces: '狗头',
+        catch: '那没事了',
       },
       personaResetOnChange: true,
       replyStyle: { multiMessage: false },
@@ -598,15 +605,20 @@ console.log('\n【17】技能 / 新人设字段 / 免打扰时段 / 黑名单 �
   check('★ 两条技能都存下来了，kind 没串',
     c.skills.length === 2 && c.skills.some((s) => s.kind === 'persona') && c.skills.some((s) => s.kind === 'pack'),
     JSON.stringify(c.skills.map((s) => s.kind)));
-  // 角色卡的快照 = 人格 12 字段 + 增强 12 项（第 32 轮起增强项也进卡）。
-  // 写死"等于 12"会把加字段变成改测试；写清楚"等于这两个表的字段总数"才是真契约。
+  // 角色卡的快照 = 人格 12 字段 + 增强 12 项 + **场景 9 项**（第 32 轮起增强项进卡；
+  // 2026-10-15 · B4 / Issue #5 起**场景也进卡** —— 不带上它，换卡后"被骂怎么回 /
+  // 冷场怎么办 / 深夜什么风格"还是上一张卡留下的，而用户以为换了一套人）。
+  // 写死"等于 12"会把加字段变成改测试；写清楚"等于这三张表 + 一个 `scenes` 键"才是真契约。
   {
     const card = c.skills.find((s) => s.kind === 'persona');
-    const { PERSONA_KEYS: PK, ENHANCE_KEYS: EK } = await import('../src/custom-config.js');
+    const { PERSONA_KEYS: PK, ENHANCE_KEYS: EK, SCENES: SC } = await import('../src/custom-config.js');
+    const sceneKeys = Object.keys(SC);
     check('★ 角色卡带上了完整人格快照（「存多张卡一键换人」靠它）',
-      !!card?.fields && Object.keys(card.fields).length === PK.length + EK.length
-      && PK.every((k) => k in card.fields) && EK.every((k) => k in card.fields),
-      `字段数 ${Object.keys(card?.fields || {}).length}，期望 ${PK.length + EK.length}`);
+      !!card?.fields && Object.keys(card.fields).length === PK.length + EK.length + 1
+      && PK.every((k) => k in card.fields) && EK.every((k) => k in card.fields)
+      && !!card.fields.scenes && sceneKeys.every((k) => k in card.fields.scenes),
+      `字段数 ${Object.keys(card?.fields || {}).length}，期望 ${PK.length + EK.length + 1}`
+        + `（人格 ${PK.length} + 增强 ${EK.length} + 场景键 scenes）`);
   }
   check('★ 知识包**不带**人格快照（它只提供背景，不换人）',
     c.skills.find((s) => s.kind === 'pack')?.fields === undefined);
