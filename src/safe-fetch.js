@@ -358,7 +358,12 @@ async function defaultResolve(hostname) {
  * ⚠️ Node 在开了 Happy Eyeballs 时会用 `{ all: true }` 调 `lookup`，
  *    那时回调要回**数组** —— 两种形状都要处理，只处理一种会静默拿到错误类型。
  */
-export function sendOnce(url, { pinned, timeoutMs = NET_POLICY.timeoutMs, maxBytes = NET_POLICY.maxBytes } = {}) {
+export function sendOnce(url, {
+  pinned,
+  timeoutMs = NET_POLICY.timeoutMs,
+  totalMs = timeoutMs * 3,
+  maxBytes = NET_POLICY.maxBytes,
+} = {}) {
   return new Promise((resolve) => {
     const mod = url.protocol === 'https:' ? https : http;
     const options = { method: 'GET' };
@@ -368,7 +373,16 @@ export function sendOnce(url, { pinned, timeoutMs = NET_POLICY.timeoutMs, maxByt
         else cb(null, pinned.address, pinned.family);
       };
     }
-    const done = (v) => resolve(v);
+    // `done` 必须幂等：超时、连接错误、响应结束三条路都可能先到，
+    // 而 Promise 只会采纳第一次 resolve —— 但 deadline 计时器仍要在第一次就清掉。
+    let settled = false;
+    let deadline = null;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      if (deadline) clearTimeout(deadline);
+      resolve(v);
+    };
 
     const req = mod.request(url, options, (res) => {
       const chunks = [];
@@ -387,10 +401,19 @@ export function sendOnce(url, { pinned, timeoutMs = NET_POLICY.timeoutMs, maxByt
     });
 
     req.on('error', (e) => done({ ok: false, reason: 'request-failed', detail: e.message }));
+    // 空闲超时：只要还有字节到达就会被不断重置 —— 它挡不住"每 9 秒吐 1 字节"的滴流。
     req.setTimeout(timeoutMs, () => {
       req.destroy();
-      done({ ok: false, reason: 'timeout', detail: `超过 ${timeoutMs}ms` });
+      done({ ok: false, reason: 'timeout', detail: `超过 ${timeoutMs}ms 没有新数据` });
     });
+    // 绝对总时限：一次请求从发出到结束的硬上界。`timeoutMs * 3` 给重定向/大响应留余量，
+    // 但滴流端点再也无法把这条会话无限期挂住。
+    const budget = Number.isFinite(totalMs) && totalMs > 0 ? totalMs : timeoutMs * 3;
+    deadline = setTimeout(() => {
+      req.destroy();
+      done({ ok: false, reason: 'timeout', detail: `总时限超过 ${budget}ms` });
+    }, Math.max(1, budget));
+    deadline.unref?.();
     req.end();
   });
 }

@@ -69,8 +69,11 @@ export const NEXT_ASSETS = {
   'demo-state.js': 'text/javascript; charset=utf-8',
 
   /* ── 动效三件套 + 实验室（2026-10-02 · UI 升级轮）────────────────────────
-     `motion.js` / `liquid-toggle.js` / `liquid-toggle.css` 是**动效能力层**，
-     目前**只被实验室页引用**，产品页（index.html）尚未接入任何液态控件。
+     `motion.js` / `liquid-toggle.js` / `liquid-toggle.css` 是**动效能力层**。
+     ⚠️ 2026-10-20 订正：旧注释写「只被实验室页引用，产品页尚未接入任何液态控件」——
+     **与实物相反**。产品页早已直引：`index.html` 的 `src="./motion.js"` 与
+     `src="./liquid-toggle.js"`，且 `app.js` 里 `LIQUID_ON = true`、`switch` 渲染会挂 `liq-host`。
+     留着旧说法会误导下一个以为"接入还没做"的人。
 
      ⚠️ 为什么现在就登记、而不是等接入产品页再登记：
      这张表同时是「HTTP 面」和「磁盘上不许有孤儿文件」的判据

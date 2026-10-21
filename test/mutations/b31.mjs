@@ -3,8 +3,8 @@
  *
  * 这一批打的都是**「坏了完全看不出来」**：光标扫过去什么都不发生，
  * 而页面是全对的 —— 没有报错、没有白屏、按钮照常能点。
- * 静态判据见 `check-wb` §62（12 条子判据），行为判据见 `panel/next/verify.mjs`
- * （7 条，含一条"跨过一次整页重绘倾斜仍在"）。
+ * 静态判据见 `check-wb` §62（20 条子判据），行为判据见 `panel/next/verify.mjs`
+ * （含一条"跨过一次整页重绘倾斜仍在"与一条"**带速度**穿梭不越界"）。
  *
  *   | 条   | 打的是 | 该由哪一层拦住 | 期望 |
  *   |---|---|---|---|
@@ -19,6 +19,8 @@
  *   | M9  | 三条事件从 `document` 改绑到元素上 | check-wb §62④ | BLOCKED |
  *   | M10 | 给 `[data-tilt]` 加回 `transform-style: preserve-3d` | check-wb §62⑬（反向） | BLOCKED |
  *   | M11 | 倾角上限改回"更明显"的 12° | check-wb §62⑭ | BLOCKED |
+ *   | M12 | 回落弹簧重新继承指针速度（去掉 `initialVelocity: 0`） | check-wb §62⑲ | BLOCKED |
+ *   | M13 | 去掉写变量时的 ±MAX_DEG 夹层 | check-wb §62⑳ | BLOCKED |
  *
  * ⚠️ **M3 是本轮实测发现的真问题**：整页每 3 秒 `innerHTML` 重建，
  *    正在倾斜的卡片被换成新节点 ⇒ 变量与 `tilt-on` 全丢 ⇒
@@ -34,7 +36,13 @@
  *    ⚠️ **M10 / M11 原本就没进过这张表**（表停在 M9，而文件里有 11 条）——
  *      本轮顺手补齐；"期望 N 条"也一并订正为 11。
  *
- * 期望：11 条全部 `BLOCKED`，`INVALID` 为 0。
+ * 期望：13 条全部 `BLOCKED`，`INVALID` 为 0。
+ *
+ * ⚠️ **2026-10-20（第三次"大幅翻面"）**：前两次修的是 `preserve-3d` 与 `perspective`；
+ *    这次真实浏览器复现出另一条路径 —— pointermove 在同一 JS 任务里连发时，
+ *    `MotionValue.set()` 用微秒级 `dt` 算速度，2° 被记成上万 deg/s；`leave()` 的弹簧
+ *    继承它后过冲到 **301.78°**。修复：`RELEASE.initialVelocity = 0` + 写出前夹到
+ *    ±MAX_DEG。M12 / M13 钉住这两层。
  *
  * ⚠️ 跑测试一律 `NODE_OPTIONS= node …`（R39），漏带 = 内部基线假红、mutate 会正确地拒绝开跑。
  * ⚠️ 跑之前先提交。
@@ -228,4 +236,32 @@ const M11 = {
   expect: 'BLOCKED',
 };
 
-export default [M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11];
+// ── M12：回落弹簧重新继承指针速度（2026-10-20 · 第三次"大幅翻面"的根因）────
+const M12 = {
+  id: 'M12',
+  note: '去掉 RELEASE 的 initialVelocity: 0 —— 快速穿梭时回落继承上万 deg/s，1° 的卡被甩到 301.78°（用户看到的就是 360° 翻转）。预期 BLOCKED（§62⑲）',
+  anchor: /var RELEASE = Object\.assign\(\{\}, SPRING, \{ initialVelocity: 0 \}\);/,
+  count: 1,
+  file: TILT,
+  apply: (s) => s.replace(
+    'var RELEASE = Object.assign({}, SPRING, { initialVelocity: 0 });',
+    'var RELEASE = Object.assign({}, SPRING);'),
+  layer: 'check-wb',
+  expect: 'BLOCKED',
+};
+
+// ── M13：去掉写变量的视觉夹层 ──────────────────────────────────────────────
+const M13 = {
+  id: 'M13',
+  note: '删掉写 --tilt-rx 时的 ±MAX_DEG 夹层 —— 根因修复之外的视觉保险失效（将来新路径写入大角度就会整块翻过去）。预期 BLOCKED（§62⑳）',
+  anchor: /el\.style\.setProperty\('--tilt-rx', Math\.max\(-MAX_DEG, Math\.min\(MAX_DEG, rx\)\)\.toFixed\(2\) \+ 'deg'\);/,
+  count: 1,
+  file: TILT,
+  apply: (s) => s.replace(
+    "el.style.setProperty('--tilt-rx', Math.max(-MAX_DEG, Math.min(MAX_DEG, rx)).toFixed(2) + 'deg');",
+    "el.style.setProperty('--tilt-rx', rx.toFixed(2) + 'deg');"),
+  layer: 'check-wb',
+  expect: 'BLOCKED',
+};
+
+export default [M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13];

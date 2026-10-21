@@ -50,8 +50,11 @@ export const SELF_SENT_MAX = 60;
  * @returns {string[]}
  */
 export function messageIdsOf(res) {
-  const d = res?.data;
-  if (!d) return [];
+  // 两种形状都认：OneBot 原始回执（`{status, data:{message_id}}`）与
+  // `OneBotClient.call()` 剥壳后的内层（`{message_id}`）。只认外层的话，
+  // 线上返回的那一份永远解析不出 id —— 引用回复会静默整条失效。
+  const d = res?.data ?? res;
+  if (!d || typeof d !== 'object') return [];
   const out = [];
   if (d.message_id !== undefined && d.message_id !== null) out.push(String(d.message_id));
   // 合并转发之类的接口会回一个 id 数组 —— 一并记下（它们同样是"我发的"）。

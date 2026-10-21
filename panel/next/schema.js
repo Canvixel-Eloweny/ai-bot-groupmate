@@ -201,12 +201,10 @@ export const GROUPS = [
                 memCell('面板自身', ['memory', 'procs', 'panelMB'], ' MB'),
               ] },
               { t: 'kv', rows: (s) => [
-                kv('实例锁', () => (j(s, ['bridge', 'lock']) ? `被 pid ${s.bridge.lock.pid} 持有` : '无')),
                 kv('可回滚的配置版本', () => `${j(s, ['configHistory'], 0)} 步`),
                 kv('运行中的代码', () => (j(s, ['effective', 'alive']) ? `pid ${s.effective.pid} · ${j(s, ['effective', 'model'], '—')}` : '机器人没在跑')),
                 kv('插件（磁盘）', () => `${j(s, ['extensions', 'sum', 'total'], 0)} 个 · 可加载 ${j(s, ['extensions', 'sum', 'load'], 0)}`),
               ] },
-              { t: 'note', text: '「实例锁」出现而机器人没在跑，就是"点了启动会被拒"的那一刻 —— 面板**不提供**强制接管（删锁是危险动作，交脚本或人工）。' },
             ],
           },
         ],
@@ -264,6 +262,29 @@ export const GROUPS = [
             id: 'audit', title: '审计留档', span: 6,
             desc: '只读路由 <code>GET /api/audit</code>。旧页面**不读它** —— 这里第一次把它摆出来。',
             ctrls: [{ t: 'auditList', from: 'audit' }],
+          },
+        ],
+      },
+      {
+        /* ══════════════ 假 QQ（2026-10-21 · Win-v0.1.2 移植）══════════════
+           这一页起的是**真的程序**（scripts/fake-qq.mjs 起假 OneBot + 真 src/index.js），
+           只是把 QQ 那一层换成本地假的。会话逻辑不在这页里：斜杠命令由脚本解释，
+           面板只转发 stdin 行。 */
+        id: 'fake', label: '假 QQ', title: '假 QQ（不用真 QQ 也能聊）',
+        desc: '真程序 + 假 QQ 传输层：<b>真模型</b>（或勾离线假模型）、真人设、真记忆落盘。定时消息、夜间产出这些"没有界面"的能力，在这一页打一句话就能验。',
+        cards: [
+          {
+            id: 'fake', title: '会话（打字 = 发消息）', span: 12,
+            desc: '真实的程序在后台跑，回显就是它真的输出。斜杠命令：<code>/at</code> 开关 @、<code>/private</code> 切私聊、<code>/group</code> 切回群、<code>/as QQ 名字</code> 换身份、<code>/log</code> 看程序日志、<code>/quit</code> 退出。',
+            ctrls: [
+              { t: 'fakeView' },
+              { t: 'text', id: 'fake.text', label: '你要说的话', ph: '直接打字就是一条群消息（默认带 @，机器人一定回）', wide: true, volatile: true },
+              { t: 'buttons', label: '', items: [
+                act('发送', 'fake.send', 'btn-primary'),
+                act('清屏', 'fake.clear'),
+              ] },
+              { t: 'note', kind: 'warn', text: '⚠️ 真机器人正在跑时<b>不许</b>用真数据起第二个程序（会抢同一份 <code>data\\</code>，把记忆写乱）—— 先停机器人，或勾「沙箱数据」（换成空的一份临时 data）。' },
+            ],
           },
         ],
       },
@@ -572,12 +593,12 @@ export const GROUPS = [
         cards: [{
           id: 'reply', title: '长短与习惯', span: 12,
           ctrls: [
-            /* ⚠️ 档位刻度（`ticks`）而不是 `seg`：
+            /* ⚠️ 档位进度条（`ticks`）而不是 `seg`：
                短→中→长**有顺序**，而 `.seg` 把三档排成等宽按钮 ——
                按钮间距表达的是"它们同类"，不表达"谁比谁多"。
-               刻度把高度接上（近→高），不用读文字就知道大概在哪一档。
+               横向液面直接画出"现在走到第几档"，不用读文字再排序。
                数据来源与 `seg` 完全相同（`customMeta.replyLengths`），
-               刻度不另存一份。 */
+               进度条不另存一份。 */
             { t: 'ticks', id: 'r.len', label: '回复长短', bind: 'replyStyle.length',
               options: (s) => Object.entries(j(s, ['customMeta', 'replyLengths'], {})).map(([v, o]) => ({ v, l: o.label, title: o.hint })) },
             { t: 'switch', id: 'r.multi', label: '允许一件事拆成几条发', bind: 'replyStyle.multiMessage',
@@ -679,6 +700,13 @@ export const GROUPS = [
           id: 'ppl', title: '印象与好感度', span: 12,
           ctrls: [{ t: 'people' }],
         }],
+      },
+      {
+        id: 'cardgrade', label: '角色卡分级', title: '角色卡分级（十维）',
+        desc: '把「这张卡能不能演一个人」拆成十件可数的事：<b>灰</b> 别上 · <b>绿</b> 只够演样板剧 · <b>蓝</b> 偏了 · <b>紫</b> 齐了但没边界 · <b>金</b> 成品。'
+          + '缺的那一维下面直接给了问法 —— 写一句话就能补进这张卡。门槛与文案由后端下发（<code>src/persona-grade.js</code>，面板不抄第二份）。',
+        draft: true,
+        cards: [{ id: 'cg', title: '卡库', span: 12, ctrls: [{ t: 'cardGrade' }] }],
       },
       {
         id: 'transfer', label: '导入导出', title: '导入 / 导出',
@@ -806,6 +834,10 @@ export const GROUPS = [
                     它的注释写着"面板导航改名时这一行必须跟着改"。 */
               { t: 'tags', id: 't.priv', label: '同意私聊的 QQ 号', bindSys: 'privateUsers', ph: '100000001',
                 hint: '填入同意私聊的 QQ 号（纯数字、逗号隔开）。填好后，这些人直接私聊它，它就会回话 —— 私聊相当于"直接点名"，<b>不用 @ 也不用关键词</b>。<b>留空 = 谁私聊都不回</b>。' },
+              { t: 'switch', id: 't.fpriv', label: '好友私聊按群友接待', bind: 'allowFriendsPrivate',
+                hint: '开着：机器人<b>加过的 QQ 好友</b>私聊它，即使没填进上面那格，也按群友的方式回话（好友表来自协议端，最多晚 10 分钟生效）。<b>好友不等于管理员</b> —— 叫醒、夜间产出收件人这些仍只认主人号。关掉：只有上面那格的号能私聊它。' },
+              { t: 'tags', id: 't.owner', label: '主人 QQ（叫醒 / 私聊兜底）', bindSys: 'ownerQq', ph: '100000001',
+                hint: '主人的 QQ 号（纯数字、逗号隔开）。加载配置时会<b>自动补进「同意私聊的 QQ 号」</b>，并允许在睡眠期间用私聊叫醒它。<b>留空 = 叫醒路整体关闭</b>（自然起床不受影响）。' },
               { t: 'tags', id: 't.allow', label: '放行的群号', bindSys: 'groups', ph: '100000001, 987654321',
                 hint: '留空 = 群里它谁都不回。至少填一个要它说话的群（纯数字、逗号隔开）。' },
             ],
@@ -860,6 +892,89 @@ export const GROUPS = [
         }],
       },
       {
+        id: 'peak', label: '峰谷（高峰时段）', title: '峰谷闸 —— 高峰时段不主动搭话',
+        desc: '工作日 <b>09:00–12:00</b> 与 <b>14:00–18:00</b>，群里<b>没人叫它就不出声</b>：不接话、不扫积压、不自己起话题。'
+          + '被 @、引用了它的话、命中触发词、拍一拍都照常回；私聊没有沉默档；定时消息不受影响（那是你点的活）。',
+        draft: true,
+        cards: [{
+          id: 'pk', title: '高峰时刻表', span: 6,
+          ctrls: [
+            { t: 'switch', id: 'pk.on', label: '启用峰谷闸（高峰时也不主动找话）', bind: 'peak.enabled',
+              hint: '默认开。这是总闸：关掉之后，工作日白天它和平时一样爱接话、也照常起话题 —— 代价是那几个小时最费钱、也最容易被当成刷屏。' },
+            { t: 'switch', id: 'pk.mute', label: '高峰时群里没人叫就不接话', bind: 'peak.muteUnmentioned',
+              hint: '默认开。只解除"群里没被叫到"的沉默；上面的总闸关掉后这一格不再起作用。被 @ / 引用 / 关键词 / 拍一拍都不受这一格影响。' },
+            { t: 'note', text: '时段是写死的两段（<b>工作日</b>才知道：周六周日整天都算谷）。要改时刻就改 <code>src/peak.js</code> 的 <code>PEAK_WINDOWS</code> —— 别在面板上造第二份数字。' },
+          ],
+        }],
+      },
+      {
+        id: 'patrol', label: '巡逻与热度', title: '巡逻与热度 —— 它自己翻积压、看谁熟',
+        desc: '群里安静下来之后，它会把这段时间没接的消息<b>攒成一轮</b>交给模型，由它决定接一句还是照常安静。'
+          + '热度是两套 0–1 的权重：<b>按人</b>的关系温度与<b>按群</b>的活跃度，两套都只压不放。',
+        draft: true,
+        cards: [
+          {
+            id: 'pt', title: '巡逻规则', span: 6,
+            ctrls: [
+              { t: 'switch', id: 'pt.on', label: '群安静后翻积压（巡逻）', bind: 'trigger.patrol.enabled',
+                hint: '关掉就只有「被点名 / 关键词 / 插话 / 定时主动」这四条开口路径。巡逻是唯一会读积压的那条。' },
+              { t: 'number', id: 'pt.min', label: '至少攒几条积压', bind: 'trigger.patrol.minUnread', min: 1, max: 200, step: 1, hint: '默认 5。' },
+              { t: 'number', id: 'pt.silence', label: '群里安静多少分钟后才翻', bind: 'trigger.patrol.silenceMin', min: 0, max: 1440, step: 1, hint: '默认 10 分钟。' },
+              { t: 'number', id: 'pt.gap', label: '同一个群两轮巡逻至少隔多少分钟', bind: 'trigger.patrol.minGapMin', min: 0, max: 1440, step: 1, hint: '默认 20 分钟。' },
+              { t: 'number', id: 'pt.chance', label: '基础概率（%）', bind: 'trigger.patrol.chance', min: 0, max: 100, step: 5, pct: true,
+                hint: '实际掷骰时还会乘热度权重（群越冷越不容易开口）。被 @ / 关键词 / 私聊不受这个数影响。' },
+              { t: 'number', id: 'pt.lines', label: '一轮最多带几条消息', bind: 'trigger.patrol.maxLines', min: 1, max: 60, step: 1,
+                hint: '默认 24。只截巡逻摘要，不改未读计数；太长会挤掉别的背景。' },
+              { t: 'number', id: 'pt.chars', label: '一轮摘要最多多少字', bind: 'trigger.patrol.maxChars', min: 100, max: 6000, step: 100,
+                hint: '默认 1800。按字符截，消息条目仍按上面的条数保留。' },
+              { t: 'note', text: '一轮巡逻 = 一批积压的摘要进提示词，模型可以接一句，也可以 <code>qq_quiet</code> 照常安静。它不是每条都问模型 —— 攒够、安静够才问一次。' },
+            ],
+          },
+          {
+            id: 'ptv', title: '现在的热度与积压', span: 6,
+            ctrls: [
+              { t: 'patrolView' },
+              { t: 'note', text: '「关系温度」是它对某个人在这个群里的热络程度（0–100%）：连着找它聊天会往下掉，安静下来慢慢回升。「群活跃」看最近 30 分钟的消息量。数据每 30 秒刷新一次（机器人没在跑时显示上一次的快照）。' },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'waiting', label: '聊天等待与图片', title: '聊天等待与图片 —— 回得更像人，也能发图 / 看图',
+        desc: '回话之前的<b>停顿</b>、同一个人连发几条时<b>攒成一轮</b>、模型慢时先<b>垫一句</b>，以及「正在输入」气泡；'
+          + '下面还有<b>发图</b>与<b>看图</b>两个工具。全部只影响观感与能力，不改变判定（闸门、限流、额度不受影响）。',
+        draft: true,
+        cards: [
+          {
+            id: 'cw', title: '聊天等待', span: 6,
+            ctrls: [
+              { t: 'switch', id: 'cw.on', label: '回之前先停一会儿（拟人停顿）', bind: 'wait.enabled',
+                hint: '关掉 = 判定一过立刻调模型（改造前的行为）。下面几个数都只在它开着时生效。' },
+              { t: 'number', id: 'cw.min', label: '最短停顿（毫秒）', bind: 'wait.minMs', min: 0, max: 10000, step: 100, hint: '默认 400。' },
+              { t: 'number', id: 'cw.max', label: '最长停顿（毫秒）', bind: 'wait.maxMs', min: 0, max: 20000, step: 100, hint: '默认 2500。长消息会按字数往上加，但不会超过这个值。' },
+              { t: 'number', id: 'cw.per', label: '每多一个字再多停（毫秒）', bind: 'wait.perCharMs', min: 0, max: 200, step: 5, hint: '默认 15。' },
+              { t: 'number', id: 'cw.merge', label: '连发合并：安静这么多毫秒才回（0 = 不合并）', bind: 'wait.mergeMs', min: 0, max: 30000, step: 100,
+                hint: '默认 1200。<b>只合并群聊</b>里同一个人连着发的几条；私聊不合并（紧急唤醒要按连发计数）。被合并掉的几句会进背景段，不会丢。' },
+              { t: 'number', id: 'cw.hold', label: '模型慢时先垫一句：超过多少毫秒（0 = 不垫）', bind: 'wait.holdMs', min: 0, max: 120000, step: 500, hint: '默认 6000。' },
+              { t: 'text', id: 'cw.text', label: '垫的那句话（留空 = 不垫）', bind: 'wait.holdText', ph: '例如：我想想…' },
+              { t: 'switch', id: 'cw.typing', label: '私聊里显示「正在输入」', bind: 'wait.typing', hint: '群聊协议端不支持这个状态，只对私聊生效。' },
+            ],
+          },
+          {
+            id: 'img', title: '图片工具', span: 6,
+            ctrls: [
+              { t: 'switch', id: 'img.send', label: '允许它主动发图', bind: 'image.send',
+                hint: '开着时模型多一个 send_image 工具。改完要<b>重启机器人</b>才生效（工具在启动时注册）。' },
+              { t: 'switch', id: 'img.view', label: '允许它按需看图', bind: 'image.view',
+                hint: '开着时模型多一个 view_image 工具（给地址 / 路径 / 消息号）。当前模型必须真的支持 vision。' },
+              { t: 'text', id: 'img.root', label: '本机图片目录', bind: 'image.root', ph: '默认 images-out（相对 data/）',
+                hint: '本机路径只允许这个目录内的文件（符号链接逃逸会被 realpath 拦下）。留空 = 禁用本机路径，远端 http(s) 仍可用。' },
+              { t: 'note', kind: 'warn', text: '图片先<b>下载成本地字节</b>再交给协议端：内网地址、私网 IP、超过 8MB 的一律发不出去，也会在日志里写明原因。' },
+            ],
+          },
+        ],
+      },
+      {
         id: 'proactive', label: '主动与免打扰', title: '主动发言与免打扰',
         desc: '"什么时候它自己起话头"以及"什么时候绝对不许出声"。',
         draft: true,
@@ -879,6 +994,8 @@ export const GROUPS = [
                  换算收在 app.js 的 valueOf / setValue 里，控件只负责声明单位。 */
               { t: 'number', id: 'pr.chance', label: '随机插话概率（%）', bindSys: 'interjectChance', min: 0, max: 100, step: 5, pct: true,
                 hint: '0 = 只有被点名才回。仅在上面的「必须 @」关掉后有效。' },
+              { t: 'number', id: 'pr.hour', label: '单会话每小时最多回复', bindSys: 'perHourPerSession', bounds: 'perHourPerSession',
+                hint: '<b>私聊 / @ / 叫名字 / 命中关键词不受这一格限制</b>（它们仍受 1.5 秒与每分钟 8 条约束）；随机插话与主动发言会吃这个总额。' },
               { t: 'note', text: '插话还有一层<b>时机</b>判定（活跃期提权 / 冷场降权，D12b）：上面这个概率是基准值，实际掷骰时会乘以因子。因子表在 trace 的 <code>interject</code> 那一格里可见。' },
             ],
           },
@@ -1281,10 +1398,10 @@ export const CTRL_KINDS = [
      把等权 kv 行换成有状态色的卡片，坏的那格自己会变红。 */
   'statusGrid', 'ports',
   'text', 'textarea', 'password', 'number', 'time', 'select', 'seg', 'tags',
-  /* `ticks`：**有序档位**的刻度选择器。
+  /* `ticks`：**有序档位**的横向进度条（2026-10-21 由竖向刻度改来）。
      与 `seg` 同一套数据契约（同一个 `options` / 同一个 `valueOf`/`setValue`），
-     差别只在呈现：刻度把高度接上，所以顺序是**看得见的**。
-     ⚠️ 少于 3 档时它**自动退回 `seg`**（2 档时高度差表达不了顺序，
+     差别只在呈现：液面覆盖到第几段，所以顺序与当前档位**一眼可见**。
+     ⚠️ 少于 3 档时它**自动退回 `seg`**（2 档时进度条表达不了顺序，
         白占一行高度与一套指针逻辑）。 */
   'ticks',
   /* `range`（2026-10-17）：**连续量**的进度条（区别于 `ticks` 的有限档位）。
@@ -1307,14 +1424,15 @@ export const CTRL_KINDS = [
                        （同一天先说"底部一条"，第二次又说"不要单独成块"⇒ 收成按钮） */
   'brainTags', 'quotaBtn',
   'usageBySource', 'usageTable',
-  'enhance', 'scenes', 'playRules', 'skills', 'memOverview', 'memList', 'memRecords', 'autoMemList',
+  'enhance', 'scenes', 'playRules', 'skills', 'cardGrade', 'memOverview', 'memList', 'memRecords', 'autoMemList',
+  'patrolView',
   'schedList', 'holidays', 'emotionState', 'pluginSummary', 'pluginList', 'pluginSettings', 'pluginScope',
   'people', 'unread', 'gallery', 'apiDeals',
   'sesList', 'sesDetail', 'chatList', 'chatDetail', 'traceList', 'logList', 'auditList',
   /* `termView`：网页内置终端（2026-10-11）—— 取代那个关不掉的前台 cmd 窗口。
      它不是一个"控件"，而是一个**自己管连接的面板**：日志由服务端经 SSE 推过来
      （`/api/console/stream`），页面重画时靠模块级状态重填，不重新建连接。 */
-  'termView',
+  'termView', 'fakeView',
   'update',
   'tryOut', 'importFile', 'importZip', 'protoInfo',
 ];

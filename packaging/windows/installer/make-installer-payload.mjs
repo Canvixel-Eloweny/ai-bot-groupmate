@@ -97,7 +97,13 @@ async function main() {
     }
     copyDir(path.join(appFull, 'panel'), path.join(appOut, 'panel'));
     copyDir(path.join(appFull, 'src'), path.join(appOut, 'src'));
-    copyFile(path.join(appFull, 'scripts', 'check-onebot.js'), path.join(appOut, 'scripts', 'check-onebot.js'));
+    // 运行时脚本白名单：面板的假 QQ / AI 认领会在运行时 spawn 它们。
+    // 漏一个的症状是"点了按钮进程起不来"，而安装与启动都正常。
+    fs.mkdirSync(path.join(appOut, 'scripts', 'lib'), { recursive: true });
+    for (const rel of ['check-onebot.js', 'fake-qq.mjs', 'adopt-card.mjs', 'dev-sim.mjs']) {
+      copyFile(path.join(appFull, 'scripts', rel), path.join(appOut, 'scripts', rel));
+    }
+    copyFile(path.join(appFull, 'scripts', 'lib', 'fake-host.mjs'), path.join(appOut, 'scripts', 'lib', 'fake-host.mjs'));
     copyDir(path.join(REPO, 'node_modules', 'ws'), path.join(appOut, 'node_modules', 'ws'));
     if (!exists(path.join(appOut, 'node_modules', 'ws', 'package.json'))) {
       throw new Error('node_modules/ws 没有复制进 payload（机器人会起不来）');

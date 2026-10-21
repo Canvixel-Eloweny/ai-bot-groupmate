@@ -33,6 +33,10 @@ import { SLEEP_DEFAULTS, readSleep } from './sleep.js';
 import { FORWARD_DEFAULTS, readForward } from './forward-expand.js';
 // D18 · 跨会话发言：同上 —— 默认值与归一化都在拥有那份判据的叶子里。
 import { CROSS_DEFAULTS, readCrossSend } from './cross-send.js';
+// 峰谷闸 / 巡逻 / 聊天等待：默认值与归一化同样归各自的零依赖叶子。
+import { PEAK_DEFAULTS, readPeak } from './peak.js';
+import { PATROL_DEFAULTS, patrolTuningOf } from './patrol.js';
+import { WAIT_DEFAULTS, waitTuningOf } from './waiting.js';
 // 提醒的"哪天算工作日"表（D17）。归一化归它（`normalizeHolidays` 拥有"什么算合法登记"的判据），
 // 闭集合 `REMINDER_ON` 也归 `reminder.js` —— 这里只取用，不自己再写一份名单。
 import { parseIsoDay, normalizeHolidays } from './holidays.js';
@@ -413,6 +417,23 @@ const CUSTOM_DEFAULTS = {
    * ⚠️ 本步**不加面板写控件**（按 E23 先例）；**改它要重启机器人**才生效（注册在启动时定）。
    */
   crossSend: { ...CROSS_DEFAULTS },
+  /**
+   * 峰谷闸：工作日高峰里，群里没被叫到就不出声。
+   * 默认值与归一化归 `src/peak.js`，这里只落配置。
+   */
+  peak: { ...PEAK_DEFAULTS },
+  /**
+   * 好友私聊按群友接待：协议端好友表里的人私聊它，即使没写进 `allow.private` 也回。
+   * 好友不等于管理员；拉不到好友表时失败关闭。判据在 `src/friends.js`。
+   */
+  allowFriendsPrivate: true,
+  /** 聊天等待（拟人停顿 / 连发合并 / 慢任务垫话 / 正在输入）。 */
+  wait: { ...WAIT_DEFAULTS },
+  /**
+   * 图片工具。默认**关**：开着会给每次模型请求多两个工具定义，改变请求体与 token 用量。
+   * `root` 是本机图片目录（相对 `data/` 或绝对路径）；本机路径只允许该目录内的文件。
+   */
+  image: { send: false, view: false, root: 'images-out' },
   /** 回复方式 */
   replyStyle: {
     // short / normal / long
@@ -438,8 +459,12 @@ const CUSTOM_DEFAULTS = {
     keywords: [],
     // 定时主动开新话题：到点自己抛一句。间隔的默认值与上下限在 src/field-schema.js
     proactive: { enabled: false, intervalMin: numDefault('proactiveIntervalMin'), text: '' },
-    // 定时消息：[{ id, at:'HH:MM', text, enabled }]
+    // 定时消息：[{ id, at:'HH:MM', text, prompt, target, enabled }]
     scheduled: [],
+    /**
+     * 巡逻：群里安静下来后把积压合成一轮交给模型。默认值与归一化归 `src/patrol.js`。
+     */
+    patrol: { ...PATROL_DEFAULTS },
     /**
      * 免打扰时段：这个区间内**不主动开口**（插话、定时主动、定时消息全都不发）。
      * 以前这段是硬编码在 src/index.js 里的 23:00–08:00，界面上只能写"这条是写死的"。
@@ -520,8 +545,11 @@ function scheduledItems(v) {
     if (!it) continue;
     const at = str(it.at, 5);
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(at)) continue; // 时间格式不对的直接丢
+    // 两种正文：`text`（写死原文）与 `prompt`（到点让模型现写，夜间产出用）。
+    // 两个都没有才丢 —— 只认 text 会把「夜里写摘要」这类条目静默扔掉。
     const text = str(it.text, 500).trim();
-    if (!text) continue;
+    const prompt = str(it.prompt, 500).trim();
+    if (!text && !prompt) continue;
     // ══ D17 的另外两个维度：日期（只在那天发一次）与频次（工作日 / 休息日）══
     //
     // ⚠️ 2026-10-02 修：这两个字段此前**不在这张白名单里**，于是被静默剥掉，整条链
@@ -541,7 +569,15 @@ function scheduledItems(v) {
     const date = parseIsoDay(str(it.date, 10).trim()) ? str(it.date, 10).trim() : '';
     const on = REMINDER_ON.includes(it.on) ? it.on : 'any';
     out.push({
-      id: str(it.id, 40) || `s${out.length}`, at, text, enabled: it.enabled !== false, date, on,
+      id: str(it.id, 40) || `s${out.length}`,
+      at,
+      text,
+      prompt,
+      // 投递目标：认不出的值回落 group（写错字段的后果应该是"按老样子发群里"，而不是静默丢件）。
+      target: it.target === 'owner' ? 'owner' : 'group',
+      enabled: it.enabled !== false,
+      date,
+      on,
     });
   }
   return out.slice(0, 20);
@@ -738,6 +774,7 @@ export function readCustom(raw) {
         text: str(c.trigger.proactive.text, 500),
       },
       scheduled: scheduledItems(c.trigger.scheduled),
+      patrol: patrolTuningOf(c.trigger),
       quietHours: quietHours(c.trigger.quietHours),
     },
     allowProactive: c.allowProactive !== false,
@@ -750,6 +787,17 @@ export function readCustom(raw) {
     forwardExpand: readForward(c.forwardExpand),
     // 跨会话发言（D18）：同上 —— 归一化归 `readCrossSend`，这里只负责取出来。
     crossSend: readCrossSend(c.crossSend),
+    // 峰谷 / 好友私聊 / 聊天等待 / 图片：默认值与归一化都归各自的叶子。
+    peak: readPeak(c.peak),
+    allowFriendsPrivate: c.allowFriendsPrivate !== false,
+    wait: waitTuningOf(c),
+    image: {
+      // 默认关：开着会改变每次模型请求的工具定义与 token 用量。
+      send: c.image?.send === true,
+      view: c.image?.view === true,
+      // 留空 = 禁用本机路径（远端 http(s) 仍可用）。
+      root: c.image?.root === undefined ? 'images-out' : str(c.image.root, 200).trim(),
+    },
     scenes: Object.fromEntries(Object.keys(SCENES).map((k) => [k, str(c.scenes[k], 500)])),
     // ══ 节假日表（D17）══
     //

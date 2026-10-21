@@ -42,7 +42,9 @@ export function sampleConfig() {
     context: { recentTurns: 6, ambientMessages: 8 },
     reply: { maxChunks: 4 },
     llm: { model: 'sample-model', provider: 'zhipu', features: { vision: false, webSearch: false } },
-    trigger: { requireAtInGroup: true, aliases: [], interjectChance: 0, interjectCooldownMs: 0 },
+    // 新功能在测试夹具里**默认关**：峰谷会随墙钟静默、等待会引入秒级停顿、
+    // 巡逻/好友私聊会改变判定 —— 让 smoke 依赖"现在几点"是最坏的假红来源。
+    trigger: { requireAtInGroup: true, aliases: [], interjectChance: 0, interjectCooldownMs: 0, patrol: { enabled: false } },
     throttle: { minIntervalMs: 0, perMinutePerSession: 100, globalConcurrency: 1 },
     allow: { private: [], groups: ['100000001'], allowAllWhenEmpty: false },
     deny: { users: [], groups: [] },
@@ -55,6 +57,10 @@ export function sampleConfig() {
       memory: { manual: [{ id: 'm1', text: '不要跟群里的张三说话', on: true }], auto: false },
       replyStyle: { length: 'normal' },
       allowProactive: true,
+      peak: { enabled: false, muteUnmentioned: true },
+      wait: { enabled: false },
+      image: { send: false, view: false, root: 'images-out' },
+      allowFriendsPrivate: false,
     },
   };
 }

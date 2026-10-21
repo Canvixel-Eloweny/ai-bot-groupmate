@@ -118,6 +118,12 @@
   <!-- 二级导航：当前域内的页面。⚠️ B29 整块上移到顶栏正下方（用户的原话：「与顶部
        现有的液态玻璃区域融为一体」）；B40 起它与灵动岛同处 `.navrow`。 -->
   <div class="nav2wrap" id="nav2wrap">
+    <!-- ⚠️ 二级导航的滑块**必须是静态元素**（同 `.nav-ind` 的理由）：
+         `renderNav2()` 每次切页用 `innerHTML` 重建按钮，滑块若跟着重建，
+         每次都变成"从 0 长出来"——滑动感当场消失，而页面照常工作。
+         B29 的下划线（`.sub::after`）在本轮退役：它无法跨"切换"表达位移，
+         而 §6.4 的三条准入对导航全中（本项目自己的教规）。 -->
+    <span class="nav2-ind" id="nav2Ind" aria-hidden="true"></span>
     <nav class="nav2" id="nav2" role="tablist" aria-label="页面"></nav>
   </div>
   <!-- B30：`.page-meta`（「即时页 / 点一下立刻生效」说明）按用户要求整块删除 ——

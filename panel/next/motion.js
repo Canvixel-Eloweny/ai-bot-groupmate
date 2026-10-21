@@ -213,8 +213,9 @@
   }
 
   /* ══ 4 · 动�� ═══════════════════════════════════════════════════════════
-     `animate(mv, target, { type:'spring', stiffness, damping, mass })`
+     `animate(mv, target, { type:'spring', stiffness, damping, mass, initialVelocity })`
      语义对齐 framer-motion。返回一个带 `.stop()` 的句柄。
+     `initialVelocity` 缺省 = 接着当前速度走；显式给 0 用于"回落不许继承手势速度"。
 
      ⚠️ 半路改目标是**必须**支持的，而且不能"从当前速度重新起步"式地
         悄悄丢掉动量 —— 那样连点两下会看到速度归零的台阶。
@@ -238,7 +239,13 @@
       return noop;
     }
 
-    var state = { x: mv.get(), v: mv.velocity() };
+    /* ⚠️ `initialVelocity` 是给"回落不许继承手势速度"的场景用的：
+       pointermove 在同一个 JS 任务里连发时，`set()` 用 `performance.now()` 的
+       微秒级差值算速度 —— 2° 的变化会被记成上万 deg/s；弹簧继承它就会把 1° 的卡
+       甩过半圈（tilt.js 的快速穿梭实测原始角 **301.78°**）。
+       缺省仍是"接着当前速度走"，其它调用方的动量语义一个字不变。 */
+    var v0 = cfg.initialVelocity == null ? mv.velocity() : Number(cfg.initialVelocity);
+    var state = { x: mv.get(), v: Number.isFinite(v0) ? v0 : 0 };
     var stopped = false;
 
     var item = {

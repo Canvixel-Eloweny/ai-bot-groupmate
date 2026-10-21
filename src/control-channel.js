@@ -40,7 +40,7 @@
  * 与 `abort` / `retry`（动的是"正在生成的那一轮"）不是同一层，
  * 但同样走这一条通道（Q7 的裁决就是"要加新动作就加进闭集合，不另开通道"）。
  */
-export const CONTROL_KINDS = ['abort', 'retry', 'sleep', 'wake'];
+export const CONTROL_KINDS = ['abort', 'retry', 'sleep', 'wake', 'shutdown'];
 
 /**
  * 命令的最大寿命（毫秒）。**经验值，非官方阈值。**
@@ -50,6 +50,20 @@ export const CONTROL_KINDS = ['abort', 'retry', 'sleep', 'wake'];
  * 几乎一定已经结束了。再长就是"恢复过期状态"。
  */
 export const CONTROL_MAX_AGE_MS = 2 * 60 * 1000;
+
+/**
+ * 按命令种类覆盖寿命（**唯一一张表**）。
+ *
+ * `shutdown` 只给 30 秒：面板点「停止」后会先等优雅退出，超时才强杀。
+ * 若强杀发生在命令写入之后、机器人还没起来（例如多实例/启动中），
+ * 2 分钟的旧上限会让**下一次启动读到这条命令后立刻自杀** —— 用户看到的是"起不来"。
+ */
+export const CONTROL_MAX_AGE_BY_KIND = { shutdown: 30 * 1000 };
+
+export function maxAgeForKind(cmd, fallback = CONTROL_MAX_AGE_MS) {
+  const v = CONTROL_MAX_AGE_BY_KIND[cmd];
+  return Number.isFinite(v) && v > 0 ? v : fallback;
+}
 
 /**
  * 轮询间隔（毫秒）。**经验值，非官方阈值。**
@@ -189,7 +203,8 @@ export async function runControlStep({
   if (!rec) {
     return { action: 'none', reason: '没有待执行的命令' };
   }
-  const d = controlDecision(rec, { now, lastId, maxAgeMs });
+  // `shutdown` 用更短的寿命（30 秒）：它不该在"强杀之后、下一次启动"时被兑现。
+  const d = controlDecision(rec, { now, lastId, maxAgeMs: maxAgeForKind(rec.cmd, maxAgeMs) });
 
   if (d.action === 'expire') {
     // 过期也要留痕：写回 `done` 之后面板才看得见"它被忽略了、为什么"。

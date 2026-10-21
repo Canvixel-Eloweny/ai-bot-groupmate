@@ -45,6 +45,18 @@ export const NUM_FIELDS = {
   /** 工作台「连续回复的最小间隔」（秒）。0 = 用底层防抖，所以 min 是 0 */
   cooldownSec: { default: 0, min: 0, max: 600 },
 
+  /** 模型温度。非数字/越界一律回退默认，不许把 NaN 传进请求体。 */
+  temperature: { default: 1, min: 0, max: 2 },
+
+  /** 随机插话基准概率（0–1）。面板按百分比显示，换算只在 uiNumbers 一处。 */
+  interjectChance: { default: 0, min: 0, max: 1 },
+
+  /** 单会话分钟级上限（所有出口共用）。 */
+  perMinutePerSession: { default: 8, min: 1, max: 60 },
+
+  /** 单会话小时级上限（只约束主动/插话；直呼类豁免，见 brain.throttleReason）。 */
+  perHourPerSession: { default: 60, min: 1, max: 600 },
+
   /** 定时主动说话的间隔（分钟） */
   proactiveIntervalMin: { default: 90, min: 5, max: 1440 },
 

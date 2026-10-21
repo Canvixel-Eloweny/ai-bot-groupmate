@@ -32,6 +32,9 @@ ITEMS = [
     "Estrella-Bot.vbs",
     "run-hidden.vbs",
     "4-DIAG.bat",
+    # 2026-10-21（Win-v0.1.2 移植）：工具链入口（假 QQ / 十项自检）
+    "start-fake-chat.bat",
+    "7-VERIFY.bat",
     "estrella-bot.ico",
     "README.html",
     # ⚠️ 2026-10-14：README.txt 与「本版修了什么.txt」已不再随包（维护者要求：
@@ -86,6 +89,12 @@ ITEMS = [
     "app/panel/lib/update-offline.js",
     "app/panel/next/schema.js",
     "app/panel/next/app.js",
+    # 2026-10-21（Win-v0.1.2 移植）：假 QQ / AI 认领的运行时脚本与面板进程壳。
+    "app/panel/lib/fake-session.js",
+    "app/scripts/fake-qq.mjs",
+    "app/scripts/adopt-card.mjs",
+    "app/scripts/dev-sim.mjs",
+    "app/scripts/lib/fake-host.mjs",
     "app/src/user-root.js",
     "app/src/config.js",
     "app/src/net-rules.js",

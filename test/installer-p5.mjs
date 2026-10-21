@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { loadPublicKey, fingerprintOf } from '../panel/lib/update-signature.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/* 当前版本从唯一来源读；写死会在合法升版后把"拒绝当前版本"测成另一个错误。 */
+const VER = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')).version;
 const KEYGEN = path.join(REPO, 'packaging', 'windows', 'update', 'keygen.mjs');
 const MAKE = path.join(REPO, 'packaging', 'windows', 'update', 'make-manifest.mjs');
 const CHECK = path.join(REPO, 'packaging', 'windows', 'update', 'release-check.mjs');
@@ -90,12 +92,12 @@ function runCheck(fx) {
 }
 
 /* ── 1. make-manifest 的当前版本闸 ─────────────────────────────────── */
-ck('make-manifest 默认拒绝当前版本（0.1.3）', () => {
+ck(`make-manifest 默认拒绝当前版本（${VER}）`, () => {
   const t = tmp();
-  const exe = path.join(t, 'Estrella-Bot-Setup-0.1.3.exe');
+  const exe = path.join(t, `Estrella-Bot-Setup-${VER}.exe`);
   fs.writeFileSync(exe, 'exe');
   const out = path.join(t, 'latest.json');
-  const r = run(MAKE, ['--exe', exe, '--version', '0.1.3', '--out', out]);
+  const r = run(MAKE, ['--exe', exe, '--version', VER, '--out', out]);
   assert.notEqual(r.status, 0);
   assert.match(`${r.stdout}\n${r.stderr}`, /--allow-current/);
   assert.equal(fs.existsSync(out), false);
@@ -103,19 +105,19 @@ ck('make-manifest 默认拒绝当前版本（0.1.3）', () => {
 
 ck('make-manifest --allow-current 放行且字段与 EXE 一致', () => {
   const t = tmp();
-  const exeName = 'Estrella-Bot-Setup-0.1.3.exe';
+  const exeName = `Estrella-Bot-Setup-${VER}.exe`;
   const exe = path.join(t, exeName);
   const bytes = Buffer.from('release-exe');
   fs.writeFileSync(exe, bytes);
   const out = path.join(t, 'latest.json');
-  const r = run(MAKE, ['--exe', exe, '--version', '0.1.3', '--out', out, '--allow-current']);
+  const r = run(MAKE, ['--exe', exe, '--version', VER, '--out', out, '--allow-current']);
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
   const m = JSON.parse(fs.readFileSync(out, 'utf8'));
-  assert.equal(m.version, '0.1.3');
+  assert.equal(m.version, VER);
   assert.equal(m.installer.size, bytes.length);
   assert.equal(m.installer.sha256, sha256(bytes));
-  assert.equal(m.installer.url, `https://github.com/${GH}/releases/download/v0.1.3/${exeName}`);
-  assert.equal(m.notesUrl, `https://github.com/${GH}/releases/tag/v0.1.3`);
+  assert.equal(m.installer.url, `https://github.com/${GH}/releases/download/v${VER}/${exeName}`);
+  assert.equal(m.notesUrl, `https://github.com/${GH}/releases/tag/v${VER}`);
 });
 
 /* ── 2. release-check 正向与负向 ───────────────────────────────────── */

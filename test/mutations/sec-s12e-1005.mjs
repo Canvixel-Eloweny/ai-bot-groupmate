@@ -11,7 +11,7 @@
  *   |---|---|---|---|
  *   | N1 | app.js 丢了 `bridgeCmd('abort')` 的中止接线 | §42 现役落点 | BLOCKED |
  *   | N2 | schema.js 的 `controlHintOf` 被改名 | §42 现役落点 | BLOCKED |
- *   | N3 | app.js 不再渲染 `lock.pid` | §43 现役落点 | BLOCKED |
+ *   | N3 | app.js 重新渲染 `lock.pid`（§43 已翻成反向：展示退役） | §43 现役落点 | BLOCKED |
  *   | N4 | app.js 的定时行丢了 `date` 控件 | §46 现役落点 | BLOCKED |
  *   | N5 | app.js 的 ZIP 安装入口被改名 | §49 现役落点 | BLOCKED |
  *   | N6 | app.js 不再读 `effective.sleep` | §50 现役落点 | BLOCKED |
@@ -24,6 +24,12 @@
  *       往注释里写反而正是要证明"不算数" —— 那条由 `d29.mjs` M11 的正向形态覆盖。
  *
  * 期望：N1–N7 `BLOCKED`，N8 `NOT-BLOCKED`，`INVALID` 为 0。
+ *
+ * ⚠️ **2026-10-20 · N3 方向反转**：维护者点名退役「实例锁」展示（Windows 强杀停止
+ *    会留残留锁，旧告警只看文件在不在，把"点启动会被拒"变成假告警）。§43 从
+ *    "页面必须渲染 lock.pid"翻成"页面**不许**再出现 lock 引用"；N3 随之从
+ *    "把键读错让锁隐身"改成"把旧读法接回来"，N8（注释里写旧读法）仍是 NOT-BLOCKED
+ *    的误报对照 —— 它证明反向判据同样剥注释。
  * ⚠️ 跑测试一律 `NODE_OPTIONS= node …`（R39）；跑之前**先提交**；
  *    用全新的 `QQBOT_MUTATE_WORK` 目录（R46.1：复用旧目录会把工作树回滚）。
  */
@@ -54,14 +60,20 @@ const N2 = {
   expect: 'BLOCKED',
 };
 
-// ── N3：锁状态不再渲染（§43）────────────────────────────────────────────────
+// ── N3：锁状态重新渲染（§43 反向 · 2026-10-20 方向反转）────────────────────
+// ⚠️ 实例锁展示已退役：§43 现在判"页面**不许**再出现 lock 引用"。
+//    所以这条变异从"把键读错让锁隐身"改成"把旧读法接回来"——
+//    它证明退役后的反向判据真的会挡住"顺手把旧告警贴回来"。
 const N3 = {
   id: 'N3',
-  note: 'app.js 把 `[\'bridge\', \'lock\', \'pid\']` 的键读错 —— 「有人持着锁」这件事在界面上重新变成隐形。预期 BLOCKED（§43）',
-  anchor: /\['bridge', 'lock', 'pid'\]/,
+  note: '把 `[\'bridge\', \'lock\', \'pid\']` 的读法接回 app.js —— 已退役的实例锁告警会重新出现。预期 BLOCKED（§43 反向）',
+  anchor: /  const upd = UPD\.state \|\| j\(s, \['update'\], null\);/,
   count: 1,
   file: APP,
-  apply: (s) => s.replace(/\['bridge', 'lock', 'pid'\]/, "['bridge', 'lock', 'pidX']"),
+  apply: (s) => s.replace(
+    "  const upd = UPD.state || j(s, ['update'], null);",
+    "  if (j(s, ['bridge', 'lock'])) out.push('<div class=\"banner\">lock</div>');\n"
+      + "  const upd = UPD.state || j(s, ['update'], null);"),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };

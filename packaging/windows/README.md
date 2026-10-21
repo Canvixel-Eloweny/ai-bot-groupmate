@@ -194,7 +194,7 @@ cp -R <开发仓>/node_modules/ws  pkg/app/node_modules/ws
 ⚠️ 因为第 1 步的 `make-app.mjs` 会**剔除 `app/packaging/`**，包内不会出现"两份 `setup.mjs`"。
 构建后可以核一下：`ls pkg/app/packaging` 应当不存在。
 
-**5. 重算 `pkg/SHA256SUMS.txt`（41 项 · 点名制）**
+**5. 重算 `pkg/SHA256SUMS.txt`（61 项 · 点名制；2026-10-21 实测）**
 
 ```bash
 python3 packaging/windows/make-sums.py <pkg目录>
@@ -237,7 +237,7 @@ node packaging/windows/scan-package.mjs <pkg目录>      # 退出码 0 = 0 命�
 正是第 58 轮 9 个文件"进了包却没进 git"的直接成因。`SHA256SUMS.txt` 只回答"文件有没有被改过"，
 回答不了"这份包是哪棵树打的"。
 
-⚠️ 它**不进** `SHA256SUMS.txt` 的 41 项 —— 清单**无法自证**（把自己的哈希写进自己，
+⚠️ 它**不进** `SHA256SUMS.txt` 的 61 项 —— 清单**无法自证**（把自己的哈希写进自己，
 被改了就看不出来）。这是刻意的，不是漏项。
 
 ## P2：NSIS 安装器构建（2026-10-18）

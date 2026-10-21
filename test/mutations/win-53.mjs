@@ -170,4 +170,119 @@ export default [
   },
 
   /* §99 表情 id 表（M11 / M12）已于 2026-10-17 删除：FACE_PRESETS 整表删除。 */
+
+  // ── §96⑧b 面板主文件的协议端探测口（2026-10-20 · A 批「假绿补洞」C1）───────
+  // 为什么单独三条：§96⑧ 只 `read` 了 `state-collector.js`，所以 `server.js` 里那五处
+  // 写死的端口（两处 HTTP 探测 + 三处"在不在跑"，其中 SSE 那颗把结果当 `proto` 每 3 秒
+  // 推给页面）**从来没有闸**。下面三条各自只打红 ⑧b 的一条子判据。
+  // ⚠️ 编号跳到 M14：M11/M12 历史上属于已删除的 §99 表情表（见上一行注释），不复用以免对不上账。
+  {
+    id: 'M14',
+    note: '把 apiGroups 的探测端口改回写死的 3000 —— 换端口的部署上"列群"永远空，'
+      + '而界面只说"协议端还没连上"（屏幕上没有任何地方说它探的是哪个端口）。预期 BLOCKED（§96⑧b 反向条）',
+    file: 'panel/server.js',
+    anchor: /await httpGet\(onebotProbePorts\(\)\.httpPort, '\/get_group_list', 10000\)/,
+    count: 1,
+    apply: (s) => s.replace(
+      "httpGet(onebotProbePorts().httpPort, '/get_group_list', 10000)",
+      "httpGet(3000, '/get_group_list', 10000)"
+    ),
+    layer: 'check-wb',
+    expect: 'BLOCKED',
+  },
+  {
+    id: 'M15',
+    note: '一键启动的「等协议端就绪」改回写死 3000 —— 症状比显示失真更坏：非默认端口的部署上'
+      + '等满 60 秒后报"协议端没响应"，而协议端其实活着。预期 BLOCKED（§96⑧b 反向条）',
+    file: 'panel/server.js',
+    anchor: /const onebotTask = waitFor\(async \(\) => \(await httpGet\(onebotHttpPort/,
+    count: 1,
+    apply: (s) => s.replace(
+      "await httpGet(onebotHttpPort, '/get_login_info', ONEBOT_PROBE_TIMEOUT_MS)",
+      "await httpGet(3000, '/get_login_info', ONEBOT_PROBE_TIMEOUT_MS)"
+    ),
+    layer: 'check-wb',
+    expect: 'BLOCKED',
+  },
+  {
+    id: 'M16',
+    note: 'SSE 心跳那颗改回 portOpen(3001) —— 它是**直接推给页面**的 `proto` 字段，'
+      + '于是"屏幕上的协议端状态"有了第二个真相源，且探的可能是机器人根本没连的端口。'
+      + '预期 BLOCKED（§96⑧b 反向条）',
+    file: 'panel/server.js',
+    anchor: /Promise\.resolve\(portOpen\(beatWsPort\)\)/,
+    count: 1,
+    apply: (s) => s.replace('Promise.resolve(portOpen(beatWsPort))', 'Promise.resolve(portOpen(3001))'),
+    layer: 'check-wb',
+    expect: 'BLOCKED',
+  },
+  {
+    id: 'M17',
+    note: '删掉薄接线本体、把调用换成内联 `cfg?.onebot?.wsPort ?? 3001` —— 判据分成两份，'
+      + '而 net-rules 那份带的 `httpIsDefault` 回落标记会静默消失（面板"探的是不是默认口"那格失真）。'
+      + '预期 BLOCKED（§96⑧b 定义形状条）',
+    file: 'panel/server.js',
+    anchor: /const onebotProbePorts = \(\) => onebotEndpointOf\(readConfig\(\)\?\.onebot\);/,
+    count: 1,
+    apply: (s) => s.replace(
+      'const onebotProbePorts = () => onebotEndpointOf(readConfig()?.onebot);',
+      'const onebotProbePorts = () => { const c = readConfig(); return { httpPort: c?.onebot?.httpPort ?? 3000, wsPort: c?.onebot?.wsPort ?? 3001 }; };'
+    ),
+    layer: 'check-wb',
+    expect: 'BLOCKED',
+  },
+
+  // ── §96⑧c NapCat 原生停/启的端口（2026-10-20 · 步骤 1 · R5）────────────────
+  // ⑧b 的五处是"读"（问协议端在不在），⑧c 这两处是"写"（杀哪个进程 / 等哪个端口）。
+  // 各自只打一条：字面量回潮 / 不把 wsPort 传下去 / 调用方不传配置端口。
+  {
+    id: 'M18',
+    note: 'stopNativeNapcat 的按端口杀改回写死 3001 —— 改过 WS 端口的部署上①永远找不到进程，'
+      + '"重启协议端"于是变成"又拉一个 NapCat"，二维码永远不会重新生成。预期 BLOCKED（§96⑧c）',
+    file: 'panel/lib/napcat-native.js',
+    anchor: /const r = await killTree\(\{ port: wsPort \}\);/,
+    count: 1,
+    apply: (s) => s.replace('const r = await killTree({ port: wsPort });', 'const r = await killTree({ port: 3001 });'),
+    layer: 'check-wb',
+    expect: 'BLOCKED',
+  },
+  {
+    id: 'M19',
+    note: 'restartNativeNapcat 的等就绪改回写死 3001 —— 非默认端口的部署上会等满 45 秒后'
+      + '误报"没起来"（协议端其实活着）。预期 BLOCKED（§96⑧c）',
+    file: 'panel/lib/napcat-native.js',
+    anchor: /if \(await portAlive\(wsPort\)\) return \{ ok: true/,
+    count: 1,
+    apply: (s) => s.replace('if (await portAlive(wsPort)) return { ok: true', 'if (await portAlive(3001)) return { ok: true'),
+    layer: 'check-wb',
+    expect: 'BLOCKED',
+  },
+  {
+    id: 'M20',
+    note: 'restartNativeNapcat 停的那一步不把 wsPort 传下去 —— "按对的端口等、按错的端口停"，'
+      + '症状是"重启成功但一直没就绪"。预期 BLOCKED（§96⑧c）',
+    file: 'panel/lib/napcat-native.js',
+    anchor: /const stop = await stopNativeNapcat\(killTree, \{ wsPort \}\);/,
+    count: 1,
+    apply: (s) => s.replace(
+      'const stop = await stopNativeNapcat(killTree, { wsPort });',
+      'const stop = await stopNativeNapcat(killTree);'
+    ),
+    layer: 'check-wb',
+    expect: 'BLOCKED',
+  },
+  {
+    id: 'M21',
+    note: 'server.js 调 restartNativeNapcat 时不再传配置端口 —— 默认 3001 接管，'
+      + '用户改过端口时停/等都按错端口。预期 BLOCKED（§96⑧c）',
+    file: 'panel/server.js',
+    anchor: /await restartNativeNapcat\(killTree, \{ wsPort: onebotProbePorts\(\)\.wsPort \}\);/,
+    count: 1,
+    apply: (s) => s.replace(
+      'await restartNativeNapcat(killTree, { wsPort: onebotProbePorts().wsPort });',
+      'await restartNativeNapcat(killTree);'
+    ),
+    layer: 'check-wb',
+    expect: 'BLOCKED',
+  },
 ];

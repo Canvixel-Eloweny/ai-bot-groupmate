@@ -22,7 +22,7 @@ import { SIMILAR_THRESHOLD, similarity } from './custom-config.js';
 import { looksInjected } from './injection.js';
 import { GATE_ERROR_KIND, isBlocking } from './gate-scan.js';
 import { recordUsage, USAGE_SOURCES } from './usage.js';
-import { writeJsonAtomic } from './atomic-write.js';
+import { writeJsonAtomic, writeTextAtomic } from './atomic-write.js';
 // 结构化记忆（ATI-3）：判据与状态机住在 memory-record（零依赖叶子），这里只做存储与接线。
 import {
   normalizeRecord,
@@ -92,10 +92,27 @@ export function autoMemoryForPrompt() {
   return listAutoMemory().slice(0, IN_PROMPT);
 }
 
+/**
+ * 按「最新的在前」的列表整份写回（`listAutoMemory()` 的形状）。
+ *
+ * 磁盘是 append-only（最旧在前），所以这里必须**反过来**再写；漏了这一步，
+ * 面板每删一条就会把整份文件永久翻成"最新在前"，之后提示词取到的是最旧 12 条。
+ * 写入走原子写：面板与机器人是两个进程，原地覆盖撞上 append 会丢行/写坏。
+ *
+ * @param {{id?:string,text?:string}[]} rows 最新在前
+ * @param {string} [file]
+ */
+export function writeAutoMemory(rows, file = AUTO_MEMORY_FILE) {
+  const list = Array.isArray(rows) ? rows.filter((m) => m && m.text) : [];
+  const text = [...list].reverse().map((m) => JSON.stringify(m)).join('\n') + (list.length ? '\n' : '');
+  writeTextAtomic(file, text);
+  return { ok: true, count: list.length };
+}
+
 /** 控制台「一键清空」用 */
 export function clearAutoMemory() {
   try {
-    fs.writeFileSync(AUTO_MEMORY_FILE, '');
+    writeTextAtomic(AUTO_MEMORY_FILE, '');
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -177,7 +194,7 @@ export function appendAutoMemory(entry) {
     // 超上限就折半截断（和对话流一个做法），保留最近的一半
     const all = fs.readFileSync(AUTO_MEMORY_FILE, 'utf8').split('\n').filter(Boolean);
     if (all.length > MAX_RECORDS) {
-      fs.writeFileSync(AUTO_MEMORY_FILE, all.slice(-Math.round(MAX_RECORDS / 2)).join('\n') + '\n');
+      writeTextAtomic(AUTO_MEMORY_FILE, all.slice(-Math.round(MAX_RECORDS / 2)).join('\n') + '\n');
     }
     return { ok: true };
   } catch (e) {
@@ -649,7 +666,9 @@ export class MemoryKeeper {
           text: parsed.text,
           detail: parsed.detail,
           provenance: {
-            chatKey: `${ctx.scene}:${ctx.id}`,
+            // 作用域键由调用方给（`memory-scope.js`：有角色卡按卡、没卡按会话）。
+            // 缺省回落到会话键 —— 老调用方行为逐字不变。
+            chatKey: String(ctx.memoryKey || `${ctx.scene}:${ctx.id}`),
             // 发送者：只作**溯源**（这是谁在说这件事），不再是这条记忆的主语
             userId: ctx.userId,
             messageId: ctx.messageId,
@@ -729,7 +748,10 @@ export class MemoryKeeper {
     // 第 13 轮加。之前它只看着眼前这段对话，于是"他以前喜欢 X、现在说不要 X"
     // 会被当成两个独立的事实，旧的继续注入、还因反复看到而越滚越巩固。
     // 只给**同一会话**（按会话隔离的纪律不能破），且跳过已经失效 / 被否掉的。
-    const chatKey = `${ctx.scene}:${ctx.id}`;
+    // 判官也要能看见**旧作用域**的记忆（启用卡之前按群存的那份），否则
+    // "他以前喜欢 X、现在说不要 X" 会被当成两条独立事实。
+    const chatKey = String(ctx.memoryKey || `${ctx.scene}:${ctx.id}`);
+    const chatKeys = new Set([chatKey, String(ctx.fallbackChatKey || '')].filter(Boolean));
     const userId = String(ctx.userId || '');
     // ⚠️ D-M1：范围要**同时**认出"这个人说的"与"关于这个人的" ——
     //    改造前只看发送者，于是"他以前不喜欢 X、后来说不要 Y"这类**同一主语**的
@@ -737,7 +759,7 @@ export class MemoryKeeper {
     const known = readRecords()
       .filter((r) => r
         && r.status !== 'superseded' && r.status !== 'rejected' && r.status !== 'archived'
-        && (r.provenance?.chatKey === chatKey
+        && (chatKeys.has(r.provenance?.chatKey)
             || (userId && r.provenance?.userId === userId)
             || (userId && r.provenance?.subjectId === userId)))
       .slice(-6)

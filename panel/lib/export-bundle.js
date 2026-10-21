@@ -33,6 +33,8 @@ export function makeExportBundle() {
     const custom = readCustom(cfg);
     const stamp = new Date().toLocaleString('zh-CN', { hour12: false });
     const files = {};
+    const hideList = (arr) => (Array.isArray(arr) ? arr.map((_, i) => `<已隐藏${i + 1}>`) : []);
+    const maskChatKey = (s) => String(s ?? '').replace(/\b(group|private):\d+(?::\d+)?/g, '$1:<已隐藏>');
 
     const personaFile = cfg?.persona?.file || '';
     // H-03（2026-10-05 · 第 10 轮 · 开源前审查）：这条路径来自**用户可见配置**，
@@ -149,11 +151,11 @@ export function makeExportBundle() {
       `- 过滤链接：${custom.safety.filterLinks ? '开' : '关'}`,
       ``,
       `## 放行的群`,
-      ...(cfg?.allow?.groups || []).map((g) => `- ${g}`),
+      ...(mask ? hideList(cfg?.allow?.groups) : (cfg?.allow?.groups || [])).map((g) => `- ${g}`),
       ``,
       `## 拉黑的群 / 人（这些地方它完全不回话）`,
-      `- 群：${(cfg?.deny?.groups || []).join('、') || '(无)'}`,
-      `- 人：${(cfg?.deny?.users || []).join('、') || '(无)'}`,
+      `- 群：${((mask ? hideList(cfg?.deny?.groups) : (cfg?.deny?.groups || []))).join('、') || '(无)'}`,
+      `- 人：${((mask ? hideList(cfg?.deny?.users) : (cfg?.deny?.users || []))).join('、') || '(无)'}`,
     ].join('\n');
 
     const auto = listAutoMemory();
@@ -176,7 +178,8 @@ export function makeExportBundle() {
         if (!rs.length) return ['(空)'];
         return rs.map((r) => {
           const when = new Date(r.lastSeenAt || Date.now()).toLocaleString('zh-CN', { hour12: false });
-          const scope = r.provenance?.chatKey || '(无会话)';
+          const scopeRaw = r.provenance?.chatKey || '(无会话)';
+          const scope = mask ? maskChatKey(scopeRaw) : scopeRaw;
           return `- [${r.status}] ×${r.samples} ${r.kind}｜${r.text}${r.detail ? `（${r.detail}）` : ''}｜${scope}｜${when}`;
         });
       })(),
@@ -220,23 +223,34 @@ export function makeExportBundle() {
     if (what === 'all' || what === 'config') {
       // 脱敏。**不提供"连 Key 都不清"的导出** —— 那等于把账号送人，
       // 不该由一个下载按钮完成。但群号要不要一起藏掉，交给用户选：
-      //   mask=1（默认）：清空 Key/Token + 群号与 QQ 号换成占位 → 这份可以放心发给别人
-      //   mask=0         ：只清空 Key/Token，保留群号 → 自己留档用
+      //   mask=1（默认）：清空凭据 + 群号/QQ 号换成占位 → 结构化名单已藏；正文仍需自查
+      //   mask=0         ：只清空凭据，保留群号 → 自己留档用
+      //
+      // ⚠️ 键名匹配**不许用 `/key|token|secret/`**：它会把 `maxTokens` 一起清空
+      //    （导出里变成 `"maxTokens": ""`，数值丢失）。这里只认精确的凭据键名；
+      //    `llm.keys` 这种"服务商 → Key"的映射按父键识别。
+      const SECRET_KEYS = new Set([
+        'apikey', 'api_key', 'accessToken'.toLowerCase(), 'access_token',
+        'token', 'secret', 'clientsecret', 'client_secret', 'password', 'webuitoken',
+      ]);
       const safe = JSON.parse(JSON.stringify(cfg || {}));
-      const scrub = (o) => {
+      const scrub = (o, parent = '') => {
         if (!o || typeof o !== 'object') return;
         for (const k of Object.keys(o)) {
-          if (/key|token|secret/i.test(k)) { o[k] = ''; continue; }
-          scrub(o[k]);
+          const v = o[k];
+          if (SECRET_KEYS.has(String(k).toLowerCase()) || (parent === 'keys' && typeof v === 'string')) {
+            o[k] = '';
+            continue;
+          }
+          scrub(v, k);
         }
       };
       scrub(safe);
       if (mask) {
-        const hide = (arr) => (Array.isArray(arr) ? arr.map((_, i) => `<已隐藏${i + 1}>`) : arr);
         for (const key of ['allow', 'deny']) {
-          if (safe[key]?.groups) safe[key].groups = hide(safe[key].groups);
-          if (safe[key]?.private) safe[key].private = hide(safe[key].private);
-          if (safe[key]?.users) safe[key].users = hide(safe[key].users);
+          if (safe[key]?.groups) safe[key].groups = hideList(safe[key].groups);
+          if (safe[key]?.private) safe[key].private = hideList(safe[key].private);
+          if (safe[key]?.users) safe[key].users = hideList(safe[key].users);
         }
       }
       files['config-已脱敏.json'] = JSON.stringify(safe, null, 2);

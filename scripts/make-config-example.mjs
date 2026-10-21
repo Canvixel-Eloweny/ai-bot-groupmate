@@ -26,6 +26,10 @@ import { DEFAULT_AMBIENT_BATCH } from '../src/ambient.js';
 import { budgetOf } from '../src/context-budget.js';
 // 桌面端「启动方式」的缺省值（2026-10-16）：同样只从唯一判据取，不在这里手写。
 import { DEFAULT_LAUNCH } from '../src/launch-mode.js';
+// L3 聚合层：后端选择的默认值只从唯一注册表取，不在这里手写 'auto'。
+import { normalizeBackend } from '../src/backend/registry.js';
+// 移植 Win-v0.1.2：新自定义段的默认值只从 `readCustom` 取，不在这里手写数字。
+import { readCustom } from '../src/custom-config.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = path.join(ROOT, 'config.json');
@@ -45,6 +49,11 @@ const example = sanitizeConfig(cfg, { blankGroups: true, dropDeadKeys: true });
 //    批粒度只从 `DEFAULT_AMBIENT_BATCH` 取、预算表只从 `budgetOf()` 取 ——
 //    改默认值永远只改那一处（"同一份语义两份拷贝"是本项目头号杀手）。
 const tuning = interjectTuningOf({});
+// 协议端后端选择（L3，2026-10-20）：真实 config 里没有这个键时也要补进模板，
+// 否则"照着模板配不出后端选择"（与下面 m-4 那批漏键同一个形态）。
+example.onebot = example.onebot || {};
+example.onebot = { backend: normalizeBackend(undefined), ...example.onebot };
+
 example.trigger = example.trigger || {};
 // 注意方向：**输入键名**是 `interjectXxx`（`config.js` 把归一化后的结果摊平进 cfg.trigger，
 // 摊平后叫 `activeWindowMs` —— 那是运行时的名字，写进模板反而无效）。
@@ -88,6 +97,17 @@ if (!('activeCustomId' in example.llm)) example.llm.activeCustomId = '';
 //    （唯一出处）—— 那条一改这里跟着变，正是我们要的单源。
 example.launch = { ...DEFAULT_LAUNCH };
 
+// ── 2026-10-21（移植 Win-v0.1.2）：模板补上新自定义段 ─────────────────────
+// 生成器从真机 config.json 抄，用户没显式改过的新键永远不会出现。
+// 值只从 `readCustom({})` 取（唯一默认值来源），不在这里手写。
+const customDefaults = readCustom({});
+example.custom = example.custom && typeof example.custom === 'object' ? example.custom : {};
+for (const key of ['peak', 'allowFriendsPrivate', 'wait', 'image']) {
+  if (!(key in example.custom)) example.custom[key] = customDefaults[key];
+}
+example.custom.trigger = example.custom.trigger && typeof example.custom.trigger === 'object' ? example.custom.trigger : {};
+if (!('patrol' in example.custom.trigger)) example.custom.trigger.patrol = customDefaults.trigger.patrol;
+
 // ⚠️ 这里**刻意不补 `presets.qwen`**（对照：上面补了 `keys.qwen`）—— 两者的区别是
 //    "缺失时有没有人兜底"：
 //      · `keys` 缺一格 ⇒ 只能靠人来填，模板不写就没人知道；
@@ -106,7 +126,9 @@ if (leaks.length) {
 
 // 群号清空后给个占位，让人知道这里该填什么（空数组容易被当成"不允许任何群"）
 if (example.allow && Array.isArray(example.allow.groups)) {
-  example.allow.groups = ['填你的群号，例如 123456789'];
+  // 2026-10-21：不再写中文占位。它会被 `idList()` 原样当成一个真群号，
+  // 于是"模板能启动、但谁都不放行"，用户还以为已经配好了。空数组 + 启动报错更诚实。
+  example.allow.groups = [];
 }
 
 // ── 昵称 / 别名：**类型化扫描扫不到它们** ──────────────────────────────────

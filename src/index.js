@@ -2,8 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadConfig } from './config.js';
-import { CONFIG_FILE, USER_ROOT, PANEL_STATE_DIR, DATA_DIR, panelFile } from './user-root.js';
+import { CONFIG_FILE, USER_ROOT, PANEL_STATE_DIR, DATA_DIR, panelFile, ensureUserDirs } from './user-root.js';
 import { OneBotClient, flattenMessage, textSegment, atSegment, replySegment, imageSegment, triggerTextOf } from './onebot.js';
+// L3 聚合适配层：主链路不再直接问"这家协议端长什么样" ——
+// 后端识别与合并转发参数顺序都收进 `src/backend/`（2026-10-20）。
+import { createOneBotDriver } from './backend/driver.js';
+import { forwardAttemptsFor } from './backend/normalize.js';
 import { LlmClient } from './llm.js';
 import { supportsVision } from './model-caps.js';
 import {
@@ -14,6 +18,24 @@ import { MemoryKeeper } from './memory.js';
 // 表达规范观测（ATI-1）：**只记录、不拦截**（判据与词表住在 speech-rules，
 // 提示词侧也引同一份 —— 两边各写一份必然漂移）。
 import { scanSpeech } from './speech-rules.js';
+// 反模板闸：判据与动作全在 anti-template（零依赖叶子），这里只接线。
+import { deTemplate } from './anti-template.js';
+// 峰谷闸：工作日高峰里没被叫到就不出声。判据全在 peak.js（零依赖叶子）。
+import { peakSkipReason, peakQuietForProactive, readPeak } from './peak.js';
+// 好友私聊按群友接待：判据叶子（成员关系），表由本文件的 refreshFriends() 从协议端拉。
+import { friendIdsOf, FRIENDS_RECHECK_MS, FRIENDS_TTL_MS } from './friends.js';
+// 热度（按人关系温度 + 群活跃度）与巡逻（攒一批积压再问一轮）。
+import {
+  heatWeightOf, newHeatEntry, normalizeHeatEntry, noteHeatTurn, chatHeatOf, heatBandOf,
+} from './heat.js';
+import { patrolTuningOf, patrolPlanOf, patrolEventOf } from './patrol.js';
+// 夜间产出：定时消息的「让模型现写」。
+import { isNightly, nightlyTargetOf, nightlyMessages, transcriptOf, NIGHTLY_MAX_TOKENS } from './nightly.js';
+// 聊天等待：停顿 / 连发合并 / 慢任务垫话。判据全在 waiting.js。
+import { humanDelayMs, waitTuningOf } from './waiting.js';
+// 图片两件套：判据（地址归类/MIME/上限）在 images.js；网络与文件读取只在这里。
+import { classifyImageArg, imageMimeOf, imageFileOf, IMAGE_MAX_BYTES, VIEW_IMAGE_PROMPT } from './images.js';
+import { safeFetch } from './safe-fetch.js';
 // B33：内部标记（历史里那四句系统批注）的**唯一出处**在这儿 —— 本文件的四处
 // `remember(...)` 与 `sayToGroup` 的出口都从它取。理由与出口闸门同一句话：
 // 文案与判据各写两份，改了文案忘了改词干 = 闸门**静默失效**（真机已经泄过一次）。
@@ -85,6 +107,7 @@ import {
 // 主动出站的配额计划与「分句 + 出口闸门」判定（B8 · S-PROACTIVE / 第 49 轮复审）——
 // 判定是纯函数（smoke T134 钉行为），这里只做接线
 import { planProactiveSend, plannedProactiveChunks } from './proactive.js';
+import { createSemaphore } from './async-util.js';
 import {
   writeJsonAtomic, writeTextAtomic, truncateLinesAtomic, sweepStaleTemps,
   // [W1] 独占提交 / 独占替换 —— 关掉"读→判→写"之间的 TOCTOU 窗口
@@ -157,6 +180,9 @@ const log = scoped('bridge');
 // 外包体检（ZCode 2026-09-27）发现这一处漏了 env 覆盖。
 const EFFECTIVE_FILE = process.env.QQBOT_EFFECTIVE_FILE
   || panelFile('effective.json');
+// 快照刷新周期。默认 20 秒；测试把它调短才能在一次回归里等到 `onebotHealth` 落盘
+// （与 QQBOT_EFFECTIVE_FILE 同族：只改采样节奏，不改产品行为）。
+const EFFECTIVE_INTERVAL_MS = Number(process.env.QQBOT_EFFECTIVE_MS) || 20000;
 // 「正在生成回复」的标记文件。本机模型一条要十几秒，
 // 面板靠它显示进度，否则用户只能干等，以为机器人坏了。
 //
@@ -192,6 +218,8 @@ const CONTROL_FILE = process.env.QQBOT_CONTROL_FILE
 // ⚠️ 上面这句刻意写成"同一个 panel 目录"而不是"共用 panel 加两个星号"：扫描器先剥注释，
 //    而"斜杠紧跟星号"会被当成块注释开头，一路吃到下一个块注释结尾，把中间的真实代码
 //    整段吞掉（第 41 轮在别处踩过同一件事，表现是一组互不相关的契约同时假红）。
+const HEAT_FILE = path.join(DATA_DIR, 'heat-state.json');
+const PATROL_SNAPSHOT_FILE = path.join(DATA_DIR, 'patrol-state.json');
 const REMINDER_FILE = process.env.QQBOT_REMINDER_FILE
   ? path.resolve(process.env.QQBOT_REMINDER_FILE)
   : panelFile('reminder-state.json');
@@ -321,6 +349,9 @@ function writeEffective(cfg) {
       // ⚠️ `null` = **还没算过**（机器人刚起来的那一瞬）—— 与"醒着"是两件不同的事，
       //    页面按 null 不显示，而不是显示成"醒着"（那会让"门禁没接上"看起来一切正常）。
       sleep: sleepSnap,
+      // 协议端连接健康（B4）：面板把它与自己的 HTTP 探测**并排**显示 —— 两个观测面、两个时刻。
+      // 与 extSnapshot 同一条理由：只在 main() 里产生、只被 writeEffective 消费。
+      onebotHealth: onebotHealthSnap,
     });
   } catch {
     /* 写不出来也不影响机器人跑 */
@@ -343,6 +374,14 @@ function writeEffective(cfg) {
  *    前者表示"这一栏没有数据"，后者表示"一个都没启用"。页面按 `null` 不显示。
  */
 let extSnapshot = null;
+
+/**
+ * 机器人侧看到的协议端连接健康（B4 · 2026-10-20）。
+ * 为什么挂在模块级而不是当参数传：理由与 `extSnapshot` 完全相同 —— 只在 `main()` 里产生、
+ * 只被 `writeEffective()` 消费，而后者有三个调用点。初值 `null` = "机器人还没采过"，
+ * 与"连上了但没心跳"是两件不同的事（面板按 null 不显示，而不是显示成"断"）。
+ */
+let onebotHealthSnap = null;
 
 /**
  * 已加载扩展包声明的**提示词指引**（清单 `prompt.sections`），收集成 `src/brain.js` 认的形状。
@@ -398,24 +437,6 @@ function watchConfig(onReload) {
   }
 }
 
-function createSemaphore(limit) {
-  let active = 0;
-  const queue = [];
-  const next = () => {
-    if (active >= limit || queue.length === 0) return;
-    active += 1;
-    const { run, resolve, reject } = queue.shift();
-    run().then(resolve, reject).finally(() => {
-      active -= 1;
-      next();
-    });
-  };
-  return (run) =>
-    new Promise((resolve, reject) => {
-      queue.push({ run, resolve, reject });
-      next();
-    });
-}
 
 /**
  * 把本次生效的三处凭据装进出口闸门的**运行时阻断集**（第 56 轮 F1-1 · E21 第二半）。
@@ -443,6 +464,15 @@ function armRuntimeSecrets(cfg) {
 async function main() {
   let cfg = loadConfig(process.env.QQBOT_CONFIG);
   armRuntimeSecrets(cfg);
+
+  // 用户数据根与图片目录自建：完整包解压后没有 `data/`（压缩包不装空目录），
+  // 第一次跑会缺这一层、部分落盘口在 try/catch 里静默失败。放在占锁之前 ——
+  // 拒绝启动时不该留下半个运行态，但这两个目录是纯数据容器，先建不产生副作用。
+  try {
+    ensureUserDirs();
+  } catch (e) {
+    log.warn(`用户数据目录创建失败（落盘可能降级）：${e?.message || e}`);
+  }
 
   // ── D19 · 先占锁，再干别的 ─────────────────────────────────────────────
   //
@@ -509,6 +539,9 @@ async function main() {
   const brain = new Brain(cfg, store);
   const llm = new LlmClient(cfg.llm);
   const bot = new OneBotClient(cfg.onebot);
+  // ⚠️ 驱动只包 `call` 与后端表，不接管连接/心跳 —— 那两件事仍归 OneBotClient，
+  // 面板读到的 healthSnapshot 也仍来自同一个客户端（不产生第二个真相源）。
+  const onebot = createOneBotDriver({ client: bot, backend: cfg.onebot.backend });
   // ⚠️ 必须是 let：globalConcurrency 改了之后 reload() 会重建信号量（见下方 reload）。
   //    旧实现只在启动时建一次，改并发数要重启才生效，面板还不提示。
   let gate = createSemaphore(cfg.throttle.globalConcurrency);
@@ -517,6 +550,31 @@ async function main() {
   // 「自我记忆 → 自动记录」。传 getCfg 而不是 cfg 快照：配置会热重载，
   // 抓快照的话开关改了它永远看不到。
   const keeper = new MemoryKeeper(() => cfg, llm);
+
+  /**
+   * 协议端好友表缓存（「好友私聊按群友接待」用；判据在 `src/friends.js`）。
+   * 为什么带缓存而不是每条私聊现拉：`get_friend_list` 是一次协议端往返，
+   * 每来一条陌生私聊都打一次，等于把陌生人变成免费的探测工具。
+   */
+  const friendsCache = { at: 0, ids: new Set() };
+  let friendsFetching = null;
+  async function refreshFriends() {
+    if (friendsFetching) return friendsFetching;
+    friendsFetching = (async () => {
+      try {
+        const data = await bot.call('get_friend_list', {}, 10000);
+        friendsCache.ids = friendIdsOf(data);
+        friendsCache.at = Date.now();
+        brain.setFriendIds(friendsCache.ids);
+        log.info(`好友表已刷新：${friendsCache.ids.size} 个（好友私聊按群友接待：${cfg.custom?.allowFriendsPrivate === false ? '关' : '开'}）`);
+      } catch (e) {
+        log.warn(`拉好友表失败（沿用 ${friendsCache.at ? new Date(friendsCache.at).toLocaleTimeString('zh-CN', { hour12: false }) : '空'} 那份）：${e?.message || e}`);
+      } finally {
+        friendsFetching = null;
+      }
+    })();
+    return friendsFetching;
+  }
 
   /**
    * 工具注册表 + 工具回合执行器（第 46 轮 B12e-1 · 执行层）。
@@ -570,6 +628,163 @@ async function main() {
     }
     log.info(`跨会话发言已开启：注册了 ${toolRegistry.size()} 个宿主工具`);
   }
+
+  /**
+   * ── 图片两件套（Win-v0.1.2 移植）──────────────────────────────────────
+   * `send_image` —— 发一张图（本机绝对路径 / http(s) 地址）。
+   * `view_image` —— 按需看一张图（路径 / 地址 / 消息号，返回一句描述）。
+   *
+   * ⚠️ 只在开关**真的是 true** 时注册：默认关，请求体与不开工具时逐字节相同。
+   * ⚠️ 本机路径只允许 `custom.image.root`（默认 data/images-out）内的文件：
+   *    图片工具一旦能读任意绝对路径，群里的提示注入就能把本机图片发出去。
+   *    远端地址走 `safeFetch`（私网拒绝、逐跳重校验、字节上限）。
+   */
+  function imageRootPath() {
+    const raw = String(cfg.custom?.image?.root || '').trim();
+    return raw ? path.resolve(DATA_DIR, raw) : '';
+  }
+
+  function imagePathAllowed(file) {
+    const root = imageRootPath();
+    if (!root) return { ok: false, reason: '本机图片目录未配置（custom.image.root 留空）' };
+    try {
+      const realRoot = fs.realpathSync(root);
+      const realFile = fs.realpathSync(file);
+      if (realFile === realRoot || realFile.startsWith(realRoot + path.sep)) return { ok: true };
+      return { ok: false, reason: '本机路径不在允许的图片目录内（custom.image.root）' };
+    } catch (e) {
+      return { ok: false, reason: `图片目录或文件不可读（${e.message}）` };
+    }
+  }
+
+  /** 把「一张图」的三种参数（url / path / base64）解析成字节。失败给一句人话。 */
+  async function imageBytesOf(arg) {
+    const src = classifyImageArg(arg);
+    if (!src.ok) return { ok: false, reason: src.reason };
+    if (src.kind === 'url') {
+      const r = await safeFetch(src.value, { policy: { maxBytes: IMAGE_MAX_BYTES } });
+      if (!r.ok) return { ok: false, reason: `下载失败（${r.reason}${r.detail ? `：${r.detail}` : ''}）` };
+      return { ok: true, bytes: r.body };
+    }
+    if (src.kind === 'file') {
+      const allowed = imagePathAllowed(src.value);
+      if (!allowed.ok) return allowed;
+      try {
+        const st = fs.statSync(src.value);
+        if (!st.isFile()) return { ok: false, reason: '那个路径不是文件' };
+        if (st.size > IMAGE_MAX_BYTES) {
+          return { ok: false, reason: `文件太大（上限 ${Math.round(IMAGE_MAX_BYTES / 1024 / 1024)}MB）` };
+        }
+        return { ok: true, bytes: fs.readFileSync(src.value) };
+      } catch (e) {
+        return { ok: false, reason: `读不到这个文件（${e.message}）` };
+      }
+    }
+    return { ok: true, bytes: Buffer.from(src.value, 'base64') };
+  }
+
+  /** 从一条消息里取图片段给的地址（`get_msg` 的 data.url / data.file）。只读，不下载。 */
+  async function imageUrlFromMessage(messageId) {
+    const r = await bot.call('get_msg', { message_id: Number(messageId) }, 10000);
+    const segs = Array.isArray(r?.message) ? r.message : [];
+    for (const seg of segs) {
+      if (seg?.type !== 'image') continue;
+      const u = String(seg.data?.url || seg.data?.file || '').trim();
+      if (u) return u;
+    }
+    return '';
+  }
+
+  /** `send_image`：发一张图到**当前**会话。 */
+  async function toolSendImage(ctx = {}, args = {}) {
+    const scene = ctx.kind === 'group' ? 'group' : 'private';
+    const chatId = String(ctx.chatId ?? '');
+    if (!chatId) return { content: '没发出去：不知道这条要发给谁', isError: true };
+    const got = await imageBytesOf(args.url ?? args.path ?? args.file ?? '');
+    if (!got.ok) return { content: `没发出去：${got.reason}`, isError: true };
+    const mime = imageMimeOf(got.bytes);
+    if (!mime) return { content: '没发出去：这不是一张认得的图片（只认 png / jpg / gif / webp / bmp）', isError: true };
+    try {
+      await bot.sendMsg(scene, chatId, [imageSegment(imageFileOf(got.bytes))]);
+    } catch (e) {
+      return { content: `没发出去：${e.message}`, isError: true };
+    }
+    const kb = Math.round(got.bytes.length / 1024);
+    journal('image', `发了一张图（${mime}，${kb}KB）→ ${scene}:${chatId}`);
+    log.info(`[图片] 已发一张（${mime}，${kb}KB）→ ${scene}:${chatId}`);
+    return { content: `图发出去了（${mime}，${kb}KB）。` };
+  }
+
+  /** `view_image`：按需看一张图，把图交给模型换回一句描述。 */
+  async function toolViewImage(ctx = {}, args = {}) {
+    // ⚠️ 模型不支持看图时**如实拒绝** —— 否则 LlmClient 会把图剥掉、只发文字，
+    //    模型就着文件名瞎编一段（比"看不到"难查得多）。
+    const canSee = supportsVision(cfg.llm?.model, cfg.llm?.provider, cfg.llm?.declaredFeatures)
+      && cfg.llm?.features?.vision;
+    if (!canSee) {
+      return { content: '看不到：当前模型不支持看图（config.llm 里没开 vision，或这个型号不在支持表里）', isError: true };
+    }
+    let arg = args.url ?? args.path ?? args.file ?? '';
+    if (!arg && args.message_id != null) {
+      try {
+        arg = await imageUrlFromMessage(args.message_id);
+      } catch (e) {
+        return { content: `看不到：取那条消息失败（${e.message}）`, isError: true };
+      }
+      if (!arg) return { content: '看不到：那条消息里没有图片', isError: true };
+    }
+    const got = await imageBytesOf(arg);
+    if (!got.ok) return { content: `看不到：${got.reason}`, isError: true };
+    const mime = imageMimeOf(got.bytes);
+    if (!mime) return { content: '看不到：这不是一张认得的图片', isError: true };
+    const dataUrl = `data:${mime};base64,${got.bytes.toString('base64')}`;
+    // 小额旁路必须显式关思考（见 src/llm.js 文件头：否则推理吃光额度）。
+    const { text, usage } = await llm.chatWithUsage(
+      [{
+        role: 'user',
+        content: [{ type: 'text', text: VIEW_IMAGE_PROMPT }, { type: 'image_url', image_url: { url: dataUrl } }],
+      }],
+      { temperature: 0.2, maxTokens: 400, thinking: { mode: 'off' } }
+    );
+    if (usage) recordUsage({ ...usage, chat: String(ctx.chatKey ?? ''), source: USAGE_SOURCES.agent });
+    const said = String(text ?? '').trim();
+    return { content: said || '看不清这张图（模型没给描述）' };
+  }
+
+  if (cfg.custom?.image?.send === true) {
+    const r = toolRegistry.register({
+      id: 'send_image',
+      owner: '',
+      description: `发一张图到当前聊天。地址可以是 http(s) 直链，也可以是本机图片目录（custom.image.root）内的绝对路径。一次一张，别连刷。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'http(s) 图片直链，或本机图片目录内的绝对路径' },
+        },
+        required: ['url'],
+      },
+      execute: toolSendImage,
+    });
+    if (!r.ok) log.warn(`发图工具没能注册：${r.reason}`);
+  }
+  if (cfg.custom?.image?.view === true) {
+    const r = toolRegistry.register({
+      id: 'view_image',
+      owner: '',
+      description: '看一张图并说出里面有什么。给图片地址 / 本机图片目录内的路径，或给一条消息号（摘要里 # 后面那串数字）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'http(s) 图片直链，或本机图片目录内的绝对路径' },
+          message_id: { type: 'string', description: '要看的那条消息的 id（与 url 二选一）' },
+        },
+      },
+      execute: toolViewImage,
+    });
+    if (!r.ok) log.warn(`看图工具没能注册：${r.reason}`);
+  }
+  const imageTools = ['send_image', 'view_image'].filter((n) => toolRegistry.has(n));
+  if (imageTools.length) log.info(`图片工具已注册：${imageTools.join('/')}`);
 
   const toolLoop = createToolLoop({
     client: llm,
@@ -634,7 +849,7 @@ async function main() {
       }
       const action = kind === 'private' ? 'send_private_forward_msg' : 'send_group_forward_msg';
       const key = kind === 'private' ? 'user_id' : 'group_id';
-      return bot.call(action, { [key]: Number(rawId), messages: fwd.data });
+      return onebot.call(action, { [key]: Number(rawId), messages: fwd.data });
     },
     /**
      * 发一张图（2026-10-15 修 · 对应「小鱼发不出图片」/ Issue #5 同族）。
@@ -660,7 +875,7 @@ async function main() {
       if (!rawId || !file) throw new Error('sendImage 需要 target 与图片地址');
       const action = kind === 'private' ? 'send_private_msg' : 'send_group_msg';
       const key = kind === 'private' ? 'user_id' : 'group_id';
-      return bot.call(action, { [key]: Number(rawId), message: [imageSegment(file)] });
+      return onebot.call(action, { [key]: Number(rawId), message: [imageSegment(file)] });
     },
   };
 
@@ -842,6 +1057,13 @@ async function main() {
   watchConfig(reload);
 
   bot.on('ready', () => {
+    // 好友表是只读拉取；失败只告警，绝不挡启动。
+    void refreshFriends();
+    // 后端识别放在 ready 之后：`auto` 要问一次 `get_version_info`，没连上时问不到。
+    // 识别失败不阻塞主链路（回 `generic`，forward 仍按 message_id 先试）。
+    onebot.detectBackend()
+      .then((id) => log.info(`协议端后端：${onebot.label}（${id}${onebot.detection?.ok === false ? '，识别失败' : ''}）`))
+      .catch((e) => log.debug(`后端识别失败（按 generic 继续）：${e.message}`));
     log.info(`桥接就绪 | 模型: ${llm.label}`);
     log.info(
       `白名单 | 群: ${cfg.allow.groups.join(',') || '空'} | 私聊: ${cfg.allow.private.join(',') || '空'}` +
@@ -924,8 +1146,82 @@ async function main() {
     return next;
   }
 
+  // ── 聊天等待 · 连发合并 ────────────────────────────────────────────────
+  // 同一个人连着发几条时，等 `wait.mergeMs`（默认 1.2 秒）没人再发，
+  // 才把**最后一条**排进队列 —— 像真人等对方把话说完，而不是逐条插嘴。
+  // 被合并掉的几条挂在 `mergedLines` 上，由 `handleMessage` 补进背景段。
+  // ⚠️ 只合并**同一个人**：key 里必须带发送者，否则两个人的话会被揉成一个人的。
+  // ⚠️ 合成事件（补看 / 巡逻 / 拍一拍）不合并 —— 它们本来就是"攒好的一批"。
+  const mergePending = new Map();
+
+  /** 这条消息有没有"点名"它（@ 或引用）—— 点名的既不许等、也不许被合并掉。 */
+  function mentionsSelf(evt) {
+    return Array.isArray(evt?.message)
+      && evt.message.some((seg) => seg?.type === 'at' || seg?.type === 'reply');
+  }
+
+  function enqueueWithMerge(evt) {
+    // ⚠️ 只合并**群聊**：私聊是 1:1，而且主人私聊的"10 秒内连发 3 条"是紧急唤醒的
+    // 唯一判据（sleep.js 的 burst）—— 合并会把 3 条合成 1 条，紧急唤醒永远不触发。
+    if (evt?.message_type !== 'group') return enqueueFor(evt);
+    const tuning = waitTuningOf(cfg.custom);
+    if (!tuning.enabled || tuning.mergeMs <= 0 || evt?.isCatchUp || evt?.isPatrol || evt?.isPoke) {
+      return enqueueFor(evt);
+    }
+    const scene = evt.message_type === 'group' ? 'group' : 'private';
+    const chatId = scene === 'group' ? evt.group_id : evt.user_id;
+    const key = `${scene}:${chatId}:${evt.user_id ?? ''}`;
+    const prev = mergePending.get(key);
+
+    // 点名（@ / 引用）立刻进队列，并把同一个人之前那批没点名的话先冲出去。
+    if (mentionsSelf(evt)) {
+      if (prev) {
+        mergePending.delete(key);
+        clearTimeout(prev.timer);
+        void enqueueFor(prev.evt);
+      }
+      return enqueueFor(evt);
+    }
+
+    const text = String(evt.raw_message || triggerTextOf(evt) || '').trim();
+    const sender = evt.sender?.card || evt.sender?.nickname || `用户${evt.user_id ?? ''}`;
+    const lines = prev ? [...prev.lines, { sender: prev.sender, userId: prev.userId, text: prev.text }] : [];
+    if (prev) clearTimeout(prev.timer);
+    evt.mergedLines = lines;
+    const timer = setTimeout(() => {
+      mergePending.delete(key);
+      void enqueueFor(evt);
+    }, tuning.mergeMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    mergePending.set(key, { timer, evt, lines, sender, userId: evt.user_id, text });
+  }
+
+  /**
+   * 私聊「正在输入」气泡。群聊协议端没有这个能力（NapCat 只对私聊认这个动作）。
+   * 返回一个 `stop()`；无论成功失败都必须在收尾处调用（否则气泡会一直亮着）。
+   */
+  function startTyping(scene, id) {
+    const tuning = waitTuningOf(cfg.custom);
+    if (!tuning.enabled || !tuning.typing || scene !== 'private') return () => {};
+    const userId = Number(id);
+    if (!Number.isFinite(userId)) return () => {};
+    let stopped = false;
+    const pulse = () => {
+      bot.call('set_input_status', { user_id: userId, event_type: 1 }, 5000).catch(() => {});
+    };
+    pulse();
+    const timer = setInterval(pulse, 5000);
+    if (typeof timer.unref === 'function') timer.unref();
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      bot.call('set_input_status', { user_id: userId, event_type: 0 }, 5000).catch(() => {});
+    };
+  }
+
   bot.on('message', (evt) => {
-    enqueueFor(evt);
+    enqueueWithMerge(evt);
   });
 
   /**
@@ -943,6 +1239,13 @@ async function main() {
    * 其余 notice（撤回、戳一戳以外的 notify、群管…）**不处理**，但记一条 debug ——
    * 静默丢弃正是本项目最怕的失败模式。
    */
+  // 账号掉线（B3）：NapCat 的心跳 status.online / notice bot_offline 都会走到这里。
+  // **不重连、不重启协议端** —— 那会多一次风控判定，且替代不了重新登录。
+  bot.on('offline', (e) => {
+    log.warn(`账号已掉线：${e?.reason || '协议端报告离线'} —— 保持连接，等它自己重登或扫码`);
+    journal('notice', `账号掉线：${e?.reason || '协议端报告离线'}（不重连、不重启协议端）`);
+  });
+
   bot.on('notice', async (evt) => {
     // ⚠️ `onebot.js` 对**所有非 message 报文**都 emit('notice') —— 心跳（`meta_event`）
     // 也在其中，约每 30 秒一次。它们不是"我们没处理的 notice"，只是别的事件：
@@ -997,7 +1300,7 @@ async function main() {
       // 展示名：尽力取，取不到就不写（宁可显示「用户<号>」也不编一个名字）。
       let name = '';
       try {
-        const info = await bot.call('get_group_member_info', { group_id: n.id, user_id: n.fromId, no_cache: false }, 5000);
+        const info = await onebot.call('get_group_member_info', { group_id: n.id, user_id: n.fromId, no_cache: false }, 5000);
         name = String(info?.card || info?.nickname || '');
       } catch (err) {
         log.debug(`取拍一拍发起者昵称失败（用「用户<号>」代替）：${err.message}`);
@@ -1014,10 +1317,16 @@ async function main() {
    *   ① `forward` 型 —— 段里只有一个 id，真正的内容要再调一次 `get_forward_msg`；
    *   ② `node` 型 —— 段里内嵌节点，本来就能直接读（下面走同一个渲染器）。
    *
-   * ⚠️ **参数用 `message_id`，不是段里的那个 id** —— 参考实现的真机实测
-   *    （2026-09-05，SnowLuma/NapCat）：`get_forward_msg` **只认 `message_id`**；
-   *    转发卡片里的 `res_id` 会过期，报 `payload is empty`。所以段里那个 id 只作**兜底**重试
-   *    （多一次调用，但能覆盖"协议端两种行为都有"的现实）。两个都不行 → 退回占位符。
+   * ⚠️ **两步都要有 —— 先用 `message_id`，再用段里那个 id（下称 resId）兜底，少一步就失去一家。**
+   *    旧注释「协议端只认 `message_id`，`res_id` 会过期报 `payload is empty`」是**把 SnowLuma
+   *    一家的行为当成了通用行为**（2026-10-20 源码取证订正；三家入参键名都只有 `message_id`/`id`，
+   *    没有任何一家收 `res_id` 这个键）。逐家实物：NapCat 两个键都收（`message_id || id`），
+   *    拿到值之后**按形状分流** —— 数字走"回查这条消息的历史"，非数字才降级按 resId 下载；
+   *    SnowLuma **`id` 优先**，只喂 message_id 时必须先回查到那条事件、再从转发段里挖出 resId；
+   *    **LLBot 把两个键都按 resId 字符串解读**，源码注释明写"不要把整数 message_id 用在这里"
+   *    ⇒ 兜底那一次是 LLBot 唯一能通的调用，删掉它 = 删掉 LLBot 支持。
+   *    反过来 resId 会过期（SnowLuma 抛 `payload is empty`、NapCat 抛 `ResId无效`），
+   *    所以第一步同样不能省。两个都不行 → 退回占位符。
    * ⚠️ 整条消息**最多调两次**（message_id 一次 + res_id 兜底一次），且只渲染一次。
    * ⚠️ **fail-open**：任何异常都不许影响这条消息的处理 —— 宁可它只看见 `[合并转发]`。
    *    成功与失败都要留痕（`forward` 那一格进 trace），否则"它说看不见"无从复盘。
@@ -1042,17 +1351,15 @@ async function main() {
     const t0 = Date.now();
     const stat = { off: false, segs: segs.length, nodes: 0, chars: 0, ms: 0, via: '', error: '' };
 
-    // 优先 message_id（协议端只认它）；没有 message_id 或它失败了，再拿段里的 res_id 试一次。
-    const attempts = [];
-    if (evt.message_id !== undefined && evt.message_id !== null && String(evt.message_id)) {
-      attempts.push({ via: 'message_id', params: { message_id: Number(evt.message_id) || evt.message_id } });
-    }
+    // 第一步该用哪个键，**不再由这里决定**：`forwardAttemptsFor` 按后端表排序
+    // （LLBot 的 `id` 必须先试；NapCat/SnowLuma 先 `message_id`）。
+    // ⚠️ 两步不是冗余：LLBot 只认后者、resId 过期时只有前者能用（判据与实物见函数头）。
     const resId = forwardResIdOf(evt.message);
-    if (resId) attempts.push({ via: 'res_id', params: { id: resId } });
+    const attempts = forwardAttemptsFor(onebot.backend, { messageId: evt.message_id, resId });
 
     for (const at of attempts) {
       try {
-        const data = await bot.call('get_forward_msg', at.params, 5000);
+        const data = await onebot.call('get_forward_msg', at.params, 5000);
         const nodes = forwardNodesOf(data);
         if (!nodes.length) {
           // 形状不对 / 空 → 换下一种参数再试；全试完仍为空就退回占位符（不编内容）。
@@ -1077,6 +1384,13 @@ async function main() {
     return { text: '', stat };
   }
 
+  /** 命中工作台配的触发词＝点了它的名（峰谷闸的"被叫到"之一）。与 brain 同口径：子串、不区分大小写。 */
+  const keywordHitOf = (list, parsed) => {
+    if (!Array.isArray(list) || !list.length) return false;
+    const low = String(triggerTextOf(parsed)).toLowerCase();
+    return list.some((k) => low.includes(String(k).toLowerCase()));
+  };
+
   async function handleMessage(evt) {
     const selfId = bot.selfId ?? String(evt.self_id ?? '');
 
@@ -1097,14 +1411,32 @@ async function main() {
     // 为它们建 session、记背景消息是纯内存浪费（且只增不减 —— 每个见过的群/用户一条）。
     // 预判与 decide 用的是同一份判定（brain.#gateReason），两边不会漂移。
     // skip 记录照写（writeSkip 不需要 session），日志与之前逐字一致。
-    const allowed = brain.isAllowed(evt);
+    let allowed = brain.isAllowed(evt);
+    // 「好友私聊按群友接待」：白名单没写他、但他在好友表里 ⇒ 放行。
+    // 表可能还没拉到，所以这里允许一次（最多 60 秒一次）的重拉。
+    if (!allowed && scene === 'private' && cfg.custom?.allowFriendsPrivate !== false) {
+      if (Date.now() - friendsCache.at > FRIENDS_RECHECK_MS) await refreshFriends();
+      allowed = brain.isAllowed(evt);
+      if (allowed) log.info(`[私聊] ${evt.user_id} 在好友表里 → 按群友接待（没写进「同意私聊的 QQ 号」也回）`);
+    }
+    // 被挡下的私聊也留一行：用户"没看到别人的私聊"时，至少要能在日志里看见它们来过。
+    if (!allowed && scene === 'private') {
+      log.info(`[私聊] 忽略 ${evt.user_id}：不在「同意私聊的 QQ 号」里${cfg.custom?.allowFriendsPrivate === false ? '（好友接待已关）' : '，也不在好友表里'}`);
+    }
     const session = allowed ? store.get(scene, id) : null;
+    // 角色卡切换时清掉该会话里旧卡说过的话（全局指纹管不到按群的卡）。
+    const activeCard = allowed ? brain.syncCard(session, evt) : null;
 
     const sender = evt.sender?.card || evt.sender?.nickname || `用户${evt.user_id}`;
     // ⚠️ `!evt.isPoke`：拍一拍合成的那条**不进背景段**（D9b）。
     //    背景段的用途是"让模型知道刚才群里谁在说什么"；一次拍一拍不是"话"，
     //    记进去等于往上下文里塞一句自己没见过的动作，更容易诱发复读。
     if (allowed && scene === 'group' && !evt.isPoke) {
+      // 连发合并：被合并掉的几条先按原顺序进背景段，再记当前这条 ——
+      // 模型看到的顺序与真人看到的顺序一致，最后一条仍是"正在被回的那条"。
+      for (const ln of Array.isArray(evt.mergedLines) ? evt.mergedLines : []) {
+        if (ln?.text) brain.rememberAmbient(session, ln.sender, ln.text, ln.userId);
+      }
       brain.rememberAmbient(session, sender, parsed.text, evt.user_id);
     }
 
@@ -1203,7 +1535,42 @@ async function main() {
     // `parsed.replyTo` 只是"被引用消息的 id"（不含作者），拿它去比"我发过的 id"。
     // ⚠️ 只读一次、传进去 —— 不让 `decide()` 自己去碰进程状态（保持它是纯函数）。
     const repliedToMe = isReplyToSelf(selfSentIds, parsed.replyTo);
-    const decision = brain.decide(session, evt, parsed, { repliedToMe });
+
+    // ── C 改造 · 峰谷闸（工作日 09:00–12:00 / 14:00–18:00，群聊没被叫到就不出声）──
+    // 位置同睡眠门禁：在**未读记录之后**、`decide()` 与**未读消费之前** ⇒
+    // 跳过时这一条原样留在未读，但不补看（峰谷只是"这个时段不搭话"，不是"人不在"）。
+    // 被 @ / 引用了我的话 / 命中触发词 / 拍一拍 / 私聊 —— 都算被叫到，照常处理。
+    // ⚠️ 必须在**任何会调模型的东西之前**（否则"高峰不出声"会变成"照常烧钱"）。
+    const peakReason = peakSkipReason({
+      now: Date.now(),
+      scene,
+      mentionedSelf: parsed.mentionedSelf,
+      repliedToMe,
+      keywordHit: keywordHitOf(cfg.custom?.trigger?.keywords, parsed),
+      isPoke: !!evt.isPoke,
+      peak: readPeak(cfg.custom?.peak),
+    });
+    if (peakReason) {
+      writeSkip({
+        traceId, stage: 'peak', scene, id, sender,
+        text: `${sender}: ${parsed.text}`,
+        reason: peakReason,
+        model: cfg.llm.model, baseUrl: cfg.llm.baseUrl,
+        // 与睡眠门禁同一条纪律：没处理就不消费，如实 null。
+        unread: null,
+        forward: forwardStat,
+      });
+      log.info(`[${traceId}] 高峰静默 ${session ? session.key : store.key(scene, id)} ${sender}: ${truncate(parsed.text)}`);
+      return;
+    }
+    // 热度权重（按人关系温度）：冷的时候少冒头，交给 decide() 乘进概率。
+    const heatWeight = session ? heatWeightOf(heatEntryOf(session.key, evt.user_id)) : 1;
+    const decision = brain.decide(session, evt, parsed, {
+      repliedToMe,
+      heatWeight,
+      // 巡逻轮的计划（只有合成事件 `isPatrol` 才有）：概率 / 攒了几条都在 evt.patrol 上。
+      patrol: evt.isPatrol ? evt.patrol : null,
+    });
 
     // ── D30 · 单点消费（**唯一消费点**）────────────────────────────────────
     // `decide()` 一返回就消费：respond 与 skip 都算"已被门禁处理完毕"，
@@ -1218,7 +1585,12 @@ async function main() {
     // 先记账再判会让冷场时长恒为 0（那个因子就成了永远为假的死代码）。
     // ⚠️ 拍一拍不是"话"（D9b 既有的口径：它不进背景段、不进风格统计）——
     //    让它推进就等于一次拍一拍把冷场计时清零。
-    if (session && !evt.isPoke) brain.noteSeen(session);
+    // 拍一拍与巡逻轮都不算"有人在跟它说话"（巡逻不能把自己的摘要当成新消息，
+    // 否则会重置静默计时、让下一次巡逻永远等不到"安静下来"）。
+    if (session && !evt.isPoke && !evt.isPatrol) {
+      brain.noteSeen(session);
+      noteChatMessage(session.key);
+    }
 
     if (!decision.respond) {
       // B10a · O-SKIP：以前只有 log.debug（默认级别 info，**根本不输出**），
@@ -1269,7 +1641,20 @@ async function main() {
     //    拿文案当枚举的话，改一个字的措辞就会静默改掉这里的分支。
     if (decision.kind === 'interject') session.lastInterjectAt = Date.now();
 
-    const throttled = brain.throttleReason(session);
+    // 巡逻记账：只有真的回了才写"这批话被看过了"（掷骰没中 / 连不上模型都不走这里）。
+    if (decision.kind === 'patrol' && session) {
+      heatState.patrol[session.key] = Date.now();
+      saveHeatState(true);
+    }
+
+    // 热度记账（按人关系温度）：位置在所有"跳过"分支之后，指令叫停的一轮不算聊天。
+    if (session && !evt.isPoke && !evt.isPatrol) {
+      const when = Date.now();
+      noteHeatTurn(heatEntryOf(session.key, evt.user_id, when), when);
+      saveHeatState();
+    }
+
+    const throttled = brain.throttleReason(session, Date.now(), { kind: decision.kind });
     if (throttled) {
       // 同上：被限流也是一种"没回"，而且要跟"决策就没答应"区分开（处置完全不同）。
       writeSkip({
@@ -1326,6 +1711,7 @@ async function main() {
       // 而作息状态是那个唯一判定点重算出来的快照（`sleepSnap`），不在这一层再算一遍。
       sleep: sleepSnap,
       catchUp: !!evt.isCatchUp,
+      patrol: !!evt.isPatrol,
       // 扩展包指引（2026-10-15）：由**已加载**的包声明（清单 prompt.sections）收集而来。
       // 与 tier / sleep / catchUp 同一条纪律 —— 每轮才变的东西由调用方注入，
       // brain 不在那一层读全局快照。没有扩展包时是空数组 ⇒ 提示词逐字不变。
@@ -1353,7 +1739,7 @@ async function main() {
       chatId: String(id),
       selfId,
       botName: cfg.persona?.botName ?? '',
-      onebot: scopedOnebot(bot, { log }),
+      onebot: scopedOnebot(onebot, { log }),
       sender: extSender,
       // ⚠️ 扩展包的工具**不直接用 `sender`** —— `plugin-host` 会用这个工厂把 ctx 收成
       //    "这个包自己的那一份"（按清单声明裁剪，见 `senderFor`）。
@@ -1369,11 +1755,32 @@ async function main() {
       //    要加回来之前，先用工具回合断言钉住它的形状 —— 否则又是"说不清该有什么"。
     };
 
+    // ── 聊天等待 · 拟人停顿 ────────────────────────────────────────────────
+    // 判定已经过了（真的要回）、模型还没叫 —— 在这里停一下，像真人把话看完再敲字。
+    // 巡逻轮 / 补看轮**不等**：那两轮本来就不是"有人刚跟你说了一句话"。
+    const waitTuning = waitTuningOf(cfg.custom);
+    const stopTyping = startTyping(scene, id);
+    if (waitTuning.enabled && !evt.isPatrol && !evt.isCatchUp) {
+      const pauseMs = humanDelayMs({ chars: String(parsed.text || '').length, tuning: waitTuning });
+      if (pauseMs > 0) await sleep(pauseMs);
+    }
+
     markThinking(true, { scene, id: String(id), sender, reason: decision.reason, traceId });
     let reply = '';
     let chatErr = null;
     let runToolResults = [];
     const t0 = Date.now();
+    // ── 聊天等待 · 慢任务垫一句 ────────────────────────────────────────────
+    // 模型超过 `holdMs` 还没出结果时，先回一句短话（「我想想…」），免得对面以为它没看见。
+    // 走**同一个出口** `deliverFromBot`（分句 / 闸门 / 节奏都在那儿），不另开发送路径。
+    let holdTimer = null;
+    if (waitTuning.enabled && waitTuning.holdMs > 0 && waitTuning.holdText && !evt.isPatrol && !evt.isCatchUp) {
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        void deliverFromBot(scene, id, waitTuning.holdText).catch((e) => log.warn(`垫话发送失败: ${e.message}`));
+      }, waitTuning.holdMs);
+      if (typeof holdTimer.unref === 'function') holdTimer.unref();
+    }
     // ── D6：登记"这一轮在途"，并把 signal 交给模型调用链 ────────────────
     // 触发消息**随 begin 一起登记**：中止/失败之后要能**原地重放**（复用同一个会话，
     // 不新建、不换 id —— 换了会让会话列表膨胀，而重放的意义正是"接着刚才那句"）。
@@ -1409,6 +1816,9 @@ async function main() {
       chatErr = err;
     } finally {
       markThinking(false);
+      // 垫话与「正在输入」都是本轮附属状态：无论成功/失败/中止都要收掉。
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+      stopTyping();
       // 一轮结束（成功/失败/中止都到这里）：把在途记录搬进"上一轮"。
       // ⚠️ 放在 finally 而不是 try 之后 —— 上面那条 catch 会 return，
       //    写在 try 之后的话"失败"这一支永远不会登记结果，重试判据就永远是空的。
@@ -1548,7 +1958,20 @@ async function main() {
        删除理由（维护者原话）：它只会发那几个黄豆脸，并不智能 —— 不如不发。
        ⚠️ `parseReply` 现在**无条件**剥掉残留标记，所以 `chunks` 里不会再有 `[face:…]`；
           模型凭惯性写出来的那一串也会在那一层被清掉，不会原样发进群里。 */
-    const outChunks = chunks;
+    // ── D 改造 · 反模板闸 ────────────────────────────────────────────────
+    // 提示词里早写了「别一个模子」，但小模型连着几轮会滑回同一个形状
+    // （每条破折号抖机灵 / 每条同一个词起手 / 每句同一副骨架）。这三件事都能从
+    // **文本本身**判出来，不靠模型自省 —— 判出来就削平，话照样说（不拦整条）。
+    const parsedChunks = chunks;
+    const recentOwn = (session.history || [])
+      .filter((m) => m.role === 'assistant')
+      .slice(-3)
+      .map((m) => m.content);
+    const tmpl = deTemplate(recentOwn, parsedChunks);
+    const outChunks = tmpl.chunks;
+    if (tmpl.hit) {
+      log.info(`反模板闸：${tmpl.hit} → ${tmpl.changed ? '已削平' : '太短，没削'} (${session.key})`);
+    }
     rec.chunks = outChunks;
     // 出口闸门拦下的原因如实落盘：拦了却不留痕，用户只能看到"它突然不理我"。
     rec.blocked = blocked || '';
@@ -1570,6 +1993,9 @@ async function main() {
         `表达规范命中 ${speech.count} 处（${speech.groups.join('/')}）：${speech.hits.map((h) => h.word).join('、')} (${session.key})`
       );
     }
+    // 这一轮撞了哪个模板 / 削没削。命中却 changed:false 也落盘 ——
+    // 「闸没工作」与「闸看了但话本来就短」在复盘时必须是两件事。
+    rec.template = { hit: tmpl.hit, changed: tmpl.changed };
     writeTrace(rec);
 
     // ── 出口闸门（B8 · S-EGRESS）──
@@ -1760,6 +2186,9 @@ async function main() {
       id: String(id),
       userId: String(evt.user_id),
       senderName: sender,
+      // 记忆作用域：有卡按卡，没卡按会话；fallback 只用于读取旧群记忆。
+      memoryKey: brain.memoryKeyFor(evt, session, activeCard),
+      fallbackChatKey: activeCard ? session?.key : '',
       // ATI-3 的判断要**看见语境**：只给一条孤立的消息，模型没法判断「方向」——
       // 真机实测（2026-09-24）：把「他说以后别加喵」记成了「他喜欢加喵」，
       // 把「他自己不带 ✨」记成了「他不喜欢别人带 ✨」。
@@ -1818,12 +2247,17 @@ async function main() {
     return hour >= q.from || hour < q.to;
   }
 
-  async function sayToGroup(groupId, text) {
+  /**
+   * 主动出站的**唯一实现**（群 / 私聊共用）：分句 + 出口闸门 + 节奏。
+   * `sayToGroup` / `sayToOwner` 都只是薄包装 —— 两条发送路径各写一遍的话，
+   * 出口闸门迟早只在一侧生效。
+   */
+  async function deliverFromBot(scene, chatId, text) {
     // 分句 + 出口闸门判定在 src/proactive.js 的 plannedProactiveChunks（纯函数，
     // smoke T134 钉行为）。这里是它**唯一的接线点**（check-wb 契约钉住接线不被摘掉）：
     // 命中凭据/本机路径就**整条不发** —— 与 brain.parseReply 的口径一致：
     // 丢一段留一段，剩下的半句照样把上下文泄了。
-    // 抛错而不是返回 0：让 tickProactive 现成的 catch 把原因记进日志，
+    // 抛错而不是返回 0：让调用方现成的 catch 把原因记进日志，
     // 也避免调用方把"被拦下"误当成"已发出"去记账（markReplied）。
     const { chunks, blocked, internal: profInternal } = plannedProactiveChunks(text, { maxChunks: cfg.reply.maxChunks });
     if (blocked) {
@@ -1832,15 +2266,26 @@ async function main() {
     // B33：同一条留痕纪律 —— 剥了标记必须说出来，否则表现是"它今天话变短了"，
     // 而日志里什么都不剩（主动链没有 trace 记录，日志是唯一现场）。
     if (profInternal.length) {
-      log.warn(`主动链复读了内部标记（${profInternal.join('/')}）→ 已剥掉，其余照发 群 ${groupId}`);
+      log.warn(`主动链复读了内部标记（${profInternal.join('/')}）→ 已剥掉，其余照发 ${scene}:${chatId}`);
     }
     for (let i = 0; i < chunks.length; i += 1) {
-      await bot.sendMsg('group', String(groupId), [textSegment(chunks[i])]);
+      await bot.sendMsg(scene, String(chatId), [textSegment(chunks[i])]);
       // 主动路径与主链路共用同一处节奏计算（src/pace.js）——
       // 两处各写一遍的话，迟早出现"主动消息还是那个整齐的固定延迟"。
       if (i < chunks.length - 1) await sleep(sendDelayFor(chunks[i], cfg.reply));
     }
     return chunks.length;
+  }
+
+  async function sayToGroup(groupId, text) {
+    return deliverFromBot('group', groupId, text);
+  }
+
+  /** 夜间产出投给主人私聊：不受睡眠/免打扰管（这是给运营者的产出，不往群里开口）。 */
+  async function sayToOwner(text) {
+    const id = String(ownerIds()[0] || '').trim();
+    if (!id) throw new Error('没配 owner.qq，夜间产出没有收件人');
+    return deliverFromBot('private', id, text);
   }
 
   // ── D18 · 跨会话发言：两个宿主工具的实现（**唯一执行处**）──────────────────
@@ -1951,6 +2396,33 @@ async function main() {
     return String(out || '').trim();
   }
 
+  /**
+   * 夜间产出：把一条 scheduled 条目变成"让模型现写一份东西"。
+   * 素材只取**白名单群最近的历史**（每群最后 40 条）—— 写的是"这段时间群里在聊什么"，
+   * 不是"它记得什么"。已知上限：历史条目没有时间戳，"今天"实际等于"最近这些"。
+   */
+  async function composeNightly(s) {
+    const name = cfg.persona?.name || '机器人';
+    const lines = [];
+    for (const g of (cfg.allow.groups || []).filter(Boolean)) {
+      const sess = store.get('group', String(g));
+      for (const m of (sess?.history || []).slice(-40)) {
+        lines.push(`${m.role === 'assistant' ? name : '群友'}：${m.content}`);
+      }
+    }
+    const transcript = transcriptOf(lines);
+    const out = await gate(async () => {
+      const { text, usage } = await llm.chatWithUsage(
+        nightlyMessages({ name, prompt: s.prompt, transcript }),
+        // 与主动开场白同一条：小额度 + 关思考，否则 700 token 会被 reasoning 吃光。
+        { temperature: 0.6, maxTokens: NIGHTLY_MAX_TOKENS, thinking: { mode: 'off' } }
+      );
+      recordUsage({ ...usage, source: USAGE_SOURCES.nightly });
+      return text;
+    });
+    return String(out || '').trim();
+  }
+
   // ── D17 · 提醒的运行时状态（**不进 config.json**，落 `panel/reminder-state.json`）──
   //
   // 形状：`{ "<id>@<dueMs>": { status: 'sent'|'missed'|'skipped', at, reason? } }`。
@@ -2004,26 +2476,30 @@ async function main() {
       budgetLevel: usageGateOf().level,
     });
 
+  let proactiveTickRunning = false;
   async function tickProactive() {
+    // 30 秒 tick 不等上一轮跑完。一次发送循环（多群 / 多条 / 模型调用）可能超过 30 秒，
+    // 而提醒的"已发出"标记是在 await 之后才落的 —— 没有这道守卫，同一分钟会再发一遍。
+    if (proactiveTickRunning) return;
+    proactiveTickRunning = true;
+    try {
     const c = cfg.custom;
     if (!c) return;
+    // 好友表定期重拉（加好友后最多 10 分钟生效；被白名单挡下的私聊另有 60 秒重拉）。
+    // 放在总闸之前：「不主动说话」与「人能不能私聊它」无关。
+    if (Date.now() - friendsCache.at > FRIENDS_TTL_MS) void refreshFriends();
     // 总闸。关掉之后定时消息也不发 —— 用户在界面上看到的就是"关掉它就是彻底闭嘴"
     if (c.allowProactive === false) return;
 
-    // ── D31-1 · 睡眠：睡着时**整条主动链停工**（含定时消息）─────────────────
-    // 为什么不只挡"主动话题"：定时消息虽不花 token，但"睡着期间不开口"是作息语义的一部分
-    // （一条 03:00 的定时问候会把"睡着了"这件事当场演砸）。
-    // ⚠️ 这里**不推进** `lastProactiveAt`（与"被限流不推进"同一取舍）：醒来立刻就能开口，
-    //    而不是"再等一个间隔"。
-    // ⚠️ 记忆判官不需要单独挡 —— 它只在主链路尾部被调，而主链路已被门禁挡住。
-    if (sleepSnap?.asleep) return;
-
-    const groups = (cfg.allow.groups || []).filter(Boolean);
-    if (!groups.length) return;
-
+    // ── D31-1 · 睡眠 / 免打扰：改成**逐条判断**，不再提前 return 整条链 ──────
+    // 夜里给主人写一份摘要（prompt + target:'owner'，不发群）是运营者的产出，
+    // 与"群里要安静"是两件事：群里安静不等于主人半夜不许收到整理。
+    // 其余条目睡着/免打扰时照旧跳过（状态不推进 —— 窗口内醒来仍会补发）。
     const now = new Date();
     const hour = now.getHours();
-    if (inQuietHours(hour)) return;
+    const asleep = !!sleepSnap?.asleep;
+    const quiet = inQuietHours(hour);
+    const groups = (cfg.allow.groups || []).filter(Boolean);
 
     // ── D17 · 定时消息（提醒）：日期维度 + 到点后的 30 分钟重试窗 + missed 收尾 ──
     //
@@ -2037,6 +2513,9 @@ async function main() {
     let reminderDirty = false;
     for (const s of c.trigger?.scheduled || []) {
       if (!s.enabled) continue;
+      // 只有"发给主人私聊的夜间产出"豁免睡眠/免打扰；发群里的照旧管。
+      const toOwner = isNightly(s) && nightlyTargetOf(s) === 'owner';
+      if (!toOwner && (asleep || quiet)) continue;
       const dueMs = dueMsOf(s, now.getTime());
       if (dueMs == null) continue; // at / date 认不出 → 整条不触发（见 reminder.js ①②）
       const rkey = keyOf(s.id, dueMs);
@@ -2074,7 +2553,9 @@ async function main() {
       }
 
       let sent = false;
-      for (const item of planFor(groups)) {
+      // owner 产出的"目标"是主人私聊，不占群发计划；群发仍走既有的 planFor（配额/限流同源）。
+      const targets = toOwner ? [{ group: ownerIds()[0] || '-', send: true }] : planFor(groups);
+      for (const item of targets) {
         // 被配额拦下时**必须记日志说明原因**。不记的话用户看到的是
         // "我设的定时消息有时候不发" —— 那比"发多了"更难查。
         if (!item.send) {
@@ -2083,12 +2564,18 @@ async function main() {
           continue;
         }
         try {
-          await sayToGroup(item.group, s.text);
+          // prompt 类的正文是**现写的**：一条只生成一次，再发给各群（同一件事在多群
+          // 说出不同版本比"慢一点"更难解释）。
+          const body = isNightly(s) ? await composeNightly(s) : s.text;
+          if (!body) throw new Error('没有可发的内容');
+          if (toOwner) await sayToOwner(body);
+          else await sayToGroup(item.group, body);
           // 主动出站也要**计入配额**：不记账的话它根本不算"发过话"，
-          // 这道闸门就只是装饰品。
-          brain.markReplied(sessionOfGroup(item.group));
+          // 这道闸门就只是装饰品。⚠️ owner 投递不记群账（item.group 是主人 QQ，
+          // 不是群；记了会捏造一个 `group:<ownerQQ>` 的假会话）。
+          if (!toOwner) brain.markReplied(sessionOfGroup(item.group));
           sent = true;
-          log.info(`定时消息已发出（${s.at} → 群 ${item.group}）`);
+          log.info(`${toOwner ? '夜间产出' : '定时消息'}已发出（${s.at} → ${toOwner ? '主人私聊' : `群 ${item.group}`}）`);
         } catch (e) {
           lastBlock.set(rkey, `发送失败：${e.message}`);
           log.error(`定时消息发送失败（群 ${item.group}）: ${e.message}`);
@@ -2103,7 +2590,16 @@ async function main() {
     }
     if (reminderDirty) saveReminderState();
 
+    // 定时消息与夜间产出已经处理完；剩下的主动行为统一受睡眠/免打扰管。
+    if (asleep || quiet) return;
+    if (!groups.length) return;
+
+    // 巡逻先于"主动起话题"：巡逻是唯一会读积压的那条；真派出去就不要再自己起新话题。
+    if (runPatrolTick(now.getTime()) > 0) return;
+
     const p = c.trigger?.proactive;
+    // 峰谷闸：工作日高峰里不主动找话。定时消息在上面已经走完 —— 那是用户点的活，不受这条限制。
+    if (peakQuietForProactive(now.getTime(), readPeak(c.peak))) return;
     if (!p?.enabled) return;
     if (now.getTime() - lastProactiveAt < p.intervalMin * 60000) return;
 
@@ -2135,6 +2631,145 @@ async function main() {
         log.error(`主动开口发送失败（群 ${item.group}）: ${e.message}`);
       }
     }
+    } finally {
+      proactiveTickRunning = false;
+    }
+  }
+
+  // ── 热度账本 + 巡逻快照（Win-v0.1.2 移植）────────────────────────────
+  // 形状：`{ heat: { "<scene:id>": { "<qq>": {w, at, decayedAt, chain} } }, patrol: { "<scene:id>": 上次巡逻时刻 } }`。
+  // 判据（回升 / 扣温 / 冷却权重 / 群活跃度）全在 `src/heat.js`，这里只负责存与取。
+  let heatState = { heat: {}, patrol: {} };
+  let heatSavedAt = 0;
+  /** 近段消息时间戳（群活跃度的原料）：只进内存，重启即空（活跃度本来就看"最近"）。 */
+  const recentByChat = new Map();
+
+  function loadHeatState() {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(HEAT_FILE, 'utf8'));
+      heatState = {
+        heat: parsed && typeof parsed.heat === 'object' && parsed.heat ? parsed.heat : {},
+        patrol: parsed && typeof parsed.patrol === 'object' && parsed.patrol ? parsed.patrol : {},
+      };
+    } catch {
+      heatState = { heat: {}, patrol: {} };
+    }
+  }
+
+  function saveHeatState(force = false) {
+    const now = Date.now();
+    if (!force && now - heatSavedAt < 5000) return;
+    heatSavedAt = now;
+    try {
+      writeJsonAtomic(HEAT_FILE, heatState, { mode: 0o600 });
+    } catch (e) {
+      log.warn(`热度账本写入失败（不影响发言）：${e.message}`);
+    }
+  }
+
+  /** 取（必要时新建）一条关系温度。 */
+  function heatEntryOf(sessionKey, qq, now = Date.now()) {
+    const key = String(sessionKey || '');
+    const id = String(qq || '');
+    if (!key || !id) return newHeatEntry(now, 0.5);
+    const chat = heatState.heat[key] || (heatState.heat[key] = {});
+    chat[id] = normalizeHeatEntry(chat[id], now);
+    return chat[id];
+  }
+
+  /** 群活跃度（0–1）：用近段消息时间戳算，窗口与目标条数都在叶子里。 */
+  function chatHeatFor(sessionKey, now = Date.now()) {
+    const list = recentByChat.get(String(sessionKey || '')) || [];
+    return chatHeatOf(list, now);
+  }
+
+  /** 记一条"这个群刚才有人说话"（群活跃度的原料）。 */
+  function noteChatMessage(sessionKey, now = Date.now()) {
+    const key = String(sessionKey || '');
+    if (!key) return;
+    const list = recentByChat.get(key) || [];
+    list.push({ at: now });
+    while (list.length > 80) list.shift();
+    recentByChat.set(key, list);
+  }
+
+  /** 巡逻快照（面板页的读源）：只写"看得懂的事实"，不写判据。 */
+  function writePatrolSnapshot(nowMs) {
+    try {
+      const rows = [];
+      for (const s of store.sessions.values()) {
+        const key = String(s?.key || '');
+        if (!key.startsWith('group:')) continue;
+        const chat = heatState.heat[key] || {};
+        const people = Object.entries(chat)
+          .map(([qq, rec]) => {
+            const e = normalizeHeatEntry(rec, nowMs);
+            return { qq, pct: Math.round(e.w * 100), band: heatBandOf(e.w) };
+          })
+          .sort((a, b) => b.pct - a.pct)
+          .slice(0, 8);
+        const lastPatrolAt = Number(heatState.patrol[key]) || 0;
+        const backlog = (Array.isArray(s.ambient) ? s.ambient : [])
+          .filter((m) => Number.isFinite(Number(m?.at)) && Number(m.at) > lastPatrolAt).length;
+        rows.push({
+          key,
+          group: String(s.id ?? key.slice(6)),
+          unread: backlog,
+          silenceMin: s.lastMsgAt ? Math.round((nowMs - s.lastMsgAt) / 60000) : 0,
+          lastPatrolAt,
+          heat: Math.round(chatHeatFor(key, nowMs) * 100),
+          people,
+        });
+      }
+      writeJsonAtomic(PATROL_SNAPSHOT_FILE, {
+        updatedAt: nowMs,
+        tuned: patrolTuningOf(cfg.custom?.trigger),
+        rows,
+      }, { mode: 0o600 });
+    } catch (e) {
+      log.warn(`巡逻快照写入失败（不影响运行）：${e.message}`);
+    }
+  }
+
+  /**
+   * 巡逻轮：群里安静下来后，把这段时间的积压摘要合成一轮交给模型。
+   * 素材是背景窗口（ambient），不是 unread —— unread 一判定完就被消费掉了。
+   */
+  function runPatrolTick(nowMs) {
+    const tuning = patrolTuningOf(cfg.custom?.trigger);
+    const chats = [];
+    for (const s of store.sessions.values()) {
+      const key = String(s?.key || '');
+      if (!key.startsWith('group:')) continue;
+      chats.push({
+        key,
+        scene: 'group',
+        id: String(s.id ?? key.slice(6)),
+        recent: Array.isArray(s.ambient) ? s.ambient : [],
+        lastMsgAt: Number(s.lastMsgAt) || 0,
+        lastPatrolAt: Number(heatState.patrol[key]) || 0,
+      });
+    }
+    writePatrolSnapshot(nowMs);
+    if (!tuning.enabled || !chats.length) return 0;
+    // 峰谷闸：高峰里连"自己找话"都不做，巡逻同理。
+    if (peakQuietForProactive(nowMs, readPeak(cfg.custom?.peak))) return 0;
+
+    const plan = patrolPlanOf({
+      chats, now: nowMs, tuning, heatOf: (chat) => chatHeatFor(chat.key, nowMs),
+    });
+    let fired = 0;
+    for (const item of plan.picked) {
+      // 不消费任何东西：素材是背景窗口（滚动），消费未读会把「跳过」的账抹掉。
+      // 也**不在这里**写 lastPatrolAt —— 掷骰没中时那一批还没人看过，
+      // 写下去等于"这半天的话永远不再问"。真正的记账在 handleMessage 的巡逻分支。
+      enqueueFor(patrolEventOf(item, bot.selfId ?? ''), '巡逻轮处理异常');
+      fired += 1;
+    }
+    if (fired) {
+      journal('patrol', `巡逻：翻了 ${fired} 个群的积压（${plan.picked.map((p) => `群 ${p.id} ${p.count} 条`).join('；')}）→ 交给模型决定接不接`);
+    }
+    return fired;
   }
 
   // 30 秒扫一次。定时消息的精度是"分钟"，30 秒足够，
@@ -2143,6 +2778,7 @@ async function main() {
   // D17：提醒状态在**启动时要读回来** —— 不读的话，机器人重启一次，今天已经发过的那几条
   // 就会再发一遍（旧实现的去重表在内存里，重启即失忆）。读了才有"提醒不重复"这件事。
   loadReminderState();
+  loadHeatState();
   // D31-1 · 睡眠：读一次状态 + **立刻算一次**（面板第一眼就要能看到它睡没睡，
   // 而不是等第一次 30 秒 tick）。
   loadSleepState();
@@ -2599,11 +3235,21 @@ async function main() {
    * 命令 → 动作。闭集合的**唯一接线点**（`CONTROL_KINDS` 住在 control-channel.js）。
    * 走到兜底那句说明判据层放行了集合外的命令 —— 那是判据坏了，不是命令合法，所以如实说。
    */
+  let shutdownStarted = false;
   function runControlCommand(cmd) {
     if (cmd === 'abort') return abortAllInFlight();
     if (cmd === 'retry') return replayLastFailure();
     if (cmd === 'sleep') return manualSleepNow();
     if (cmd === 'wake') return manualWakeNow();
+    if (cmd === 'shutdown') {
+      // 先回执、再退出：`runControlStep` 要把 done 写回文件，面板才看得到"它收到了"。
+      if (shutdownStarted) return { ok: true, msg: '已经在退出（重复命令已忽略）' };
+      shutdownStarted = true;
+      // 用 setImmediate 而不是普通定时器：先让 runControlStep 把 done 写回文件，
+      // 也避免给"index.js 的定时器标识符恰有固定数量"那条契约（§50）多开一个调度点。
+      setImmediate(() => shutdown('面板停止'));
+      return { ok: true, msg: '正在退出（补写完成后进程会自行结束）' };
+    }
     return { ok: false, msg: `不认识的命令「${cmd}」（判据层没拦住，请检查 control-channel.js）` };
   }
 
@@ -2632,13 +3278,18 @@ async function main() {
   // 这一瞬间面板上的状态会跟真实情况对不上。
   clearStaleThinking();
   bot.start();
+  onebotHealthSnap = bot.healthSnapshot();
 
   // 定期重刷「机器人此刻在用什么」的快照。
   //
   // 为什么不能只在配置变化时写一次：如果有孤儿实例退出（比如控制台误起了两个，
   // 清理掉其中一个），那个进程的退出钩子会把这个文件删掉，
   // 而还活着的这一个不会主动重写 → 面板就读不到"当前生效"，显示成空白。
-  setInterval(() => writeEffective(cfg), 20000);
+  // B4：协议端健康与配置快照同一拍落盘 —— 面板拿到的两个时刻因此不会差出整整一轮。
+  setInterval(() => {
+    onebotHealthSnap = bot.healthSnapshot();
+    writeEffective(cfg);
+  }, EFFECTIVE_INTERVAL_MS);
 
   // ── D19 · 心跳与释放（锁的另外两处接线）──────────────────────────────────
   //
@@ -2671,7 +3322,7 @@ async function main() {
     journal('exit', `锁易主自逐：${hb.reason}`);
     shutdown('锁易主');
   }
-  // ⚠️ 回调保持"短形状"：check-wb §43⑤ 的窗口契约（`setInterval(…{0,400}…}, LOCK_HEARTBEAT_MS)`）
+  // ⚠️ 回调保持"短形状"：check-wb §43⑤ 的窗口契约（定时器回调 … {0,400} … LOCK_HEARTBEAT_MS）
   //    在盯着它 —— 逻辑搬进具名函数，窗口才不会被撑爆。
   const heartbeat = setInterval(() => { heartbeatStep(); }, LOCK_HEARTBEAT_MS);
   heartbeat.unref();
@@ -2704,6 +3355,8 @@ async function main() {
     // ⚠️ 两处必须**并排出现**在退出路径上 —— 契约 §55 判的就是这个对称性，
     //    而不是"某个标识符存在"（那样删掉 `flushProfiles` 的调用点也照样绿）。
     flushProfiles();
+    // 热度账本是 5 秒防抖：退出前补写一次，否则最后几轮关系温度白记。
+    saveHeatState(true);
     bot.stop();
     // 锁要在**正常退出**这条路上主动释放：不释放的话，下一次启动会走"接管残留锁"
     // 那一条（虽然也能起来），但留档里就多了一条误导性的 takeover。

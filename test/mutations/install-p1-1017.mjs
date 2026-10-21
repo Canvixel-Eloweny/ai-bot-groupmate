@@ -20,7 +20,9 @@ export default [
     id: 'M2',
     note: '机器人 cwd 回退到 USER_ROOT —— 程序入口与运行目录分离后相对路径会指错',
     file: 'panel/server.js',
-    anchor: /cwd: PROGRAM_ROOT,/m,
+    // 2026-10-21：面板新增了认领脚本的 spawn（也用 PROGRAM_ROOT cwd）——
+    // 锚点带上下一行的 detached 才唯一指向"机器人本体"那一处。
+    anchor: /cwd: PROGRAM_ROOT,\n      detached: true,/m,
     count: 1,
     apply: (s) => s.replace('cwd: PROGRAM_ROOT,', 'cwd: USER_ROOT,'),
     layer: 'check-wb',

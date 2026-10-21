@@ -32,7 +32,9 @@ import {
 // ⚠️ 它们与上面两个不是同一层（那两个动的是"正在生成的那一轮"，这两个动的是作息），
 //    所以按钮在页面上也**分开摆**（见 `01-body-shell.html`）—— 混在一排会让人把
 //    「让它睡」当成「停止机器人」。
-export const CONTROL_LABELS = { abort: '中止本轮', retry: '重试本轮', sleep: '让它睡', wake: '叫它醒' };
+export const CONTROL_LABELS = {
+  abort: '中止本轮', retry: '重试本轮', sleep: '让它睡', wake: '叫它醒', shutdown: '停止机器人（优雅退出）',
+};
 
 /** 读命令文件。**读不到/坏 JSON 一律给 null**（面板不该因为一个可选通道崩掉）。 */
 function readControl() {
@@ -68,6 +70,19 @@ export function controlStateOf({ now = Date.now() } = {}) {
     stale: !rec.done && known && expired,
     done: rec.done,
   };
+}
+
+/**
+ * 清掉一条**还没执行**的命令（只清自己发的那条）。
+ *
+ * 用途：面板点「停止」后先发 `shutdown`，超时强杀。强杀时机器人没机会把 done 写回去；
+ * 若把这条命令留在文件里，下一次启动会在 30 秒内读到它并**起来即退出**。
+ * 只认 id，避免把用户刚下发的下一条命令一起清掉。
+ */
+export function clearCommand(id) {
+  const rec = readControl();
+  if (!rec || rec.id !== id || rec.done) return false;
+  try { fs.unlinkSync(CONTROL_FILE); return true; } catch { return false; }
 }
 
 /**

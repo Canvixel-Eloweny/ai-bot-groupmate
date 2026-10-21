@@ -32,6 +32,9 @@ import {
 } from '../packaging/windows/tools/lib/install-layout.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/* 当前产品版本从唯一来源读，不写死某一版 —— 发版升版本号时这组夹具要跟着走，
+   写死会让一次合法的 0.1.4 升版把 launcher 用例判成红（2026-10-21 实测）。 */
+const VER = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')).version;
 let failures = 0;
 let checks = 0;
 function ck(name, fn) {
@@ -86,7 +89,7 @@ console.log('P2 installer/layout checks');
 
 ck('版本与 appId 单一来源：package.json', () => {
   const info = readPackageInfo(REPO);
-  assert.equal(info.version, '0.1.3');
+  assert.equal(info.version, VER);
   assert.equal(info.appId, 'com.estrellabot.windows');
 });
 
@@ -190,7 +193,7 @@ await ckA('launcher：全新安装根能起面板、写 health=ok、按配置不
   const t = tmp('p2-launcher-');
   const inst = path.join(t, 'inst');
   const ud = path.join(t, 'userdata');
-  const app = path.join(inst, 'versions', '0.1.3', 'app');
+  const app = path.join(inst, 'versions', VER, 'app');
   fs.mkdirSync(app, { recursive: true });
   // ESM 会解析 symlink 到真实路径，import.meta.url 就不再是安装根 ⇒ 这里必须真复制。
   for (const rel of ['src', 'panel', 'node_modules/ws', 'scripts']) {
@@ -202,10 +205,10 @@ await ckA('launcher：全新安装根能起面板、写 health=ok、按配置不
   }
   writeJsonAtomic(path.join(inst, 'install.json'), {
     schema: 1, appId: 'com.estrellabot.windows', installRoot: inst, userRoot: ud,
-    installedVersion: '0.1.3',
+    installedVersion: VER,
   });
   writeJsonAtomic(path.join(inst, 'current.json'), {
-    schema: 1, current: '0.1.3', previous: null, health: 'pending', failures: 0,
+    schema: 1, current: VER, previous: null, health: 'pending', failures: 0,
   });
   writeJsonAtomic(path.join(ud, 'config.json'), { launch: { openOnStart: false } });
   const port = 52000 + Math.floor(Math.random() * 1000);
@@ -233,15 +236,15 @@ ck('bootstrap：安装根内用新 runtime 生成 config.json 与 setup marker',
   const t = tmp('p2-bootstrap-');
   const inst = path.join(t, 'inst');
   const ud = path.join(t, 'userdata');
-  const app = path.join(inst, 'versions', '0.1.3', 'app');
+  const app = path.join(inst, 'versions', VER, 'app');
   fs.mkdirSync(app, { recursive: true });
   for (const rel of ['src']) fs.cpSync(path.join(REPO, rel), path.join(app, rel), { recursive: true });
   for (const rel of ['package.json', 'config.example.json']) fs.copyFileSync(path.join(REPO, rel), path.join(app, rel));
   fs.cpSync(path.join(REPO, 'packaging', 'windows', 'tools'), path.join(inst, 'tools'), { recursive: true });
   writeJsonAtomic(path.join(inst, 'install.json'), {
-    schema: 1, appId: 'com.estrellabot.windows', installRoot: inst, userRoot: ud, installedVersion: '0.1.3',
+    schema: 1, appId: 'com.estrellabot.windows', installRoot: inst, userRoot: ud, installedVersion: VER,
   });
-  writeJsonAtomic(path.join(inst, 'current.json'), { schema: 1, current: '0.1.3', previous: null, health: 'ok', failures: 0 });
+  writeJsonAtomic(path.join(inst, 'current.json'), { schema: 1, current: VER, previous: null, health: 'ok', failures: 0 });
   const r = spawnSync(process.execPath, [path.join(inst, 'tools', 'bootstrap.mjs'), '--install-root', inst, '--user-root', ud], {
     encoding: 'utf8',
     timeout: 30000,

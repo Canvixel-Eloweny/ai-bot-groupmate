@@ -429,6 +429,14 @@ export function run(exe, args, { timeout = 8000 } = {}) {
 
 /** 交互式提问（只需要 node 内置 readline，不引 prompt 库）。 */
 export async function ask(question, { def = '', validate } = {}) {
+  // 非交互（stdin 不是 TTY / 被脚本拉起）时 readline 的 question 永不 settle ——
+  // Node 会以 "unsettled top-level await" + exit 13 收场，后面的收尾一步都不做。
+  // 有默认值就用默认值；必填项没有默认值就抛一句明确的错，让调用方知道该加 --yes。
+  if (!process.stdin.isTTY) {
+    const err = validate ? validate(def) : null;
+    if (err) throw new Error(`非交互模式无法询问「${question}」，且没有可用的默认值：${err}`);
+    return def;
+  }
   const { createInterface } = await import('node:readline/promises');
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {

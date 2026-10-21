@@ -17,6 +17,8 @@ import {
   // 第 58 轮：把「哪个账号还没配上 3001/3000」直接报出来（见下面"协议端口"那一项的理由）。
   knownAccounts, hasOnebotServers, napcatConfigDir,
   ok, warn, bad, title, say, dim, isMain,
+  // VC++ 运行库那一项要读注册表（见 ⑥b 的理由）；`run` 是 common 里跑 `reg query` 的唯一实现。
+  run,
 } from './lib/common.mjs';
 
 /** 版本号比较：`gte('22.13.0','22.13')` === true。只处理 x[.y[.z]]，够用。 */
@@ -44,6 +46,40 @@ function diskFree(p) {
   } catch {
     return null;
   }
+}
+
+/** 注册表判据的键名（微软文档确认的固定位置，与 NapCatQQ-Desktop 用的同一个）。 */
+const VC_KEY = 'HKLM\\SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\X64';
+
+/**
+ * VC++ 2015-2022 x64 运行库检测（只读）。
+ *
+ * 判据与 NapCat 官方 Windows 壳同源：它把这套运行库当成一个"组件"做注册表检测 ——
+ * 该键的 `Installed`(REG_DWORD) 非 0 即算已装，`Version`(REG_SZ，形如 v14.44.35211.0)
+ * 能解出来就带上、解不出不影响判定（NapCatQQ-Desktop `crates/ncd-component/src/vcredist.rs:6-8,29`，
+ * 2026-10-19 取证）。
+ *
+ * 键不存在时（真机实测：`reg.exe` 回 exit 1 + "unable to find the specified registry key"）
+ * 退化到 System32 那三颗 DLL 在场与否 —— 有些机器的运行库是别的程序带进来的，注册表键没写但库
+ * 实际在；反过来三颗齐了才算装，缺任何一颗都可能撞上 `msvcp140.dll` 找不到。
+ *
+ * @param {string} [key] 判定用的注册表键；默认为官方固定位置，留一个注入口是为了让
+ *   "键不存在 → DLL 兜底"这条负路能在真机上被单独验到（真装一次 VC++ 不是可重复的实验）。
+ * @returns {Promise<{installed:boolean, version:string, via:string}>}
+ */
+export async function checkVcRedist(key = VC_KEY) {
+  const r = await run('reg', ['query', key]);
+  if (r.code === 0) {
+    const dw = /Installed\s+REG_DWORD\s+0x([0-9a-fA-F]+)/.exec(r.out);
+    const ver = /Version\s+REG_SZ\s+(\S+)/.exec(r.out);
+    if (dw && Number.parseInt(dw[1], 16) !== 0) {
+      return { installed: true, version: ver ? ver[1] : '', via: 'registry' };
+    }
+  }
+  const sys32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+  const need = ['vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll'];
+  const present = need.filter((d) => exists(path.join(sys32, d)));
+  return { installed: present.length === need.length, version: '', via: `dll:${present.length}/${need.length}` };
 }
 
 /**
@@ -135,6 +171,28 @@ export async function collectEnv() {
     out.push(item(LEVEL.warn, 'QQ 协议端', zipPresent ? '已下载 NapCat 包，但还没解压' : '尚未安装 NapCat',
       '双击 1-SETUP.bat —— 它会在联网状态下自动下载并装好（约 30–36MB，随版本变化）。'
       + '没网也行：把官方 NapCat.Shell.zip 放到协议端目录再重跑一次即可。'));
+  }
+
+  // ⑥b VC++ 2015-2022 x64 运行库（NapCat 注入器的隐式依赖）
+  //
+  // 为什么写进来：NapCat 的 `NapCatWinBootMain.exe` / `NapCatWinBootHook.dll` **动态链接**
+  // MSVCP140 / VCRUNTIME140，机器缺这套运行库时的症状是「注入器秒退、没有可读报错」
+  // （NapCatQQ-Desktop `crates/ncd-component/src/vcredist.rs:3-4` 逐字这么写，它因此把 VC++
+  // 当成一个正式组件来装）。这正是我方 VM 上「装了起不来」一类工单里最难归因的那型 ——
+  // 面板只会说"协议端没起来"，真凶在系统层。
+  // ⚠️ 这一项**刻意只出 warn**：setup 与一键安装都把 err 当"必须先解决"直接中止
+  //    （`onekey.mjs` 的 `fatal` 分支、`setup.mjs` 同一形状），而缺运行库挡住的是**起协议端**
+  //    这一步、不是装机器人；且装它需要 UAC 提权，只读自检不能替用户装（见文件头的设计原则）。
+  if (IS_WIN) {
+    const vc = await checkVcRedist();
+    out.push(vc.installed
+      ? item(LEVEL.ok, 'VC++ 运行库', `VC++ 2015-2022 x64 已安装${vc.version ? `（${vc.version}）` : ''}`)
+      : item(LEVEL.warn, 'VC++ 运行库',
+        '没有检测到 VC++ 2015-2022 x64 运行库（注册表那一项没查到，System32 里三颗运行库也不齐）',
+        'NapCat 的注入器依赖它，缺了会「起协议端时秒退、只留一行看不懂的报错」。'
+        + '装微软官方那一个：https://aka.ms/vs/17/release/vc_redist.x64.exe（要管理员权限），装完重跑本检查。'));
+  } else {
+    out.push(item(LEVEL.ok, 'VC++ 运行库', '非 Windows，跳过（本项只在 Windows 上有意义）'));
   }
 
   // ⑦ QQ 客户端

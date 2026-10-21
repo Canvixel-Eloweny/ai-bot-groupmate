@@ -147,16 +147,11 @@ export default [
   },
   {
     id: 'M8',
-    note: '主动链睡眠闸排到定时消息**之后**（睡着时照样发早安）',
+    note: '把定时消息的睡眠/免打扰逐条跳过摘掉（睡着时照样发群早安；owner 豁免不再有边界）',
     file: 'src/index.js',
-    anchor: /^    if \(sleepSnap\?\.asleep\) return;$/m,
+    anchor: /if \(!toOwner && \(asleep \|\| quiet\)\) continue;/,
     count: 1,
-    apply: (s) => s
-      .replace(`${GATE_TP}\n`, '')
-      .replace(
-        'for (const s of c.trigger?.scheduled || []) {',
-        `for (const s of c.trigger?.scheduled || []) {\n    ${GATE_TP.trim()} // 变异：排到定时消息之后`
-      ),
+    apply: (s) => s.replace('if (!toOwner && (asleep || quiet)) continue;', 'if (!toOwner && false) continue;'),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

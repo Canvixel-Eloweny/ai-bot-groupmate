@@ -44,6 +44,8 @@ export const USAGE_SOURCES = Object.freeze({
   memoryJudge: 'memoryJudge',
   /** 主动话题生成：`index.js` 的 `composeTopic`（故意不带会话键） */
   proactiveTopic: 'proactiveTopic',
+  /** 夜间产出：`index.js` 的 `composeNightly`（同样不带会话键） */
+  nightly: 'nightly',
 });
 
 /**

@@ -226,6 +226,8 @@ export const BOT_STATE_FILE = path.join(DATA_DIR, 'bot-state.json');
 export const PEOPLE_DIR = path.join(DATA_DIR, 'memory', 'people');
 export const GALLERY_FILE = path.join(DATA_DIR, 'images-lib', 'index.json');
 export const API_DEALS_FILE = path.join(DATA_DIR, 'api-deals.json');
+// 巡逻快照（本仓自己写的，与上面几个扩展包数据不同）：机器人每 30 秒 tick 刷新一次。
+export const PATROL_SNAPSHOT_FILE = path.join(DATA_DIR, 'patrol-state.json');
 
 /**
  * 后端**源文件**清单（不含页面片段，那些每次请求读盘）。
@@ -310,5 +312,9 @@ export const BACKEND_SOURCES = [
   'panel/lib/update.js',
   'panel/lib/update-routes.js',
   'panel/lib/update-offline.js',
+  // 假 QQ 虚拟入口的会话管理（2026-10-21）。改了它必须重启面板才生效。
+  // 它起的子进程（scripts/fake-qq.mjs）**不进表** —— 那是按需拉起的脚本，
+  // 不是面板的加载期依赖。
+  'panel/lib/fake-session.js',
 ];
 

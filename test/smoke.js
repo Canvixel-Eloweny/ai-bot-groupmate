@@ -11,7 +11,7 @@ import { startMockLlm } from './mock-llm.js';
 // 一行临时路径漏改 = 测试的假数据落进**用户真实的数据文件**（见下面 env 清单那一整段注释）。
 import { GROUP_ID, tmpPath, cfgWith, groupEvt } from './helpers/fixtures.js';
 // D28：`triggerTextOf` 是"触发判定该看哪一份正文"的唯一判据（@ 段的显示名不算正文）
-import { flattenMessage, triggerTextOf } from '../src/onebot.js';
+import { OneBotClient, flattenMessage, triggerTextOf } from '../src/onebot.js';
 // D23-2：合并转发展开的判据、归一化与**三个上限**（节点 / 总字符 / 单条）全从生产模块 import ——
 // 在测试里另抄一份经验值，等于把"默认值漂移"这道要防的坑亲手搬回来（与 interject / tier 同款）。
 import {
@@ -69,6 +69,7 @@ import {
   scanInternalMarks, stripInternalMarks, isInternalMark, markRegistryProblems,
 } from '../src/internal-marks.js';
 import { abortError, isAborted, abortOutcome, retryDecision, createSessionControl } from '../src/session-control.js';
+import { createSemaphore } from '../src/async-util.js';
 import { kindOfSetting, isSensitiveKey, settingsSpec, coerceSetting, applySettingsPatch } from '../src/plugin-settings.js';
 import { activeManualMemory, MANUAL_MEMORY_IN_PROMPT, readCustom } from '../src/custom-config.js';
 // 数值类设置的声明表（第 42 轮 B12b · SCHEMA-LITE）。测试与生产读的是**同一份** ——
@@ -206,8 +207,8 @@ import { steady } from '../scripts/cache-probe.mjs';
 // 在测试里另写一份"什么算过期 / 哪些命令合法"就是把语义又抄了一遍，
 // 而这条通道的两侧（面板 / 机器人）本来就是靠这一份对齐的。
 import {
-  CONTROL_KINDS, CONTROL_MAX_AGE_MS, parseControlRecord, controlDecision,
-  controlDoneOf, newControlId, runControlStep,
+  CONTROL_KINDS, CONTROL_MAX_AGE_MS, CONTROL_MAX_AGE_BY_KIND, maxAgeForKind,
+  parseControlRecord, controlDecision, controlDoneOf, newControlId, runControlStep,
 } from '../src/control-channel.js';
 // 实例锁的判据层（D19 · E19）。同上：**只从生产模块来** ——
 // 在测试里另写一份"什么算陈旧 / 什么算残留"就是把语义又抄了一遍。
@@ -331,7 +332,11 @@ async function main() {
   // D23-2：`get_forward_msg` 的回答由用例现设（每条用例自己决定"展开成功 / 空壳 / 失败"）。
   // 默认回空壳 —— 没设的用例走 fail-open 那条路，不会静默变成"展开成功"。
   let forwardReply = () => null;
-  const ob = startMockOneBot({ port: OB_PORT, selfId: SELF, onForward: (p) => forwardReply(p) });
+  // `heartbeatMs: 1000` —— T397 要证明机器人**真的消费了**心跳并把它写进 effective。
+  // 心跳事件走 `#onRaw` 的专门分支（return），不会变成 notice，既有用例看不到它。
+  const ob = startMockOneBot({
+    port: OB_PORT, selfId: SELF, heartbeatMs: 1000, onForward: (p) => forwardReply(p),
+  });
   await Promise.all([llm.listening, ob.listening]);
 
   // 子进程的 env 抽成一处：T275（第二个实例必须被锁拦下）要起**同一套环境的第二个真入口**，
@@ -347,6 +352,8 @@ async function main() {
     // 用户真实的 panel/effective.json —— 而 `since` 是「改动有没有生效」的判据来源，
     // 被测试写一脚等于把取证工具本身污染了（外包体检 ZCode 2026-09-27 的发现）。
     QQBOT_EFFECTIVE_FILE: efile,
+    // T397：把 20 秒的快照周期调短，才能在回归里等到 onebotHealth 落盘。
+    QQBOT_EFFECTIVE_MS: '500',
     QQBOT_CONTROL_FILE: ctlfile,
     QQBOT_BRIDGE_LOCK_FILE: lockfile,
     QQBOT_BRIDGE_JOURNAL_FILE: jfile,
@@ -2990,8 +2997,8 @@ async function main() {
       check(
         'T356 「让它睡 / 叫它醒」进的是 CONTROL_KINDS 这条既有闭集合（不新开控制通道，Q12 裁决①）',
         CONTROL_KINDS.includes('sleep') && CONTROL_KINDS.includes('wake')
-          && CONTROL_KINDS[0] === 'abort' && controlDecision({ id: 'c1', cmd: 'shutdown', at: Date.now() }).ok === false,
-        `闭集合=${JSON.stringify(CONTROL_KINDS)} 集合外命令=${JSON.stringify(controlDecision({ id: 'c1', cmd: 'shutdown', at: Date.now() }).reason)}`
+          && CONTROL_KINDS[0] === 'abort' && controlDecision({ id: 'c1', cmd: 'reboot', at: Date.now() }).ok === false,
+        `闭集合=${JSON.stringify(CONTROL_KINDS)} 集合外命令=${JSON.stringify(controlDecision({ id: 'c1', cmd: 'reboot', at: Date.now() }).reason)}`
       );
     }
 
@@ -6813,7 +6820,7 @@ async function main() {
 
           // T257 命令种类是**闭集合**：本通道能改变机器人的行为，多一个动词多一片攻击面。
           //   大小写不同也算不认识（不做"顺手容错"，容错就得维护一张别名表）。
-          const stranger = ['shutdown', 'ABORT', '', 'abort '].map((cmd) => controlDecision({ ...rec, cmd }, { now: cnow }));
+          const stranger = ['reboot', 'ABORT', '', 'abort '].map((cmd) => controlDecision({ ...rec, cmd }, { now: cnow }));
           check(
             'T257 命令种类是闭集合：abort / retry 之外一律拒（含大小写与空串），且拒绝理由点名了合法集合',
             stranger.every((d) => d.ok === false && d.action === 'none' && d.reason.includes('不认识'))
@@ -9884,8 +9891,13 @@ async function main() {
       const bounded = big.length === SELF_SENT_MAX && big[0] === `x${SELF_SENT_MAX + 19}`;
       const dedup = JSON.stringify(noteSelfSent(['a', 'b', 'c'], ['b'])) === JSON.stringify(['b', 'a', 'c']);
       const parse = JSON.stringify(messageIdsOf({ status: 'ok', data: { message_id: 42 } })) === '["42"]'
+        // 线上真正传到 messageIdsOf 的是**已剥壳**的内层 —— 只测外层会让整条引用回复
+        // 静默失效而单测全绿（2026-10-15 报告 §1 的形状）。
+        && JSON.stringify(messageIdsOf({ message_id: 42 })) === '["42"]'
+        && JSON.stringify(messageIdsOf({ message_ids: [7, 8] })) === '["7","8"]'
         && messageIdsOf({ status: 'ok' }).length === 0   // 对端没回 id → 空数组，不猜
-        && messageIdsOf(null).length === 0;
+        && messageIdsOf(null).length === 0
+        && messageIdsOf(42).length === 0;
       check(
         'T364 引用回复（M-4）· 叶级：自己发过的 id 认得出 · 别人的/空的/重启后不认 · 有界丢旧 · 去重置顶 · 响应认不出不猜',
         leaf && bounded && dedup && parse,
@@ -9897,7 +9909,9 @@ async function main() {
       const brainSrc = fs.readFileSync(new URL('../src/brain.js', import.meta.url), 'utf8');
       const wired = /isReplyToSelf\(selfSentIds,\s*parsed\.replyTo\)/.test(idxSrc)
         && /noteSelfSent\(selfSentIds,\s*messageIdsOf\(await bot\.sendMsg\(/.test(idxSrc)
-        && /decide\(session,\s*evt,\s*parsed,\s*\{\s*repliedToMe\s*\}\)/.test(idxSrc)
+        // 2026-10-21：decide 的 opts 增加了 heatWeight / patrol；接线判据只要求
+        // `repliedToMe` 仍在同一个调用对象的开头，不再钉死"只有它一个键"。
+        && /decide\(session,\s*evt,\s*parsed,\s*\{[\s\S]{0,200}repliedToMe/.test(idxSrc)
         && /repliedToMe === true/.test(brainSrc);
       check(
         'T364b 引用回复的**接线**在位（只断言叶子会让"忘了接"全绿）：读一次 → 传进 decide → 发完记 id → decide 里消费它',
@@ -11174,6 +11188,600 @@ const fs = require('node:fs');
       }
     }
 
+  // ── T396 · 协议端可观测面：心跳 / 周期 get_status / 半断连超时（B1–B3 · 2026-10-20）──
+  //    这一条打的是"机器人**自己**能不能发现协议端不答了"：
+  //    mock 推心跳、mock 对指定动作永不应答，客户端必须把两件事都记下来。
+  {
+    const bad = [];
+    const ck = (c, m) => { if (!c) bad.push(m); };
+    const port396 = SMOKE_BASE_PORT + 41;
+    const ob396 = startMockOneBot({
+      port: port396, selfId: SELF, heartbeatMs: 60, delayMs: 40,
+      silentActions: ['get_group_list'],
+    });
+    const cli = new OneBotClient({
+      wsUrl: `ws://127.0.0.1:${port396}`,
+      accessToken: '',
+      reconnectBackoffMs: [50],
+      statusProbeMs: 100,
+    });
+    try {
+      await ob396.listening;
+      cli.start();
+      const up = await waitFor(() => cli.connected, { timeout: 3000 });
+      ck(up === true, '客户端没连上 mock');
+      const gotHb = await waitFor(() => cli.healthSnapshot().lastHeartbeatAt > 0, { timeout: 3000 });
+      const hb = cli.healthSnapshot();
+      ck(gotHb === true, '心跳事件没被消费（lastHeartbeatAt 一直为 0）');
+      ck(hb.heartbeatIntervalMs === 60, `心跳间隔没被记下：${hb.heartbeatIntervalMs}（mock 报的是 60）`);
+      const gotStatus = await waitFor(() => cli.healthSnapshot().lastStatusOk === true, { timeout: 3000 });
+      ck(gotStatus === true, '周期 get_status 没有成功过');
+      ck(ob396.actions.includes('get_status'), '客户端从没真的发过 get_status（只在本地置了状态）');
+      // 半断连：连接还在，但 get_group_list 永远没有 echo 回包 ⇒ 必须按超时失败
+      const t0 = Date.now();
+      let timedOut = false;
+      try { await cli.call('get_group_list', {}, 120); } catch (e) { timedOut = /API 超时/.test(e.message); }
+      const elapsed = Date.now() - t0;
+      ck(timedOut, '半断连（动作永不应答）没有按 echo 超时失败');
+      ck(elapsed >= 100, `超时回得太快（${elapsed}ms）—— 没真的等 echo`);
+      ck(cli.healthSnapshot().timeouts >= 1, '超时计数没有落进健康快照');
+      ck(ob396.actionCount >= 3, `mock 收到的动作太少（${ob396.actionCount}）—— 夹具没跑起来`);
+    } finally {
+      cli.stop();
+      await waitFor(() => !cli.connected, { timeout: 2000 });
+      await ob396.close().catch(() => {});
+    }
+    check(
+      'T396 ★ 协议端可观测面（B1–B3）：心跳被消费（含 interval）· 周期 get_status 真的发过 · '
+        + '半断连按 echo 超时失败并落进 timeouts',
+      bad.length === 0,
+      bad.length ? bad.join(' | ') : '八组全过'
+    );
+  }
+
+  // ── T397 · 机器人侧健康快照真的落进 effective.json（B4 · 2026-10-20）──
+  //    不是断言"函数返回了字段"，而是读**真进程**写出的文件 —— 接线断了这一条会红。
+  //    主 mock 配了 `heartbeatMs: 1000`，`QQBOT_EFFECTIVE_MS=500` 让快照每 0.5 秒刷一次。
+  {
+    const bad = [];
+    const ck = (c, m) => { if (!c) bad.push(m); };
+    const effNow = () => {
+      try { return JSON.parse(fs.readFileSync(efile, 'utf8')); } catch { return null; }
+    };
+    const ok = await waitFor(() => {
+      const h = effNow()?.onebotHealth;
+      return h?.connected === true && h.lastHeartbeatAt > 0;
+    }, { timeout: 8000 });
+    const h = effNow()?.onebotHealth;
+    ck(ok === true, `effective.json 里 8 秒内没出现 connected+心跳：${JSON.stringify(h)}`);
+    ck(!!h && h.heartbeatIntervalMs === 1000,
+      `机器人记下的心跳间隔不对：${h?.heartbeatIntervalMs}（主 mock 报的是 1000）`);
+    ck(!!h && h.lastFrameAt > 0, '没有记录最后一次入站帧时刻');
+    ck(!!h && h.calls > 0, '动作调用计数为 0（客户端从未发过动作）');
+    ck(!!h && h.statusProbeIntervalMs > 0, '周期探活间隔没下发（面板无法区分"没问过"与"不探"）');
+    ck(ob.actions.includes('get_status'), '主桥接从未发过周期 get_status');
+    check(
+      'T397 ★ 机器人侧健康快照（B4）：connected / 最后心跳 / 入站帧 / 动作计数 / 探活间隔真的写进 effective.json（真进程）',
+      bad.length === 0,
+      bad.length ? bad.join(' | ') : `onebotHealth=${JSON.stringify(h)}`
+    );
+  }
+
+  // ── T398 · `onebotSelfReport` 的纯投影（B6 双时刻的"面板这一侧"）──
+  {
+    const SC = await import(new URL('../panel/lib/state-collector.js', import.meta.url).href);
+    const rep = SC.onebotSelfReport(
+      { ok: true, body: JSON.stringify({ status: 'ok', data: { app_name: 'X', app_version: '1.2', protocol_version: 'v11' } }) },
+      { ok: true, body: JSON.stringify({ status: 'ok', data: { online: true, good: true } }) },
+      123456
+    );
+    const rep2 = SC.onebotSelfReport(null, null, 654321);
+    check(
+      'T398 ★ 协议端自报投影（B6）：字段逐字转述 · probedAt 由调用方注入（纯函数）· 没答时 answered=false 且 self* 为 null',
+      rep.answered === true && rep.appName === 'X' && rep.appVersion === '1.2'
+        && rep.protocolVersion === 'v11' && rep.selfOnline === true && rep.selfGood === true
+        && rep.probedAt === 123456
+        && rep2.answered === false && rep2.selfOnline === null && rep2.selfGood === null
+        && rep2.probedAt === 654321,
+      `answered=${rep.answered} app=${rep.appName} ${rep.appVersion}/${rep.protocolVersion} `
+        + `self=${rep.selfOnline}/${rep.selfGood} probedAt=${rep.probedAt} ｜ 空回包 answered=${rep2.answered}`
+    );
+  }
+
+  // ── T399–T403 · L3 聚合适配层（2026-10-20 · R1/R2/R4）────────────────────
+  //    这五条打的是"同一动作在不同后端上语义不同"的五处：失败形状 / 参数顺序 /
+  //    能力真值 / 自报可信度 / 面板投影。四条纯函数，一条驱动（假 client 记录调用顺序）。
+  {
+    const bad = [];
+    const ck = (c, m) => { if (!c) bad.push(m); };
+    const N = await import(new URL('../src/backend/normalize.js', import.meta.url).href);
+    const ok = N.classifyOneBotReply({ status: 'ok', retcode: 0, data: { a: 1 } });
+    ck(ok.transportOk === true && ok.businessOk === true && ok.code === 'ok' && ok.data?.a === 1,
+      `成功回包被误判：${JSON.stringify(ok)}`);
+    const lag = N.classifyOneBotReply({ status: 'failed', retcode: 200, message: 'failed' });
+    ck(lag.transportOk === true && lag.businessOk === false && lag.code === 'business_failed',
+      `Lagrange 的 retcode 200 + failed 被当成成功：${JSON.stringify(lag)}`);
+    ck(lag.data === null, '业务失败时还把 data 交出去了（半份 data 会被上层当成功内容）');
+    const empty = N.classifyOneBotReply({ status: 'failed', retcode: 200, message: 'download forward message payload is empty' });
+    ck(empty.code === 'forward_payload_empty', `SnowLuma 的 payload is empty 没被识别：${empty.code}`);
+    const resid = N.classifyOneBotReply({ status: 'failed', retcode: -1, message: 'ResId无效' });
+    ck(resid.code === 'forward_resid_invalid', `NapCat 的 ResId无效 没被识别：${resid.code}`);
+    const junk = N.classifyOneBotReply('nope');
+    ck(junk.transportOk === false && junk.businessOk === false, '非对象回包没被判 malformed');
+    check(
+      'T399 ★ L3 失败语义归一：transport / business 正交 · retcode 200 + failed 不再当成功 · '
+        + 'SnowLuma「payload is empty」与 NapCat「ResId无效」各有错误码 · 失败不交出 data',
+      bad.length === 0,
+      bad.length ? bad.join(' | ') : '六组全过'
+    );
+  }
+
+  {
+    const bad = [];
+    const ck = (c, m) => { if (!c) bad.push(m); };
+    const N = await import(new URL('../src/backend/normalize.js', import.meta.url).href);
+    const f1 = N.forwardAttemptsFor('napcat', { messageId: '123', resId: 'abc' });
+    ck(f1.map((x) => x.via).join(',') === 'message_id,res_id', `NapCat 顺序不对：${f1.map((x) => x.via)}`);
+    ck(f1[0]?.params?.message_id === 123, `NapCat 的 message_id 没还原成数字：${JSON.stringify(f1[0])}`);
+    const f2 = N.forwardAttemptsFor('llbot', { messageId: '123', resId: 'abc' });
+    ck(f2.map((x) => x.via).join(',') === 'res_id,message_id', `LLBot 顺序不对：${f2.map((x) => x.via)}`);
+    ck(f2[0]?.params?.id === 'abc', `LLBot 的 id 不是 resId 字符串：${JSON.stringify(f2[0])}`);
+    const f3 = N.forwardAttemptsFor('snowluma', { messageId: -42, resId: '' });
+    ck(f3.length === 1 && f3[0].params.message_id === -42, `负 int32 的 message_id 被丢了/改了：${JSON.stringify(f3)}`);
+    ck(N.messageIdShapeOf(-42) === 'int32-negative', '负 message_id 的形状没被识别');
+    const none = N.forwardAttemptsFor('napcat', { messageId: '', resId: '' });
+    ck(none.length === 0, `两个 id 都为空时仍生成了尝试：${JSON.stringify(none)}`);
+    check(
+      'T400 ★ L3 合并转发参数顺序：NapCat/SnowLuma 先 message_id、LLBot 先 id（resId）· '
+        + '负 int32 原样保留 · 两个 id 都为空时不生成尝试',
+      bad.length === 0,
+      bad.length ? bad.join(' | ') : '六组全过'
+    );
+  }
+
+  {
+    const bad = [];
+    const ck = (c, m) => { if (!c) bad.push(m); };
+    const R = await import(new URL('../src/backend/registry.js', import.meta.url).href);
+    const N = await import(new URL('../src/backend/normalize.js', import.meta.url).href);
+    ck(R.backendOfSelfReport({ app_name: 'NapCat' }) === 'napcat', 'NapCat 没被识别');
+    ck(R.backendOfSelfReport({ app_name: 'SnowLuma' }) === 'snowluma', 'SnowLuma 没被识别');
+    ck(R.backendOfSelfReport({ app_name: 'LLBot', app_version: '8.3.2' }) === 'llbot', 'LLBot 没被识别');
+    ck(R.backendOfSelfReport({ app_name: 'Lagrange.OneBot' }) === 'lagrange', 'Lagrange 没被识别');
+    ck(R.backendOfSelfReport({ app_name: '未知协议端' }) === 'generic', '未识别时没回 generic');
+    ck(R.resolveBackend({ configured: 'snowluma', selfReport: { app_name: 'NapCat' } }) === 'snowluma',
+      '显式配置被自报覆盖了');
+    ck(R.resolveBackend({ configured: 'auto', selfReport: { app_name: 'SnowLuma' } }) === 'snowluma',
+      'auto + 自报没有解析成 snowluma');
+    ck(R.normalizeBackend('LLBot') === 'llbot' && R.normalizeBackend('不存在') === 'auto',
+      'normalizeBackend 没把不合法值收回 auto');
+    const caps = N.capabilitiesOf('llbot');
+    ck(caps.actions.get_status === 'unknown', `LLBot 的 get_status 被标成 ${caps.actions.get_status}`);
+    ck(caps.actions.send_group_msg === 'yes', '生产动作被误标成不支持');
+    ck(caps.canSend.image === 'untrusted' && caps.canSend.record === 'untrusted',
+      '上游自报的 can_send_* 被当成了能力真值');
+    const trust = N.selfReportTrustOf('napcat');
+    ck(trust.good === false && trust.online === false, 'NapCat 的自报 good/online 被当成了可信');
+    ck(N.capabilitiesOf('napcat').actions.get_version_info === 'yes', 'NapCat 的 get_version_info 没标 yes');
+    check(
+      'T401 ★ L3 后端注册表与能力：自报 app_name 识别四家 · 显式配置优先 · LLBot 的 get_status=unknown · '
+        + 'can_send_* 一律 untrusted · NapCat/Lagrange 的 good 不可信',
+      bad.length === 0,
+      bad.length ? bad.join(' | ') : '十一组全过'
+    );
+  }
+
+  {
+    const bad = [];
+    const ck = (c, m) => { if (!c) bad.push(m); };
+    const D = await import(new URL('../src/backend/driver.js', import.meta.url).href);
+    const calls = [];
+    const fake = {
+      async call(action, params) {
+        calls.push({ action, params });
+        if (action === 'get_version_info') return { app_name: 'LLBot' };
+        if (action === 'get_forward_msg' && params?.id) return { messages: [1] };
+        throw new Error('不应走到这里');
+      },
+    };
+    const d = D.createOneBotDriver({ client: fake, backend: 'auto' });
+    const id = await d.detectBackend();
+    ck(id === 'llbot' && d.backend === 'llbot', `auto 没识别成 LLBot：${id}`);
+    const r = await d.getForwardMsg({ messageId: 123, resId: 'abc' });
+    const seq = calls.filter((x) => x.action === 'get_forward_msg');
+    ck(r.via === 'res_id', `LLBot 第一次没用 resId：${r.via}`);
+    ck(seq.length === 1 && JSON.stringify(seq[0].params) === '{"id":"abc"}',
+      `LLBot 的调用序列不对：${JSON.stringify(seq)}`);
+    const calls2 = [];
+    const fake2 = {
+      async call(action, params) {
+        calls2.push({ action, params });
+        if (action === 'get_version_info') return { app_name: 'NapCat' };
+        if (action === 'get_forward_msg') return { messages: [1] };
+        throw new Error('x');
+      },
+    };
+    const d2 = D.createOneBotDriver({ client: fake2, backend: 'auto' });
+    await d2.detectBackend();
+    const r2 = await d2.getForwardMsg({ messageId: 123, resId: 'abc' });
+    const first2 = calls2.find((x) => x.action === 'get_forward_msg');
+    ck(r2.via === 'message_id' && first2?.params?.message_id === 123,
+      `NapCat 第一次没用 message_id：${JSON.stringify(first2)}`);
+    let asked = false;
+    const d3 = D.createOneBotDriver({
+      client: { async call() { asked = true; return {}; } },
+      backend: 'snowluma',
+    });
+    ck((await d3.detectBackend()) === 'snowluma' && asked === false,
+      '显式配置的 driver 仍去问了 get_version_info（或改了后端）');
+    check(
+      'T402 ★ L3 驱动：auto 用 get_version_info 认后端 · LLBot 先试 resId、NapCat 先试 message_id · '
+        + '第一条成功就不再试 · 显式配置不问协议端',
+      bad.length === 0,
+      bad.length ? bad.join(' | ') : '六组全过'
+    );
+  }
+
+  {
+    const bad = [];
+    const ck = (c, m) => { if (!c) bad.push(m); };
+    const SC = await import(new URL('../panel/lib/state-collector.js', import.meta.url).href);
+    const rep = SC.onebotSelfReport(
+      { ok: true, body: JSON.stringify({ status: 'ok', data: { app_name: 'SnowLuma', app_version: '2.0.3', protocol_version: '11' } }) },
+      { ok: true, body: JSON.stringify({ status: 'ok', data: { online: true, good: true } }) },
+      1
+    );
+    ck(rep.backendId === 'snowluma' && rep.backendLabel === 'SnowLuma',
+      `面板没识别后端：${rep.backendId}/${rep.backendLabel}`);
+    ck(rep.selfReportTrust?.good === false, '面板把自报 good 当成了可信');
+    const rep2 = SC.onebotSelfReport(null, null, 2);
+    ck(rep2.backendId === 'generic' && rep2.selfReportTrust?.good === false,
+      '没答时后端/信任度不对');
+    check(
+      'T403 ★ 面板自报投影带后端：app_name → backendId/label · selfReportTrust 随之下发 · '
+        + '没答时回 generic（不猜最近的一家）',
+      bad.length === 0,
+      bad.length ? bad.join(' | ') : '三组全过'
+    );
+  }
+
+  // ── B1（2026-10-21）：判据正确性的六条反证 ──────────────────────────────
+  {
+    // T404：30 秒 tick 的单飞守卫。它是 index.js 的闭包状态，不能直接 import
+    // （import 入口会真的启动机器人），所以这里断言**守卫形状与 finally 归还**都在位。
+    const idxSrc = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+    check(
+      'T404 主动链单飞：上一轮没跑完时下一 tick 直接跳过（不排队、不并发）· index 真的接了这道守卫',
+      /let proactiveTickRunning = false;/.test(idxSrc)
+        && /if \(proactiveTickRunning\) return;/.test(idxSrc)
+        && /proactiveTickRunning = true;/.test(idxSrc)
+        && /finally \{\s*proactiveTickRunning = false;\s*\}/.test(idxSrc),
+      '守卫标记 = ' + ['let 声明', '入口 return', '置 true', 'finally 归还']
+        .map((s, i) => `${s}:${[/let proactiveTickRunning = false;/, /if \(proactiveTickRunning\) return;/, /proactiveTickRunning = true;/, /finally \{\s*proactiveTickRunning = false;\s*\}/][i].test(idxSrc)}`).join(' · ')
+    );
+
+    // T405：信号量在 run() 同步抛错时必须归还槽位，否则累计 limit 次后永久死锁。
+    {
+      const sem = createSemaphore(1);
+      const thrown = await sem(() => { throw new Error('sync-boom'); }).then(() => '', (e) => e.message);
+      let secondRan = false;
+      const after = await sem(async () => { secondRan = true; return 2; });
+      check(
+        'T405 信号量：run() 同步抛错也归还槽位（累计 limit 次不再死锁）· 第二次照常执行',
+        thrown === 'sync-boom' && secondRan === true && after === 2,
+        `同步抛错=${thrown}｜第二次执行=${secondRan}｜结果=${after}`
+      );
+    }
+
+    // T406：滴流响应。空闲超时会被每个字节重置，只有绝对总时限能收住它。
+    {
+      const trickle = http.createServer((req, res) => {
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        const t = setInterval(() => { try { res.write('.'); } catch { /* 已断开 */ } }, 20);
+        res.on('close', () => clearInterval(t));
+      });
+      await new Promise((r) => trickle.listen(0, '127.0.0.1', r));
+      const t0 = Date.now();
+      const r = await sendOnce(new URL(`http://127.0.0.1:${trickle.address().port}/`), { timeoutMs: 50, totalMs: 140 });
+      const ms = Date.now() - t0;
+      trickle.closeAllConnections?.();
+      trickle.close();
+      check(
+        'T406 safe-fetch 绝对总时限：每 20ms 吐 1 字节的滴流也会在总时限内退出（空闲超时挡不住）',
+        r.ok === false && r.reason === 'timeout' && /总时限/.test(r.detail || '') && ms < 1500,
+        `结果=${r.reason}/${r.detail}｜耗时=${ms}ms`
+      );
+    }
+
+    // T407：上一轮表必须是 LRU —— 覆盖同一个 key 要刷新它的顺序，而不是留在原地。
+    {
+      const ctl = createSessionControl({ keep: 2 });
+      for (const k of ['a', 'b']) { ctl.begin(k); ctl.end(k, 'ok'); }
+      ctl.begin('a'); ctl.end('a', 'ok'); // touch a，b 成为最久没碰过的那条
+      ctl.begin('c'); ctl.end('c', 'ok');
+      check(
+        'T407 会话“上一轮”表是 LRU：重新碰过的 key 不该被当成最老的一条淘汰（FIFO 会挤掉主群）',
+        ctl.lastOf('a') !== null && ctl.lastOf('b') === null && ctl.lastOf('c') !== null,
+        `a=${!!ctl.lastOf('a')} b=${!!ctl.lastOf('b')} c=${!!ctl.lastOf('c')}（应 true/false/true）`
+      );
+    }
+
+    // T408：本机判定必须锚在 host 段；控制台路径判定必须按 host 认厂商，不能被查询串骗。
+    {
+      const yes = [
+        'http://127.0.0.1:8080/v1', 'http://[::1]:8080', 'http://10.1.2.3',
+        'http://172.20.0.1', 'http://192.168.1.2', '127.0.0.1:3001',
+      ].every((u) => isLocalBase(u) === true);
+      const no = [
+        'https://evil.com/#//127.0.0.1', 'https://relay.example.com/x//127.0.0.1',
+        'http://127.0.0.1.example.com/v1', 'http://172.40.0.1', 'https://bigmodel.cn.localhost:1/v1',
+      ].every((u) => isLocalBase(u) === false);
+      const relay = consoleHostReject('https://relay.example.com/keys?src=api.deepseek.com');
+      const consoleUrl = consoleHostReject('https://platform.deepseek.com/usage');
+      check(
+        'T408 net-rules 锚 host：路径/锚点里的 127.0.0.1 不再算本机 · 合法中转不再被当成控制台页',
+        yes && no && relay === '' && consoleUrl !== '',
+        `本机组=${yes} 反例组=${no}｜中转=${relay || '(放行)'}｜控制台=${consoleUrl ? '(拦下)' : '(漏了)'}`
+      );
+    }
+
+    // T409：背景段从最老开始裁时，段标题必须保留（否则模型把背景当成自己参与过的对话）。
+    {
+      const secs = [{
+        id: 'ambient', label: '背景消息', trimFrom: 'oldest', keepHead: 1,
+        lines: ['## 刚才群里的消息（你没参与的，作为背景）', '张三: 很长很长的一条背景消息', '李四: 另一条'],
+      }];
+      const out = applyBudget(secs, budgetOf({ total: 100000, sections: { ambient: 10 } }));
+      const lines = out.lines;
+      check(
+        'T409 背景段保标题：trimFrom=oldest 先丢正文，段标题永远留着',
+        lines[0].startsWith('## 刚才群里的消息') && !out.lines.includes('很长很长的一条背景消息'),
+        `首行=${lines[0]}｜剩 ${lines.length} 行`
+      );
+    }
+  }
+
+  // ── B2（2026-10-21）：落盘 / 原型键 / 请求体 ────────────────────────────
+  {
+    // T410：面板删除一条后，磁盘顺序必须仍是「最旧在前」；提示词读取才是「最新在前」。
+    {
+      const mem = await import(new URL('../src/memory.js', import.meta.url).href);
+      const ms = await import(new URL('../src/memory-store.js', import.meta.url).href);
+      const f = path.join(os.tmpdir(), `qqbot-b2-mem-${process.pid}.jsonl`);
+      fs.writeFileSync(f, [
+        JSON.stringify({ id: 'a1', text: 'oldest' }),
+        JSON.stringify({ id: 'a2', text: 'mid' }),
+        JSON.stringify({ id: 'a3', text: 'newest' }),
+      ].join('\n') + '\n');
+      const rows = ms.listAutoMemory(f).filter((m) => m.id !== 'a2');
+      mem.writeAutoMemory(rows, f);
+      const disk = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).text);
+      const readBack = ms.listAutoMemory(f).map((m) => m.text);
+      fs.rmSync(f, { force: true });
+      check(
+        'T410 删除自动记忆后磁盘顺序不反转：oldest→newest · 读口仍 newest→oldest（不再只记最旧 12 条）',
+        JSON.stringify(disk) === '["oldest","newest"]' && JSON.stringify(readBack) === '["newest","oldest"]',
+        `磁盘=${JSON.stringify(disk)}｜读回=${JSON.stringify(readBack)}`
+      );
+    }
+
+    // T411：Windows 瞬时占用（EBUSY/EPERM）要走退避重试，ENOENT 不重试。
+    {
+      const aw = await import(new URL('../src/atomic-write.js', import.meta.url).href);
+      let calls = 0;
+      const sleeps = [];
+      const ok = aw.renameWithRetry('t', 'f', {
+        rename: () => {
+          calls += 1;
+          if (calls < 3) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; }
+        },
+        chmod: () => {},
+        sleep: (ms) => sleeps.push(ms),
+        delays: [0, 1, 2, 3],
+      });
+      let enoentCalls = 0;
+      let enoent = '';
+      try {
+        aw.renameWithRetry('t', 'f', {
+          rename: () => { enoentCalls += 1; const e = new Error('missing'); e.code = 'ENOENT'; throw e; },
+          sleep: () => {},
+        });
+      } catch (e) { enoent = e.code; }
+      check(
+        'T411 原子写退避：EBUSY 两次后成功（退避 1/2ms）· ENOENT 不重试',
+        ok.attempts === 3 && calls === 3 && JSON.stringify(sleeps) === '[1,2]'
+          && enoentCalls === 1 && enoent === 'ENOENT',
+        `EBUSY 次数=${calls} 退避=${JSON.stringify(sleeps)}｜ENOENT 次数=${enoentCalls}/${enoent}`
+      );
+    }
+
+    // T412：空的自定义大脑不能靠原型属性伪装成「有 constructor 这套」。
+    {
+      const cb = await import(new URL('../src/custom-brain.js', import.meta.url).href);
+      const empty = cb.customBrainsOf({ llm: { customBrains: {} } });
+      const real = cb.customBrainsOf({
+        llm: { customBrains: { constructor: { name: 'c', baseUrl: 'https://a.example/v1', model: 'm' } } },
+      });
+      check(
+        'T412 自定义大脑空表不认原型键：`brains["constructor"]` 为 undefined · 真填了同名 id 才存在',
+        Object.getPrototypeOf(empty.brains) === null
+          && empty.brains['constructor'] === undefined
+          && Object.hasOwn(real.brains, 'constructor') === true,
+        `原型=${Object.getPrototypeOf(empty.brains)}｜空表 constructor=${empty.brains['constructor']}｜真同名=${Object.hasOwn(real.brains, 'constructor')}`
+      );
+    }
+
+    // T413：请求体超限后 close 必须 settle —— 旧实现只 destroy，Promise 永远挂着。
+    {
+      const { EventEmitter } = await import('node:events');
+      const io = await import(new URL('../panel/lib/http-io.js', import.meta.url).href);
+      const req = new EventEmitter();
+      req.destroy = () => {};
+      const p = io.readBody(req);
+      req.emit('data', 'x'.repeat(1_000_001));
+      req.emit('close');
+      const r = await Promise.race([
+        p,
+        new Promise((res) => setTimeout(() => res('TIMEOUT'), 500)),
+      ]);
+      check(
+        'T413 readBody 超限/断开都会 settle：只 destroy 不再让 Promise 永不返回',
+        r !== 'TIMEOUT' && typeof r === 'object',
+        `结果=${r === 'TIMEOUT' ? '仍未返回（缺陷）' : JSON.stringify(r)}`
+      );
+    }
+  }
+
+  // ── B3（2026-10-21）：协议端存活阶梯 + 真实心跳停摆重连 ──────────────────
+  {
+    const live = await import(new URL('../src/onebot-liveness.js', import.meta.url).href);
+    const v = (health, ports) => live.livenessVerdictOf({ health, ports, now: 1_000_000, staleMs: 90_000 }).code;
+    const cases = [
+      [null, {}, 'down'],
+      [null, { http: true, ws: false }, 'ws-down'],
+      [null, { http: true, ws: true }, 'port-only'],
+      [{ connected: false }, { http: true, ws: true }, 'ws-down'],
+      [{ connected: true, botOffline: true, lastFrameAt: 999_000 }, { http: true, ws: true }, 'account-offline'],
+      [{ connected: true, lastFrameAt: 800_000, lastStatusOk: true }, { http: true, ws: true }, 'stalled'],
+      [{ connected: true, lastFrameAt: 999_000, lastStatusOk: false }, { http: true, ws: true }, 'actions-dead'],
+      [{ connected: true, lastFrameAt: 999_000, lastStatusOk: true }, { http: true, ws: true }, 'ok'],
+    ];
+    const got = cases.map(([h, p]) => v(h, p));
+    check(
+      'T414 协议端存活阶梯：down→ws-down→port-only→account-offline→stalled→actions-dead→ok（纯函数真值表）',
+      JSON.stringify(got) === JSON.stringify(cases.map((c) => c[2])),
+      `${got.join(' / ')}`
+    );
+
+    // T415：看门狗只 terminate、不自己重连；health 快照带够面板判定所需字段。
+    const obSrc = fs.readFileSync(new URL('../src/onebot.js', import.meta.url), 'utf8');
+    const scSrc = fs.readFileSync(new URL('../panel/lib/state-collector.js', import.meta.url), 'utf8');
+    const appSrc = fs.readFileSync(new URL('../panel/next/app.js', import.meta.url), 'utf8');
+    check(
+      'T415 看门狗接线：只 terminate + 健康快照字段齐 · collector 判 verdict · 检查表读 onebot.verdict',
+      /#startWatchdog\(\)/.test(obSrc) && /#checkLiveness\(\)/.test(obSrc)
+        && /this\.ws\.terminate\(\)/.test(obSrc)
+        && /botOffline: this\.botOffline/.test(obSrc)
+        && /watchdogKills: this\.watchdogKills/.test(obSrc)
+        && /livenessVerdictOf\(/.test(scSrc) && /onebot: \{/.test(scSrc)
+        && /j\(s, \['onebot', 'verdict'\]/.test(appSrc),
+      'watchdog/health/collector/检查表 四段接线'
+    );
+
+    // T416：真实 WS —— 服务端只接受连接、不发任何帧；看门狗必须在 staleMs 后断开并重连。
+    {
+      const { WebSocketServer } = await import('ws');
+      const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await new Promise((r) => (wss.address() ? r() : wss.once('listening', r)));
+      let conns = 0;
+      wss.on('connection', () => { conns += 1; });
+      const c = new OneBotClient({
+        wsUrl: `ws://127.0.0.1:${wss.address().port}/`,
+        accessToken: '',
+        reconnectBackoffMs: [20],
+        statusProbeMs: 0,
+        staleMs: 120,
+      });
+      c.start();
+      const reconnected = await waitFor(() => c.healthSnapshot().watchdogKills >= 1 && conns >= 2, { timeout: 3000 });
+      const snap = c.healthSnapshot();
+      c.stop();
+      await new Promise((r) => wss.close(r));
+      check(
+        'T416 真停摆：服务端不发帧 → 看门狗断开（watchdogKills≥1）→ 走既有 close 路径重连（连接数≥2）',
+        reconnected === true && snap.watchdogKills >= 1 && conns >= 2,
+        `watchdogKills=${snap.watchdogKills} 连接数=${conns} 原因=${snap.lastDropReason}`
+      );
+    }
+  }
+
+  // ── B4（2026-10-21）：优雅停止命令 + 非 TTY 提问 ────────────────────────
+  {
+    // T417：shutdown 进闭集合，且只给 30 秒寿命；普通命令仍 2 分钟。
+    const now = 1_800_000_000_000;
+    const shut = controlDecision({ id: 's1', cmd: 'shutdown', at: now - 31_000 }, { now, maxAgeMs: maxAgeForKind('shutdown') });
+    const abort = controlDecision({ id: 'a1', cmd: 'abort', at: now - 31_000 }, { now });
+    check(
+      'T417 停止命令：shutdown 进闭集合 · 寿命 30s（强杀后的旧命令不会让下次启动即退）· abort 仍 2min',
+      CONTROL_KINDS.includes('shutdown')
+        && maxAgeForKind('shutdown') === CONTROL_MAX_AGE_BY_KIND.shutdown
+        && maxAgeForKind('shutdown') === 30_000
+        && shut.action === 'expire' && abort.action === 'run',
+      `shutdown=${{ s: shut.action, a: abort.action }} 寿命=${maxAgeForKind('shutdown')}ms`
+    );
+
+    // T418：非 TTY 下 ask 不许挂死；有默认值用默认值，必填项无默认值给明确错误。
+    {
+      const cmn = await import(new URL('../packaging/windows/tools/lib/common.mjs', import.meta.url).href);
+      const desc = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+      Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+      let got = '';
+      let threw = '';
+      try {
+        got = await cmn.ask('建快捷方式？', { def: 'y', validate: (v) => (v ? '' : '必填') });
+        await cmn.ask('必填项', { def: '', validate: (v) => (v ? '' : '必填') });
+      } catch (e) {
+        threw = e.message;
+      } finally {
+        if (desc) Object.defineProperty(process.stdin, 'isTTY', desc);
+        else delete process.stdin.isTTY;
+      }
+      check(
+        'T418 非 TTY 的 ask：有默认值直接返回（不再 unsettled await / exit 13）· 必填项无默认值抛明确错误',
+        got === 'y' && /必填/.test(threw) && !/unsettled/.test(threw),
+        `默认值=${got}｜必填= ${threw || '(没有抛)'}`
+      );
+    }
+
+    // T419：小时上限只拦主动/插话；直呼三类豁免，但分钟级仍生效。
+    {
+      const qStore = new SessionStore();
+      const qb = new Brain(sampleConfig(), qStore);
+      qb.cfg.throttle = { minIntervalMs: 0, perMinutePerSession: 1000, perHourPerSession: 5, globalConcurrency: 1 };
+      const qs = qStore.get('group', '100000001');
+      const t0 = 1_700_000_000_000;
+      for (let i = 0; i < 5; i += 1) qb.markReplied(qs, t0 - i * 1000);
+      const whyInterject = qb.throttleReason(qs, t0, { kind: 'interject' });
+      const whyNamed = qb.throttleReason(qs, t0, { kind: 'named' });
+      const whyPrivate = qb.throttleReason(qs, t0, { kind: 'private' });
+      const whyKeyword = qb.throttleReason(qs, t0, { kind: 'keyword' });
+      qb.cfg.throttle.perMinutePerSession = 3;
+      const whyMinute = qb.throttleReason(qs, t0, { kind: 'named' });
+      check(
+        'T419 直呼豁免小时上限：interject 被拦 · private/named/keyword 放行 · 分钟级仍拦直呼',
+        typeof whyInterject === 'string' && whyInterject.includes('一小时')
+          && whyNamed === null && whyPrivate === null && whyKeyword === null
+          && typeof whyMinute === 'string' && whyMinute.includes('一分钟'),
+        `插话=${whyInterject}｜直呼=${[whyNamed, whyPrivate, whyKeyword].map((x) => (x === null ? 'ok' : x)).join('/')}｜分钟=${whyMinute}`
+      );
+    }
+
+    // T420：非数字配置不再变成 NaN；坏 JSON 抛出带文件名的明确错误。
+    {
+      const { loadConfig } = await import(new URL('../src/config.js', import.meta.url).href);
+      const f = path.join(os.tmpdir(), `qqbot-b5-cfg-${process.pid}.json`);
+      fs.writeFileSync(f, JSON.stringify({
+        allow: { groups: ['100000001'] },
+        llm: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', temperature: 'abc' },
+        trigger: { interjectChance: '0.7%' },
+        throttle: { perHourPerSession: 'x' },
+      }));
+      let cfg = null;
+      let cfgErr = '';
+      try { cfg = loadConfig(f); } catch (e) { cfgErr = e.message; }
+      fs.writeFileSync(f, '{ bad json');
+      let badErr = '';
+      try { loadConfig(f); } catch (e) { badErr = e.message; }
+      fs.rmSync(f, { force: true });
+      check(
+        'T420 配置数值回退：temperature=1 · interjectChance=0 · perHour=60 · 坏 JSON 报出文件名而不是裸 SyntaxError',
+        !cfgErr && cfg && cfg.llm.temperature === 1 && cfg.trigger.interjectChance === 0
+          && cfg.throttle.perHourPerSession === 60
+          && /配置文件不是合法 JSON/.test(badErr) && badErr.includes(f),
+        `cfgErr=${cfgErr || '无'}｜温度=${cfg?.llm?.temperature} 插话=${cfg?.trigger?.interjectChance} 小时=${cfg?.throttle?.perHourPerSession}｜坏JSON=${badErr.slice(0, 60)}`
+      );
+    }
+  }
 
   } finally {
     await cleanup();

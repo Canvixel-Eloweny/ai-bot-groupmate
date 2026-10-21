@@ -76,14 +76,14 @@ export default [
     id: 'M6',
     note: '冷场记账挪到 decide 之前（冷场时长恒为 0，因子变死代码而四层照绿）',
     file: 'src/index.js',
-    anchor: /if \(session && !evt\.isPoke\) brain\.noteSeen\(session\);/,
+    anchor: /if \(session && !evt\.isPoke && !evt\.isPatrol\) \{\n      brain\.noteSeen\(session\);/,
     count: 1,
     apply: (s) => s
       .replace(
-        '    const decision = brain.decide(session, evt, parsed);',
-        '    if (session && !evt.isPoke) brain.noteSeen(session);\n\n    const decision = brain.decide(session, evt, parsed);'
+        '    // 热度权重（按人关系温度）：冷的时候少冒头，交给 decide() 乘进概率。\n    const heatWeight = session ? heatWeightOf(heatEntryOf(session.key, evt.user_id)) : 1;',
+        '    if (session && !evt.isPoke && !evt.isPatrol) {\n      brain.noteSeen(session);\n      noteChatMessage(session.key);\n    }\n\n    // 热度权重（按人关系温度）：冷的时候少冒头，交给 decide() 乘进概率。\n    const heatWeight = session ? heatWeightOf(heatEntryOf(session.key, evt.user_id)) : 1;'
       )
-      .replace('    if (session && !evt.isPoke) brain.noteSeen(session);\n\n    if (!decision.respond) {', '    if (!decision.respond) {'),
+      .replace('    if (session && !evt.isPoke && !evt.isPatrol) {\n      brain.noteSeen(session);\n      noteChatMessage(session.key);\n    }\n\n    if (!decision.respond) {', '    if (!decision.respond) {'),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

@@ -212,9 +212,19 @@ export function readZip(input, { entryMax = ZIP_ENTRY_MAX, fileMax = ZIP_FILE_MA
       }
       const raw = b.subarray(dataStart, dataStart + csize);
       try {
-        data = method === 8 ? inflateRawSync(raw) : Buffer.from(raw);
+        // 上限必须传给 zlib 本身：只靠"解压后再比对 declared usize"是**解压炸弹**——
+        // 声明 10 字节、实际膨胀到几百 MB 的条目会先把内存吃掉，再被下面的比对拒绝。
+        data = method === 8
+          ? inflateRawSync(raw, { maxOutputLength: Math.max(1, Math.min(fileMax, usize)) + 1 })
+          : Buffer.from(raw);
       } catch (e) {
-        return { ok: false, error: `「${name}」解压失败（${e?.message ?? e}）` };
+        const over = /maxOutputLength|buffer/i.test(String(e?.message ?? ''));
+        return {
+          ok: false,
+          error: over
+            ? `「${name}」解压后超过单文件上限 ${fileMax} 字节（拒绝继续分配内存）`
+            : `「${name}」解压失败（${e?.message ?? e}）`,
+        };
       }
       // 两道一起才挡得住压缩炸弹：**声明的大小**与**实际解出来的大小**都要对得上。
       if (data.length !== usize) {

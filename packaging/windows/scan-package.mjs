@@ -42,13 +42,20 @@ const MAX_BYTES = 3 * 1024 * 1024; // 大于 3MB 的文本基本是产物/数据
  * 明确豁免的**第三方随附内容**（不是"为了让它变绿"才加的，理由写在这里）：
  *
  *   `runtime/node/node_modules` 是 **Node.js 官方发行版原样自带**的 npm 及其依赖。
- *   它的文档里含 PEM 私钥**示例**（`-----BEGIN … PRIVATE KEY-----`），那是教学文本，
+ *   它的文档里含 PEM 私钥**示例**（教学用占位块），那是第三方随附文本，
  *   与用户数据、与本项目都无关。
  *   我们对这份运行时的校验方式也**不是**文本扫描 —— 而是比对该发行版官方
  *   SHASUMS256.txt 里的 zip 哈希（见构建报告），那比逐行扫更精确。
  *   豁免数会**如实打印**，不静默。
  */
-const VENDOR_SKIP = [path.join('runtime', 'node', 'node_modules')];
+const VENDOR_SKIP = [
+  path.join('runtime', 'node', 'node_modules'),
+  // ④b 的 `userdata/napcat` 是 NapCat.Shell 官方包原样注入（VM 自用、不对外分发）。
+  // 2026-10-21 实测：它的 web UI 资产 `static/assets/index-BeMUzQFw.js` 内含一个
+  // PEM 私钥**示例块** —— 那是第三方包自带的内容，不是本项目的凭据。
+  // 扫它只会把第三方文件当成本项目泄漏；④（对外包）不含这个目录。
+  path.join('userdata', 'napcat'),
+];
 const isVendor = (rel) => VENDOR_SKIP.some((v) => rel === v || rel.startsWith(v + path.sep));
 
 function* walk(dir) {

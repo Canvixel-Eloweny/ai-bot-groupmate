@@ -143,7 +143,10 @@ function joinSections(sections) {
 /**
  * 按预算裁剪各段。
  *
- * @param {{id:string,label:string,lines:string[],drop?:boolean,trimFrom?:'newest'|'oldest',minLines?:number}[]} sections
+ * @param {{id:string,label:string,lines:string[],drop?:boolean,trimFrom?:'newest'|'oldest',minLines?:number,keepHead?:number}[]} sections
+ *   `keepHead` = 从最老的一端裁剪时**永不丢弃**的前 n 行（段标题用）。
+ *   没有它的话，`trimFrom:'oldest'` 的第一次 `shift()` 恰好丢掉段标题 ——
+ *   模型会把「## 刚才群里的消息（你没参与的…）」当成自己参与过的对话。
  * @param {ReturnType<typeof budgetOf>} budget
  * @param {{drop?:string[]}} [opts] `drop` = **整段移除**的段 id（D8 的 trim 档；
  *        见 `SAVING_DROP`）。与"配额淘汰"是两件事：这里是**先整段拿掉**，
@@ -180,8 +183,10 @@ export function applyBudget(sections, budget = DEFAULT_BUDGET, opts = {}) {
   for (const s of work) {
     const cap = b.sections[s.id];
     if (!cap || s.drop === false) continue;
-    while (charsOf(s.lines) > cap && s.lines.length > (s.minLines || 0)) {
-      const gone = s.trimFrom === 'oldest' ? s.lines.shift() : s.lines.pop();
+    const keepHead = Math.max(0, Math.trunc(Number(s.keepHead) || 0));
+    const floor = (s.minLines || 0) + keepHead;
+    while (charsOf(s.lines) > cap && s.lines.length > floor) {
+      const gone = s.trimFrom === 'oldest' ? s.lines.splice(keepHead, 1)[0] : s.lines.pop();
       dropped.push({ id: s.id, label: s.label, chars: gone.length });
     }
   }
@@ -193,8 +198,10 @@ export function applyBudget(sections, budget = DEFAULT_BUDGET, opts = {}) {
     for (const id of EVICTION_ORDER) {
       const s = work.find((x) => x.id === id);
       if (!s || s.drop === false) continue;
-      while (total > b.total && s.lines.length > (s.minLines || 0)) {
-        const gone = s.trimFrom === 'oldest' ? s.lines.shift() : s.lines.pop();
+      const keepHead = Math.max(0, Math.trunc(Number(s.keepHead) || 0));
+      const floor = (s.minLines || 0) + keepHead;
+      while (total > b.total && s.lines.length > floor) {
+        const gone = s.trimFrom === 'oldest' ? s.lines.splice(keepHead, 1)[0] : s.lines.pop();
         total -= gone.length + 1;
         dropped.push({ id: s.id, label: s.label, chars: gone.length });
       }

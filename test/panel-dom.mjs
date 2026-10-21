@@ -229,7 +229,15 @@ try {
 
   console.log('\n── 「启动链路」检查表 ──');
   ok(first.emptyCount === 0, '旧占位 .steps-empty 没出现');
-  ok(first.stepsRows.length >= 4, `检查表至少 4 行（协议端 / 控制台 / 群聊 / 机器人；云端大脑再加 Key 一行 = 5。实得 ${first.stepsRows.length}）`);
+  ok(first.stepsRows.length >= 4, `检查表至少 4 行（协议端 / 协议端自报 / 控制台 / 群聊 / 机器人；云端大脑再加 Key 一行。实得 ${first.stepsRows.length}）`);
+  /* 2026-10-20 补：「协议端自报」那一行必须**真的画出来**（数据来自 state-collector 的
+     `/get_version_info` + `/get_status`）。只断言后端下发了字段不算接线 —— 这一层是
+     全项目唯一会真渲染这个检查表的门禁，行没了不会有任何别的门变红。 */
+  ok(first.stepsRows.some((r) => /协议端自报/.test(r.txt)), '「协议端自报」那一行在检查表里（协议端身份回读有接到界面上）');
+  /* 2026-10-20 补：机器人侧健康（B4/B6）也必须在界面上**看得见** ——
+     上一行是"面板此刻问到了什么"，这一行是"机器人守着的 WS / 心跳 / 超时"。
+     两个观测面合成一句会让人以为是同一时刻的事实，所以它们是两行。 */
+  ok(first.stepsRows.some((r) => /机器人心跳/.test(r.txt)), '「机器人心跳」那一行在检查表里（机器人侧健康快照接到了界面上）');
   ok(first.stepsRows.filter((r) => r.cur === '1').length === 1, '恰好一行被点亮（data-cur="1"）');
   for (const r of first.stepsRows) console.log(`     [cur=${r.cur}] ${r.txt}`);
   const curTxt = (first.stepsRows.find((r) => r.cur === '1') || {}).txt || '';
@@ -293,6 +301,76 @@ try {
   const counts = r.map((x) => `${x.label.trim()}=${x.cards}`).join(' ');
   console.log(`  每页卡片数：${counts}`);
 
+  /* ── 「回复长短」必须是横向进度条（2026-10-21）────────────────────────
+     为什么单钉这一格：它是**纯视觉改造**，改坏了不会抛异常、也不会白屏 ——
+     最可能的失效是"又退回竖向刻度"或"液面没跟着点击走"，两者都不报错。
+     判据取真实几何（轨道宽/高、液面宽度、刻线数）与一次真实指针点击。 */
+  console.log('\n── 「回复长短」进度条 ──');
+  const tick = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const groups = [...document.querySelectorAll('#nav1 .grp')];
+    const gi = groups.findIndex((g) => (g.textContent || '').includes('人格'));
+    if (gi < 0) return { err: '找不到「人格」功能域' };
+    groups[gi].click(); await sleep(150);
+    const subs = [...document.querySelectorAll('#nav2 .sub')];
+    const si = subs.findIndex((s) => (s.textContent || '').includes('回复设置'));
+    if (si < 0) return { err: '找不到「回复设置」子页' };
+    subs[si].click(); await sleep(200);
+    const box = document.querySelector('.tkx[data-tk="r.len"]');
+    if (!box) return { err: '回复设置里没有 .tkx[data-tk="r.len"]' };
+    const row = box.querySelector('.tkx-row');
+    const fill = box.querySelector('.rng-fill');
+    if (!row || !fill) return { err: '进度条缺少轨道或液面（.rng-track / .rng-fill）' };
+    const rb = row.getBoundingClientRect();
+    const fb = fill.getBoundingClientRect();
+    const all = [...box.querySelectorAll('.tkx-native input[type=radio]')];
+    const ci = all.findIndex((r) => r.checked);
+    const ti = ci < 0 ? 0 : (ci + 1) % all.length;
+    const before = {
+      checked: all[ci]?.value || '',
+      label: box.querySelector('.tkx-name')?.textContent || '',
+      p: box.style.getPropertyValue('--p'),
+    };
+    /* 点**下一档**的中心（不写死 90%）：当前档可能是任意一档，
+       写死位置会在"当前已经是最后一档"时点了也不变，把功能正常误判成红。
+       用真实 PointerEvent，走和手指/鼠标同一条 pointerdown → pointerup → commit。 */
+    const x = rb.left + rb.width * ((ti + 0.5) / all.length);
+    const ev = { bubbles: true, clientX: x, pointerId: 1, pointerType: 'mouse' };
+    row.dispatchEvent(new PointerEvent('pointerdown', ev));
+    row.dispatchEvent(new PointerEvent('pointerup', ev));
+    await sleep(300);
+    const box2 = document.querySelector('.tkx[data-tk="r.len"]') || box;
+    const all2 = [...box2.querySelectorAll('.tkx-native input[type=radio]')];
+    const after = {
+      checked: all2.find((r) => r.checked)?.value || '',
+      label: box2.querySelector('.tkx-name')?.textContent || '',
+      p: box2.style.getPropertyValue('--p'),
+      want: all[ti]?.parentElement?.querySelector('span')?.textContent || '',
+    };
+    const out = {
+      before, after,
+      w: rb.width, h: rb.height, fw: fb.width,
+      n: Number(box.dataset.n),
+      radios: box.querySelectorAll('.tkx-native input[type=radio]').length,
+      stops: box.querySelectorAll('.tkx-stop').length,
+      legend: [...box.querySelectorAll('.tkx-legend > span')].map((s) => s.textContent.trim()),
+    };
+    const dis = document.querySelector('[data-a="draft-discard"]');
+    if (dis) dis.click();
+    return out;
+  })()`);
+  ok(tick && !tick.err, `回复长短控件是横向进度条（${tick?.err || '渲染出来了'}）`);
+  if (tick && !tick.err) {
+    ok(tick.h >= 20 && tick.w > 200, `进度条是真横条（宽 ${Math.round(tick.w)}px / 高 ${Math.round(tick.h)}px）`);
+    ok(tick.radios === 3 && tick.n === 3, `三档与原生 radio 都在（radio=${tick.radios} · data-n=${tick.n}）`);
+    ok(tick.stops === 2, `等分刻线是 2 条（实得 ${tick.stops}）`);
+    ok(tick.legend.join(',') === '短,中等,长', `图例仍来自后端三档（${tick.legend.join(',')}）`);
+    ok(tick.before.checked && tick.after.checked && tick.before.checked !== tick.after.checked,
+      `点下一档的轨道中心会换档（${tick.before.checked} → ${tick.after.checked}）`);
+    ok(tick.after.label === tick.after.want && tick.after.p !== tick.before.p,
+      `液面与档名一起跟到新档（${tick.before.p} → ${tick.after.p} · ${tick.before.label} → ${tick.after.label}）`);
+  }
+
   /* ── 大脑页的两块新东西（2026-10-17 · 维护者点名重做）──
      ⚠️ 它们**不是**业务逻辑，但正是那种"少一块也不报错"的形态：
         标签行没了 → 用户以为只能改配置改模型；免费额度没了 → 再没人发现它在哪。
@@ -353,12 +431,24 @@ try {
     if (tag) {
       tag.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       await sleep(120);
-      const btns = [...box.querySelectorAll('button')].map((b) => b.textContent || '');
+      /* 2026-10-20：右键的呈现层从居中 modal 换成了锚点浮层（.ctxmenu），
+         行为与三项动作不变。判据两者都接受 —— 它盯的是「右键能弹出带改名/删除的菜单」，
+         不是「必须是哪种容器」（容器换了不该让这条变成假红）。
+         ⚠️ 浮层挂在 document.body 上（不在 #page 里），且合成事件没有 clientX/Y（默认 0,0），
+            夹紧逻辑会把它放进视口左上角 —— 不影响判据。
+         ⚠️ 注释里**不许出现反引号**：这一段整体是一个 template literal，反引号会把字符串截断
+            （本轮实测：node --check 直接报 missing ) after argument list）。 */
+      const ctx = document.querySelector('.ctxmenu');
+      const btns = ctx
+        ? [...ctx.querySelectorAll('[data-ci]')].map((b) => b.textContent || '')
+        : [...box.querySelectorAll('button')].map((b) => b.textContent || '');
       menu = {
-        open: modalEl.hidden === false,
-        title: (box.querySelector('h3') || {}).textContent || '',
+        open: !!ctx || modalEl.hidden === false,
+        floating: !!ctx,
+        title: ctx ? (ctx.querySelector('.ctx-h') || {}).textContent || '' : (box.querySelector('h3') || {}).textContent || '',
         items: btns.join('|'),
       };
+      if (ctx) ctx.remove();                      /* 别把浮层留给后面的断言 */
       const c2 = box.querySelector('[data-a="__modal-close"]');
       if (c2) c2.click();
     }
@@ -377,7 +467,7 @@ try {
   }
   if (brainUi.menu) {
     ok(brainUi.menu.open && /删除/.test(brainUi.menu.items) && /改名字/.test(brainUi.menu.items),
-      `标签右键弹出改名 / 删除菜单（标题「${brainUi.menu.title}」· 按钮 ${brainUi.menu.items}）`);
+      `标签右键弹出改名 / 删除菜单（标题「${brainUi.menu.title}」· 按钮 ${brainUi.menu.items} · ${brainUi.menu.floating ? '锚点浮层' : '居中弹窗'}）`);
   }
 
   /* ── 切换的反馈：横幅 + 选中态 + 四行 kv 必须同时跟着换（2026-10-17 · 维护者点名）──
@@ -519,6 +609,67 @@ try {
       `液面跟着变长（--p ${coolUi.before.p} → ${coolUi.after.p}）`);
     ok(coolUi.aria && coolUi.aria === coolUi.after.val, `读屏文案与读数同源（aria-valuetext「${coolUi.aria}」）`);
   }
+
+  /* ── 吸顶导航行：并排 ⇄ 上下两行（2026-10-20 · 维护者报「临界宽度吞页签」）──
+     ⚠️ 这一条**必须真渲染**才测得出来：静态扫描看不出"页签被 overflow 裁掉"，
+        而 `.nav2` 的滚动条是隐藏的 ⇒ 被裁的时候页面零报错、契约全绿。
+     ⚠️ 修复前实测：1815 → 1629 时「运行」域的「终端」被裁；1815 切到「大脑」
+        （页签名最长，548px）同样被裁；再窄到 1280 以下反而正常。
+     ⚠️ 判据同时钉两头：该换行时必须换行，**不该换行时也不许提前换**
+        （否则等于把"裁字"换成"永远两行"，同样偏离用户要的并排观感）。 */
+  console.log('\n── 吸顶导航行：并排 / 上下两行 ──');
+  const navCases = [
+    { w: 2000, dom: '大脑', stacked: false },
+    // 2026-10-21：运行域新增「假QQ」后，1815 下该域已装不下 7 个页签 ——
+    // 合法换行；"不该提前换"由同域的 2000 案例继续钉住（不把整档阈值放宽）。
+    { w: 2000, dom: '运行', stacked: false },
+    { w: 1815, dom: '运行', stacked: true },
+    { w: 1815, dom: '大脑', stacked: true },
+    { w: 1629, dom: '运行', stacked: true },
+    { w: 1300, dom: '插件', stacked: false },
+    { w: 900, dom: '运行', stacked: true },
+  ];
+  for (const c of navCases) {
+    await send('Emulation.setDeviceMetricsOverride', {
+      width: c.w, height: 1000, deviceScaleFactor: 1, mobile: false,
+    });
+    await sleep(350);   // resize 防抖 120ms + 一次布局
+    const m = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => x.textContent.indexOf('${c.dom}') >= 0);
+      if (!g) return { error: '没找到分组' };
+      g.click(); await sleep(250);
+      const row = document.getElementById('navrow');
+      const nav = document.getElementById('nav2');
+      const wrap = document.getElementById('nav2wrap');
+      const nav1 = document.getElementById('nav1');
+      const nr = nav.getBoundingClientRect();
+      const wr = wrap.getBoundingClientRect();
+      const n1 = nav1.getBoundingClientRect();
+      const inner = document.querySelector('.nav-inner').getBoundingClientRect();
+      const outside = [...nav.querySelectorAll('.sub')].filter((s) => {
+        const b = s.getBoundingClientRect();
+        return b.left < nr.left - 0.5 || b.right > nr.right + 0.5;
+      }).map((s) => s.textContent.trim());
+      return {
+        stacked: row.classList.contains('is-stacked'),
+        twoRows: n1.top >= wr.bottom - 1,
+        outside,
+        islandCentered: Math.abs((inner.left - n1.left) - (n1.right - inner.right)) < 1.5,
+      };
+    })()`);
+    /* ⚠️ 判据看**行为**（几行 / 有没有被裁 / 岛居中），不看 `.is-stacked` 这个类本身：
+       1280 以下的换行也可能是无 JS 兜底的那条媒体查询完成的 —— 类名是实现细节，
+       把它写成硬条件会让"行为其实正确"的路径变红。 */
+    const pass = !m.error
+      && m.twoRows === c.stacked
+      && (m.outside || []).length === 0
+      && m.islandCentered === true;
+    ok(pass, `${c.w}px / ${c.dom}：${c.stacked ? '上下两行' : '并排'}，页签完整、岛居中`
+      + `（实得 stacked=${m.stacked} 两行=${m.twoRows} 裁掉=[${m.outside || ''}] 居中=${m.islandCentered}`
+      + `${m.error ? ' · ' + m.error : ''}）`);
+  }
+  await send('Emulation.clearDeviceMetricsOverride');
 } catch (e) {
   fails.push(`守卫自己出错：${e && e.message ? e.message : e}`);
 } finally {
@@ -536,5 +687,5 @@ if (fails.length) {
   console.log(`── ${fails.length} 处问题 ──`);
   process.exit(1);
 }
-console.log('\n✓ 前端 DOM 守卫通过：首屏 + 检查表 + 逐页遍历（含零运行时错误 / 无白屏页）+ 插话冷却进度条');
+console.log('\n✓ 前端 DOM 守卫通过：首屏 + 检查表 + 逐页遍历（含零运行时错误 / 无白屏页）+ 插话冷却进度条 + 导航行响应式换行');
 process.exit(0);

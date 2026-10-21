@@ -2,9 +2,14 @@
 
 > **这个文件只回答一个问题：现在该跑哪一个？**
 >
-> 立档理由（2026-10-01 清理轮）：这个目录里躺着 **34 份**清单、共 **324 条**变异，
+> 立档理由（2026-10-01 清理轮）：这个目录里躺着**一批**清单、每份若干条变异，
 > 命名五花八门（`d<步>` / `q<问题号>` / `review-<日期>` / `t<任务><版本>` / `zcode-0928`…），
-> **没有任何索引**。于是"这轮改完该复跑哪些"只能靠翻台账 —— 而台账说的是"当时"，不是"现在"。
+> **没有索引**。于是"这轮改完该复跑哪些"只能靠翻台账 —— 而台账说的是"当时"，不是"现在"。
+>
+> ⚠️ 份数与条数**不在这里写死**：它们每加一份就过期一次（本行曾长期停在「34 份 / 324 条」）。
+> 现取命令：`ls test/mutations/*.mjs | wc -l` · `grep -c 'anchor:' test/mutations/*.mjs | awk -F: '{s+=$2} END{print s}'`。
+> 2026-10-21 实测为 **104 份 / 867 条**（Win-v0.1.2 移植新增 6 份：`port-1021-*`，
+> 覆盖 §125–§130；同日稍早是 98 份 / 843 条）。
 >
 > 每条清单都**只打它那一处**（换了写法就打不穿的判据是假绿），所以它们是本项目
 > 「判据到底有没有盯住」的**唯一证据**。别把它们当一次性脚本删掉。
@@ -135,7 +140,7 @@ NODE_OPTIONS= node scripts/mutate.mjs --restore     # 万一进程被杀，用�
 | **`b25.mjs`** | **B25 背景流光（旧六团流体 → canvas 颗粒渐变）** | **1**（原 16） | 契约 1 | ✅ | **1/1 · INVALID 0**（第 7 轮**退役 15 条**：M1–M9/M11–M16 全打已整体移除的六团流体；<br>⚠️ **保留 M10** —— 它打 `body.eg-on::before`（玻璃背板），对象还在、命中 1/1） |
 | `b29.mjs` | **B29 吸顶三层玻璃**（二级 tab 栏上移 / 灵动岛跟随主题 / 下划线）| 14 | 契约 14 | ✅ | **14/14 · INVALID 0**（首轮 12/14，两条 NOT-BLOCKED 暴露了 N14/N15 两个缺口，补判据后全绿）<br>⚠️ 2026-10-04：V4 的目标令牌由 `--c-eg-surface-isle` 换成 `--c-nav-bg` —— 前者**全仓零消费**（灵动岛实际用后者），原来那条变异改的是**不影响页面**的数字而判据照样 BLOCKED |
 | `b30.mjs` | **B30 模型线路拖拽排序**（拖拽把手 / 让位 / 键盘重排 / 位置播报 / 撤销）| 14 | 契约 14 | ✅ | **14/14 · INVALID 0**（第 7 轮**真跑**取证 —— 不再需要"等价手工复演"：`panel/next/` 早已入库）。<br>⚠️ **第 7 轮 M4 重锚 / M6+M12 收紧**（同形语句在表里有 3 处 / 赋值有 2 处）<br>★ **M10 当场打出一个判据缺口**：首跑 NOT-BLOCKED ⇒ 查明 `§61⑭` 是"**有一处合规就绿**"，而 `routeAction` 里 `applyIds(` 有**两处** ⇒ 判据收紧成"两处都要在"，复跑 BLOCKED |
-| `b31.mjs` | **B31 卡片 3D 倾斜 + 跟随高光**（光标倾斜 / 跟随高光 / 弹簧回落）| 11 | 契约 11 | ✅ | **11/11 · INVALID 0**（第 7 轮**真跑**取证）。<br>⚠️ **第 7 轮 M7 重锚（方向反转）**：跟随高光已被用户两轮点名**整组删除**，`§62⑩` 变成**反向判据** ⇒ 从"删掉深色那份令牌"改成"把 `[data-tilt]::after` 接回来"（刻意不用令牌 —— 那会连坐 §60 的 G1）<br>⚠️ **M11 重锚**：倾角上限 `3° → 1°`（用户连着两轮要更小）；**M6 修 `apply`**（删的块里含已删除的 `::after` 规则 ⇒ 空转） |
+| `b31.mjs` | **B31 卡片 3D 倾斜 + 跟随高光**（光标倾斜 / 跟随高光 / 弹簧回落）| 13 | 契约 13 | ✅ | **13/13 · INVALID 0**（第 7 轮**真跑**取证；2026-10-20 新增 M12/M13）。<br>⚠️ **第 7 轮 M7 重锚（方向反转）**：跟随高光已被用户两轮点名**整组删除**，`§62⑩` 变成**反向判据** ⇒ 从"删掉深色那份令牌"改成"把 `[data-tilt]::after` 接回来"（刻意不用令牌 —— 那会连坐 §60 的 G1）<br>⚠️ **M11 重锚**：倾角上限 `3° → 1°`（用户连着两轮要更小）；**M6 修 `apply`**（删的块里含已删除的 `::after` 规则 ⇒ 空转）<br>★ **2026-10-20 第三次"大幅翻面"**：浏览器复现 301.78° ⇒ 回落弹簧零初速 + 写出夹层；M12/M13 钉住 |
 | `d12b.mjs` | D12b 插话时机 | 7 | 契约 4 / smoke 3 | ✅ | 7/7 |
 | `d14.mjs` | D14 收藏表情（只读） | 6 | 契约 6 | ✅ | 6/6 |
 | `d15.mjs` | D15 联网底座续 | 16 | 契约 13 / smoke 3 | ✅ | 16/16 |
@@ -279,3 +284,80 @@ NODE_OPTIONS= node scripts/mutate.mjs --restore     # 万一进程被杀，用�
 那是本轮最值钱的一条经验：**"全仓扫描接进 check-wb"这个计划本身是错的**
 （393/512 条变异会触发它、28 条"误红对照组"会被误翻），
 根因是"锚点自洽"属于**整棵树**，而 check-wb 是在**变异后的工作树**上被调的。
+
+## B1 · 判据正确性（`judgments-1021.mjs` · 2026-10-21）
+
+| 变异 | 打的是什么 | 层 | 该由谁拦 | 期望 |
+|---|---|---|---|---|
+| J1 | 引用回执退回只认外层 `res.data` | check-wb | §120① | BLOCKED |
+| J2 | `settled` 初值翻成 true（超时不幂等） | check-wb | §120② | BLOCKED |
+| J3 | 信号量同步抛错不归还槽位 | check-wb | §120③ | BLOCKED |
+| J4 | 主动链单飞入口判断恒假 | check-wb | §120④ | BLOCKED |
+| J5 | 会话表回到 FIFO | check-wb | §120⑥ | BLOCKED |
+| J6 | `isLocalBase` 不再取 hostname | check-wb | §120⑦ | BLOCKED |
+| J7 | 预算裁剪从保标题退回 `shift()` | check-wb | §120⑧ | BLOCKED |
+| J8 | 背景段不再声明 `keepHead` | check-wb | §120⑨ | BLOCKED |
+
+⚠️ J7 的 `count: 2`：同一个规则在逐段配额与总量淘汰两处各写一次，改一处不会改变行为
+（另一处仍会丢标题），所以两条代码必须一起改才等价于"退回旧实现"。
+
+## B2 · 落盘与面板数据安全（`datasafe-1021.mjs` · 2026-10-21）
+
+| 变异 | 打的是什么 | 层 | 该由谁拦 | 期望 |
+|---|---|---|---|---|
+| D1 | 自动记忆整份写不再 reverse | check-wb | §121① | BLOCKED |
+| D2 | 清空自动记忆退回非原子写 | check-wb | §121② | BLOCKED |
+| D3 | 面板删除绕开唯一写口直接写盘 | check-wb | §121③ | BLOCKED |
+| D4 | 原子写不再重试 EBUSY | check-wb | §121④ | BLOCKED |
+| D5 | 自定义大脑容器退回普通对象 | check-wb | §121⑤ | BLOCKED |
+| D6 | 面板退回原型属性判存在 | check-wb | §121⑥ | BLOCKED |
+| D7 | ZIP 不再传 maxOutputLength | check-wb | §121⑦ | BLOCKED |
+| D8 | readBody 不再监听 close | check-wb | §121⑧ | BLOCKED |
+| D9 | 导出脱敏键表被改名/退回宽泛匹配 | check-wb | §121⑨ | BLOCKED |
+| D10 | 记忆导出不再掩码 chatKey | check-wb | §121⑩ | BLOCKED |
+
+⚠️ D7/D9 第一版 NOT-BLOCKED：契约只查了词/前缀，注释与改名都能骗过。已把判据收紧到
+`inflateRawSync(raw, { maxOutputLength:` 的**调用形状**与 `const SECRET_KEYS = new Set([`
+的**完整声明**，复跑 10/10。
+
+## B3 · 协议端存活看门狗（`liveness-1021.mjs` · 2026-10-21）
+
+| 变异 | 打的是什么 | 层 | 该由谁拦 | 期望 |
+|---|---|---|---|---|
+| L1 | 看门狗超时只记日志、不断开 | check-wb | §122① | BLOCKED |
+| L2 | `start()` 不再启动看门狗 | check-wb | §122① | BLOCKED |
+| L3 | 不识别心跳里的账号掉线 | check-wb | §122③ | BLOCKED |
+| L4 | 存活阶梯删掉 account-offline 分支 | check-wb | §122④ | BLOCKED |
+| L5 | collector 不再下发存活结论 | check-wb | §122⑤ | BLOCKED |
+| L6 | 检查表不再读事件流 verdict | check-wb | §122⑥ | BLOCKED |
+| L7 | 安装器退回"只按 3001 端口认协议端" | check-wb | §122⑧ | BLOCKED |
+
+⚠️ L2/L7 第一版 NOT-BLOCKED：契约只查"函数/字符串存在"，删调用/换常量都能骗过。
+已把判据收紧到 `this.#startWatchdog();` 与 `const probe = await probeOnebotIdentity(3000);`
+的**调用形状**，复跑 7/7。
+
+## B4 · 优雅停止与首启（`shutdown-1021.mjs` · 2026-10-21）
+
+| 变异 | 打的是什么 | 层 | 该由谁拦 | 期望 |
+|---|---|---|---|---|
+| S1 | shutdown 退出控制命令闭集合 | check-wb | §123① | BLOCKED |
+| S2 | shutdown 寿命退回 2 分钟 | check-wb | §123② | BLOCKED |
+| S3 | index 不再消费 shutdown | check-wb | §123③ | BLOCKED |
+| S4 | stopBridge 不再发 shutdown | check-wb | §123④ | BLOCKED |
+| S5 | --only=check 退回空格写法 | check-wb | §123⑤ | BLOCKED |
+| S6 | ask 去掉非 TTY 降级 | check-wb | §123⑥ | BLOCKED |
+| S7 | 模板写回中文占位群号 | check-wb | §123⑦ | BLOCKED |
+| S8 | 面板删掉 owner.qq 控件 | check-wb | §123⑧ | BLOCKED |
+| S9 | /api/config 不接收 ownerQq | check-wb | §123⑨ | BLOCKED |
+
+## B5 · 直呼豁免与数值校验（`quota-1021.mjs` · 2026-10-21）
+
+| 变异 | 打的是什么 | 层 | 该由谁拦 | 期望 |
+|---|---|---|---|---|
+| Q1 | NUM_FIELDS 不登记 temperature | check-wb | §124① | BLOCKED |
+| Q2 | temperature 退回裸 Number() | check-wb | §124② | BLOCKED |
+| Q3 | 坏 JSON 不再给文件名 | check-wb | §124③ | BLOCKED |
+| Q4 | 直呼类不再豁免小时上限 | check-wb | §124④ | BLOCKED |
+| Q5 | 主链路不传 decision.kind | check-wb | §124⑤ | BLOCKED |
+| Q6 | 面板删掉小时上限控件 | check-wb | §124⑥ | BLOCKED |
+| Q7 | /api/config 不夹取小时上限 | check-wb | §124⑦ | BLOCKED |

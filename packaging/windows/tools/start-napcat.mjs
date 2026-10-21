@@ -21,6 +21,7 @@
  */
 
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
@@ -108,6 +109,34 @@ function alignKnownAccounts() {
   }
 }
 
+/**
+ * 问一次 NapCat 的 HTTP 口，确认"3001 上那位"是不是 OneBot 实现。
+ * 只认**回执形状**（`retcode` / `status`），不要求 token —— 401/403 也说明有人在听，
+ * 但那种情况仍按"无法确认"处理（宁可让用户核对，也不要静默连到别人的协议端）。
+ */
+function probeOnebotIdentity(port = 3000, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/get_status', timeout: timeoutMs }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(body);
+          if (j && (j.retcode !== undefined || j.status !== undefined)) {
+            resolve({ ok: true, detail: `retcode=${j.retcode ?? '—'} status=${j.status ?? '—'}` });
+            return;
+          }
+          resolve({ ok: false, detail: '有 HTTP 应答，但不是 OneBot JSON' });
+        } catch {
+          resolve({ ok: false, detail: `HTTP ${res.statusCode}，响应不是 JSON` });
+        }
+      });
+    });
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, detail: 'HTTP 超时' }); });
+    req.on('error', (e) => resolve({ ok: false, detail: e.code || e.message }));
+  });
+}
+
 export async function startNapcat({ qq = '' } = {}) {
   // ⚠️ 对齐**刻意放在端口守卫之前**（第 58 轮实测后调整）：协议端已经在跑时，
   //    下面那条 `portOpen(3001)` 会直接 return —— 而"协议端在跑、配置却被清空 / 模板缺失"
@@ -115,8 +144,16 @@ export async function startNapcat({ qq = '' } = {}) {
   alignKnownAccounts();
 
   if (await portOpen(PORT)) {
-    ok(`协议端已经在跑了（${PORT} 端口有应答）—— 不重复启动`);
-    return { started: false };
+    // 只探端口会认错人：群里真实出现过"另一个 OneBot 项目占着 3001"，
+    // 安装器于是打印"协议端已在跑"并跳过启动，机器人连到了别人的协议端。
+    const probe = await probeOnebotIdentity(3000);
+    if (probe.ok) {
+      ok(`协议端已经在跑了（${PORT} 端口有应答，身份回执=${probe.detail}）—— 不重复启动`);
+      return { started: false };
+    }
+    warn(`3001 端口有程序在监听，但 3000 没有给出 OneBot 回执（${probe.detail}）—— 无法确认是 NapCat，不重复启动`);
+    warn('如果这确实是另一个 QQ 机器人项目，请把它停掉或换端口，再重新运行本安装器。');
+    return { started: false, error: 'port-occupied-unverified' };
   }
 
   const launcher = findNapcatLauncher();

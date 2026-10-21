@@ -182,11 +182,11 @@ const X1 = {
 // ── X2：把裸 OneBot 客户端交给扩展包 ───────────────────────────────────────
 const X2 = {
   id: 'X2',
-  note: 'src/index.js 把 `onebot: scopedOnebot(bot, { log })` 换成裸 `onebot: bot` —— 扩展包绕过出口闸门/节奏/配额**直接发言**。预期 BLOCKED（§14 ⑧e 反向）',
-  anchor: /onebot: scopedOnebot\(bot, \{ log \}\),/,
+  note: 'src/index.js 把 `onebot: scopedOnebot(onebot, { log })` 换成裸 `onebot: onebot` —— 扩展包绕过出口闸门/节奏/配额**直接发言**。预期 BLOCKED（§14 ⑧e 反向）',
+  anchor: /onebot: scopedOnebot\(onebot, \{ log \}\),/,
   count: 1,
   file: IDX,
-  apply: (s) => s.replace(/onebot: scopedOnebot\(bot, \{ log \}\),/, 'onebot: bot,'),
+  apply: (s) => s.replace(/onebot: scopedOnebot\(onebot, \{ log \}\),/, 'onebot: onebot,'),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };

@@ -218,6 +218,7 @@ export function makeUsageReport({
     agent: '主回复',
     memoryJudge: '记忆判定',
     proactiveTopic: '主动话题',
+    nightly: '夜间产出',
   };
 
   function readUsage() {

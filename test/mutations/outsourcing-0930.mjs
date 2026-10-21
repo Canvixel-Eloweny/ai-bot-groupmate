@@ -108,7 +108,10 @@ export default [
     id: 'N7',
     note: '定时器别名声明（只数 `setInterval(` 拦不住，FG50-2）',
     file: 'src/index.js',
-    anchor: /^  setInterval\(\(\) => \{$/m,
+    // ⚠️ 2026-10-20：`src/index.js` 里又长出一个同形状的 2 空格 `setInterval(() => {`
+    //    （协议端健康快照那一拍）。锚点必须钉住它原本打的那一块（D31-1 睡眠 tick），
+    //    否则"命中 2/1"会让这条变异失效 —— 而它验的是**别名声明**，与那新块无关。
+    anchor: /^  setInterval\(\(\) => \{\n    \/\/ D31-1：/m,
     count: 1,
     apply: (s) => s.replace(
       '  setInterval(() => {',

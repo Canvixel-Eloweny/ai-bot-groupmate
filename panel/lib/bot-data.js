@@ -38,7 +38,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { BOT_STATE_FILE, PEOPLE_DIR, GALLERY_FILE, API_DEALS_FILE } from './paths.js';
+import { BOT_STATE_FILE, PEOPLE_DIR, GALLERY_FILE, API_DEALS_FILE, PATROL_SNAPSHOT_FILE } from './paths.js';
 
 /* ── 小工具 ─────────────────────────────────────────────────────────────── */
 
@@ -211,14 +211,54 @@ export function readApiDeals(limit = 40, file = API_DEALS_FILE) {
   };
 }
 
+/* ── 巡逻快照（本仓自己写的，与上面几个扩展包数据不同）───────────────── */
+
+/**
+ * 巡逻与热度快照：机器人每 30 秒 tick 写一次 `data/patrol-state.json`。
+ * 形状是我们定的，所以按图索骥；仍然照抄白名单投影的纪律 ——
+ * 认不出的字段不显示、缺失不算错（机器人没跑过就是 `ok:false, missing:true`）。
+ */
+export function readPatrol() {
+  const r = readJson(PATROL_SNAPSHOT_FILE);
+  if (!r.ok) return { ok: false, missing: !!r.missing, reason: r.reason, rows: [], tuned: null, updatedAt: null };
+  const d = r.data;
+  const rows = Array.isArray(d?.rows) ? d.rows.filter(isObj).map((x) => ({
+    key: strOr(x.key, 80),
+    group: strOr(x.group, 40),
+    unread: Math.max(0, Math.round(numOr(x.unread))),
+    silenceMin: Math.max(0, Math.round(numOr(x.silenceMin))),
+    lastPatrolAt: numOr(x.lastPatrolAt) || 0,
+    heat: Math.min(100, Math.max(0, Math.round(numOr(x.heat)))),
+    people: Array.isArray(x.people) ? x.people.filter(isObj).map((u) => ({
+      qq: strOr(u.qq, 20),
+      pct: Math.min(100, Math.max(0, Math.round(numOr(u.pct)))),
+      band: strOr(u.band, 8),
+    })).filter((u) => u.qq) : [],
+  })).filter((x) => x.key) : [];
+  return {
+    ok: true,
+    missing: false,
+    rows,
+    tuned: isObj(d?.tuned) ? {
+      enabled: d.tuned.enabled !== false,
+      minUnread: numOr(d.tuned.minUnread),
+      silenceMin: numOr(d.tuned.silenceMin),
+      minGapMin: numOr(d.tuned.minGapMin),
+      chance: numOr(d.tuned.chance),
+    } : null,
+    updatedAt: numOr(d?.updatedAt) || null,
+  };
+}
+
 /* ── 一次读全（`collectState()` 用这一个口）────────────────────────────── */
 
-/** `collectState()` 里只调这一个 —— 四个读盘口在此收口，路由里不出现任何文件名。 */
+/** `collectState()` 里只调这一个 —— 读盘口在此收口，路由里不出现任何文件名。 */
 export function readBotData() {
   return {
     emotion: readEmotion(),
     people: readPeople(),
     gallery: readGallery(),
     apiDeals: readApiDeals(),
+    patrol: readPatrol(),
   };
 }

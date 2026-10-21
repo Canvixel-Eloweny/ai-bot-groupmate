@@ -77,6 +77,18 @@ export const HOLD_BACK_ROOT = [
   // 但提示正文里写死了本机那条发布流水线（`~/.qqbot/finish-ai-bot-groupmate.sh`）——
   // 对外是死路径，且把本机工具布局泄到公开面。旧纪律：本机路径不进公开仓。
   'scripts/pre-push.sh',
+  // G4 打 tag 的唯一入口（2026-10-20 维护者批准入库）。两条判据**都**命中：
+  //   ① 它把本机凭据存放位置写死成 `~/.qqbot/gh-token.txt`，且注释里那条发布链
+  //     （`~/.qqbot/finish-ai-bot-groupmate.sh` 第 ⑧ 步）只在这台机器上存在 —— 对外部读者
+  //     是死路径，clone 下来既没有 token 文件也没有驱动它的链；
+  //   ② 它是**维护者的发布工具**，不是产品运行时代码：对外没有使用价值（与上面 `packaging/`
+  //     那条"对象不对"同族）。
+  // ⚠️ 公开仓里"能直接跑起来写 GitHub tag 的脚本"本身就是攻击面 —— 持有不发也是减面。
+  'scripts/g4-tag.mjs',
+  // g4-tag 的 `--selftest` 夹具（本地 mock GitHub，绝不联网）。它随正本一起持有：
+  // 少了它，仓内那 10 条 selftest 断言就只能在真 GitHub 上跑（写操作），自检价值直接归零。
+  // 判据同上两条：只服务本机那条发布链、对外无使用价值。
+  'scripts/mock-github-server.mjs',
 ];
 
 /** 顶层资产是否**不随公开拷贝发布**（前缀匹配，与 `make-publish-copy.mjs` 的同名语义一致）。 */

@@ -104,6 +104,9 @@ export function createSessionControl({ keep = 50 } = {}) {
 
   /** 写入"上一轮"，并维持上限（本项目对只增不减的容器一律设上限）。 */
   function remember(key, rec) {
+    // 先删再插：覆盖同一个 key 时刷新它的插入顺序，淘汰的才是真正最久没碰过的那条。
+    // 只 set 不删会把这张表变成 FIFO —— 开机就在的主群会被最先挤掉。
+    last.delete(key);
     last.set(key, rec);
     while (last.size > keep) last.delete(last.keys().next().value);
   }

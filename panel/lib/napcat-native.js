@@ -270,20 +270,23 @@ export function startNativeNapcat({ qq = '' } = {}) {
  * 停原生协议端。
  *
  * ⚠️ 三条杀路（2026-10-13 真机定位，前两条都单独踩过）：
- *    ① 按端口（已登录时那条路，登录态在 3001 上）；
+ *    ① 按端口（已登录时那条路，登录态在协议端的 WS 端口上）；
  *    ② 按映像名 `NapCatWinBootMain.exe` **强杀**（`/T /F`）—— 优雅关闭对 GUI 的 QQ 无效；
  *    ③ 清掉父进程已死的**孤儿 QQ**（NapCat 拉起来的那个；用户自己的 QQ 父进程活着，不碰）。
- *    ⚠️ 只按端口杀是杀不掉的：没登录时 3001 根本没开，按端口找不到进程，
+ *    ⚠️ 只按端口杀是杀不掉的：没登录时 WS 端口根本没开，按端口找不到进程，
  *       于是"重启协议端"变成"又拉了一个 NapCat"，二维码永远不会重新生成。
  *
  * @param {(pid:number)=>Promise<boolean>} killTree 面板的杀树函数（按 pid，仅用于①）
+ * @param {{wsPort?:number}} [opts] 协议端 WS 端口 —— 由 `panel/server.js` 的
+ *   `onebotProbePorts()` 传入（配置里机器人真正连的那个）。默认 3001 只是 NapCat
+ *   的出厂值，**不是判据来源**：用户改过端口的部署上，写死 3001 会让①永远找不到进程。
  */
-export async function stopNativeNapcat(killTree) {
+export async function stopNativeNapcat(killTree, { wsPort = 3001 } = {}) {
   if (!IS_WIN) return { ok: false, msg: '仅 Windows' };
 
   // ① 按端口（登录态在时）
   try {
-    const r = await killTree({ port: 3001 });
+    const r = await killTree({ port: wsPort });
     if (r && r.ok) return { ok: true, msg: '已停止协议端' };
   } catch { /* 端口那条路本来就可能找不到，继续按映像名 */ }
 
@@ -360,14 +363,16 @@ export function napcatProcessPids() {
  * 真·重启：先杀干净（含 NapCat 拉起的 QQ），再拉起，然后**等它真正活过来**。
  *
  * "活过来"的判据是三选一（2026-10-13 群友资料补充）：NapCat 把 hook 注进 QQ，
- * **WebUI(6099) 与 OneBot(3001/3000) 都由 QQ 进程监听** —— 所以二维码图先出、
+ * **WebUI(6099) 与 OneBot(WS/HTTP) 都由 QQ 进程监听** —— 所以二维码图先出、
  * 端口后开，等任何一个都算活。等到不等于失败，照实说明。
  *
  * @param {(pid:number)=>Promise<boolean>} killTree 面板的杀树函数（按 pid）
+ * @param {{qq?:string, waitMs?:number, wsPort?:number}} [opts] `wsPort` 由调用方从配置传入，
+ *   停与等共用同一个值 —— 否则"按对的端口停、按错的端口等"会表现成"重启成功但一直没就绪"。
  */
-export async function restartNativeNapcat(killTree, { qq = '', waitMs = 45000 } = {}) {
+export async function restartNativeNapcat(killTree, { qq = '', waitMs = 45000, wsPort = 3001 } = {}) {
   if (!IS_WIN) return { ok: false, msg: '原生协议端只在本包的 Windows 构建里使用' };
-  const stop = await stopNativeNapcat(killTree);
+  const stop = await stopNativeNapcat(killTree, { wsPort });
   if (!stop.ok && !/没找到/.test(stop.msg)) {
     return { ok: false, msg: `停不下来：${stop.msg}` };
   }
@@ -381,7 +386,7 @@ export async function restartNativeNapcat(killTree, { qq = '', waitMs = 45000 } 
   while (Date.now() < deadline) {
     await new Promise((s) => setTimeout(s, 700));
     if (readLocalQr()) return { ok: true, msg: '已重启，新二维码已生成' };
-    if (await portAlive(3001)) return { ok: true, msg: '已重启，协议端已就绪（账号已登录，不用扫码）' };
+    if (await portAlive(wsPort)) return { ok: true, msg: '已重启，协议端已就绪（账号已登录，不用扫码）' };
   }
   return {
     ok: false,

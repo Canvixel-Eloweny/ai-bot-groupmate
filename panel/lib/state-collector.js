@@ -11,6 +11,10 @@ import { FEATURE_LABEL, ZHIPU_MODEL_META } from '../../src/model-caps.js';
 import { LOCK_REFUSE_EXIT_CODE } from '../../src/bridge-lock.js';
 import { fieldMeta } from '../../src/field-schema.js';
 import { isLocalBase, onebotEndpointOf, providerOf } from '../../src/net-rules.js';
+import { livenessVerdictOf } from '../../src/onebot-liveness.js';
+// L3 聚合层（2026-10-20）：面板只转述"识别到的后端"，不自己再写一份名字映射。
+import { backendOfSelfReport, backendLabel } from '../../src/backend/registry.js';
+import { classifyOneBotReply, selfReportTrustOf } from '../../src/backend/normalize.js';
 // 桌面端「启动方式」（2026-10-16）：唯一判据住 `src/launch-mode.js` ——
 // 面板这里只下发**结论**（与启动器执行的那一个值逐字一致），不许自己再判一遍；
 // 启动跟踪（launch-log）的读口也在这里，卡片上的「上次启动」就是它。
@@ -37,10 +41,65 @@ import { cachedDockerPs, cachedDockerUp, cachedMemory, httpGet, portOpen, sh, wi
 import { CONTROL_LABELS, controlStateOf } from './control.js';
 import { extensionsOf } from './extensions.js';
 import { readBotData } from './bot-data.js';
+// 角色卡十维判据（唯一实现住 src/persona-grade.js —— 面板不抄第二份门槛表）。
+import { gradePersonaCard } from '../../src/persona-grade.js';
 import { readConfig } from './config-io.js';
 import { readModelSync } from './model-sync-state.js';
 import { readTrace, TRACE_AGGREGATE } from './trace-io.js';
 import { state } from './runtime-state.js';
+
+/**
+ * 把 `get_version_info` / `get_status` 两份回包收成「协议端自报」这一块。
+ *
+ * 纯函数：不碰 IO、不猜缺省 —— 没答就 `answered:false`，字段缺就留空串。
+ * 键名按两家实物核对过（2026-10-20 取证）：`get_version_info` 回 `app_name`/`app_version`/
+ * `protocol_version`（NapCat `action/system/GetVersionInfo.ts:6-9`、SnowLuma `onebot/src/actions/info.ts:63-67`
+ * 两家逐字一致，也是 OneBot 11 规范名）；`get_status` 回 `online`/`good`（NapCat `GetStatus.ts:5-8`）。
+ *
+ * ⚠️ **只转述、不下结论**，两个理由：① 有的家没实现这两条动作（LLBot 未取证、官方群侧无此端点）；
+ *    ② 自报值不能当健康判据 —— NapCat 的 `GetStatus.ts:29-30` 就把 `good` 写死 `true`，
+ *    Lagrange 的 `online/good` 同样是硬编码、LLBot 的 `can_send_*` 恒 true。
+ *    字段前缀 `self` 就是为了把这件事写在名字上。
+ *
+ * @param {{ok:boolean,body:string}|null} verRes `/get_version_info` 的原始回包
+ * @param {{ok:boolean,body:string}|null} statRes `/get_status` 的原始回包
+ * @param {number} [now] 面板探测时刻（可注入，保持纯函数）
+ * @returns {{answered:boolean,appName:string,appVersion:string,protocolVersion:string,
+ *            statusAnswered:boolean,selfOnline:boolean|null,selfGood:boolean|null,probedAt:number,
+ *            backendId:string,backendLabel:string,selfReportTrust:object}}
+ */
+export function onebotSelfReport(verRes, statRes, now = Date.now()) {
+  // 与账号那一支同一个口径：`status==='ok'` 或 `retcode===0` 才算它答了。
+  const dataOf = (res) => {
+    if (!res || !res.ok) return null;
+    try {
+      const rep = classifyOneBotReply(JSON.parse(res.body));
+      return rep.businessOk ? (rep.data ?? null) : null;
+    } catch { return null; }
+  };
+  const s = (x) => (x === undefined || x === null ? '' : String(x));
+  const v = dataOf(verRes);
+  const st = dataOf(statRes);
+  // 后端识别只从**自报 app_name** 来；识别不出就是 generic，不猜最近的一家。
+  const backendId = backendOfSelfReport(v);
+  return {
+    backendId,
+    backendLabel: backendLabel(backendId),
+    // 自报值可不可信（NapCat/Lagrange 的 good 写死 true、LLBot 的 can_send_* 恒 true）。
+    // 面板原样转述这份结论，不自己再判一遍。
+    selfReportTrust: selfReportTrustOf(backendId),
+    answered: !!v,
+    appName: s(v?.app_name),
+    appVersion: s(v?.app_version),
+    protocolVersion: s(v?.protocol_version),
+    statusAnswered: !!st,
+    selfOnline: st ? !!st.online : null,
+    selfGood: st ? !!st.good : null,
+    // 面板这次探测的时刻：与机器人侧的心跳时刻并排显示时，
+    // 读的人才能分清"两个来源各是什么时候看到的"（B6 双时刻）。
+    probedAt: now,
+  };
+}
 
 /**
  * 「面板状态」聚合（`/api/state` 的数据源）—— H-10 第二半 · 第 19 轮从主文件搬出。
@@ -94,8 +153,12 @@ export function makeStateCollector(deps) {
     // 真问一次协议端，而不是只看端口。
     // ⚠️ 这一步**不再以"容器在不在跑"为前提**：容器只是 macOS 那条部署路线的实现细节，
     //    协议端在不在，只有一个正确的判据 —— 问它本人。
-    const [infoRes, wsRes, p6099] = await Promise.all([
+    // 2026-10-20 追加两条回读（`/get_version_info`、`/get_status`）：同一次并行探测，
+    // 不额外增加延迟（三条都在同一个 Promise.all 里，各自 2.5s 上限，答不上就空）。
+    const [infoRes, verRes, statRes, wsRes, p6099] = await Promise.all([
       httpGet(onebot.httpPort, '/get_login_info'),
+      httpGet(onebot.httpPort, '/get_version_info'),
+      httpGet(onebot.httpPort, '/get_status'),
       wsProbe(onebot.wsPort),
       portOpen(NAPCAT_WEBUI_PORT),
     ]);
@@ -103,15 +166,22 @@ export function makeStateCollector(deps) {
     let account = null;
     if (infoRes.ok) {
       try {
-        const j = JSON.parse(infoRes.body);
-        if (j.status === 'ok' || j.retcode === 0) {
+        const rep = classifyOneBotReply(JSON.parse(infoRes.body));
+        if (rep.businessOk) {
           account = {
-            userId: String(j.data?.user_id ?? ''),
-            nickname: String(j.data?.nickname ?? ''),
+            userId: String(rep.data?.user_id ?? ''),
+            nickname: String(rep.data?.nickname ?? ''),
           };
         }
       } catch { /* 不是 JSON 就当没连上 */ }
     }
+
+    // ── 协议端自报的身份与状态（2026-10-20 补的两条回读）─────────────────────
+    // 上面那条 `onebotHttp: infoRes.ok` 只回答"有没有人答 HTTP"，不回答"答的是谁、
+    // 报的哪一版"。这一块把后者摆出来供核对（换协议端 / 版本对不上 QQ 时，这是第一眼线索）。
+    // ⚠️ 只转述、不判红：自报值不可信（Lagrange 的 online/good 写死 true），而且有的家
+    //    根本没实现这两条动作 —— 拿"它没答"去报故障，等于把"这家没实现"说成"我方坏了"。
+    const onebotAgent = onebotSelfReport(verRes, statRes);
 
     // ── 登录状态（第 53 轮 · B2：整段从"容器在跑"这个前提里解出来）──────────
     // 原来整段包在 `if (containerRunning)` 里 ⇒ Windows 上恒为 false ⇒
@@ -239,6 +309,22 @@ export function makeStateCollector(deps) {
           wsConfigured: onebot.wsConfigured,
           httpIsDefault: onebot.httpIsDefault,
         },
+        // 协议端**自报**的身份与版本（同一次探测里拿的，不是另一个真相源）。
+        // 放在 `ports` 这一组是因为它就是"那条 HTTP 探测答了什么"的一部分；
+        // 「启动链路」检查表读的也是这一组（判据见 check-wb §100 的字段白名单）。
+        // `bot` = 机器人进程自己看到的连接健康（来自 effective.json，由机器人每 20 秒刷一次）。
+        // ⚠️ 它与 `probedAt` 是**两个观测面、两个时刻**：面板探 HTTP、机器人守 WS 与心跳。
+        //    别把任何一个当成另一个的"实时版"（它们的采样周期不同，也不保证同时成功）。
+        onebotAgent: { ...onebotAgent, bot: eff?.onebotHealth || null },
+      },
+      // 协议端存活结论（B3）：端口通 ≠ 事件流活。判据住 src/onebot-liveness.js，
+      // 面板只转述 code；页面按 code 决定颜色与文案（不在前端重算阶梯）。
+      onebot: {
+        ...livenessVerdictOf({
+          health: eff?.onebotHealth || null,
+          ports: { http: infoRes.ok, ws: wsRes.ok },
+        }),
+        transports: { http: infoRes.ok, ws: wsRes.ok, webui: p6099 },
       },
       account,
       localModel: {
@@ -306,6 +392,10 @@ export function makeStateCollector(deps) {
       },
       debugLog: readDebugFlag(),
       config: {
+        // 用户选的后端（`auto` = 让机器人按 get_version_info 识别）。
+        // 面板只转述配置；**识别结果**在 `ports.onebotAgent.backendId`，两者不同：
+        // 配置是"我想要哪家"，识别是"实际连上的那家"。
+        backend: cfg?.onebot?.backend || 'auto',
         wsUrl: cfg?.onebot?.wsUrl || '',
         baseUrl,
         model: cfg?.llm?.model || '',
@@ -377,6 +467,11 @@ export function makeStateCollector(deps) {
         // 私聊白名单（2026-10-12；面板上现在叫「同意私聊的 QQ 号」）：机器人侧一直按 `allow.private` 判定私聊放行，
         // 但面板从没下发过它 ⇒ 界面上看不见也改不了。下发与落盘两处一起补。
         privateUsers: cfg?.allow?.private || [],
+        // 主人 QQ（2026-10-21）：睡眠叫醒的唯一身份判据，加载时会自动补进私聊白名单。
+        owners: cfg?.owner?.qq || [],
+        // 当前读的是真配置还是模板。用模板时面板**保存不会写进模板**，
+        // 用户看到"保存成功"却不生效 —— 这一格就是用来把这件事摆到台面上的。
+        source: fs.existsSync(CONFIG_FILE) ? 'config.json' : 'config.example.json',
         // 黑名单也下发 —— 面板要能编辑它（以前只有后端认这个字段，界面没有入口）
         denyGroups: cfg?.deny?.groups || [],
         denyUsers: cfg?.deny?.users || [],
@@ -411,6 +506,11 @@ export function makeStateCollector(deps) {
       // 「自定义工作台」那一整块。归一化逻辑在 src/custom-config.js（与机器人共用一份），
       // 面板只负责渲染 —— 不自己写默认值，才不会出现"面板上填了、机器人没读"。
       custom,
+      // 角色卡分级（十维）：面板只渲染，判据在 src/persona-grade.js。
+      // 只算 `kind:'persona'` 的卡；`custom.skills` 里没有卡就是空数组。
+      personaCards: (custom.skills || [])
+        .filter((sk) => sk && sk.kind === 'persona')
+        .map((sk) => ({ ...gradePersonaCard(sk), id: sk.id || '', enabled: sk.enabled !== false, scope: sk.scope || { type: 'global' } })),
       // 自动记忆（机器人唯一写入者，面板只读）。形状和手动记忆一致，便于前端一起渲染。
       autoMemory: listAutoMemory(),
       // 结构化记忆（ATI-3 存量 + 人工复核的状态，ATI-5）。

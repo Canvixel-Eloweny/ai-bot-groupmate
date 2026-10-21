@@ -367,6 +367,31 @@ check('切换途中有速度驱动的形变（横向拉伸 · 纵向压缩 · �
   !!flight && flight.sx > 1.002 && flight.sy < 0.999 && Math.abs(flight.sx * flight.sy - 1) < 0.01,
   flight ? `峰值 scaleX=${flight.sx.toFixed(4)} scaleY=${flight.sy.toFixed(4)} 乘积=${(flight.sx * flight.sy).toFixed(4)}` : '取不到');
 
+/* 二级导航滑块（§103 · 2026-10-20）：切换时**必须真的在途**。
+   与一级那条的差别：二级的滑块是「位移 + 宽度」两个量，且必须**跨页签再切**才有可测位移
+   （同页签点击不产生移动，会得出"没动"的假结论 —— 本轮真机调试踩过）。
+   ⚠️ 判据取「帧间不同值的个数」，不取某一时刻的形变：弹簧收敛时间随机器快慢漂。 */
+await evalJs(`document.querySelectorAll('#nav2 .sub')[0].click(); return 1;`);
+await sleep(500);
+await evalJs(`const s=document.querySelectorAll('#nav2 .sub'); s[s.length-1].click(); return 1;`);
+const nav2flight = await evalJs(`
+  const ind = document.getElementById('nav2Ind');
+  return (async () => {
+    const seen = new Set(); let last = null;
+    for (let i = 0; i < 20; i += 1) {
+      const t = getComputedStyle(ind).transform; seen.add(t); last = t;
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    const nav = document.getElementById('nav2');
+    const sel = nav.querySelector('.sub[aria-selected="true"]');
+    const m = new DOMMatrixReadOnly(last);
+    return { distinct: seen.size, dx: m.e, want: sel.offsetLeft + 8 - nav.scrollLeft };
+  })();
+`);
+check('二级导航切换时滑块**在途**（≥3 个不同帧位）+ 终点对齐选中页签',
+  !!nav2flight && nav2flight.distinct >= 3 && Math.abs(nav2flight.dx - nav2flight.want) <= 3,
+  nav2flight ? `不同帧位=${nav2flight.distinct} · x=${nav2flight.dx.toFixed(2)}（期望 ${nav2flight.want}）` : '取不到');
+
 await sleep(600);
 const indFit = await evalJs(`
   const ind = document.getElementById('navInd');
@@ -379,6 +404,47 @@ const indFit = await evalJs(`
 check('指示器停在选中项上（位移与宽度都对得上）',
   !!indFit && indFit.ready && Math.abs(indFit.tx - indFit.x) < 1.5 && Math.abs(indFit.w - indFit.sw) < 1.5,
   indFit ? `${indFit.label} · tx=${indFit.tx.toFixed(1)} vs x=${indFit.x} · w=${indFit.w.toFixed(1)} vs ${indFit.sw}` : '取不到');
+
+/* §131（2026-10-21）：数据刷新不能把二级滑块逼疯。
+   复现用户视频：进入「日志与审计」并停留 —— 旧实现里 loadLogs→softPaint 是本地
+   取数回环（每秒上千次重画），每次都重启滑块弹簧，最终把它写到屏幕外。
+   判据：观察窗口内重画回调 < 10 次；滑块每帧都在玻璃条内、宽度 > 4、不透明；
+   最终位置与选中页签对齐。 */
+const nav2Loop = await evalJs(`
+  const nav = document.getElementById('nav2');
+  const ind = document.getElementById('nav2Ind');
+  const wrap = document.getElementById('nav2wrap');
+  const subs = [...nav.querySelectorAll('.sub')];
+  const logTab = subs.find((b) => /日志与审计/.test(b.textContent)) || subs[4] || subs[subs.length - 1];
+  logTab.click();
+  await new Promise((r) => setTimeout(r, 1200));
+  let paints = 0;
+  const mo = new MutationObserver(() => { paints += 1; });
+  mo.observe(document.getElementById('page'), { childList: true, subtree: true });
+  const wr = wrap.getBoundingClientRect();
+  const seen = [];
+  for (let i = 0; i < 24; i += 1) {
+    const r = ind.getBoundingClientRect();
+    seen.push({ x: r.x, w: r.width, op: +getComputedStyle(ind).opacity });
+    await new Promise((res) => requestAnimationFrame(res));
+  }
+  mo.disconnect();
+  const bad = seen.filter((s) => !(s.w > 4 && s.op > 0.9 && s.x >= wr.x - 2 && s.x + s.w <= wr.x + wr.width + 2));
+  const sel = nav.querySelector('.sub[aria-selected="true"]');
+  const m = new DOMMatrixReadOnly(getComputedStyle(ind).transform);
+  return {
+    paints: paints,
+    bad: bad.length,
+    minW: Math.min(...seen.map((s) => s.w)),
+    maxW: Math.max(...seen.map((s) => s.w)),
+    dx: m.e,
+    want: sel ? sel.offsetLeft + 8 - nav.scrollLeft : null,
+  };
+`);
+check('数据刷新期间二级滑块不发散/不消失，且日志页不再自循环重画（§131）',
+  !!nav2Loop && nav2Loop.paints < 10 && nav2Loop.bad === 0 && nav2Loop.maxW < 400
+    && Math.abs(nav2Loop.dx - nav2Loop.want) <= 3,
+  nav2Loop ? `重画回调=${nav2Loop.paints} · 越界帧=${nav2Loop.bad} · 宽度 ${nav2Loop.minW.toFixed(1)}~${nav2Loop.maxW.toFixed(1)} · x=${nav2Loop.dx.toFixed(1)}（期望 ${nav2Loop.want}）` : '取不到');
 
 /* 文案里的 `**粗体**` 必须被渲染成 <b>；漏了会在页面上留下字面量星号。 */
 const starText = await evalJs(`return (document.body.innerText.match(/\\*\\*[^*\\n]{1,40}\\*\\*/g) || []).slice(0,3)`);
@@ -1040,6 +1106,77 @@ check('快速穿梭时**并发动画数不累积**（漏管一个句柄就是每
   tiltFast?.err ? tiltFast.err
     : `并发峰值=${tiltFast?.maxActive}（正常 ≤4：两张卡 × rx/ry）· 穿梭后残留=${tiltFast?.mvCount}`);
 
+/* ── ③'''' 带速度穿梭：用户报"快速经过两块玻璃板时大幅翻面"（2026-10-20）──
+ * ⚠️⚠️ 上面那条旧测试只在**同一个点**派发事件（Δ角度 = 0 ⇒ 速度 = 0），
+ *    所以它测不到真实的触发路径 —— 这正是这条老问题绕过两轮修复还活着的原因。
+ *    这里在两张卡的**对角之间**连续穿梭，然后立即离开：`pointermove` 在同一个
+ *    JS 任务里连发，`MotionValue.set` 会把"2° / 几十微秒"记成千上万 deg/s；
+ *    `leave()` 的回落弹簧继承这个速度就会大幅过冲。
+ *    修复前实测原始运动值峰值 **211.54°**（1° 的卡被甩过半圈）。
+ * ⚠️ 判据读 `el.__tilt` 的**原始运动值**，不只看 CSS 变量：变量会被守卫夹住，
+ *    只看画面会把"引擎仍在过冲"藏起来。
+ * ⚠️ 先等一次整页重绘再开跑：整页每 3 秒重建，采样跨过重建时节点会游离，
+ *    读到的是空样式（那是探针的假红/假绿，不是产品行为）。 */
+const tiltFastMove = await evalJs(`
+  const pick = () => [...document.querySelectorAll('section.card[data-tilt]')].slice(0, 2);
+  let cards = pick();
+  if (cards.length < 2) return { err: '可倾斜卡不足 2 张' };
+  const first = cards[0];
+  const tw = Date.now();
+  while (Date.now() - tw < 3800) {
+    await new Promise((r) => setTimeout(r, 100));
+    const now = pick();
+    if (now.length >= 2 && now[0] !== first) { cards = now; break; }
+  }
+  const A = cards[0], B = cards[1];
+  const ra = A.getBoundingClientRect(), rb = B.getBoundingClientRect();
+  const fire = (el, type, r, fx, fy, related) => el.dispatchEvent(new PointerEvent(type, {
+    bubbles: true, clientX: r.left + r.width * fx, clientY: r.top + r.height * fy,
+    relatedTarget: related || null,
+  }));
+  fire(A, 'pointerover', ra, 0.1, 0.1);
+  fire(A, 'pointermove', ra, 0.1, 0.1);
+  for (let i = 0; i < 20; i++) {
+    const el = (i % 2 === 0) ? A : B;
+    const r = (i % 2 === 0) ? ra : rb;
+    const fx = (i % 4 < 2) ? 0.05 : 0.95;
+    const fy = (i % 4 < 2) ? 0.05 : 0.95;
+    fire(el, 'pointerover', r, fx, fy);
+    fire(el, 'pointermove', r, fx, fy);
+  }
+  const last = (20 % 2 === 0) ? A : B;
+  const lr = (20 % 2 === 0) ? ra : rb;
+  fire(last, 'pointerout', lr, 0.95, 0.95, document.body);
+  const rawOf = (el) => el.__tilt
+    ? Math.max(Math.abs(el.__tilt.rx.get()), Math.abs(el.__tilt.ry.get())) : 0;
+  const visOf = (el) => Math.max(
+    Math.abs(parseFloat(getComputedStyle(el).getPropertyValue('--tilt-rx')) || 0),
+    Math.abs(parseFloat(getComputedStyle(el).getPropertyValue('--tilt-ry')) || 0));
+  let peakRaw = 0, peakVis = 0;
+  const t0 = performance.now();
+  await new Promise((done) => {
+    const tick = () => {
+      peakRaw = Math.max(peakRaw, rawOf(A), rawOf(B));
+      peakVis = Math.max(peakVis, visOf(A), visOf(B));
+      if (performance.now() - t0 < 1200) requestAnimationFrame(tick); else done();
+    };
+    requestAnimationFrame(tick);
+  });
+  return {
+    peakRaw, peakVis, maxDeg: window.Tilt && window.Tilt.MAX_DEG,
+    connected: A.isConnected && B.isConnected,
+  };
+`);
+check('**带速度**穿梭后回落不越界（原始运动值）—— 回落弹簧不许继承指针的高速角速度',
+  !!tiltFastMove && !tiltFastMove.err && tiltFastMove.peakRaw <= 1.5,
+  tiltFastMove?.err ? tiltFastMove.err
+    : `原始峰值=${tiltFastMove?.peakRaw?.toFixed(2)}° · 上限=${tiltFastMove?.maxDeg}°（修复前两次实测 211.54° / 301.78°）`);
+check('带速度穿梭后**画面**角度不越界（CSS 变量 ≤ 上限 + 0.2°）',
+  !!tiltFastMove && !tiltFastMove.err
+    && tiltFastMove.peakVis <= (tiltFastMove.maxDeg || 1) + 0.2,
+  tiltFastMove?.err ? tiltFastMove.err
+    : `画面峰值=${tiltFastMove?.peakVis?.toFixed(2)}° · 节点在页=${tiltFastMove?.connected}`);
+
 /**
  * 截图 = **给人看**的证据，逻辑判据一条都不依赖它。
  *
@@ -1056,7 +1193,9 @@ const maybeShot = (name, g, s, full = false) =>
 
 const shot1 = await maybeShot('01-run-overview', 0, 0);
 const shotEmotion = await maybeShot('04-emotion', 4, 0);
-const shotSleep = await maybeShot('05-sleep', 5, 3);
+// 2026-10-21：speak 组在 scheduled 与 proactive 之间插入了 peak/patrol/waiting，
+// 睡眠页从第 3 个子页移到第 6 个。
+const shotSleep = await maybeShot('05-sleep', 5, 6);
 
 /* ── ④ 真实交互：草稿机制 ─────────────────────────────────────────────── */
 await evalJs(`document.querySelectorAll('#nav1 .grp')[2].click(); return 1;`); // 人格
@@ -1215,6 +1354,9 @@ check('节假日表可以编辑了（添加按钮与日期框都不再禁用）'
    ⚠️ 注入后必须**自己调 `__nextRepaint()`** 强制重画：干等 3 秒轮询会被
       `refresh()` 用服务端数据覆盖回去（那时断言测的是"没封顶的真实数据"）。 */
 const LIST_CAP_EXPECTED = 15;   // 与 `app.js` 的 `LIST_CAP` 同源 —— 改那边要同步这里
+// 2026-10-21：注入夹具与断言之间**不许**被 3 秒轮询插进来（它会用服务端数据覆盖
+// S.state.apiDeals，症状就是"展开到 40 条后突然变回 2 条"）。暂停到 keepA 结束。
+await evalJs('window.__nextPauseRefresh?.(true); return 1;');
 await goto(1, 3);
 const cap = await evalJs(`
   const S = window.__next, repaint = window.__nextRepaint;
@@ -1293,6 +1435,7 @@ check('长列表展开态跨重绘不被收回（状态在 S.extra，不在 DOM 
 check('容器滚动位置真的守得住（不是"滚一半被拉回去"）',
   keepA?.scrollable > 40 && keepA?.scrolled === 100 && keepA?.scAfter === 100,
   keepA?.err || `可滚余量 ${keepA?.scrollable}px · 滚到 ${keepA?.scrolled} → 重绘后 ${keepA?.scAfter}`);
+await evalJs('window.__nextPauseRefresh?.(false); return 1;');
 
 await goto(2, 4);   // 人格 → 扮演规则（用户截图那张卡）
 const keepD = await evalJs(`

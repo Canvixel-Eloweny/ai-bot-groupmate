@@ -1,7 +1,8 @@
 /**
  * 结构自洽检查（零依赖，可反复跑）。
  * 只查「结构上必须成立的事实」，不锁具体函数名 —— 函数名会演化，
- * 但这些契约破了产品一定坏。**一共 95 段**（下限见 `MIN_CONTRACTS`），
+ * 但这些契约破了产品一定坏。**段数下限见 `MIN_CONTRACTS`**（不在这里写死数字：
+ * 写死的那个数每加一段就过期一次，本文件头部曾因此长期落后于真实段数），
  * 逐段都有单独的注释说明它防的是哪一种**静默失效**。
  *
  * ⚠️ 面板契约的取源一律是**现役控制台** `panel/next/`（经 `panel/lib/next-page.js`
@@ -88,7 +89,7 @@ console.log = (first, ...rest) => {
  *       提交门 `pre-commit.sh` 正是因此才把 `node_modules` **软链**进闸门用的临时 worktree。
  *       记在这里是为了下次有人量到 17 时**别以为闸门坏了**。
  */
-const MIN_CONTRACTS = 114;
+const MIN_CONTRACTS = 131;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -857,6 +858,17 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
     if (pkgM8.name !== 'ai-bot-groupmate' || lockM8.name !== pkgM8.name || lockM8.packages?.['']?.name !== pkgM8.name) {
       bad++; n++;
       console.log(`✗ 包名不一致：package.json=${pkgM8.name} · lock.name=${lockM8.name} · lock.packages[""].name=${lockM8.packages?.['']?.name}（M-08）`);
+    }
+
+    // M-08c · **版本号必须一致**（2026-10-20 · 补一条长期盲区）。
+    //     为什么以前永远是绿的：这一段只比 `name`，不比 `version` ⇒
+    //     `package.json` 已经 0.1.3、`package-lock.json` 还停在 0.1.2，**没有任何东西会红**。
+    //     后果落在发布面：包里两处版本号对不上，`npm ci` 还会按 lock 的版本去解析。
+    //     ⚠️ 判据要**同时**比顶层与 `packages[""]` 两处 —— 修 lock 时只改一处是常见的半修。
+    if (lockM8.version !== pkgM8.version || lockM8.packages?.['']?.version !== pkgM8.version) {
+      bad++; n++;
+      console.log(`✗ 版本号不一致：package.json=${pkgM8.version} · lock.version=${lockM8.version}`
+        + ` · lock.packages[""].version=${lockM8.packages?.['']?.version}（M-08c，跑 \`npm install\` 对齐）`);
     }
 
     // M-08b · 提交身份不许冒名（2026-10-07 · 用户裁决「贡献者只该是真正有贡献的人」）
@@ -1759,18 +1771,24 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
   if (typeof pro3n.plannedProactiveChunks !== 'function') {
     bad++; n++; console.log('✗ src/proactive.js 没有导出 plannedProactiveChunks() —— 主动路径的闸门判定无处可断言');
   }
-  const body = bodyOfFn(src3n, 'sayToGroup');
+  // 2026-10-21（Win-v0.1.2 移植）：群 / 私聊两条主动出口收敛到 `deliverFromBot`，
+  // `sayToGroup` / `sayToOwner` 只是薄包装。判据跟着**唯一实现**走，不再钉在旧名字上。
+  const body = bodyOfFn(src3n, 'deliverFromBot');
   if (!body) {
-    bad++; n++; console.log('✗ 抽不出 src/index.js 的 sayToGroup 函数体 —— 本段契约失效（抽取失败当失败）');
+    bad++; n++; console.log('✗ 抽不出 src/index.js 的 deliverFromBot 函数体 —— 本段契约失效（抽取失败当失败）');
   } else {
     if (!/plannedProactiveChunks\(/.test(body)) {
-      bad++; n++; console.log('✗ sayToGroup 没有调用 plannedProactiveChunks() —— 主动/定时消息会绕过出口闸门');
+      bad++; n++; console.log('✗ deliverFromBot 没有调用 plannedProactiveChunks() —— 主动/定时消息会绕过出口闸门');
     }
     if (!/if\s*\(blocked\)/.test(body) || !/throw/.test(body)) {
-      bad++; n++; console.log('✗ sayToGroup 命中闸门后必须**抛错**（不是返回 0）：否则调用方会把"被拦下"误记成"已发出"');
+      bad++; n++; console.log('✗ deliverFromBot 命中闸门后必须**抛错**（不是返回 0）：否则调用方会把"被拦下"误记成"已发出"');
     }
   }
-  if (n === 0) console.log('✓ 主动路径的出口闸门判定在纯函数里，sayToGroup 是唯一接线点（且拦下即抛错）');
+  const bodyGroup = bodyOfFn(src3n, 'sayToGroup');
+  if (!bodyGroup || !/deliverFromBot\(/.test(bodyGroup)) {
+    bad++; n++; console.log('✗ sayToGroup 没有委托给 deliverFromBot —— 两条主动出口各写一遍，闸门会只在一侧生效');
+  }
+  if (n === 0) console.log('✓ 主动路径的出口闸门判定在纯函数里，deliverFromBot 是唯一实现（sayToGroup/sayToOwner 都是薄包装，且拦下即抛错）');
 }
 
 // 3o) 白名单告警的两个语义必须**分居两个变量**，且两个都要真的被读
@@ -1861,6 +1879,9 @@ const LIB_SRC_ALLOW = [
   // 自然不触达 llm / brain / onebot / index / config / logger。
   // 面板要它才能渲染自定义大脑列表并把选中那套物化回配置。
   'custom-brain.js',
+  // 2026-10-21（Win-v0.1.2 移植）：角色卡十维分级。零依赖叶子（闭包 = 1），
+  // 面板只渲染分数、不抄门槛表；自然不触达 llm / brain / onebot / index / config / logger。
+  'persona-grade.js',
   'net-rules.js', // 本机地址 / 服务商判据（唯一一份）
   'plugin-host.js', // 扩展包扫描（面板要列清单）
   // D7 新增：设置项的**类型/敏感键**判据（四类控件 + 加密码框 + 越界拒绝）。
@@ -1871,10 +1892,18 @@ const LIB_SRC_ALLOW = [
   // 面板侧 `panel/lib/control.js` 引它只为拿那一份闭集合与上限 ——
   // 两侧各写一份判据的必然结果，是"面板认为能发、机器人认为不认识"。
   'control-channel.js',
+  // B3（2026-10-21）：协议端存活阶梯（纯函数，零依赖）。面板只转述 code，
+  // 阶梯必须只有一份 —— 前端再写一遍就会与机器人侧的阈值漂。
+  'onebot-liveness.js',
   // D21 新增：扩展包清单的**路径安全判据**（`isSafeRelPath` / `normalizeManifest`）。
   // 它自己零依赖（`importsOf` 为空），是"解压出来的路径能不能落盘"的唯一判据 ——
   // 面板侧再写一份 `..` 判据，就会出现"面板放行、机器人不认"或反之。
   'plugin-manifest.js',
+  // L3 聚合层（2026-10-20）：后端表与归一化是**零依赖叶子**（registry 连 `node:` 都不 import；
+  // normalize 只 import registry）。面板要识别后端、转述自报信任度，必须读同一份表 ——
+  // 在面板里再写一份映射，就是"同一件事两份真相"。
+  'backend/registry.js',
+  'backend/normalize.js',
   // ── 第 18 轮（H-10 第二半 · 搬 `apiConfig`）新增三项 ──
   // 这三项是「保存配置」那条路由要用的判据，**都满足 §82 的真实准入判据**
   // （传递闭包不触达 llm/brain/onebot/index/config/logger），实测闭包规模：
@@ -2126,6 +2155,8 @@ const LIB_SRC_ALLOW = [
       'panel/lib/update-routes.js': 1,
       'panel/lib/update-offline.js': 2,
       'panel/lib/update.js': 2,
+      // 假 QQ 会话壳（2026-10-21）：只依赖 L0 的 paths.js + node 内置 ⇒ L1。
+      'panel/lib/fake-session.js': 1,
     };
     // lib → `src/` 的边：**同样要登记**（B11c 起）。
     // 为什么：`src/` 里既有"零依赖的共享模块"，也有机器人的重型模块
@@ -2288,7 +2319,11 @@ const LIB_SRC_ALLOW = [
   //    这不是缺陷，是"字面量扫描"这类契约的固有形状：被扫的集合里包含扫描器时，
   //    扫描器里表示"待查字面量"的那串文本要刻意与它不同形。
   const FINGERPRINTS = [
-    ['本机/局域网地址正则', '172\\.(1[6-9]'],
+    // 2026-10-21：判据从整串正则改成 `URL.hostname` + 数值比较，指纹跟着换成
+    // 唯一属于这条实现的比较式（`172.16–31` 那一段）。契约盯的是"只有一处判据"，
+    // 不是"必须写成正则"。
+    // ⚠️ 写成拼接：本脚本也在被扫集合里，直接写整串会让它**自己命中自己**。
+    ['本机/局域网地址判定', 'b >= 16' + ' && b <= 31'],
     ['DeepSeek 域名判定', 'deepseek\\.com'],
     ['智谱域名判定', 'bigmodel\\.cn'],
     // 千问（2026-10-07）：取 `aliyuncs\.com` 这一段 —— 它是地址里最独特的部分。
@@ -2511,7 +2546,9 @@ const LIB_SRC_ALLOW = [
    * ⚠️ **`llm.js` 永远不许出现在这里** —— 本机模型（mlx :8080）与自建中转都在回环/局网，
    *    接上等于让机器人连不上自己的大脑，而回归照样全绿。
    */
-  const PROD_CALLERS = ['src/ext-fetch.js'];
+  // 2026-10-21（Win-v0.1.2 移植）：`src/index.js` 的图片下载（send_image/view_image 的远端分支）。
+  // 它只允许 http(s) 且走 safeFetch 的私网拒绝 —— 这正是本模块要保护的调用面。
+  const PROD_CALLERS = ['src/ext-fetch.js', 'src/index.js'];
   /** 测试侧只做"至少有人真的 import"的自证，不逐文件登记（测试文件增删是常态）。 */
   const TEST_CALLERS_MIN = 1;
 
@@ -3378,8 +3415,10 @@ const LIB_SRC_ALLOW = [
     problems.push('ext-scope.js 缺只读白名单或发言类判据 —— 边界判据必须只有一处');
   }
   // 接线：toolCtx 里给的必须是**代理**。两条一起查 —— 正查"用了代理"，反查"没有裸客户端"。
-  if (!/onebot:\s*scopedOnebot\(bot/.test(indexSrc14)) {
-    problems.push('src/index.js 的 toolCtx 里 onebot 不是 scopedOnebot(bot) —— 外来代码又拿到了原始协议客户端');
+  // L3（2026-10-20）：被代理的对象从 `bot` 换成了 `onebot` 驱动（它只有 call，且走归一层）。
+  // 判据语义不变：**必须是代理**，不是原始客户端。
+  if (!/onebot:\s*scopedOnebot\((?:bot|onebot)/.test(indexSrc14)) {
+    problems.push('src/index.js 的 toolCtx 里 onebot 不是 scopedOnebot(客户端/驱动) —— 外来代码又拿到了原始协议客户端');
   }
   if (/^\s*onebot:\s*bot,?\s*$/m.test(indexSrc14)) {
     problems.push('src/index.js 里仍写着 `onebot: bot` —— 那是绕过一切出站策略的口子');
@@ -3662,10 +3701,16 @@ const LIB_SRC_ALLOW = [
       // ② 常量回溯：`maxTokens: SMALL_BUDGET` 这种写法被外包变异（ZCode M2）证实会让
       //    本契约少认一个调用点（打印的计数自己掉下去、自证下限却仍满足）——
       //    于是那条路对额度闸视而不见。认出标识符就在同文件找 `const <名> = <数字>`。
+      //    2026-10-21（Win-v0.1.2 移植）：夜间产出用的是 `src/nightly.js` 的
+      //    `NIGHTLY_MAX_TOKENS`（700，> LOW_TOKEN，不属于小额度调用）。这里从**模块本体**
+      //    取值，不在契约里抄第二个 700 —— 否则改默认值时两处必漂。
+      const nightlyMod = await import(new URL('../src/nightly.js', import.meta.url));
+      const KNOWN_IMPORTED_TOKENS = { NIGHTLY_MAX_TOKENS: nightlyMod.NIGHTLY_MAX_TOKENS };
       const unknown = [];
       for (const idm of args.matchAll(/maxTokens\s*:\s*([A-Za-z_$][\w$]*)\b/g)) {
         const decl = src.match(new RegExp(`const\\s+${idm[1]}\\s*=\\s*(\\d+)`));
         if (decl) nums.push(Number(decl[1]));
+        else if (KNOWN_IMPORTED_TOKENS[idm[1]] != null) nums.push(Number(KNOWN_IMPORTED_TOKENS[idm[1]]));
         else unknown.push(idm[1]);
       }
       const low = nums.filter((nn) => nn <= LOW_TOKEN);
@@ -4152,14 +4197,17 @@ const LIB_SRC_ALLOW = [
   //      第一版把"必须夹在两者之间"写死，结果当场假红（复核本来就在 check 之前）。
   //      判据要钉的是**唯一真正重要的那件事**：许可复核发生在"真的把字发出去"之前。
   const atLate = idx.indexOf('lateSendReason(');
-  const atSend = idx.indexOf('bot.sendMsg(');
+  // 主链路发送循环的锚点：图片工具也调 `bot.sendMsg(`，所以不能取全文第一处；
+  // 从 `for (let i = 0; i < outChunks.length; i += 1) {` 之后再找，才是真正的主发送点。
+  const mainLoopAt = idx.indexOf('for (let i = 0; i < outChunks.length; i += 1) {');
+  const atSend = mainLoopAt >= 0 ? idx.indexOf('bot.sendMsg(', mainLoopAt) : -1;
   if (atLate < 0) problems.push('src/index.js 没有调 lateSendReason( —— 发送时刻复核根本没接线');
-  if (atSend < 0) problems.push('src/index.js 里找不到 bot.sendMsg( —— 契约锚点失效');
+  if (atSend < 0) problems.push('src/index.js 主发送循环里找不到 bot.sendMsg( —— 契约锚点失效');
   if (atLate >= 0 && atSend >= 0 && atLate > atSend) {
     problems.push(`发送时刻复核在 bot.sendMsg 之后（late@${atLate} send@${atSend}）—— 那时字已经发出去了，复核等于没有`);
   }
   // 循环体内（逐条复核），不在循环外
-  const loopStart = idx.lastIndexOf('for (let i = 0; i < outChunks.length; i += 1) {', atSend);
+  const loopStart = mainLoopAt;
   if (loopStart < 0 || atLate < loopStart) {
     problems.push('发送时刻复核不在逐条发送的循环体内 —— 它必须**每一条**都复核（多条分条场景）');
   }
@@ -6455,7 +6503,7 @@ const LIB_SRC_ALLOW = [
       }
     }
     // 反向：闭集合之外不许有人接（多接一个动词 = 多一片攻击面）
-    for (const k of ['shutdown', 'restart', 'reload']) {
+    for (const k of ['reboot', 'restart', 'reload']) {
       if (new RegExp(`cmd === '${k}'`).test(mapBody)) {
         problems.push(`runControlCommand 处理了闭集合之外的 '${k}' —— 这条通道默认拒绝，多一个动词就多一片攻击面`);
       }
@@ -6590,7 +6638,7 @@ const LIB_SRC_ALLOW = [
   const runRec = cc.controlDecision(base, { now: t0 });
   const expired = cc.controlDecision(base, { now: base.at + cc.CONTROL_MAX_AGE_MS + 1 });
   const edge = cc.controlDecision(base, { now: base.at + cc.CONTROL_MAX_AGE_MS });
-  const stranger = cc.controlDecision({ ...base, cmd: 'shutdown' }, { now: t0 });
+  const stranger = cc.controlDecision({ ...base, cmd: 'reboot' }, { now: t0 });
   const doneRec = cc.controlDecision({ ...base, done: cc.controlDoneOf({ ok: true, msg: 'x', at: t0, pid: 1 }) }, { now: t0 });
   if (runRec.ok !== true || runRec.action !== 'run') problems.push('合法的新命令没有被判成可执行 —— 这条通道整个是死的');
   if (edge.action !== 'run') problems.push('有效期边界写错了（刚好到上限不该判过期）—— 静默缩短整条通道的寿命');
@@ -6787,18 +6835,18 @@ const LIB_SRC_ALLOW = [
   if (!paths4.includes('QQBOT_BRIDGE_LOCK_FILE')) {
     problems.push('panel/lib/paths.js 没有 QQBOT_BRIDGE_LOCK_FILE 覆盖 —— 测试只能读真机那份锁');
   }
-  // ⚠️ **S-12 第五批**：取源从旧页切到**现役控制台**。
-  //    `paintLock` → 现役页是**顶栏告警条**（`app.js` 读 `bridge.lock.pid`）+「实例锁」kv 行（`schema.js`）；
-  //    `refuseExitCode` 那条**退役并登记** —— 现役页不显示退出码，那个数到不了页面
-  //    （登记在 docs/S12-CONTRACT-MIGRATION-1005.md §十三）。
+  // ⚠️ **2026-10-20 维护者点名：锁的展示退役。**
+  //    面板仍**只读**声明（`/api/state` 的 `bridge.lock` 保留），但页面不再显示。
+  //    理由（群友实测）：Windows 停止走 `taskkill /F`，机器人来不及执行退出钩子 ⇒ 残留锁；
+  //    而旧展示只判「文件在不在 / 面板跟没跟着」，不判 pid 存活与心跳新鲜度 ⇒
+  //    "退出再进"就报「点启动会被拒」，实际启动时机器人自己会接管残留锁（阶梯在 `src/bridge-lock.js`）。
+  //    锁本身与「真双活时拒绝启动」不变；真被拒时启动响应的失败信息仍会带出原因。
+  //    ⚠️ 反向断言是刻意的：以后要重新显示，先改这条决定与契约，别让旧告警悄悄复活。
   const { readNextAsset: read43 } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
   const app43 = stripComments(read43('app.js').raw, 'js');
   const sch43 = read43('schema.js').raw;
-  if (!/\['bridge',\s*'lock',\s*'pid'\]/.test(app43)) {
-    problems.push('现役面板没有渲染 lock.pid —— "有别人持着锁"这件事在界面上还是隐形的');
-  }
-  if (!/实例锁/.test(sch43) || !/bridge',\s*'lock'/.test(sch43)) {
-    problems.push('现役面板的「实例锁」那一行没有读 bridge.lock —— 锁状态没有落点');
+  if (/\['bridge',\s*'lock'/.test(app43) || /实例锁/.test(sch43)) {
+    problems.push('现役面板又渲染了实例锁（bridge.lock / 「实例锁」）—— 该展示已于 2026-10-20 退役：残留锁会让"点启动会被拒"变成假告警');
   }
 
   // ⑩ 行为：真跑一遍判定阶梯与占锁（不是"代码里提到了就算"）
@@ -7516,9 +7564,10 @@ const LIB_SRC_ALLOW = [
   // ① 来源枚举唯一，且**真的写进账本行**；老记录一律空串（不许"猜一个默认来源"）。
   const U47 = await import(new URL('../src/usage.js', import.meta.url));
   const srcVals47 = Object.values(U47.USAGE_SOURCES);
-  if (srcVals47.length !== 3
-    || !srcVals47.includes('agent') || !srcVals47.includes('memoryJudge') || !srcVals47.includes('proactiveTopic')) {
-    problems.push(`USAGE_SOURCES 的三个值不对（[${srcVals47.join('、')}]）—— 它是账务来源的闭集合`);
+  if (srcVals47.length !== 4
+    || !srcVals47.includes('agent') || !srcVals47.includes('memoryJudge')
+    || !srcVals47.includes('proactiveTopic') || !srcVals47.includes('nightly')) {
+    problems.push(`USAGE_SOURCES 的四个值不对（[${srcVals47.join('、')}]）—— 它是账务来源的闭集合`);
   }
   const rec4747 = fnSlice(usage47, 'export function recordUsage(', 300);
   if (!rec4747) problems.push('抽不出 recordUsage() 的函数体 —— 本节契约失效');
@@ -7531,8 +7580,9 @@ const LIB_SRC_ALLOW = [
   // ② 三个既有调用点**各自带来源字面量**（切片锚定，不全文搜 —— 全文搜会被别处同名写法骗过）。
   //    并且调用点总数必须**恰好 3**：多一处就是新开了一条会花钱的旁路。
   const ruCall47 = [...idx47.matchAll(/recordUsage\(/g)].length + [...mem47.matchAll(/recordUsage\(/g)].length;
-  if (ruCall47 !== 3) {
-    problems.push(`recordUsage( 的调用点共 ${ruCall47} 处（应恰 3：主回复 / 记忆判官 / 主动话题）—— 多一处就是一条没登记的旁路`);
+  // 5 = 主回复 / 记忆判官 / 主动话题 / 看图旁路 / 夜间产出。
+  if (ruCall47 !== 5) {
+    problems.push(`recordUsage( 的调用点共 ${ruCall47} 处（应恰 5：主回复 / 记忆判官 / 主动话题 / 看图旁路 / 夜间产出）—— 多一处就是一条没登记的旁路`);
   }
   const hm47 = fnSlice(idx47, 'async function handleMessage(', 3000);
   if (!hm47) problems.push('抽不出 handleMessage() —— 本节契约失效');
@@ -7670,7 +7720,7 @@ const LIB_SRC_ALLOW = [
   //    而页面上两种都"有标签"、`label !== key` 那条面板层判据也照样绿。
   //    内容正确 + **互不相同**才是"按来源分账"真正的语义：两个来源同名，
   //    用户在分账行里就分不清谁花的钱。
-  const LABEL_EXPECT47 = { agent: '主回复', memoryJudge: '记忆判定', proactiveTopic: '主动话题' };
+  const LABEL_EXPECT47 = { agent: '主回复', memoryJudge: '记忆判定', proactiveTopic: '主动话题', nightly: '夜间产出' };
   const lbl47 = /const SOURCE_LABEL = \{([\s\S]*?)\};/.exec(srv47);
   if (!lbl47) {
     problems.push('panel/server.js 里没有 SOURCE_LABEL 标签表 —— 页面只能显示英文键');
@@ -8338,17 +8388,19 @@ const LIB_SRC_ALLOW = [
   // ⚠️ 外包任务2 Q54（FG50-2 双绿）：只数 `setInterval(` 会被**别名声明**绕（`const iv = setInterval`）。
   //    改数**标识符**（不跟括号）：别名声明会让它多一次出现。恰 4 = 四个既有调用点。
   const ivId50 = [...idx50.matchAll(/\bsetInterval\b/g)].length;
-  if (ivId50 !== 4) {
-    problems.push(`index.js 里 setInterval 标识符出现 ${ivId50} 次（应恰 4：tick / pollControl / writeEffective / 心跳；`
+  // 5 = 既有四处 + 私聊「正在输入」的 5 秒脉冲（Win-v0.1.2 移植）。
+  if (ivId50 !== 5) {
+    problems.push(`index.js 里 setInterval 标识符出现 ${ivId50} 次（应恰 5：tick / pollControl / writeEffective / 心跳 / 正在输入；`
       + '别名声明也算一次）—— 睡眠不许新开调度，也不许把调度藏进别名里');
   }
   // ⚠️ 外包任务1 v8（V2 双绿实测）：新调度藏进**第四个函数**、用 `const iv = setTimeout`
   //    别名 —— `\bsetInterval\b` 计数与"三个具名函数体扫描"（⑫）都够不着。
   //    setTimeout 一样要数标识符。恰 4 = 四处既有用途。
   const toId50 = [...idx50.matchAll(/\bsetTimeout\b/g)].length;
-  if (toId50 !== 4) {
-    problems.push(`index.js 里 setTimeout 标识符出现 ${toId50} 次（应恰 4：sleep 辅助 / 热重载防抖 / 存档防抖 / shutdown 退出；`
-      + '别名声明也算一次）—— 叫醒的"窗口到了"只能靠既有 30 秒 tick + 下一条消息复评，不许走私调度');
+  // 6 = 既有四处 + 连发合并窗口 + 慢任务垫话（Win-v0.1.2 移植）。
+  if (toId50 !== 6) {
+    problems.push(`index.js 里 setTimeout 标识符出现 ${toId50} 次（应恰 6：sleep 辅助 / 热重载防抖 / 存档防抖 / shutdown 退出 / 连发合并 / 慢任务垫话；`
+      + '别名声明也算一次）—— 新调度必须登记，不许藏进别名');
   }
   // ⚠️ 数的是**调用点**（`refreshSleep();` 带分号）而不是标识符：定义行是 `function refreshSleep() {`，
   //    一起数会永远多 1（第一版就这么错，当场被自己的契约打红）。
@@ -8960,9 +9012,11 @@ const LIB_SRC_ALLOW = [
 //      （给人 / 模型看的那一份），**绝不许进 `bareText`** —— 后者是触发判据看的正文。
 //      漏进 `bareText` 之后，一段转发记录里出现「小鱼」就会把它叫出来（D28 同一条理由：
 //      显示名不许进触发判据），而这件事**没有任何一层会替你发现**；
-//   ③ `get_forward_msg` 的参数只有一处实现、且**优先用 `message_id`** —— 参考实现的真机实测
-//      （2026-09-05，SnowLuma/NapCat）：段里那个 `res_id` 会过期，报 `payload is empty`。
-//      写错了照样跑通（只是永远退回占位符），所以只能靠结构判据钉住"顺序就是语义"。
+//   ③ `get_forward_msg` 的参数只有一处实现、且**先 `message_id`、再用段里那个 id（resId）兜底** ——
+//      两步各挡一家（2026-10-20 源码取证订正：旧说法"协议端只认 message_id，`res_id` 会过期、
+//      报 `payload is empty`"只是 SnowLuma 一家的行为；LLBot 反过来**只认 resId**，
+//      删掉兜底那一步就等于删掉 LLBot 支持，所以两条都是必需的）。
+//      写错了照样跑通（只是永远退回占位符），所以只能靠结构判据钉住"两步齐全、顺序不能反"。
 //
 // 判据一律走三步法：**剥行尾注释 → 配平取体 → 钉语句 / 值表达式形状**。
 {
@@ -9068,11 +9122,19 @@ const LIB_SRC_ALLOW = [
   if (!exBody) {
     problems.push('抽不出 index.js 的 expandForwardText() —— 本节"参数顺序 / fail-open / 留痕"三条判据全部失效');
   } else {
-    const iMid = exBody.indexOf("via: 'message_id'");
-    const iRes = exBody.indexOf("via: 'res_id'");
-    if (!(iMid >= 0 && iRes > iMid)) {
-      problems.push('展开没有把 **message_id 排在 res_id 之前** —— 顺序就是语义：'
-        + '协议端只认 message_id，段里的 res_id 会过期（实测会报 payload is empty），反了就永远退回占位符');
+    // L3（2026-10-20）：顺序的**唯一决定点**搬到 `registry` 的后端表 +
+    // `normalize.forwardAttemptsFor`。`expandForwardText` 只调用它，再也不自己排。
+    const norm52 = read52('backend/normalize.js');
+    const reg52 = read52('backend/registry.js');
+    const l3Order = /forwardAttemptsFor\(onebot\.backend/.test(exBody)
+      && /for \(const key of b\.forwardOrder\)/.test(norm52)
+      && /napcat:\s*\{[\s\S]{0,500}?forwardOrder: \['message_id', 'id'\]/.test(reg52)
+      && /llbot:\s*\{[\s\S]{0,500}?forwardOrder: \['id', 'message_id'\]/.test(reg52);
+    if (!l3Order) {
+      problems.push('合并转发的参数顺序不在唯一决定点上 —— L3 之后应由 registry 的后端表 + '
+        + 'normalize.forwardAttemptsFor 决定（NapCat/SnowLuma 先 message_id，LLBot 先 id）；'
+        + '顺序就是语义：第一步挡 resId 过期（SnowLuma 报 payload is empty、NapCat 报 ResId无效），'
+        + '第二步挡 LLBot（它两个入参键都按 resId 字符串解读，整数 message_id 明确不认）');
     }
     // fail-open：失败必须**吞掉**并如实回落，而不是把异常抛给调用方（那会让这条消息整条丢掉）。
     if (!/catch\s*\(/.test(exBody) || !/return\s*\{\s*text:\s*''\s*,\s*stat\s*\}/.test(exBody)) {
@@ -9278,8 +9340,8 @@ const LIB_SRC_ALLOW = [
 
   // ⑤ **只在开闸时注册**：两个工具都不许跑到那个 if 之外
   const regN54 = countOf(idx54, /toolRegistry\.register\(/g);
-  if (regN54 !== 2) {
-    problems.push(`index.js 里 toolRegistry.register( 有 ${regN54} 处（应恰 2：get_chats / send_to）`);
+  if (regN54 !== 4) {
+    problems.push(`index.js 里 toolRegistry.register( 有 ${regN54} 处（应恰 4：get_chats / send_to / send_image / view_image）`);
   }
   const gate54 = idx54.indexOf('cfg.custom?.crossSend?.enabled === true');
   const gateBody54 = gate54 < 0 ? '' : braceAt(idx54, idx54.indexOf('{', gate54));
@@ -11718,6 +11780,37 @@ const LIB_SRC_ALLOW = [
       + '上一轮挂上去的标记还在，表现是"关了还在动"，而那会让人以为开关没生效');
   }
   sub();
+  // ⑲ 回落弹簧**不许继承指针速度**（2026-10-20 · 用户第三次报"大幅翻面"的根因）。
+  //    `MotionValue.set()` 用 performance.now() 的微秒级差值算速度；pointermove 在同一
+  //    JS 任务里连发时，2° 会被记成上万 deg/s。leave() 把这个速度交给弹簧 ⇒ 1° 的卡
+  //    过冲到 **301.78°**（真实浏览器实测），用户看到的就是"360° 翻转"。
+  //    ⚠️ 判三层**接线**，缺一层 bug 都会静默回来：
+  //      引擎收 `initialVelocity` · tilt 的 RELEASE 显式给 0 · leave 真的把 RELEASE
+  //      交给**两个** M.animate。只判 tilt 里出现 0 是不够的 —— motion.js 不认这个
+  //      字段时它会被静默忽略，回归测试也只会在"带速度穿梭"时才发现。
+  const motionSrc = stripComments(readNextAsset('motion.js').raw);
+  const animateBody = bodyOf(motionSrc, 'function animate(');
+  if (!/cfg\.initialVelocity/.test(animateBody)) {
+    problems.push('motion.js 的 animate() 没有消费 cfg.initialVelocity —— tilt 传了 0 也会被静默忽略，'
+      + '快速穿梭时回落仍会继承上万 deg/s（实测原始角 301.78°）');
+  }
+  if (!/var RELEASE = Object\.assign\(\{\}, SPRING, \{ initialVelocity: 0 \}\)/.test(tiltSrc)) {
+    problems.push('tilt.js 没有把回落弹簧的初始速度显式设为 0（RELEASE）—— '
+      + '1° 的卡在快速穿梭后会被甩过半圈，用户看到的就是"360° 翻转"');
+  }
+  if ((leaveBody.match(/M\.animate\(r\.(?:rx|ry), 0, RELEASE\)/g) || []).length !== 2) {
+    problems.push('tilt.js 的 leave() 没有把**两个**回落动画都换成 RELEASE —— '
+      + '漏一个（rx 或 ry）那条仍会继承速度，翻转只会在一个轴上出现');
+  }
+  sub();
+  // ⑳ 写变量处必须夹到 ±MAX_DEG（视觉最后一道保险）。
+  //    根因修复在 ⑲；这一条防的是"将来又长出一条新路径写入大角度"。
+  if (!/Math\.max\(-MAX_DEG, Math\.min\(MAX_DEG, rx\)\)/.test(tiltSrc)
+    || !/Math\.max\(-MAX_DEG, Math\.min\(MAX_DEG, ry\)\)/.test(tiltSrc)) {
+    problems.push('tilt.js 写 --tilt-rx/ry 时没有夹到 ±MAX_DEG —— '
+      + '根因修复之外还要一道视觉保险：将来若再长出一条新路径写入大角度，卡片会整块翻过去');
+  }
+  sub();
   // ⑱ 自证：各取源都非空。
   if (!tiltSrc.length || !app.length || !entryHtml.length || !css.length
     || !onShown.length || !tiltRule.length || !markBody.length) {
@@ -11742,6 +11835,8 @@ const LIB_SRC_ALLOW = [
         + '**反向**：不许有 `transform-style: preserve-3d`（它让卡内子元素一起进 3D）· '
         + '**MAX_DEG ≤ 2°**（定在 1° —— 用户连着两轮要"更小"）· '
         + '**`--tilt-p` ≥ 1500px**（现 2400px；缩它是"卡片往前倒"那条错路的开关）· '
+        + '**回落弹簧显式零初速**（快速穿梭不继承上万 deg/s —— 实测修前原始角 301.78°）· '
+        + '**写变量夹到 ±MAX_DEG**（视觉最后一道保险）· '
         + `子判据 ${subCountOf('卡片倾斜')} 条（§51 核下限）`
     );
   }
@@ -13064,7 +13159,9 @@ const LIB_SRC_ALLOW = [
   if (!docsTracked || !allTracked) {
     problems.push('拿不到 `git ls-files` —— 本节的归档核对无法进行（此时的任何"通过"都不可信）');
   } else {
-    const top = docsTracked.filter((f) => !f.startsWith('docs/archive/'));
+    // 「顶层」按字面判：只算 `docs/` 的直接子文件。旧写法把 `docs/design/` 这类子目录里的
+    // 现行设计件也当成"顶层第 16 件"，与本节标题（顶层有界）自相矛盾 —— 子目录不占顶层名额。
+    const top = docsTracked.filter((f) => /^docs\/[^/]+$/.test(f));
     const arch = docsTracked.filter((f) => f.startsWith('docs/archive/'));
 
     // ① **归档完整性**：`archive/` 下每一份都必须在 `docs/ARCHIVE.md` 里被点名。
@@ -13123,8 +13220,12 @@ const LIB_SRC_ALLOW = [
         + '滚动窗口只判 R 族，这类件正是从这条缝里漏掉的（M-09 · 第 57 轮 B2 补）');
     }
     // ③ 顶层**有界**（防再次膨胀）；现行件必须还在。
-    if (top.length > 15) {
-      problems.push(`docs/ 顶层有 ${top.length} 个被跟踪文件（应 ≤15）—— 历史交付件又开始堆了（M-09）`);
+    //    ⚠️ 2026-10-20 上限 15 → **16**：新增的是 `docs/MOTION-WORKFLOW.md`（现行的工作流正文，
+    //       与 `MOTION-METHODOLOGY.md` 同类，**不是**带日期的历史交付件）。
+    //       这条计数的作用是拦"一次性计划/诊断/预览件又堆到顶层"，把一份现行文档塞进子目录
+    //       只是为了绕过计数器 —— 那是把门当摆设。所以按用途放宽一格，理由写在这里。
+    if (top.length > 16) {
+      problems.push(`docs/ 顶层有 ${top.length} 个被跟踪文件（应 ≤16）—— 历史交付件又开始堆了（M-09）`);
     }
     // ⚠️ 第 22 轮（发布副本感知）：`ARCHIVE.md` / `DEEP-IMPROVE.md` 是**内部台账**
     //    （归档索引 / 内部增量计划），按设计不随拷贝出去。
@@ -13231,10 +13332,14 @@ const LIB_SRC_ALLOW = [
     //         两条 **POST**；都在 WRITE_ROUTES，且都不联网）。
     // 57 / 39（2026-10-19 · P11：新增 /api/napcat/import-auto 与 /api/napcat/open-folder
     //         两条 **POST**；前者往 userdata\napcat 写文件、后者拉起 explorer，都在 WRITE_ROUTES）。
+    // 58 / 40（2026-10-21 · Win-v0.1.2：新增 /api/persona/adopt 一条 **POST**；
+    //         它花一次模型调用并记用量，归 WRITE_ROUTES，结果只预览不落盘）。
+    // 62 / 43（2026-10-21 · Win-v0.1.2 假 QQ：新增 state 一条 **GET** 与
+    //         start/send/stop 三条 **POST**；三条 POST 都在 WRITE_ROUTES）。
     // ⚠️ 改这两个数字的同时**必须**也在 `WRITE_ROUTES` 里登记（§3e 会核对分类）——
     //    只改这里等于把"新路由绕过鉴权"这件事盖章通过。GET 只读路由不进 WRITE_ROUTES。
-    if (entries81.length !== 57 || nPost81 !== 39) {
-      problems.push(`路由表项数变了（现 ${entries81.length} 项 / POST ${nPost81}，应恰 55 / 37）—— ` +
+    if (entries81.length !== 62 || nPost81 !== 43) {
+      problems.push(`路由表项数变了（现 ${entries81.length} 项 / POST ${nPost81}，应恰 62 / 43）—— ` +
         '加删路由是**明示动作**：请连 §3e 的分类与本节的精确值一起改，不许只动一头');
     }
     if (new Set(keys81).size !== keys81.length) {
@@ -14237,6 +14342,90 @@ const LIB_SRC_ALLOW = [
   }
   subHit('跨平台分支');
 
+  // ⑧b 同一个坑的**另一半**：`server.js`（面板主文件）里写死的端口，§96⑧ 照不到。
+  //     ⑧ 只 `read` 了 `state-collector.js` 一个文件 —— 于是主文件里再写多少个
+  //     `3000`/`3001` 都不会红（2026-10-20 实测：`apiGroups`、启动等待、
+  //     `autoStartNapcatIfInstalled`、`apiNapcatRestart` 与 SSE 心跳共五处全是字面量，
+  //     四层回归当时全绿）。
+  //     五处里最坏的是 SSE 那颗：它把 `portOpen(3001)` 的结果当 `proto` **每 3 秒推给页面** ——
+  //     "屏幕上的协议端状态"因此有了第二个真相源，而它探的可能根本不是机器人连着的那个端口。
+  //     ⇒ 判据与 ⑧ 同形：反向禁字面量（`read` 已剥注释 ⇒ 命中即不是注释），
+  //       正向钉"接到唯一推导口"。两处都 fail-closed：抽不到源码就当失败。
+  const srvPorts96 = read('../panel/server.js');
+  if (!srvPorts96) {
+    problems.push('读不到 panel/server.js —— 本条 ⑧b 在真空里（不接受"因此没命中"当通过）');
+  } else {
+    const hardPorts = [...srvPorts96.matchAll(/\b(httpGet|wsProbe|portOpen)\(\s*(3000|3001|6099)\b/g)]
+      .map((m) => `${m[1]}(${m[2]}`);
+    if (hardPorts.length) {
+      problems.push(`server.js 里还在用写死的端口探协议端 ${hardPorts.length} 处：`
+        + `${[...new Set(hardPorts)].join('、')} —— 必须走 onebotProbePorts()（判据本体住 `
+        + 'src/net-rules.js 的 onebotEndpointOf）；写死的后果不是报错，而是换了端口的部署上'
+        + '面板连探都不探，屏幕照样给一个"断"字');
+    }
+    if (!/onebotProbePorts\(\)/.test(srvPorts96) || !/onebotEndpointOf\(/.test(srvPorts96)) {
+      problems.push('server.js 的协议端探测没接到 onebotEndpointOf（或薄接线 onebotProbePorts 被摘了）—— '
+        + '只在 state-collector.js 接一份不够：主文件那五处同样会漂，其中一处还直接推给页面');
+    }
+    // 薄接线本体也钉形状：只许"从配置取一份"，不许在这里长出第二份端口判断。
+    // 症状很具体：有人删了它改用内联 `cfg?.onebot?.wsPort ?? 3001`，判据就分成了两份，
+    // 而 net-rules 那份的 `httpIsDefault` 回落标记会静默消失（面板上"探的是不是默认口"那格失真）。
+    if (!/const onebotProbePorts = \(\) => onebotEndpointOf\(/.test(srvPorts96)) {
+      problems.push('server.js 的 onebotProbePorts 不再是 `() => onebotEndpointOf(...)` 这一行薄接线 —— '
+        + '它是"取配置"的接线，不是判据本体；在面板主文件里重写一份端口判断就是第二个真相源');
+    }
+  }
+
+  subHit('跨平台分支');
+
+  // ⑧c NapCat **原生**停/启的端口（2026-10-20 · R5）：`panel/lib/napcat-native.js` 里
+  //     `stopNativeNapcat` 按端口杀、`restartNativeNapcat` 按端口等就绪，两处都曾写死 3001。
+  //     ⚠️ 这与外层的探测口方向相反：那五处是**读**（问协议端在不在），这两处是**写**
+  //     （杀哪个进程 / 等哪个端口），所以 ⑧b 的字面量扫描照不到它们。
+  //     用户把 OneBot WS 端口改掉后，症状是：①按端口永远找不到进程（"重启协议端"变成
+  //     "又拉了一个 NapCat"，二维码永远不重生成）；②等满 45 秒后报"没起来"，而它其实活着。
+  //     ⇒ 判据：两处都必须用调用方传入的 `wsPort`；调用方必须是 `onebotProbePorts().wsPort`。
+  const nn96 = read('../panel/lib/napcat-native.js');
+  if (!nn96) {
+    problems.push('读不到 panel/lib/napcat-native.js —— ⑧c 在真空里（不接受"因此没命中"当通过）');
+  } else {
+    const stop96 = fnSlice(nn96, 'export async function stopNativeNapcat(', 60);
+    const restart96 = fnSlice(nn96, 'export async function restartNativeNapcat(', 80);
+    if (!stop96 || !restart96) {
+      problems.push('抽不出 napcat-native.js 的 stopNativeNapcat / restartNativeNapcat —— '
+        + '⑧c 的输入集合为空，任何"通过"都不可信');
+    } else {
+      // 字面量回潮与"函数没接 wsPort"是**同一个缺陷的两种形态**：前者就是后者的成因，
+      // 所以按 if/else 只报一条（同一件事报两行，读的人会以为有两处坏）。
+      const hardKill = /\bkillTree\(\{\s*port:\s*(3000|3001|6099)\s*\}\)/.test(nn96);
+      if (hardKill) {
+        problems.push('napcat-native.js 里又出现了 `killTree({ port: 3000/3001/6099 })` 字面量 —— '
+          + '写死端口的部署上按端口那条路永远找不到进程，"重启"会变成"又拉一个"；'
+          + '端口必须来自 onebotProbePorts().wsPort');
+      } else if (!/killTree\(\{\s*port:\s*wsPort\s*\}\)/.test(stop96)) {
+        problems.push('stopNativeNapcat 没有按传入的 wsPort 杀进程（应为 `killTree({ port: wsPort })`）—— '
+          + '写死端口的部署上按端口那条路永远找不到进程，"重启"会变成"又拉一个"');
+      }
+      if (!/stopNativeNapcat\(killTree,\s*\{\s*wsPort\s*\}/.test(restart96)) {
+        problems.push('restartNativeNapcat 调 stopNativeNapcat 时没把 wsPort 传下去 —— '
+          + '"按对的端口停、按错的端口等"会表现成"重启成功但一直没就绪"');
+      }
+      const hardAlive = /\bportAlive\(\s*(3000|3001|6099)\s*\)/.test(nn96);
+      if (hardAlive) {
+        problems.push('napcat-native.js 里又出现了 `portAlive(3000/3001/6099)` 字面量 —— '
+          + '非默认端口的部署上会等满 45 秒后误报"没起来"；端口必须来自 onebotProbePorts().wsPort');
+      } else if (!/portAlive\(wsPort\)/.test(restart96)) {
+        problems.push('restartNativeNapcat 的等就绪没按 wsPort（应为 `portAlive(wsPort)`）—— '
+          + '非默认端口的部署上会等满 45 秒后误报"没起来"');
+      }
+      if (!/restartNativeNapcat\(killTree,\s*\{\s*wsPort:\s*onebotProbePorts\(\)\.wsPort\s*\}/.test(srvPorts96)) {
+        problems.push('server.js 调 restartNativeNapcat 时没传 `{ wsPort: onebotProbePorts().wsPort }` —— '
+          + '默认 3001 会接管，用户改过端口时停/等都按错端口');
+      }
+    }
+  }
+  subHit('跨平台分支');
+
   // ⑨ 内存读数**不许撒谎**（2026-10-09 · 第 53 轮 · B2）。
   //    Windows 上 `readMemory()` 如实返回 `null`（那边没有 vm_stat/sysctl/ps -Ao），
   //    而 `panel/next/schema.js` 曾经给每一项兜一个 `0` ⇒ 整张「健康与占用」
@@ -14552,7 +14741,9 @@ const LIB_SRC_ALLOW = [
     if (!keys.length) {
       problems.push('readyChecklist 里一处 j(s, [...]) 都没抽到 —— 抽取规则失效，本段等于没查');
     }
-    const ALLOWED = new Set(['ports', 'panel', 'bridge', 'config']);
+    // B3（2026-10-21）：`onebot` 是 `/api/state` 新增的存活结论（端口通 ≠ 事件流活）。
+    // 它与 `ports` 并排，不合并 —— 两个观测面、两个采样周期。
+    const ALLOWED = new Set(['ports', 'onebot', 'panel', 'bridge', 'config']);
     const stray = [...new Set(keys)].filter((k) => !ALLOWED.has(k));
     if (stray.length) {
       problems.push(`readyChecklist 读了不该读的字段：${stray.join('、')} —— 它只许读 /api/state 里`
@@ -14590,9 +14781,9 @@ const LIB_SRC_ALLOW = [
 
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
-    console.log('✓ 面板「启动链路」空态 = 只读检查表（2026-10-14 · P5，同日加到 5 行）：'
+    console.log('✓ 面板「启动链路」空态 = 只读检查表（2026-10-14 · P5，同日加到 5 行，2026-10-20 加到 6 行）：'
       + '旧占位 .steps-empty 在代码与样式里都已摘除 · '
-      + 'readyChecklist 在位且**只读** ports/panel/bridge/config 四组 · '
+      + 'readyChecklist 在位且**只读** ports/onebot/panel/bridge/config 五组 · '
       + '「放行的群聊」那行在位（维护者要求的）——只摆"填没填"、不许下启动结论 · '
       + '返回项带 ok/txt · 按「第一个未就绪」点亮一行而不是写死第 1 行 · '
       + `子判据 ${subCountOf('启动链路检查表')} 条（§51 核下限）`);
@@ -15927,12 +16118,837 @@ const LIB_SRC_ALLOW = [
     problems.push(`启动器形状正则在 tools 里应恰好定义 1 处（lib/napcat-shape.mjs），实测：${shapeOwners.map((s) => s.replace(/^\.\.\/packaging\/windows\//, '')).join(', ') || '0 处'}`);
   }
 
+  // ⑬ 面板侧那份「启动器候选表」必须与共享叶子**逐字等价**（A 批假绿补洞 C2 · 2026-10-20）。
+  //    为什么不是"抽成一份"：装机后 `napcat-native.js` 落在 `versions\<ver>\app\panel\lib\`，
+  //    叶子落在 `<InstallRoot>\tools\`，两个载荷根由 `make-sums.py` 分别点名，而分层表把
+  //    `napcat-native.js` 钉在 **L1**、它不许 import `packaging` 目录下的东西。⇒ 两份会长期共存
+  //    （它自己的注释 :17-23 就写了"候选表必须同步改"），所以把"同步"从**注释**变成**机器判据** ——
+  //    注释拦不住"改了 tools 忘了 panel"，而 ⑫ 只扫 `packaging/windows/tools`，照不到面板这一份。
+  //    不报错的症状：官方又改启动器名字 ⇒ tools 认得、面板认不得 → 面板一直说"协议端未安装"，
+  //    而一键安装/修复那边坚持"已经装好了"。
+  const nativeSrc114 = read('../panel/lib/napcat-native.js');
+  // 抽出数组体里的**正则字面量本体 + flags**（注释被 `read` 剥掉了，两份的排版差异不影响比对）。
+  const listOf = (src, decl) => {
+    const m = new RegExp(`${decl} = \\[([\\s\\S]*?)\\n\\];`).exec(src);
+    if (!m) return null;
+    return [...m[1].matchAll(/\/(.+?)\/([a-z]*)/g)].map((x) => `${x[1]}|${x[2]}`);
+  };
+  const leafList114 = listOf(shape, 'export const NAPCAT_LAUNCHER_CANDIDATES');
+  const nativeList114 = listOf(nativeSrc114, 'const LAUNCHER_CANDIDATES');
+  if (!leafList114 || leafList114.length < 4) {
+    problems.push('抽不出 napcat-shape.mjs 的启动器候选表（或不足 4 条）—— 本条 ⑬ 在真空里，'
+      + '不接受"没比对出差异"当成通过');
+  } else if (!nativeList114 || nativeList114.length < 4) {
+    problems.push('抽不出 napcat-native.js 的 LAUNCHER_CANDIDATES（或不足 4 条）—— '
+      + '面板侧那份改了名/换了形状，本条 ⑬ 失去作用域（它就是为这两份而存在的）');
+  } else if (leafList114.join('\n') !== nativeList114.join('\n')) {
+    problems.push(`两份启动器候选表已分叉（按序逐字比对）：叶子 [${leafList114.join(' ')}] ≠ `
+      + `面板 [${nativeList114.join(' ')}] —— 只改一侧的症状是"面板说协议端没装、安装器说已装"，不报错、只是没效果`);
+  }
+  const notOf = (src, decl) => {
+    const m = new RegExp(`${decl} = /\\(([^)]*)\\)/i`).exec(src);
+    return m ? m[1] : null;
+  };
+  const leafNot114 = notOf(shape, 'export const NOT_LAUNCHER_RE');
+  const nativeNot114 = notOf(nativeSrc114, 'const NOT_LAUNCHER_RE');
+  if (!leafNot114 || !nativeNot114) {
+    problems.push(`抽不出两份排除词（叶子=${leafNot114} / 面板=${nativeNot114}）—— 本条 ⑬ 失去作用域`);
+  } else if (leafNot114 !== nativeNot114) {
+    problems.push(`两份排除词已分叉：叶子 (${leafNot114}) ≠ 面板 (${nativeNot114}) —— `
+      + '少一个 `install` 就会把 NapCatInstaller.exe 当启动器拉起来（官方一键包里两者并存）');
+  }
+  if (nativeSrc114.includes('napcat-shape')) {
+    problems.push('napcat-native.js 里出现了 napcat-shape —— 面板侧不许 import packaging/**'
+      + '（分层表把它钉在 L1）；两份共存是刻意的，靠本条比对保持同步');
+  }
+  subHit('NapCat获取');
+
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
     console.log('✓ NapCat 获取（P6）：两个下载口都有连接/空闲/存活速率/单源/总预算 · 逐块重挂空闲 · '
       + `续传核 Content-Range · 先哈希后改名 · 预算只住安装工具侧 · 下载口恰好 2 个 · knownGood ${(cfg?.knownGood || []).length} 条 · `
-      + `启动器形状判据 1 处 · 本地件不查 API（§51 核下限）`);
+      + `启动器形状判据 1 处 · 面板侧候选表与叶子逐字等价（含排除词）· 本地件不查 API（§51 核下限）`);
   }
+}
+
+// 115) 外部私有协议面：三处「不是 OneBot v11 规范、而是某一家自己定的东西」必须留在原地（A 批 C3 · 2026-10-20）。
+//
+// 为什么值得一整段：
+//   这三处是**替换协议端的成本坐标**（2026-10-20 协议端源码取证的结论之一），
+//   而在此之前**没有任何一条契约或变异盯它们**（实测：§114 只查 `/api/napcat/` 开头那两条路由与
+//   `/api/state` 的 `napcat` 段形状；§84 只查 `napcatToken` 在不在注入名单里）。
+//   改坏了不会红，也不会抛异常 —— 面板只会显示"拿不到二维码"，因为失败形态是**静默**的
+//   （HTTP 4xx 被吞成空数据，`/api/qrcode/refresh` 早就改成"业务失败也回 200 + ok:false"，
+//   所以四层回归里的每一条都看着像正常）。
+//   1. `createHash('sha256').update(token + '.napcat')` —— NapCat WebUI 的登录口令派生
+//      （后缀 `.napcat` 是对方算法的一部分，我方源码取证证实逐字一致）。改了它 = 永远登录不上 WebUI。
+//   2. `POST /api/auth/login` → `POST /api/QQLogin/RefreshQRcode` —— 两步私有协议，
+//      OneBot v11 里**没有**对应能力；路由名是对方 URL，不是我们的 API 设计。
+//   3. `webuiPortCandidates()` 的 base+1..+4 —— 钉的是 NapCat「WebUI 端口被占就 +1 重试
+//      且**不回写配置**」这一外部行为（群友实测真实存在）。把它"简化"成只读配置端口，
+//      症状是"连不上"，而配置里的数字看起来完全正确。
+//
+// ⚠️ 判据一律走三步法（剥注释 → 配平取体 → 钉语句/值表达式形状），且**抽不到就当失败**。
+//    特别地：不许用 §102 那种"原始 blob 里 includes(名字)"的写法 —— `RefreshQRcode` 在
+//    `server.js:726` 的注释里也有一份，剥不剥注释决定了这条是真牙还是假牙。
+{
+  const problems = [];
+  const srv115 = read('../panel/server.js');
+
+  // ① 口令派生：形状 + 全仓唯一。
+  const qBody = fnSlice(srv115, 'async function refreshNapcatQrcode(', 120);
+  if (!qBody) {
+    problems.push('抽不出 refreshNapcatQrcode() 的函数体 —— 本节三条判据全部失去作用域（不接受"没比对出差异"当通过）');
+  } else {
+    if (!/createHash\('sha256'\)\.update\(token \+ '\.napcat'\)/.test(qBody)) {
+      problems.push("WebUI 口令派生不再是 `createHash('sha256').update(token + '.napcat')` —— "
+        + '后缀 `.napcat` 是**对方算法的一部分**，不是我们的命名口味；改了它就永远登录不上 WebUI，'
+        + '而界面上只会说"读不到凭证/拿不到二维码"');
+    }
+    // 唯一性：把派生抄到第二处（例如"顺手"在 apiQrcode 里也来一份），两份一定会漂开。
+    // ⚠️ 这里按**派生签名**计数（`createHash('sha256').update(token`），不按带后缀的整串计数 ——
+    //    否则后缀被改错时"形状条"与"唯一性条"会同时红（同一件事报两遍，就分不清到底坏了什么）。
+    const owners115 = [];
+    const walk115 = (relDir) => {
+      for (const e of fs.readdirSync(new URL(relDir, import.meta.url), { withFileTypes: true })) {
+        const rel = `${relDir}/${e.name}`;
+        if (e.isDirectory()) { walk115(rel); continue; }
+        if (!/\.(js|mjs)$/.test(e.name)) continue;
+        if (read(rel).includes("createHash('sha256').update(token")) owners115.push(rel.replace(/^\.\.\/panel\//, 'panel/'));
+      }
+    };
+    walk115('../panel');
+    if (owners115.length !== 1) {
+      problems.push(`WebUI 口令派生在 panel/ 里应恰好 1 处，实测 ${owners115.length} 处：`
+        + `${owners115.join(', ') || '0 处（那说明整处派生没了）'}`);
+    }
+  }
+  subHit('外部私有协议面');
+
+  // ② 两步私有路由：名字必须在**同一个函数体**里被调用（钉名字 + 位置，不钉实现）。
+  if (qBody) {
+    const missing115 = ['/api/auth/login', '/api/QQLogin/RefreshQRcode'].filter((p) => !qBody.includes(p));
+    if (missing115.length) {
+      problems.push(`私有路由名 ${missing115.join('、')} 不在 refreshNapcatQrcode() 体内 —— `
+        + '这两条是 NapCat 自己的 URL、OneBot v11 没有对应能力；改名等于把两步协议拆断，'
+        + '症状是"换码按钮点了没反应"而不是任何异常');
+    }
+    if (!/httpJson\((?:port|usedPort), '\/api\/auth\/login'/.test(qBody) && !/httpJson\(/.test(qBody)) {
+      problems.push('refreshNapcatQrcode() 里已经没有 httpJson() 调用 —— 私有协议面被换掉时本节应当被重新评审，而不是静默通过');
+    }
+  }
+  subHit('外部私有协议面');
+
+  // ③ 端口漂移候选：必须"先读配置里的真实端口，再补有限个近邻"。
+  const candBody = fnSlice(srv115, 'function webuiPortCandidates(', 40);
+  if (!candBody) {
+    problems.push('抽不出 webuiPortCandidates() 的函数体 —— 端口漂移这条判据失去作用域');
+  } else {
+    if (!/readNativeWebuiPort\(\)/.test(candBody)) {
+      problems.push('webuiPortCandidates() 不再先读 readNativeWebuiPort() —— 配置里的端口是用户自己填的那一个，'
+        + '丢掉它就变成"只探硬编码默认口"');
+    }
+    const drift = /for \(let i = 1; i <= (\d+)/.exec(candBody);
+    if (!drift || Number(drift[1]) < 1) {
+      problems.push('webuiPortCandidates() 里的 base+N 近邻候选没了或退化成 0 —— '
+        + 'NapCat 的 WebUI 端口被占会 +1 重试且**不回写配置**（实测），只认配置就会去敲一个没人的门');
+    } else if (Number(drift[1]) > 10) {
+      problems.push(`WebUI 近邻候选扩到 ${drift[1]} 个 —— 每 3 秒的换码链路上要串行试这么多个端口，`
+        + '等于把"点了没反应"做成真的没反应（4 个足以覆盖真实漂移）');
+    }
+  }
+  subHit('外部私有协议面');
+
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else {
+    console.log('✓ 外部私有协议面（A 批 C3）：WebUI 口令派生形状在位且全 panel 恰好 1 处 · '
+      + '两步私有路由名住在同一函数体内（/api/auth/login → /api/QQLogin/RefreshQRcode）· '
+      + '端口漂移候选仍是"先读真实端口 + base+1..4 近邻"（上限 10，防把换码链路拖死）· '
+      + '三条抽出失败一律当失败（子判据 3 条，§51 核下限）');
+  }
+}
+
+// 116) G4 tag 的**唯一入口**与**闸门分离**（2026-10-20 · 维护者批准「执行方案 2，把 g4-tag 挂进 finish 链」）。
+//
+// 为什么值得一整段（而不是并进 §71 的发布面那节）：
+//   打 tag 是**不可逆**的公开写操作 —— AGENTS.md §4 记着 0.1.2 那次的收场是"人工把版本号退回
+//   0.1.1、并撤回该编号"。而在此之前 G4 这一步**只存在于对话与技能里**：仓内没有一个可执行的入口，
+//   下一次要打标只能靠人手工敲 curl —— 手工那一次既没有闸门、也没有验收。
+//   本段把三件事钉成静态判据：**唯一入口在哪**、**它必须长什么样**、**谁驱动它**。
+//
+// ⚠️ 判据一律沿用 §115 的三步法（`read()` 剥注释 → `fnSlice` 配平取体 → 钉语句形状），
+//    且**抽不到函数体就当场报红** —— 不接受"没比对出差异"当通过：有人把 create() 整块改名，
+//    "名字在别处出现过"式的判据会照样报绿。
+//
+// ⚠️ ④「传输必须是 curl」看着像代码口味，其实不是，它是**这台机器的物理事实**：
+//    本机 Node 的 fetch 与 node:https **过不了 TLS**（`unable to verify the first certificate`，
+//    要 `--use-system-ca` 才行），而同一 URL 用 curl 拿 200（实测），与
+//    `~/.qqbot/api-push-ai-bot-groupmate.mjs:16` 同一个根因。
+//    ⇒ "顺手改回 fetch"在别人的机器上是**绿的**、在这台机器上必红，而且红在发布那一刻。
+//      这条只写在注释里挡不住下一个人，必须进契约。
+//
+// ⚠️ 本段**刻意不挂 subHit**（§100/§101/②/§103 同例，判据都落在 `problems` 上，由段数下限兜）。
+//    这里还多一条别的段没有的理由：⑥ 的输入是**仓外件** —— 在对外拷贝里它最多贡献 1 次命中、
+//    在没有 `~/.qqbot/` 的 CI 上贡献 0 次。挂进 `HEAVY_SUB_MIN` 就等于给同一个桶写一个
+//    "三台机器三种值"的下限，取高了 CI 必假红、取低了形同没取（§51⑤ 的口径）。
+{
+  const problems = [];
+  const g4Rel = 'scripts/g4-tag.mjs';
+  const mockRel = 'scripts/mock-github-server.mjs';
+
+  if (IS_PUBLISH_COPY) {
+    // 反向断言（§71 同规：**不"跳过"** —— 跳过 = 静默放水；改成方向相反的断言）。
+    // 这两个按设计住在 `HOLD_BACK_ROOT` 里（写死本机凭据路径 + 维护者发布工具 ⇒ 无对外价值），
+    // 出现在对外拷贝里就说明排除面坏了；而"公开仓里躺着一个能直接写 GitHub tag 的脚本"
+    // 本身就是多一个攻击面。
+    const leaked116 = [g4Rel, mockRel].filter((r) => fs.existsSync(path.join(REPO, r)));
+    if (leaked116.length) {
+      problems.push(`对外拷贝里出现了 ${leaked116.join('、')} —— 两者都在 HOLD_BACK_ROOT 里按设计持有不发；`
+        + '出现在拷贝里说明 `make-publish-copy` 的排除面与这份名单已经不一致（泄漏本机发布工具布局）');
+    }
+  } else {
+    const g4Src = fs.existsSync(path.join(REPO, g4Rel)) ? read(`./${path.basename(g4Rel)}`) : '';
+
+    // ① 在位 + 关键函数**抽得出**（抽不到＝本段其余判据全部失去作用域）。
+    const bodies116 = {
+      makeApi: fnSlice(g4Src, 'export function makeApi('),
+      check: fnSlice(g4Src, 'export function check('),
+      create: fnSlice(g4Src, 'export function create('),
+      verify: fnSlice(g4Src, 'export function verify('),
+      main: fnSlice(g4Src, 'function main()'),
+    };
+    const lost116 = Object.entries(bodies116).filter(([, v]) => !v).map(([k]) => k);
+    if (!g4Src) {
+      problems.push(`${g4Rel} 不在位或读不出来 —— G4 打 tag 这一步又回到"靠人手工敲 curl"（没有闸门、没有验收的那条老路）`);
+    } else if (lost116.length) {
+      problems.push(`${g4Rel} 里抽不出这些关键函数体：${lost116.join('、')} —— 唯一入口的形状变了，`
+        + '本段其余判据正在对一个不存在的东西报"通过"（§115 同规：抽不到就当失败）');
+    }
+  
+    // ② 写路径**唯一**且带批准闸门；且**不许**长成"创建 Release"的样子（那是 G6，另一道闸门）。
+    if (g4Src) {
+      const c2 = bodies116.create || '';
+      const m2 = bodies116.main || '';
+      const noPostLine = c2.split('\n').filter((l) => l.includes("'POST'") && !/git\/refs/.test(l) && !/__test\//.test(l));
+      const relShape = g4Src.split('\n').filter((l) => l.includes("'POST'") && /releases/i.test(l));
+      const missing = [];
+      if (!/argv\.includes\('--approved'\)/.test(m2)) missing.push("批准闸门判定 `argv.includes('--approved')`");
+      if (!/api\('POST'/.test(c2) || !/git\/refs/.test(c2)) missing.push("唯一的写调用 `api('POST' … /git/refs`");
+      if (!c2.includes('refs/tags/')) missing.push("`refs/tags/` 前缀");
+      if (noPostLine.length) missing.push(`除 git/refs 之外还有 ${noPostLine.length} 行 POST 写调用`);
+      if (relShape.length) missing.push(`出现了创建 Release 的 POST 形态（G6 属另一道闸门）`);
+      if (missing.length) {
+        problems.push(`${g4Rel} 的写路径形状不再满足「唯一 + 带批准闸门」：缺 ${missing.join(' · ')} —— `
+          + '这条是 G4 的实体：少了 --approved 判定，任何一次手滑都会把版本号写进不可逆的公开历史');
+      }
+    }
+  
+    // ③ tag 只能指向**远端 main**：CLI 不许出现 `--sha` 这第二个入口。
+    //    ⚠️ 判据跑在 `read()`（已剥注释）上 —— 文件头那段说明**本来就要提**"不提供 --sha"，
+    //      按原始 blob 数会当场假红（§115 立这条规矩的同款理由）。
+    if (g4Src && /--sha\b/.test(g4Src)) {
+      problems.push(`${g4Rel} 里出现了 --sha 入口 —— 这个参数是**刻意不提供**的：把 tag 打在本地开发 sha 上，`
+        + '等于让"已发布的版本号"指向一份从未进公开血缘的代码（0.1.2 事故的同族形状，AGENTS.md §4）');
+    }
+  
+    // ④ 传输层钉 curl（本机 TLS 事实，见本节头部）。
+    if (g4Src && (!/execFileSync\('curl'/.test(g4Src) || /\bfetch\s*\(/.test(g4Src))) {
+      problems.push(`${g4Rel} 的传输层不再是「execFileSync('curl') 且没有 fetch()」 —— `
+        + '本机 Node 的 fetch/node:https 过不了 TLS（`unable to verify the first certificate`，实测要 --use-system-ca），'
+        + '改回去在别人机器上是绿的、在这台机器上必红，且红在发布那一刻');
+    }
+  
+    // ⑤ 自检在位：`--selftest` 关键字 + mock 夹具**两边都在**（只有关键字没有夹具＝自检跑不起来）。
+    if (g4Src && (!g4Src.includes('--selftest') || !g4Src.includes(path.basename(mockRel))
+      || !fs.existsSync(path.join(REPO, mockRel)))) {
+      const absent = [];
+      if (!g4Src.includes('--selftest')) absent.push('`--selftest` 分支');
+      if (!g4Src.includes(path.basename(mockRel))) absent.push(`${mockRel} 的引用`);
+      if (!fs.existsSync(path.join(REPO, mockRel))) absent.push(`${mockRel} 文件本体`);
+      problems.push(`G4 自检面残缺：缺 ${absent.join(' · ')} —— `
+        + '没有 mock 夹具，这十条断言就只能对着**真 GitHub** 跑（每一断言都是一次写操作），自检会当场死掉');
+    }
+    }
+
+  // ⑥ dev-side：唯一驱动者必须真的接线。
+  //    ⚠️ 这是**仓外件**（`~/.qqbot/`），CI 与别人的机器上永远扫不出 —— 沿用 §34 known-real
+  //      那条口径（"扫不出就不假装全覆盖"）：缺席时**显眼打印跳过**、不阻断，
+  //      在场时才核对。已如实登记为**不可变异盲区**（见 CONTRACTS-HISTORY §116 那一行）。
+  const fin116 = path.join(os.homedir(), '.qqbot', 'finish-ai-bot-groupmate.sh');
+  let finSrc116 = '';
+  try { finSrc116 = fs.readFileSync(fin116, 'utf8'); } catch { /* 缺席 → 下面显眼跳过 */ }
+  if (!finSrc116) {
+    console.log(`⚠ §116⑥ 跳过：本机没有 ${fin116}（发布链驱动者是仓外件，CI 与其它机器上天然扫不到 —— 不是"已通过"）`);
+  } else {
+    // 只比**代码行**：这个文件里关于 `--tag` 的说明注释一大片，按全文 includes 会被注释骗过。
+    const finCode116 = finSrc116.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+    const finMissing = [];
+    if (!/--tag/.test(finCode116) || !/TAG=""/.test(finCode116)) finMissing.push('`--tag` 参数解析');
+    if (!/node "\$DEV\/scripts\/g4-tag\.mjs"/.test(finCode116)) finMissing.push('对仓内唯一入口的调用');
+    if (!/\[\s*-n\s+"\$TAG"\s*\]/.test(finCode116)) finMissing.push('「给了 TAG 才执行」的分叉');
+    if (finMissing.length) {
+      problems.push(`${fin116} 的 ⑧ 步接线残缺：缺 ${finMissing.join(' · ')} —— `
+        + 'G4 与 G3 分离这件事就只剩文档，实际打标仍会跟着 `--approved` 一起溜出去（本段要防的就是这个）');
+    }
+  }
+
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else {
+    console.log(IS_PUBLISH_COPY
+      ? '✓ G4 tag 唯一入口（发布副本侧）：' + `${g4Rel} 与 ${mockRel} 均不在拷贝里（HOLD_BACK_ROOT 排除确实发生）· `
+        + '本段其余五条在副本里没有作用对象，改为这一条反向断言（§71 同规，不静默跳过）'
+      : '✓ G4 tag 唯一入口（§116）：' + `${g4Rel} 在位且五个函数体抽得出 · 写路径唯一 + 带 --approved 判定 + 无创建 Release 形态 · `
+        + '无 `--sha` 第二入口 · 传输钉 execFileSync(\'curl\') 且无 fetch（本机 TLS 事实）· selftest+mock 夹具齐在 · '
+        + 'finish 链 ⑧ 步已接线（仓外件缺席时显眼跳过，登记为不可变异盲区）· 六条抽出失败一律当失败');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §120 · 判据正确性（B1 · 2026-10-21）
+// ══════════════════════════════════════════════════════════════════════════════
+// 这一批修的全是"叶子级判据"，而它们的失败形态**都不会报错**：
+//   · 引用回复只认外层回执 → 线上永远解析不出 id；
+//   · 滴流响应只被空闲超时管 → 一次抓取可以把整条会话队列挂住；
+//   · 信号量同步抛错不归还槽位 → 累计 limit 次后死锁；
+//   · 会话表只 set 不 delete → FIFO 淘汰主群；
+//   · 本机判定用整串正则 → 路径/锚点里的 127.0.0.1 可骗过；
+//   · 背景段从最老开始裁 → 第一个丢的正是段标题。
+// 所以这里盯的是**实现形状**，行为反证在 smoke T404–T409。
+{
+  const problems = [];
+  const read = (rel) => { try { return fs.readFileSync(path.join(REPO, rel), 'utf8'); } catch { return ''; } };
+  const reply = read('src/reply-track.js');
+  if (!/res\?\.data \?\? res/.test(reply)) {
+    problems.push('§120① reply-track 的 messageIdsOf 仍只认 `res.data` —— 线上传入的是已剥壳的内层，引用回复会静默整条失效');
+  }
+  const sf = read('src/safe-fetch.js');
+  if (!/总时限超过/.test(sf) || !/let settled = false/.test(sf) || !/clearTimeout\(deadline\)/.test(sf)) {
+    problems.push('§120② safe-fetch 没有绝对总时限 / done 不幂等 —— 每 9 秒吐 1 字节的滴流仍能无限挂住会话队列');
+  }
+  const au = read('src/async-util.js');
+  if (!/export function createSemaphore/.test(au) || !/active -= 1;\s*\n\s*next\(\);\s*\n\s*reject\(e\)/.test(au)) {
+    problems.push('§120③ 信号量同步抛错没有归还槽位（或实现不在 async-util.js）—— 累计 limit 次后整条闸门死锁');
+  }
+  const idx = read('src/index.js');
+  if (!/let proactiveTickRunning = false;/.test(idx)
+    || !/if \(proactiveTickRunning\) return;/.test(idx)
+    || !/finally \{\s*proactiveTickRunning = false;\s*\}/.test(idx)) {
+    problems.push('§120④ 主动链没有单飞守卫 —— 慢发送跨 30 秒 tick 会重复群发提醒');
+  }
+  if (!/async function tickProactive\(\)/.test(idx)) {
+    problems.push('§120⑤ tickProactive 被改名/拆走 —— §46/§50 的睡眠闸与提醒接线判据会对此真空报绿');
+  }
+  const sc = read('src/session-control.js');
+  if (!/last\.delete\(key\);\s*\n\s*last\.set\(key, rec\)/.test(sc)) {
+    problems.push('§120⑥ 会话“上一轮”表仍是 FIFO（覆盖 key 不刷新顺序）—— 主群会被最先挤掉');
+  }
+  const nr = read('src/net-rules.js');
+  if (!/new URL\(/.test(nr) || !/u\.hostname/.test(nr) || /LOCAL_HOST_RE\.test/.test(nr)
+    || !/const host = hostnameOf\(base\);/.test(nr)) {
+    problems.push('§120⑦ isLocalBase 没有锚到 URL.hostname —— 路径/锚点里的 127.0.0.1 会被误判成本机');
+  }
+  const cb = read('src/context-budget.js');
+  if (!/keepHead/.test(cb) || !/splice\(keepHead, 1\)/.test(cb)) {
+    problems.push('§120⑧ 预算裁剪没有 keepHead —— trimFrom:oldest 的第一个 shift() 会丢掉段标题');
+  }
+  const brain = read('src/brain.js');
+  if (!/trimFrom: 'oldest', keepHead: 1/.test(brain)) {
+    problems.push('§120⑨ 背景段没有声明 keepHead:1 —— 实现有了但这一处没接');
+  }
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else {
+    console.log('✓ 判据正确性（§120）：引用回执双形状 · safe-fetch 绝对总时限 · 信号量同步抛错归还 · '
+      + '主动链单飞接线 · 会话表 LRU · 本机判定锚 host · 背景段保标题');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §121 · 落盘与面板数据安全（B2 · 2026-10-21）
+// ══════════════════════════════════════════════════════════════════════════════
+// 这一批的共同形态：**数据在用户看不见的地方被改坏/泄漏**。
+//   · 面板删一条记忆 → 磁盘顺序永久反转 → 提示词只取最旧 12 条；
+//   · 自动记忆三处整份写非原子 → 断电/两进程交错就整份丢；
+//   · Windows 瞬时 EPERM 只重试一次 → 一次杀软扫描吞掉这次写入；
+//   · `constructor` 当 id 能靠原型属性伪装成"存在"；
+//   · ZIP 先解压再判大小 → 声明 10 字节也能分配几百 MB；
+//   · 请求体超限只 destroy 不 settle → 请求永久挂着；
+//   · 导出 mask=1 只脱敏 config，规则/记忆照样带群号，还把 maxTokens 清空。
+{
+  const problems = [];
+  const read = (rel) => { try { return fs.readFileSync(path.join(REPO, rel), 'utf8'); } catch { return ''; } };
+  const mem = read('src/memory.js');
+  if (!/export function writeAutoMemory\(/.test(mem) || !/\[\.\.\.list\]\.reverse\(\)/.test(mem)) {
+    problems.push('§121① 自动记忆没有唯一整份写口（或写前没有 reverse）—— 面板删一条就会把磁盘顺序永久反转');
+  }
+  if (!/writeTextAtomic\(AUTO_MEMORY_FILE, ''\)/.test(mem) || !/writeTextAtomic\(AUTO_MEMORY_FILE, all\.slice/.test(mem)) {
+    problems.push('§121② 清空/压缩仍是非原子写 —— 断电或并发 append 会整份丢');
+  }
+  const srv = read('panel/server.js');
+  if (!/writeAutoMemory\(rows\)/.test(srv) || /fs\.writeFileSync\(\s*AUTO_MEMORY_PATH/.test(srv)) {
+    problems.push('§121③ 面板删除记忆仍直接写盘（绕开唯一写口与顺序还原）');
+  }
+  const aw = read('src/atomic-write.js');
+  if (!/export function renameWithRetry/.test(aw) || !/e\.code !== 'EBUSY'/.test(aw)) {
+    problems.push('§121④ 原子写没有 EBUSY 退避重试 —— Windows 杀软/索引的一次瞬时占用就会吞掉这次写入');
+  }
+  const cb = read('src/custom-brain.js');
+  if (!/Object\.create\(null\)/.test(cb)) {
+    problems.push('§121⑤ 自定义大脑容器仍是普通对象 —— constructor/__proto__ 可伪装成已存在');
+  }
+  if (!/Object\.hasOwn\(allBrains, id\)/.test(srv) || !/Object\.hasOwn\(brains, wantId\)/.test(srv)) {
+    problems.push('§121⑥ 面板自定义大脑仍用原型属性判存在（`constructor` 会绕过）');
+  }
+  const zip = read('panel/lib/zip.js');
+  if (!/inflateRawSync\(raw, \{ maxOutputLength:/.test(zip)) {
+    problems.push('§121⑦ ZIP 解压没有把 maxOutputLength 传给 zlib —— 声明 10 字节的炸弹仍会先分配几百 MB');
+  }
+  const io = read('panel/lib/http-io.js');
+  if (!/req\.on\('close', \(\) => finish/.test(io)) {
+    problems.push("§121⑧ readBody 超限只 destroy 不 settle —— 请求体超限后 Promise 永不返回");
+  }
+  const ex = read('panel/lib/export-bundle.js');
+  if (/\/key\|token\|secret\/i/.test(ex) || !/const SECRET_KEYS = new Set\(\[/.test(ex)) {
+    problems.push('§121⑨ 导出脱敏仍用宽泛 /key|token|secret/（或精确键表被改名）—— 会误伤 maxTokens');
+  }
+  if (!/maskChatKey\(scopeRaw\)/.test(ex) || !/mask \? hideList\(cfg\?\.allow\?\.groups\)/.test(ex)) {
+    problems.push('§121⑩ 导出 mask=1 没有覆盖规则/记忆里的群号与 chatKey');
+  }
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else {
+    console.log('✓ 落盘与面板数据安全（§121）：记忆唯一写口+顺序还原+原子写 · Windows 退避重试 · '
+      + '自定义大脑 null 原型+hasOwn · ZIP maxOutputLength · readBody close 兜底 · 导出精确脱敏与全文掩码');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §122 · 协议端存活看门狗（B3 · 2026-10-21）
+// ══════════════════════════════════════════════════════════════════════════════
+// 这一批要防的是"端口全绿、事件流已死"：机器人和用户都以为连着，群里 @ 它却没反应。
+// 判据分三层，任何一层缺失都会让这件事重新变成静默失效：
+//   ① 客户端：心跳停摆 → 只 terminate，不自己 #connect（重连仍只有 close 一条路）；
+//      账号掉线（status.online=false / notice bot_offline）只上报、不重连；
+//   ② 判据：存活阶梯只有一份纯函数，面板只转述 code；
+//   ③ 表面：检查表把"端口"与"事件流"分成两格；协议端提示不再写死 NapCat；
+//      安装器不再只用 portOpen 认协议端。
+{
+  const problems = [];
+  const read = (rel) => { try { return fs.readFileSync(path.join(REPO, rel), 'utf8'); } catch { return ''; } };
+  const ob = read('src/onebot.js');
+  if (!/#startWatchdog\(\)/.test(ob) || !/this\.#startWatchdog\(\);/.test(ob)
+    || !/#checkLiveness\(\)/.test(ob) || !/this\.ws\.terminate\(\)/.test(ob)) {
+    problems.push('§122① 看门狗缺失或不再 terminate —— 心跳停摆时连接会一直挂着，重连永远等不到 close');
+  }
+  if (!/botOffline: this\.botOffline/.test(ob) || !/watchdogKills: this\.watchdogKills/.test(ob)
+    || !/reconnects: this\.reconnects/.test(ob) || !/lastDropReason: this\.lastDropReason/.test(ob)) {
+    problems.push('§122② 健康快照缺字段（botOffline/watchdogKills/reconnects/lastDropReason）—— 面板无法区分"掉线"与"停摆"');
+  }
+  if (!/online === false/.test(ob) || !/notice_type === 'bot_offline'/.test(ob)) {
+    problems.push('§122③ 没有识别账号掉线信号（心跳 status.online=false / notice bot_offline）');
+  }
+  const live = read('src/onebot-liveness.js');
+  if (!/export function livenessVerdictOf/.test(live) || /^\s*import\s/m.test(live)
+    || !/health\.botOffline === true/.test(live)) {
+    problems.push('§122④ 存活阶梯不是零依赖纯函数 / 缺 account-offline 分支（或文件被搬走）—— 面板与机器人会各写一份阈值');
+  }
+  const sc = read('panel/lib/state-collector.js');
+  if (!/livenessVerdictOf\(/.test(sc) || !/onebot: \{/.test(sc)) {
+    problems.push('§122⑤ collector 没有下发 state.onebot.verdict —— 页面只能回到"端口通=正常"');
+  }
+  const appSrc = read('panel/next/app.js');
+  if (!/j\(s, \['onebot', 'verdict'\]/.test(appSrc) || !/account-offline/.test(appSrc)) {
+    problems.push('§122⑥ 检查表没有读事件流 verdict（或缺 account-offline 的"不要重启协议端"文案）');
+  }
+  const srv = read('panel/server.js');
+  if (/请先启动 NapCat 并扫码登录/.test(srv)) {
+    problems.push('§122⑦ 面板提示仍写死 NapCat —— 换协议端后每句提示都是错的');
+  }
+  const sn = read('packaging/windows/tools/start-napcat.mjs');
+  if (!/probeOnebotIdentity/.test(sn) || !/const probe = await probeOnebotIdentity\(3000\);/.test(sn)
+    || !/port-occupied-unverified/.test(sn)) {
+    problems.push('§122⑧ 安装器仍只按 3001 端口认协议端 —— 别的 OneBot 实现占端口时会被当成自己人');
+  }
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else {
+    console.log('✓ 协议端存活看门狗（§122）：只 terminate 的重连唯一入口 · 账号掉线只上报 · '
+      + '健康快照字段齐 · 零依赖存活阶梯 · state.onebot 下发 · 检查表分端口/事件流 · 提示不写死 NapCat · 安装器身份核验');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §123 · 优雅停止、首启与安装器参数（B4 · 2026-10-21）
+// ══════════════════════════════════════════════════════════════════════════════
+//  这一批把三件"用户点了却得不到结果"的事收口：
+//    ① Windows 上点「停止」只 taskkill，JS 信号处理器从不执行 ⇒ flushArchive/flushProfiles/
+//       releaseOwnLock/journal 全丢；改走 control-channel 的 shutdown 命令，超时才强杀；
+//    ② `--only=check` 只认空格写法，等号写法会直接跑完整安装；
+//    ③ 非 TTY 下 ask 永不 settle（exit 13）；配置模板还带中文占位群号、owner 面板写不了。
+{
+  const problems = [];
+  const read = (rel) => { try { return fs.readFileSync(path.join(REPO, rel), 'utf8'); } catch { return ''; } };
+  const cc = read('src/control-channel.js');
+  if (!/CONTROL_KINDS = \[[^\]]*'shutdown'/.test(cc)) {
+    problems.push('§123① shutdown 没进控制命令闭集合 —— 面板停止仍只能硬杀');
+  }
+  if (!/CONTROL_MAX_AGE_BY_KIND = \{ shutdown: 30 \* 1000 \}/.test(cc) || !/maxAgeForKind\(rec\.cmd/.test(cc)) {
+    problems.push('§123② shutdown 没有 30 秒寿命（强杀后的旧命令会让下一次启动即退）');
+  }
+  const idx = read('src/index.js');
+  if (!/cmd === 'shutdown'/.test(idx) || !/shutdownStarted/.test(idx) || !/shutdown\('面板停止'\)/.test(idx)) {
+    problems.push('§123③ index 没有消费 shutdown（或没有幂等守卫）—— 命令写了没人执行');
+  }
+  const srv = read('panel/server.js');
+  if (!/issueCommand\('shutdown'\)/.test(srv) || !/clearCommand\(cmd\.id\)/.test(srv)) {
+    problems.push('§123④ stopBridge 没有先发 shutdown、超时清命令 —— Windows 停止仍丢补写');
+  }
+  const one = read('packaging/windows/tools/onekey.mjs');
+  if (!/argValue\('--only'\)/.test(one) || !/startsWith\(`\$\{name\}=`\)/.test(one)) {
+    problems.push('§123⑤ --only=check 仍不生效（只认空格写法）');
+  }
+  const cmn = read('packaging/windows/tools/lib/common.mjs');
+  if (!/process\.stdin\.isTTY/.test(cmn)) {
+    problems.push('§123⑥ ask 没有非 TTY 降级 —— 静默安装会 unsettled await / exit 13');
+  }
+  const gen = read('scripts/make-config-example.mjs');
+  if (/填你的群号/.test(gen)) {
+    problems.push('§123⑦ 配置模板仍写中文占位群号 —— 它会被当成真群号收下');
+  }
+  const sch = read('panel/next/schema.js');
+  if (!/bindSys: 'ownerQq'/.test(sch)) {
+    problems.push('§123⑧ 面板没有 owner.qq 控件 —— 主人私聊叫醒只能手改文件');
+  }
+  const cr = read('panel/lib/config-route.js');
+  if (!/if \(Array\.isArray\(body\.ownerQq\)\)/.test(cr)) {
+    problems.push('§123⑨ /api/config 不接收 ownerQq（或入口判断被摘掉）—— 控件画了也存不下去');
+  }
+  const sc = read('panel/lib/state-collector.js');
+  if (!/source: fs\.existsSync\(CONFIG_FILE\)/.test(sc) || !/owners: cfg\?\.owner\?\.qq/.test(sc)) {
+    problems.push('§123⑩ 状态里没有配置来源 / 主人名单 —— 检查表无法提示"正在用模板"与"私聊为空"');
+  }
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else {
+    console.log('✓ 优雅停止与首启（§123）：shutdown 闭集合+30s 寿命 · index 幂等消费 · stopBridge 先优雅后强杀并清命令 · '
+      + '--only=check 两种写法 · ask 非 TTY 降级 · 模板无占位 · ownerQq 面板可写 · 状态下发来源/主人');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §124 · 直呼豁免与配置数值校验（B5 · 2026-10-21）
+// ══════════════════════════════════════════════════════════════════════════════
+//  群友截图里的"突然不回"就是这一条：单会话 60 条/小时，连 @/私聊一起拦。
+//  直呼类是用户点名要的回复，不该被总量配额静默拦掉；但 1.5 秒与 8 条/分钟仍要生效。
+//  同时把两处 `Number()` 的 NaN 漏网收进 `numOr`，坏 JSON 也不再抛裸 SyntaxError。
+{
+  const problems = [];
+  const read = (rel) => { try { return fs.readFileSync(path.join(REPO, rel), 'utf8'); } catch { return ''; } };
+  const fs1 = read('src/field-schema.js');
+  for (const k of ['temperature', 'interjectChance', 'perMinutePerSession', 'perHourPerSession']) {
+    if (!new RegExp(`\\n  ${k}: \\{`).test(fs1)) {
+      problems.push(`§124① NUM_FIELDS 没登记 ${k} —— 数值校验与面板上下限会各写一份`);
+    }
+  }
+  const cfg = read('src/config.js');
+  if (!/temperature: numOr\('temperature'/.test(cfg) || !/interjectChance: numOr\('interjectChance'/.test(cfg)
+    || !/perHourPerSession: numOr\('perHourPerSession'/.test(cfg)) {
+    problems.push('§124② config.js 仍用裸 Number() 解析 temperature/interjectChance/perHour —— 非数字会变成 NaN');
+  }
+  if (!/配置文件不是合法 JSON/.test(cfg)) {
+    problems.push('§124③ 坏 config.json 仍抛裸 SyntaxError（或静默回落模板）—— 用户不知道该修哪个文件');
+  }
+  const brain = read('src/brain.js');
+  if (!/kind === 'private' \|\| kind === 'named' \|\| kind === 'keyword'/.test(brain)
+    || !/if \(!direct && session\.recentReplies\.length >= perHourPerSession\)/.test(brain)) {
+    problems.push('§124④ 直呼类没有豁免小时上限（或分钟级被一起放开了）—— 60 条后 @ 它也不回');
+  }
+  const idx = read('src/index.js');
+  if (!/throttleReason\(session, Date\.now\(\), \{ kind: decision\.kind \}\)/.test(idx)) {
+    problems.push('§124⑤ 主链路没把 decision.kind 传给限流 —— 豁免逻辑存在但永远收不到 kind');
+  }
+  const sch = read('panel/next/schema.js');
+  if (!/bindSys: 'perHourPerSession'/.test(sch)) {
+    problems.push('§124⑥ 面板没有小时上限控件 —— 用户只能手改 config.json');
+  }
+  const cr = read('panel/lib/config-route.js');
+  if (!/body\.perHourPerSession/.test(cr) || !/Math\.min\(600, Math\.max\(1, body\.perHourPerSession\)\)/.test(cr)) {
+    problems.push('§124⑦ /api/config 没接收/夹取 perHourPerSession（1–600）');
+  }
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else {
+    console.log('✓ 直呼豁免与数值校验（§124）：NUM_FIELDS 四项登记 · config 走 numOr · 坏 JSON 明确报错 · '
+      + '直呼三 kind 豁免小时上限 · 主链路传 kind · 面板小时上限控件与 1–600 夹取');
+  }
+}
+
+// 125) Win-v0.1.2 移植 · 判据叶子与配置地基（2026-10-21）。
+//
+// 这一段盯的是"叶子必须是叶子"与"新配置键必须能往返"：
+//   · 判据叶子一旦 import 了别人，就会被启动链缠住（面板/测试/机器人三边都跑不动）；
+//   · 新配置键不在 readCustom 的白名单里，面板保存一次就会把它抹掉（D17 的老形状）。
+{
+  const problems = [];
+  const read = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
+  const leaves = ['peak', 'anti-template', 'waiting', 'friends', 'nightly', 'heat', 'patrol', 'persona-grade', 'images', 'memory-scope'];
+  for (const n of leaves) {
+    const f = `src/${n}.js`;
+    if (!fs.existsSync(path.join(REPO, f))) { problems.push(`缺少判据叶子 ${f}`); continue; }
+    const src = read(f);
+    if (/^\s*import\s/m.test(src)) problems.push(`${f} 不是零依赖叶子（出现 import）`);
+  }
+  const adopt = read('src/persona-adopt.js');
+  const adoptImports = [...adopt.matchAll(/^\s*import\s+.+?from\s+'([^']+)'/gm)].map((m) => m[1]);
+  if (adoptImports.length !== 1 || adoptImports[0] !== './persona-grade.js') {
+    problems.push(`persona-adopt.js 只许 import ./persona-grade.js（实际 [${adoptImports.join(', ')}]）`);
+  }
+
+  const CC = await import(new URL('../src/custom-config.js', import.meta.url));
+  const d = CC.readCustom({});
+  if (d.peak?.enabled !== true || d.wait?.enabled !== true || d.trigger?.patrol?.enabled !== true) {
+    problems.push('readCustom({}) 的峰谷 / 等待 / 巡逻默认值不是开的（与移植口径不符）');
+  }
+  if (d.allowFriendsPrivate !== true) problems.push('readCustom({}) 的 allowFriendsPrivate 默认不是 true');
+  if (d.image?.send !== false || d.image?.view !== false) problems.push('图片工具默认不是关的（会改变每次请求的工具定义）');
+  if (!d.image?.root) problems.push('custom.image.root 没有默认目录');
+  const rt = CC.readCustom({ custom: { trigger: { scheduled: [{ at: '04:00', prompt: '写摘要', target: 'owner' }] } } });
+  const s0 = rt.trigger.scheduled[0];
+  if (!s0 || s0.prompt !== '写摘要' || s0.target !== 'owner' || s0.text !== '') {
+    problems.push('scheduled 的 prompt/target 经 readCustom 往返后丢了');
+  }
+
+  const T = await import(new URL('../src/tier.js', import.meta.url));
+  if (!T.DECISION_KINDS.includes('patrol') || T.TIER_OF_KIND.patrol !== 'interject') {
+    problems.push('tier 没有把 patrol 登记成稳定决策种类 / interject 档');
+  }
+  const U = await import(new URL('../src/usage.js', import.meta.url));
+  if (U.USAGE_SOURCES.nightly !== 'nightly') problems.push('USAGE_SOURCES 没有 nightly（夜间产出会变成未标注花费）');
+  const RT = await import(new URL('../src/reply-text.js', import.meta.url));
+  if (typeof RT.PATROL_LINE !== 'string' || !RT.PATROL_LINE.length) problems.push('reply-text 没有 PATROL_LINE');
+  const brain = read('src/brain.js');
+  if (!/PATROL_LINE/.test(brain) || !/opts\.patrol/.test(brain)) problems.push('brain 没有接线 PATROL_LINE（巡逻轮提示词缺失）');
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
+  if (!/check-anti-template\.mjs/.test(pkg.scripts?.['check:features'] || '')
+    || !/check-wait-images\.mjs/.test(pkg.scripts?.['check:features'] || '')
+    || !/check:features/.test(pkg.scripts?.verify || '')) {
+    problems.push('package.json 没有把 10 项自检接进 check:features / verify');
+  }
+
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else console.log('✓ Win-v0.1.2 地基（§125）：10 个零依赖叶子 · persona-adopt 只依赖分级 · 新配置键往返 · patrol/nightly/PATROL_LINE 登记 · 自检进 verify');
+}
+
+// 126) Win-v0.1.2 移植 · 人格按群 + 记忆按卡 + 十维分级（2026-10-21）。
+{
+  const problems = [];
+  const read = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
+  const S = await import(new URL('../src/skills.js', import.meta.url));
+  const M = await import(new URL('../src/memory-scope.js', import.meta.url));
+  const R = await import(new URL('../src/memory-record.js', import.meta.url));
+  const card = (id, type, over = {}) => ({ id, kind: 'persona', name: id, enabled: true, scope: { type, id: type === 'global' ? '' : '100' }, fields: {}, ...over });
+  const ctx = { groupId: '100', userId: '888' };
+  if (S.pickPersonaCard([card('g', 'global'), card('G', 'group'), card('U', 'user', { scope: { type: 'user', id: '888' } })], ctx)?.id !== 'U') {
+    problems.push('pickPersonaCard 没有按 人 > 群 > 全局 选卡');
+  }
+  const pack = { id: 'p', kind: 'pack', name: 'p', enabled: true, scope: { type: 'global', id: '' }, background: 'x', triggers: [] };
+  if (S.pickSkillsForPrompt([card('c', 'global'), pack], ctx, '').some((s) => s.kind === 'persona')) {
+    problems.push('角色卡仍然混在技能段里（会抢知识包字数）');
+  }
+  if (M.memoryScopeOf('group:1', 'cardA') !== 'card:cardA' || M.memoryScopeOf('group:1', '') !== 'group:1') {
+    problems.push('memoryScopeOf 的卡/会话键不符合预期');
+  }
+  const rec = (id, text, chatKey, samples = 1) => ({
+    id, kind: 'person', text, detail: '', status: 'confirmed',
+    provenance: { chatKey, userId: '2', subjectId: '', subjectName: '' },
+    samples: Array.from({ length: samples }, (_, i) => ({ at: Date.now() - i * 1000 })),
+    firstSeenAt: Date.now() - 86400000, lastSeenAt: Date.now() - 1000, updatedAt: Date.now() - 1000,
+  });
+  const oldStrong = rec('a', '三年前在这条街开过修船铺', 'group:1', 8);
+  const relevant = rec('b', '香菜可以少放一点', 'group:1');
+  const noHint = R.selectForPrompt([oldStrong, relevant], { chatKey: 'group:1', userId: '2', now: Date.now() });
+  const withHint = R.selectForPrompt([oldStrong, relevant], { chatKey: 'group:1', userId: '2', now: Date.now(), hint: '香菜怎么放' });
+  const fallback = R.selectForPrompt([relevant], { chatKey: 'card:x', fallbackChatKey: 'group:1', now: Date.now() });
+  if (noHint.picked[0]?.id !== 'a') problems.push('没有 hint 时记忆排序不再按旧顺序（巩固度优先）');
+  if (withHint.picked[0]?.id !== 'b') problems.push('给了 hint 后相关记忆没有排到前面');
+  if (fallback.picked.length !== 1) problems.push('启用卡后旧 group:<id> 记忆读不到（会表现为突然失忆）');
+
+  const brain = read('src/brain.js');
+  for (const [name, re] of [
+    ['personaCardFor', /personaCardFor\(evt\)/],
+    ['memoryKeyFor', /memoryKeyFor\(evt, session/],
+    ['syncCard', /syncCard\(session, evt\)/],
+    ['mergeCardFields', /function mergeCardFields\(/],
+    ['card.background', /card\?\.background/],
+    ['card scenes', /cardScenes/],
+  ]) if (!re.test(brain)) problems.push(`brain 缺少 ${name} 接线`);
+
+  const collector = read('panel/lib/state-collector.js');
+  if (!/personaCards: \(custom\.skills \|\| \[\]\)/.test(collector) || !/gradePersonaCard\(sk\)/.test(collector)) {
+    problems.push('面板状态下发没有算 personaCards');
+  }
+  const schema = read('panel/next/schema.js');
+  if (!schema.includes("id: 'cardgrade'") || !schema.includes("t: 'cardGrade'")) problems.push('面板没有角色卡分级页/控件');
+  const app = read('panel/next/app.js');
+  for (const [name, re] of [['cardGrade', /cardGrade: \(x\) =>/], ['skill.snap', /'skill\.snap':/], ['cg.adopt', /'cg\.adopt':/], ['applyAdopt', /function applyAdopt\(/]]) {
+    if (!re.test(app)) problems.push(`面板缺少 ${name} 接线`);
+  }
+  const srv = read('panel/server.js');
+  if (!/path: '\/api\/persona\/adopt', method: 'POST', handler: apiPersonaAdopt/.test(srv)) {
+    problems.push('面板没有登记 /api/persona/adopt');
+  }
+  const wr = srv.slice(srv.indexOf('const WRITE_ROUTES'), srv.indexOf('function isWriteRequest'));
+  if (!wr.includes("'/api/persona/adopt'")) problems.push('认领路由没有归写路由（会绕过 token 与审计）');
+  if (!/ensureUserDirs\(\)/.test(read('src/index.js'))) problems.push('入口没有 ensureUserDirs()（完整包首启缺 data/）');
+
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else console.log('✓ 人格/记忆（§126）：选卡优先级 · 卡不进技能段 · 记忆按卡+旧键回退+相关度 · 24项/场景合并 · 切卡清历史 · 十维页/AI认领/写路由');
+}
+
+// 127) Win-v0.1.2 移植 · 峰谷 / 反模板 / 等待 / 图片（2026-10-21）。
+{
+  const problems = [];
+  const read = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
+  const idx = read('src/index.js');
+  for (const [name, re] of [
+    ['peak 门禁', /const peakReason = peakSkipReason\(\{/],
+    ['peak 短路', /if \(peakReason\) \{/],
+    ['peak skip', /stage: 'peak'[\s\S]{0,400}unread: null/],
+    ['主动峰谷', /peakQuietForProactive\(now\.getTime\(\), readPeak\(c\.peak\)\)/],
+    ['反模板', /deTemplate\(recentOwn, parsedChunks\)/],
+    ['反模板 trace', /rec\.template = \{ hit: tmpl\.hit, changed: tmpl\.changed \}/],
+    ['连发合并', /function enqueueWithMerge\(evt\)/],
+    ['合并只群聊', /evt\?\.message_type !== 'group'\) return enqueueFor\(evt\)/],
+    ['合并 key', /const key = `\$\{scene\}:\$\{chatId\}:\$\{evt\.user_id \?\? ''\}`/],
+    ['拟人停顿', /humanDelayMs\(/],
+    ['垫话同出口', /deliverFromBot\(scene, id, waitTuning\.holdText\)/],
+    ['正在输入', /set_input_status/],
+    ['图片根', /function imageRootPath\(\)/],
+    ['realpath 防逃逸', /fs\.realpathSync\(file\)/],
+    ['图片注册', /cfg\.custom\?\.image\?\.send === true/],
+    ['看图能力', /supportsVision\(cfg\.llm\?\.model/],
+  ]) if (!re.test(idx)) problems.push(`index 缺少 ${name} 接线`);
+  const iv = (idx.match(/\bsetInterval\b/g) || []).length;
+  const to = (idx.match(/\bsetTimeout\b/g) || []).length;
+  if (iv !== 5 || to !== 6) problems.push(`index 计时器计数变了（setInterval ${iv} / setTimeout ${to}，应 5/6）`);
+  const schema = read('panel/next/schema.js');
+  for (const [name, re] of [
+    ['峰谷页', /id: 'peak', label: '峰谷/],
+    ['等待页', /label: '聊天等待与图片'/],
+    ['wait bind', /bind: 'wait\.enabled'/],
+    ['image bind', /bind: 'image\.send'/],
+    ['image root 控件', /bind: 'image\.root'/],
+  ]) if (!re.test(schema)) problems.push(`面板缺少 ${name}`);
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else console.log('✓ 表达节奏（§127）：峰谷门禁/主动同闸 · 反模板削形+留痕 · 群聊连发合并 · 停顿/垫话/输入态 · 图片目录限制+默认关 · 面板两页');
+}
+
+// 128) Win-v0.1.2 移植 · 好友私聊 / 夜间产出 / 巡逻与热度（2026-10-21）。
+{
+  const problems = [];
+  const read = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
+  const idx = read('src/index.js');
+  for (const [name, re] of [
+    ['好友表', /bot\.call\('get_friend_list'/],
+    ['好友推进', /brain\.setFriendIds\(friendsCache\.ids\)/],
+    ['好友重拉', /friendsCache\.at > FRIENDS_RECHECK_MS/],
+    ['好友 TTL', /friendsCache\.at > FRIENDS_TTL_MS/],
+    ['好友放行日志', /在好友表里 → 按群友接待/],
+    ['好友忽略日志', /\[私聊\] 忽略/],
+    ['夜间 toOwner', /const toOwner = isNightly\(s\) && nightlyTargetOf\(s\) === 'owner'/],
+    ['夜间逐条跳过', /if \(!toOwner && \(asleep \|\| quiet\)\) continue;/],
+    ['夜间 targets', /const targets = toOwner \? \[\{ group: ownerIds\(\)\[0\] \|\| '-', send: true \}\] : planFor\(groups\);/],
+    ['夜间现写', /const body = isNightly\(s\) \? await composeNightly\(s\) : s\.text;/],
+    ['夜间私聊', /if \(toOwner\) await sayToOwner\(body\);/],
+    ['夜间不记群账', /if \(!toOwner\) brain\.markReplied\(sessionOfGroup\(item\.group\)\);/],
+    ['热度记账', /noteHeatTurn\(heatEntryOf\(/],
+    ['热度权重', /const heatWeight = session \? heatWeightOf\(heatEntryOf\(/],
+    ['巡逻计划', /const plan = patrolPlanOf\(\{/],
+    ['巡逻挂 tick', /if \(runPatrolTick\(now\.getTime\(\)\) > 0\) return;/],
+    ['巡逻记账', /if \(decision\.kind === 'patrol' && session\) \{[\s\S]{0,120}heatState\.patrol\[session\.key\]/],
+    ['巡逻不自喂', /!evt\.isPatrol/],
+    ['启动读账本', /loadHeatState\(\);/],
+    ['退出补写', /saveHeatState\(true\);/],
+  ]) if (!re.test(idx)) problems.push(`index 缺少 ${name}`);
+  const brain = read('src/brain.js');
+  if (!/at: Date\.now\(\) \}\);/.test(brain)) problems.push('ambient 条目没有 at 时间（巡逻看不到新消息）');
+  if (!/#friendPrivateAllowed\(evt\)/.test(brain) || !/isFriend\(this\.friendIds/.test(brain)) problems.push('brain 没接好友私聊闸');
+  if (!/allowFriendsPrivate/.test(read('panel/next/schema.js'))) problems.push('面板没有好友私聊开关');
+  const paths = read('panel/lib/paths.js');
+  const bd = read('panel/lib/bot-data.js');
+  if (!/PATROL_SNAPSHOT_FILE = path\.join\(DATA_DIR, 'patrol-state\.json'\)/.test(paths)) problems.push('面板 paths 没有巡逻快照文件');
+  if (!/export function readPatrol\(\)/.test(bd) || !/patrol: readPatrol\(\)/.test(bd)) problems.push('面板 bot-data 没有读巡逻快照');
+  const schema = read('panel/next/schema.js');
+  if (!/bind: 'trigger\.patrol\.enabled'/.test(schema) || !/t: 'patrolView'/.test(schema)) problems.push('面板没有巡逻页/现状控件');
+  const app = read('panel/next/app.js');
+  if (!/patrolView: \(\) => \{/.test(app) || !/\(S\.state \|\| DEMO\)\.patrol/.test(app)) problems.push('面板没有巡逻现状渲染器');
+  if (!/data-p="\$\{i\}\|prompt"/.test(app) || !/data-p="\$\{i\}\|target"/.test(app)) problems.push('面板定时消息没有 prompt/target 输入');
+  if (!/nightly: '夜间产出'/.test(read('panel/lib/usage-report.js'))) problems.push('用量标签缺少 nightly');
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else console.log('✓ 关系与主动（§128）：好友表/失败关闭/双日志 · 夜间 owner 豁免+不记假群账+nightly 账 · 热度/巡逻挂 tick+不自喂 · 面板开关/快照/定时目标');
+}
+
+// 129) Win-v0.1.2 移植 · 假 QQ 虚拟入口（2026-10-21）。
+{
+  const problems = [];
+  const read = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
+  for (const f of ['scripts/fake-qq.mjs', 'scripts/dev-sim.mjs', 'scripts/lib/fake-host.mjs', 'panel/lib/fake-session.js', 'test/check-fake-panel.mjs']) {
+    if (!fs.existsSync(path.join(REPO, f))) problems.push(`缺少 ${f}`);
+  }
+  const fsx = read('panel/lib/fake-session.js');
+  for (const [name, re] of [
+    ['PROGRAM_ROOT', /PROGRAM_ROOT/],
+    ['CONFIG/DATA env', /QQBOT_CONFIG: CONFIG_FILE, QQBOT_DATA_DIR: DATA_DIR/],
+    ['脚本存在预检', /fs\.existsSync\(FAKE_SCRIPT\)/],
+    ['唯一会话', /if \(st\.child\) return/],
+    ['真机冲突拒绝', /env\.bridgeRunning && !sandbox/],
+  ]) if (!re.test(fsx)) problems.push(`fake-session 缺少 ${name}`);
+  const srv = read('panel/server.js');
+  for (const p of ["/api/fake-qq/state", "/api/fake-qq/start", "/api/fake-qq/send", "/api/fake-qq/stop"]) {
+    if (!srv.includes(`path: '${p}'`)) problems.push(`server 没有登记 ${p}`);
+  }
+  const wr = srv.slice(srv.indexOf('const WRITE_ROUTES'), srv.indexOf('function isWriteRequest'));
+  for (const p of ["/api/fake-qq/start", "/api/fake-qq/send", "/api/fake-qq/stop"]) {
+    if (!wr.includes(`'${p}'`)) problems.push(`${p} 没有进 WRITE_ROUTES`);
+  }
+  if (!/fakeDispose\(\);/.test(srv.slice(srv.indexOf('function shutdown'), srv.indexOf('process.on(\'SIGINT\'')))) {
+    problems.push('面板退出没有 fakeDispose()（子进程会变孤儿）');
+  }
+  const schema = read('panel/next/schema.js');
+  if (!schema.includes("id: 'fake'") || !schema.includes("t: 'fakeView'")) problems.push('面板没有假 QQ 页/控件');
+  const app = read('panel/next/app.js');
+  for (const [name, re] of [['fakeView', /fakeView: \(\) =>/], ['fake.start', /'fake\.start':/], ['mountFake', /function mountFake\(/], ['mount 接线', /ids\.has\('fakeView'\)\) mountFake\(\)/]]) {
+    if (!re.test(app)) problems.push(`面板缺少 ${name}`);
+  }
+  const fh = read('scripts/lib/fake-host.mjs');
+  if (!/::ffff:127\.0\.0\.1/.test(fh)) problems.push('假模型地址没有用 IPv4-mapped 回环（macOS 127.0.0.2 不可用）');
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else console.log('✓ 假 QQ（§129）：脚本/进程壳/4 条路由 · 起停说全走 token+审计 · 真机冲突拒绝 · 沙箱隔离 · 面板页/轮询/退出收子进程 · IPv4-mapped 假模型');
+}
+
+// 130) Win-v0.1.2 移植 · 数据与门禁收口（2026-10-21）。
+{
+  const problems = [];
+  const read = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
+  const idx = read('src/index.js');
+  if (!/HEAT_FILE = path\.join\(DATA_DIR, 'heat-state\.json'\)/.test(idx)) problems.push('热度账本不在 DATA_DIR');
+  if (!/PATROL_SNAPSHOT_FILE = path\.join\(DATA_DIR, 'patrol-state\.json'\)/.test(idx)) problems.push('巡逻快照不在 DATA_DIR');
+  if (!/writeJsonAtomic\(HEAT_FILE, heatState, \{ mode: 0o600 \}\)/.test(idx)) problems.push('热度账本没有原子写 + 0600');
+  if (!/writeJsonAtomic\(PATROL_SNAPSHOT_FILE, \{[\s\S]{0,200}mode: 0o600/.test(idx)) problems.push('巡逻快照没有原子写 + 0600');
+  if (!/path\.join\(roots\.dataDir, 'images-out'\)/.test(read('src/user-root.js'))) problems.push('ensureUserDirs 没有预建 images-out');
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
+  const cf = pkg.scripts?.['check:features'] || '';
+  const names = ['check-anti-template', 'check-card-scope', 'check-fake-panel', 'check-friends', 'check-heat-patrol', 'check-nightly', 'check-peak', 'check-persona-adopt', 'check-persona-grade', 'check-wait-images'];
+  for (const n of names) if (!cf.includes(n)) problems.push(`check:features 少了 ${n}`);
+  if (!/check:features/.test(pkg.scripts?.verify || '')) problems.push('verify 没有挂 check:features');
+  const gi = fs.readFileSync(path.join(REPO, '.gitignore'), 'utf8');
+  if (!/(^|\n)\/data\//.test(gi)) problems.push('.gitignore 没有排除 /data/');
+  const sb = fs.readFileSync(path.join(REPO, 'test', 'sandbox.sh'), 'utf8');
+  if (!/'\/data\/'/.test(sb)) problems.push('sandbox.sh 没有排除 /data/');
+  for (const f of ['scripts/fake-qq.mjs', 'scripts/dev-sim.mjs', 'scripts/lib/fake-host.mjs', 'scripts/adopt-card.mjs']) {
+    const t = read(f);
+    /* 不写死本机用户名：既避免发布审计把它当成真实标识符，
+       也更严 —— 任何 `/Users/<name>` 形态的本机绝对路径都该拦。 */
+    if (/\/Users\/[^/\s]+|real QQ|真实的群号/.test(t)) problems.push(`${f} 含本机绝对路径/真实标识符`);
+  }
+  if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
+  else console.log('✓ 数据与门禁（§130）：热度/巡逻状态在 DATA_DIR 且原子 0600 · images-out 自建 · 10 项自检进 verify · data 不进 git/沙箱 · 新脚本无本机路径');
 }
 
 // 51) 自证：这个扫描器**有没有真的在扫**（B11a · AR-SCANNER）。
@@ -15947,6 +16963,259 @@ const LIB_SRC_ALLOW = [
 //    排在中间就只能数到前面的，打印出来的数字会与自己的下限自相矛盾。
 {
   const problems = [];
+
+  // ══ §101 · 分段选择器的滑动高亮块（`.seg-hp` · 2026-10-20 新增）══════════════════
+  //     背景：`.seg` 有 5 处实例，原来的选中态是「每个选项各自变底色」—— 没有滑动指示器。
+  //     本轮从 Watermelon Highlight（MIT）抄了「一块绝对定位的块按选中项 offset 滑动」这个机制，
+  //     改造成水平轴 + 按 `:checked` 定位。这一段盯的是**抄过来之后最容易静默退化的五处**：
+  //       ① 块必须真的被插进 DOM（否则画面不动，但页面照常工作）；
+  //       ② 过渡必须引用令牌 `--dur` / `--ease`（写死 480ms 会与全站节奏脱钩）；
+  //       ③ `prefers-reduced-motion` 必须有 `transition: none`（前庭敏感用户）；
+  //       ④ 每次 `paintPage` 重建后必须重挂（3 秒轮询 ⇒ 漏了就是"高亮闪一下消失"）；
+  //       ⑤ 监听必须**委托一次**（每重建绑一次 = 监听器随轮询累积，本仓反复踩过的泄漏形状）。
+  //     ⚠️ 前三条判 CSS、后三条判 JS：失效形态不同 —— 前者画面还在只是不对，
+  //        后者是"看起来正常但功能没了"。分开判，不合成一条。
+  //     ⚠️ 本条**不挂 subHit**：判据都落在 `problems` 上，故不进 `HEAVY_SUB_MIN` 表
+  //        （同 §100 的先例：整段被跳过由段数下限兜）。
+  {
+    const { readNextAsset: readSeg } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
+    const cssSeg = stripComments(readSeg('style.css').raw);
+    const appSeg = stripComments(readSeg('app.js').raw);
+    if (!/\.seg\s+\.seg-hp\s*\{[^}]*position:\s*absolute/.test(cssSeg)) {
+      problems.push('§101：style.css 里没有 `.seg .seg-hp{position:absolute…}` —— 滑动高亮块没有定位基准，'
+        + '`.seg` 的 5 处实例全部静默退化回"每个选项各自变底色"（画面照常，只是没有滑动）');
+    }
+    /* ⚠️⚠️ **必须只看 `positionSegHp` 的函数体**，不能全文匹配 —— 本轮实测的假绿：
+       `M.reducedMotion()` 在 `syncNavIndicator` / `syncNav2Indicator` 里也有；
+       `segDurMs(` 只要**定义**还在，调用处换成写死的 160 也照样绿。
+       两处正文变异（M1/M2）因此都 NOT-BLOCKED，是变异器把判据的粗粒度照出来的。 */
+    const segFn = (/function positionSegHp\([\s\S]*?\n\}/.exec(appSeg) || [''])[0];
+    if (!/hp\.animate\(/.test(segFn)) {
+      problems.push('§101：`positionSegHp` 里没有 `hp.animate(` —— `paintPage` 每次整页重建 `#page`，'
+        + '点一下旧节点就被换掉；用 CSS 过渡的版本**永远不会动**（真机实测 120ms 内节点已卸载）');
+    }
+    if (!/function\s+segDurMs\s*\(/.test(appSeg) || !/getPropertyValue\('--dur'\)/.test(appSeg)) {
+      problems.push('§101：动画时长没有从 `--dur` 令牌读（`segDurMs` + `getPropertyValue(\'--dur\')`）—— '
+        + '写死上游的 480ms 会与全站节奏脱钩');
+    }
+    if (!/duration:\s*segDurMs\(hp\)/.test(segFn)) {
+      problems.push('§101：`positionSegHp` 的 `hp.animate` 没有用 `duration: segDurMs(hp)` —— '
+        + '只要**定义**还在、调用处写死 160 也能过（本轮变异 M2 抓到的假绿形状）');
+    }
+    if (!/M\.reducedMotion\(\)/.test(segFn)) {
+      problems.push('§101：`positionSegHp` 自己没判 `M.reducedMotion()` —— 别处（两个 nav 指示器）有不算：'
+        + '本条变异 M1 就是把这一处删掉，全文匹配抓不到它');
+    }
+    if (!/data-seg="\$\{esc\(x\.id/.test(appSeg)) {
+      problems.push('§101：`RENDER.seg` 没有输出 `data-seg` —— 跨重绘记不住上一位置，'
+        + '动画只能从 0 宽度长出来（或干脆不动），且不会有任何报错');
+    }
+    if (!/function\s+mountSegHp\s*\(/.test(appSeg)) {
+      problems.push('§101：app.js 里没有 `mountSegHp(` —— 块不会被插进 DOM，高亮永不出现（而页面照常工作）');
+    }
+    if (!/markTiltables\(\);\s*\n\s*mountSegHp\(\);/.test(appSeg)) {
+      problems.push('§101：`mountSegHp()` 没有紧跟在 `markTiltables()` 之后（两者都在 `onPageShown` 里）—— '
+        + '`paintPage` 每 3 秒整页重建，漏了这次重挂就是"高亮闪一下消失"（且不报错）');
+    }
+    if (!/document\.addEventListener\('change'[\s\S]{0,240}?positionSegHp\(/.test(appSeg)) {
+      problems.push('§101：`.seg` 的 change 事件没有走委托 —— 给每次重建的新元素各绑一次监听，'
+        + '监听器会随 3 秒轮询累积（本仓反复踩过的泄漏形状）');
+    }
+    console.log('✓ 分段选择器滑动高亮（§101）：块有定位基准 · 位移走 WAAPI（CSS 过渡跨不过重绘）· '
+      + '时长读 --dur 令牌 · 减弱动效有判 · data-seg 跨重绘记位置 · 每次重建重挂 · change 走委托');
+  }
+
+  // ══ §102 · 五份「只靠存在性白名单兜着」的资产，补行为级判据（2026-10-20）══════
+  //     背景：§101 之前实测，面板 12 份 JS 里只有 6 份被按名写进契约；换行为锚点重验后，
+  //     下面这五份**确实没有任何行为判据** —— 它们只被 `NEXT_ASSETS` 的"文件还在不在"兜着。
+  //     失效形态统一是"页面照常打开、某个功能悄悄没了"，没有任何东西会红。
+  //     每一条都判**接线**（谁调谁），不判实现细节：
+  //       ① morph.js：`Morph.create` 必须在重挂前销毁（3 秒重建 ⇒ 不销毁就是每轮多一份 rAF 订阅）；
+  //       ② liquid-toggle.js：总闸 `LIQUID_ON` 必须真的被读，且 `.liq-host` 必须由 RENDER.switch 挂上；
+  //       ③ ticks.css / mountTicks：上一批的解除函数必须先回收（`_tickClean.splice(0)`）；
+  //       ④ icons.js：图标表必须被**消费**（`Icons.icon(`）且有 `has()` 兜底，不许内联 SVG 另起一套；
+  //       ⑤ demo-state.js：**有 token 时首屏绝不许先摆演示数据**（`S.state = DEMO` 必须只出现在
+  //          `!HAS_TOKEN` 的分支里 —— 否则用户看到的是一屏"看起来很正常的假数据"）。
+  //     ⚠️ 同 §101：不挂 subHit（判据都在 `problems` 上），整段被跳过由段数下限兜。
+  {
+    const { readNextAsset: readA } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
+    const appA = stripComments(readA('app.js').raw);
+    const iconsA = stripComments(readA('icons.js').raw);
+
+    if (!/for \(const rec of _morphMap\.values\(\)\)[\s\S]{0,160}?destroy/.test(appA) || !/_morphMap\.clear\(\);/.test(appA)) {
+      problems.push('§102①：`mountMorphIcons` 没有在重挂前销毁上一批（`_morphMap` 里逐个 destroy + clear）—— '
+        + '`paintPage` 每 3 秒整页重建，不销毁就是每轮多一份动画订阅（rAF 泄漏），页面看着完全正常');
+    }
+    const liqGate = /const LIQUID_ON = (true|false);/.test(appA);
+    const liqRead = /if \(!LIQUID_ON \|\| !window\.LiquidToggle\) return;/.test(appA);
+    const liqHost = /LIQUID_ON && !unsupported \? ' liq-host'/.test(appA);
+    if (!liqGate || !liqRead || !liqHost) {
+      problems.push('§102②：`liquid-toggle` 的接线断了（总闸声明 / 挂载前读闸 / `RENDER.switch` 挂 `liq-host` 三者缺一）—— '
+        + '缺任一处，开关会静默退化成原生样式，或总闸关掉后仍在跑液态效果');
+    }
+    if (!/function mountTicks\(\)[\s\S]{0,220}?_tickClean\.splice\(0\)/.test(appA)) {
+      problems.push('§102③：`mountTicks` 没有先回收上一批（`_tickClean.splice(0)`）—— '
+        + '3 秒重建后旧监听仍挂在已被丢弃的节点上，拖拽/键盘会同时改两次值');
+    }
+    const iconCalls = (appA.match(/Icons\.icon\(/g) || []).length;
+    if (!/global\.Icons = \{/.test(iconsA) || !/icon\s*:/.test(iconsA) || !/has\s*:/.test(iconsA)) {
+      problems.push('§102④：`icons.js` 的导出面不对（必须有 `global.Icons` 且含 `icon` 与 `has`）—— '
+        + '`has()` 是 morph 动画前的兜底：少了它，未知图标名会被当成合法 key 传下去（画不出来且不报错）');
+    }
+    if (iconCalls < 3) {
+      problems.push(`§102④：app.js 里只有 ${iconCalls} 处 \`Icons.icon(\` —— 图标表没被真正消费`
+        + '（多半是有人内联了 SVG 另起一套，两个来源会各自漂移）');
+    }
+    const demoAssign = appA.split('\n').filter((l) => /S\.state\s*=\s*DEMO/.test(l));
+    const unguarded = demoAssign.filter((l) => !/HAS_TOKEN/.test(l));
+    if (!demoAssign.length || unguarded.length) {
+      problems.push('§102⑤：`S.state = DEMO` 出现在没有 `HAS_TOKEN` 守卫的位置 —— '
+        + '有 token 时首屏会先摆一屏**演示数据**（看起来正常、其实是假的；2026-10-12 真机截图抓到过）');
+    }
+    /* ⑥ 右键浮层（2026-10-20 · 只改呈现层）：行为与信息一字未改，只把居中 modal 换成锚点浮层。
+       失效形态都是"菜单飘在屏幕外 / 关不掉"，且没有任何报错。 */
+    if (!/function openCtxMenu\(ev, title, info, items\)/.test(appA)) {
+      problems.push('§102⑥：app.js 里没有 `openCtxMenu(ev, title, info, items)` —— 右键会退回居中 modal'
+        + '（不是错，但与本轮"锚点浮层"的裁决不符，且没人会发现回退了）');
+    }
+    if (/closest\('\[data-brain\]'\)[\s\S]{0,700}?modal\(/.test(appA)) {
+      problems.push('§102⑥：`contextmenu` 处理器里又出现了 `modal(` —— 呈现层被改回居中弹窗'
+        + '（行为没坏，但"锚点旁边弹出"这个体验静默消失）');
+    }
+    if (!/Math\.min\(ev\.clientX, window\.innerWidth - mw - pad\)/.test(appA)
+      || !/Math\.min\(ev\.clientY, window\.innerHeight - mh - pad\)/.test(appA)) {
+      problems.push('§102⑥：浮层没有按视口夹紧（`innerWidth - mw - pad` / `innerHeight - mh - pad`（offset 尺寸，不含缩放））——'
+        + '在右下角右键时菜单有一半在屏幕外，而且看起来只是"位置怪"');
+    }
+    if (!/e\.key === 'Escape'[\s\S]{0,40}closeCtxMenu\(\)/.test(appA)) {
+      problems.push('§102⑥：没有 Escape 关闭 —— 键盘用户只能点鼠标才能关掉浮层');
+    }
+    if (!/if \(rebuildNav\) \{\s*closeCtxMenu\(\);\s*renderNav1\(\);/.test(appA)) {
+      problems.push('§102⑥：`closeCtxMenu()` 不在 `if (rebuildNav)` 分支里 —— '
+        + '要么切页不关（菜单跨页残留），要么轮询也关（菜单活不过 3 秒，用户看不清就没了）');
+    }
+    console.log('✓ 五份无行为契约的资产（§102）：morph 先销毁 · 液态总闸三处接线 · ticks 先回收 · '
+      + `图标表被消费（${iconCalls} 处）+ has 兜底 · 演示数据只走无 token 分支`);
+  }
+
+  // ══ §103 · 二级导航滑块（`.nav2-ind` · 2026-10-20 新增）══════════════════════
+  //     背景：二级导航原先用 `.sub[aria-selected]::after` 的 `scaleX` 下划线，
+  //     样式注释里写着三条"下划线更省"的理由。但按 `MOTION-METHODOLOGY §6.4` 的三条准入
+  //     （有序状态 / 用户反复拨 / **位移承载语义**），导航三条全中 —— 一级已按 S2 做，
+  //     二级停在 S1，属"教规与实物不一致"。本轮把二级也升到 S2。
+  //     这一段盯的是升级后最容易静默退化的七处：
+  //       ① 滑块不是**静态元素**（放进了 `renderNav2` 的 innerHTML 里 ⇒ 每次切页从 0 长出来）；
+  //       ② 没有绝对定位（掉进文档流，滑动失效但元素还在）；
+  //       ③ 退役的 `::after` 又回来了（两套指示器叠在一起，肉眼像"双下划线"）；
+  //       ④ `syncNav2Indicator` 没在 `renderNav2` 之后调用（切页后不滑）；
+  //       ⑤ 没在 `paintPage(false)` 里调用（3 秒轮询后与选中项脱钩）；
+  //       ⑥ 没减 `scrollLeft`（窄屏横向滚动后与按钮错开，且不报错）；
+  //       ⑦ 没用 `Motion` 驱动（改回 CSS 过渡 ⇒ 与 §101 同一个坑：跨重建必死）。
+  //     ⚠️ 同 §101/§102：不挂 subHit，整段被跳过由段数下限兜。
+  {
+    const { readNextAsset: readA } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
+    const entryA = readA('index.html').raw;
+    const cssA = stripComments(readA('style.css').raw);
+    const appA = stripComments(readA('app.js').raw);
+
+    /* ⚠️ 锚 `class="nav2wrap"` 而不是 `.nav2wrap`：后者在**注释里**先出现一次（`--nav2-cut` 那段），
+       会让判据锚到注释上、永远测不到实物（本轮实测：距离 -215 字符）。 */
+    const inWrap = /class="nav2wrap"[^>]*>[\s\S]{0,900}?id="nav2Ind"/.test(entryA);
+    if (!/id="nav2Ind"/.test(entryA) || !inWrap) {
+      problems.push('§103①：入口页没有 `#nav2Ind`，或它不在 `.nav2wrap` 里 —— 滑块必须**静态存在**于 wrap 内'
+        + '（放进 `renderNav2` 的 innerHTML 就会每次切页从 0 长出来，滑动感当场消失）');
+    }
+    if (!/\.nav2-ind\s*\{[^}]*position:\s*absolute/.test(cssA)) {
+      problems.push('§103②：`.nav2-ind` 没有绝对定位 —— 它会掉进文档流（滑动失效但元素仍在，肉眼像多了一条线）');
+    }
+    if (/\.sub\[aria-selected="true"\]::after\s*\{/.test(cssA)) {
+      problems.push('§103③：退役的 `.sub[aria-selected="true"]::after` 又回来了 —— 与 `.nav2-ind` 叠成两套指示器');
+    }
+    if (!/function\s+syncNav2Indicator\s*\(/.test(appA)) {
+      problems.push('§103④：app.js 里没有 `syncNav2Indicator(` —— 滑块不会被定位');
+    }
+    if (!/function renderNav2\(\)[\s\S]{0,600}?syncNav2Indicator\(false\)/.test(appA)) {
+      problems.push('§103④：`renderNav2()` 之后没有调 `syncNav2Indicator(false)` —— 切页重建后滑块不更新（且不报错）');
+    }
+    if (!/aria-selected', String\(i === S\.si\)\)\);\s*\n\s*syncNav2Indicator\(false\);/.test(appA)) {
+      problems.push('§103⑤：`paintPage(false)` 更新完 `aria-selected` 之后没有同步滑块 —— '
+        + '3 秒轮询后它与选中项脱钩（表现是"切了页，线还留在上一项"）');
+    }
+    if (!/sel\.offsetLeft \+ NAV2_INSET - nav\.scrollLeft/.test(appA)) {
+      problems.push('§103⑥：滑块坐标没有减 `scrollLeft` —— 窄屏 `.nav2` 横向滚动后与按钮错开，'
+        + '而且不会有任何报错（本仓典型的静默失效）');
+    }
+    if (!/M\.animate\(ind\.x, x, NAV2_SPRING\)/.test(appA)) {
+      problems.push('§103⑦：滑块不是 `Motion` 驱动（改回了 CSS 过渡）—— `paintPage` 每次整页重建，'
+        + 'CSS 过渡跨不过重建（§101 已经踩过：真机 120ms 内节点被换掉，逐帧采样只有 2 个值）');
+    }
+    console.log('✓ 二级导航滑块（§103）：静态在 wrap 内 · 绝对定位 · 旧下划线已退役 · 切页/轮询两处同步 · '
+      + 'scrollLeft 补偿 · Motion 驱动');
+  }
+
+  // ══ §131 · 二级滑块「同步幂等 + 取数回环」（2026-10-21 新增）════════════════
+  //     背景（真机视频）：二级横线会乱跑、消失、位置错。根因是两层叠出来的：
+  //       ① 「日志与审计」页的 loadLogs()/loadAudit() 每次取完数都 softPaint()，
+  //          而 paintPage() 又会经 onPageShown() 再调它们 ⇒ **本地取数回环**
+  //          （实测每秒上千次重画）；
+  //       ② syncNav2Indicator() 每次被调用都 stop() + animate()，高频重启让弹簧
+  //          带着当前速度反复重来，速度指数发散（实测 translateX(66662px) /
+  //          width(21304px)），滑块冲出 `.nav2wrap` 后被 clip-path 裁掉。
+  //     ⇒ 教训不是"弹簧参数不对"，而是**重复同步必须是空操作**：同一个目标再同步
+  //        一百次也不该重启一次动画；数据没变就不该重画。
+  //     四条判据各自对应上面一处失效面，缺一条都会以"看起来像动画"的形式复活。
+  {
+    const { readNextAsset: readA } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
+    const app131 = stripComments(readA('app.js').raw);
+    const css131 = stripComments(readA('style.css').raw);
+    const body131 = (sig) => {
+      const i = app131.indexOf(sig);
+      if (i < 0) return '';
+      const b = app131.indexOf('{', i);
+      return b < 0 ? '' : braceAt(app131, b);
+    };
+    const nav1b = body131('function syncNavIndicator(');
+    const nav2b = body131('function syncNav2Indicator(');
+    const bind1b = body131('function bindNavIndicator(');
+    const bind2b = body131('function bindNav2Indicator(');
+    const logsb = body131('async function loadLogs(');
+    const auditb = body131('async function loadAudit(');
+    /* 早退必须在 `ind.anims.forEach(...)` **之前**：写在后面 = 先停掉在途动画再返回，
+       等于没修（弹簧每一帧从当前位置重新起步，速度照样发散）。 */
+    const idem = (b) => /if \(!instant && ind\.inited[\s\S]{0,200}?Math\.abs\(ind\.tx - x\) < 0\.5[\s\S]{0,120}?Math\.abs\(ind\.tw - w\) < 0\.5\) return;/.test(b);
+    const stopsAfterReturn = (b) => {
+      const m = /if \(!instant && ind\.inited[\s\S]{0,200}?return;/.exec(b);
+      if (!m) return false;
+      const ret = b.indexOf(m[0]);
+      const stop = b.indexOf('.anims.forEach');
+      return stop > ret;
+    };
+    if (!idem(nav2b) || !stopsAfterReturn(nav2b)) {
+      problems.push('§131①：syncNav2Indicator 没有「目标未变 → return」的早退（或早退写在 stop 之后）—— '
+        + '每次重画都会重启弹簧，重复重启会数值发散（真机：translateX 到 6 万 px，横线消失）');
+    }
+    if (!idem(nav1b) || !stopsAfterReturn(nav1b)) {
+      problems.push('§131①：syncNavIndicator（一级灵动岛）同样缺少早退 —— 同一条重画回环会把一级滑块也拖进同一个发散');
+    }
+    if (!/if \(!reset && !fresh\.length\) return;/.test(logsb) || !/softPaint\(\)/.test(logsb)) {
+      problems.push('§131②：loadLogs 没有「没有新行 → return」的守卫 —— 它末尾的 softPaint() 会经 onPageShown '
+        + '再次调用它，形成本地取数回环（每秒上千次重画）');
+    }
+    if (!/if \(S\.extra\.auditSig === sig\) return;/.test(auditb) || !/softPaint\(\)/.test(auditb)) {
+      problems.push('§131②：loadAudit 没有「内容未变 → return」的守卫 —— 同上，会形成取数回环');
+    }
+    const finite = (b) => /Number\.isFinite\(x\)[\s\S]{0,80}?Number\.isFinite\(w\)[\s\S]{0,80}?return;/.test(b);
+    /* 写样式的 apply 住在 bind* 里，不在 sync* 里 —— 取错函数体会让这条判据永远红（本轮自证抓到）。 */
+    if (!finite(bind1b) || !finite(bind2b)) {
+      problems.push('§131③：两个滑块的写样式回调没有挡非有限值 —— 数值一旦坏了，CSS 会静默忽略 transform、'
+        + '或让 width 变成 0（横线"消失但不报错"）；sync 里的 bad 分支也接不住 NaN');
+    }
+    if (!/\.nav2-ind \{[\s\S]{0,160}?bottom: 6px;[\s\S]{0,80}?height: 3px;/.test(css131)) {
+      problems.push('§131④：`.nav2-ind` 的位置/粗细不是 2026-10-21 用户要求的值（bottom:6px / height:3px）'
+        + '—— 改回 3px/2px 会重新贴住玻璃下缘且变细');
+    }
+    console.log('✓ 二级滑块（§131）：目标未变早退 ×2 · 日志/审计无变化不重画 · 非有限值拦截 · 横线 6px/3px');
+  }
 
   // ① 契约块数下限。`ran + 1` 里那个 +1 就是**本段自己**（本段也走 console.log、也被计入），
   //    于是这里比的是"算上本段一共多少段"，与 `process.on('exit')` 的口径完全一致。
@@ -16070,7 +17339,7 @@ const LIB_SRC_ALLOW = [
 //       ⚠️ 如实登记的弱点：1 条 subHit 只能说"这一段的入口执行过了"，
 //          它**拦不住"段内某一条判据被删"**（那要靠 `problems` 里的判据本身）。
 //          留 1 而不是不留，是因为不留它就完全不在表里 —— 而"整段消失"是本项目反复踩的那一类。
-const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 18], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 11], ['子进程窗口', 4], ['配置模板可运行', 5], ['启动链路检查表', 1], ['写操作回报', 1]];
+const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1]];
   for (const [bucket, min] of HEAVY_SUB_MIN) {
     const c = subCountOf(bucket);
     if (c < min) {

@@ -42,6 +42,11 @@ const argOf = (name) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? String(process.argv[i + 1] || '') : '';
 };
+/** 同时认 `--name=value` 与 `--name value`。帮助文案宣传的是等号写法，解析就必须认它。 */
+const argValue = (name) => {
+  const eq = process.argv.find((a) => a.startsWith(`${name}=`));
+  return eq ? eq.slice(name.length + 1) : argOf(name);
+};
 const has = (...names) => names.some((n) => process.argv.includes(n));
 
 // ── ② 版本校验的呈现 ─────────────────────────────────────────────────────────
@@ -75,7 +80,7 @@ async function main() {
   diag(`一键安装启动 v${VERSION}（参数：${process.argv.slice(2).join(' ') || '无'}）`);
 
   const yes = has('--yes', '-y');
-  const onlyCheck = argOf('--only') === 'check';
+  const onlyCheck = argValue('--only') === 'check';
   const updateNode = has('--update-node');
   const noShortcut = has('--no-shortcut');
   const noBrowser = has('--no-browser');
@@ -85,7 +90,7 @@ async function main() {
   const env = await collectEnv();
   for (const it of env) {
     const tag = it.level === 'ok' ? ok : it.level === 'warn' ? warn : bad;
-    // 只报**不合格**的：11 项全打印一遍，用户要找的那条会被淹掉
+    // 只报**不合格**的：12 项全打印一遍，用户要找的那条会被淹掉
     if (it.level !== 'ok') { tag(`${it.name}：${it.detail}`); if (it.fix) dim(`      ↳ 怎么办：${it.fix}`); }
   }
   const fatal = env.filter((i) => i.level === 'err');

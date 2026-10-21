@@ -168,6 +168,14 @@ panel/*.tmp
 #    `test/sandbox.sh`（rsync 排除）—— 三处由 check-wb 的契约一起盯着。
 /data/
 
+# 协议端源码取证的快照留存（2026-10-19 调研线）：里面是**第三方项目的完整源码副本**
+# （NapCat / SnowLuma / LLBot / Lagrange，合计数十 MB、解压后上百分支快照）。
+# 判据不是「体积大」而是语义：这些是**别人的许可件**，我们的发布链按 `git ls-files` 取文件，
+# 一旦它们被跟踪，就等于把第三方源码并进对外发布面 —— 与 THIRD-PARTY-NOTICES
+# 「不链接/不修改/不复制、不随仓库分发」直接冲突。所以必须锚定到仓库根（不带前导斜杠
+# 会匹配任意层级，把 docs 里将来可能出现的 research/ 子目录一起吞掉）。
+/research/
+
 # Docker 构建素材：deb/zip 加起来 226MB，由 docker/napcat/fetch-*.sh 可重新获取，
 # 入库只会让仓库膨胀且无法用 diff 看清变化。脚本本身要入库。
 docker/napcat/linuxqq.deb

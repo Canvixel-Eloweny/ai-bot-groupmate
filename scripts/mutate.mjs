@@ -44,7 +44,7 @@
  *  ══════════════════════════════════════════════════════════════════════════
  *  用法
  *  ══════════════════════════════════════════════════════════════════════════
- *    node scripts/mutate.mjs <plan.mjs> [--layer check-wb|smoke|sandbox|panel|none]
+ *    node scripts/mutate.mjs <plan.mjs> [--layer check-wb|backend|smoke|sandbox|panel|none]
  *                                     [--only M1,M3] [--timeout 600] [--json]
  *    node scripts/mutate.mjs --restore          # 从 pristine 复原所有文件
  *    node scripts/mutate.mjs --selftest         # 自证：一条必被拦住 + 一条必不被拦住
@@ -133,6 +133,9 @@ function syntaxOk(file) {
 
 const LAYERS = {
   'check-wb': { cmd: 'node', args: ['scripts/check-wb.mjs'], why: '契约层' },
+  // L3 聚合适配层：独立静态门（2026-10-20）。判据族与 check-wb 不同，跑一次 ~1s，
+  // 所以这一层的变异不必等一遍完整 smoke。
+  backend: { cmd: 'node', args: ['scripts/check-backend.mjs'], why: 'L3 后端适配契约' },
   smoke: { cmd: 'node', args: ['test/smoke.js'], why: '动态层' },
   sandbox: { cmd: 'bash', args: ['test/sandbox.sh', '--run'], why: '沙箱全量（presets + panel）' },
   panel: { cmd: 'bash', args: ['test/sandbox.sh', '--run'], why: '沙箱（只看面板那一行）' },
@@ -147,7 +150,7 @@ const LAYERS = {
  * ⚠️ 沙箱层**恒 `exit 0`**（脚本跑完测试就 exit 0），所以那一层必须解析文本。
  */
 function judge(layer, code, out) {
-  if (layer === 'check-wb') {
+  if (layer === 'check-wb' || layer === 'backend') {
     const marks = (out.match(/^✗/gm) || []).length;
     return { blocked: code !== 0 || marks > 0, why: marks ? `${marks} 行 ✗` : `exit=${code}` };
   }
@@ -194,6 +197,11 @@ function cardinality(layer, out) {
     const has = Number(m?.[1] || 0);
     const min = Number((fs.readFileSync(abs('scripts/check-wb.mjs'), 'utf8').match(/MIN_CONTRACTS = (\d+)/) || [])[1] || 0);
     return { value: has, min, label: '契约段数' };
+  }
+  if (layer === 'backend') {
+    const m = out.match(/BACKEND_CHECKS=(\d+)/);
+    // 26 条判据；留 2 条余量（新增判据时抬下限，不能沉默地少跑）。
+    return { value: Number(m?.[1] || 0), min: 24, label: 'L3 判据数' };
   }
   if (layer === 'smoke') {
     const m = out.match(/(\d+)\/(\d+) 通过/);

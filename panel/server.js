@@ -22,7 +22,7 @@ import {
 //    共用会让会话列表永远只有 3 条记录里的 1~2 个会话 —— 而页面看起来是正常的。
 import { readTrace, TRACE_SHOWN, TRACE_AGGREGATE } from './lib/trace-io.js';
 import {
-  listAutoMemory, clearAutoMemory, readRecords, reviewRecordById, recallForPrompt,
+  listAutoMemory, clearAutoMemory, writeAutoMemory, readRecords, reviewRecordById, recallForPrompt,
   AUTO_MEMORY_FILE as AUTO_MEMORY_PATH,
 } from '../src/memory.js';
 // 结构化记忆的**判据表**（状态中文名 / 该显示哪些按钮 / 淡忘程度）。
@@ -97,6 +97,8 @@ import {
 import { createUpdater } from './lib/update.js';
 import { makeUpdateRoute } from './lib/update-routes.js';
 import { makeOfflineInstallerRoute, makeOfflinePrepareRoute } from './lib/update-offline.js';
+// 假 QQ 会话（2026-10-21 · Win-v0.1.2 移植）：面板侧的进程壳，会话逻辑仍在 scripts/fake-qq.mjs。
+import { fakeSnapshot, fakeStart, fakeSend, fakeStop, fakeDispose } from './lib/fake-session.js';
 // ── 控制台页面是哪一套（2026-10-02 · 新版成为**唯一**控制台）───────────────
 //
 // 历史：旧页面曾是 `panel/parts/` 下 16 个片段按 `PARTS` 拼装的一份 HTML（`GET /`），
@@ -115,7 +117,7 @@ import { readBotData } from './lib/bot-data.js';
 import { sessionsFromTrace, sessionRecordsOf, chatsFromArchive, chatDetailOf } from './lib/sessions.js';
 // 控制通道（D6b · Q7 裁决①「命令文件轮询」）。下发命令 / 读回结果 / 中文名表
 // 三件事的面板侧实现都在 lib 里，这里只做读盘渲染 + 一条写路由 —— 判据一处都不重写。
-import { CONTROL_LABELS, controlStateOf, issueCommand } from './lib/control.js';
+import { CONTROL_LABELS, controlStateOf, issueCommand, clearCommand } from './lib/control.js';
 import { applySettingsPatch } from '../src/plugin-settings.js';
 // H-03（2026-10-05 · 第 10 轮 · 开源前审查）：人格文件的**路径包含性判据**复用唯一实现。
 // 它是零依赖叶子（`panel/lib/ext-install.js` 早已在用它），面板侧不许再写第二份 `..` 判断
@@ -171,7 +173,10 @@ import { makeConfigRoute } from './lib/config-route.js';
 // `providerOf` / `isLocalBase` **不再由 `lib/models.js` 转发**（谁实现谁导出）。
 // 直接引真身：它同时是机器人进程判钱、查询余额判服务商、以及下发给页面的
 // `provider` 字段的唯一来源 —— 一份实现，三个消费方，没有第二份可漂。
-import { providerOf, isLocalBase, providerHostOk, consoleHostReject } from '../src/net-rules.js';
+import { providerOf, isLocalBase, providerHostOk, consoleHostReject, onebotEndpointOf } from '../src/net-rules.js';
+// L3 归一层（2026-10-20）：面板 HTTP 侧与机器人 WS 侧共用同一条"业务成功"判据，
+// 不许一边 `status==='ok'`、另一边再判一次（两份判据必然漂）。
+import { classifyOneBotReply } from '../src/backend/normalize.js';
 // ── 「这笔花不花钱」的唯一判据（2026-10-07 · 接千问时从 lib/models.js 收敛到 src）──
 // 与上面 net-rules 同款：**谁实现谁导出**，主文件直接引真身，不经 lib 转发。
 // 加千问之前，"免费"这件事在三个地方各有一份名单；再加一家会让份数从 3 涨到 4。
@@ -303,6 +308,11 @@ const WRITE_ROUTES = new Set([
   '/api/update/check', '/api/update/download', '/api/update/cancel', '/api/update/install',
   // P4 离线更新：prepare 验签/暂存，installer 收原始 EXE 并校验；都会落盘。
   '/api/update/offline/prepare', '/api/update/offline/installer',
+  // 角色卡 AI 认领：花一次模型调用并记入账本；结果只是预览，不直接改配置。
+  '/api/persona/adopt',
+  // 假 QQ：起 / 说 / 停 = 进程控制，且会写数据（沙箱时写临时目录）。
+  // 少了这三行会绕过鉴权与审计（isWriteRequest 是两者的共同判据）。
+  '/api/fake-qq/start', '/api/fake-qq/send', '/api/fake-qq/stop',
 ]);
 
 /** 这次请求是不是"一次改动"。审计与将来的鉴权共用它。 */
@@ -432,6 +442,20 @@ const PORT_RELEASE_WAIT_MS = 2500;
 const ONEBOT_PROBE_TIMEOUT_MS = 2500;
 const ONEBOT_PROBE_GAP_MS = 2000;
 const ONEBOT_READY_DEADLINE_MS = 60000;
+
+/**
+ * 协议端**探测地址**的唯一取法：配置里机器人连的那条（判据本体住 `src/net-rules.js`
+ * 的 `onebotEndpointOf()`，本函数只是"从配置取一份"的薄接线，不含任何判断）。
+ *
+ * ⚠️ 这个文件里原本有五处把 `3000` / `3001` 直接写在调用上：`apiGroups` 与启动等待打的是
+ * HTTP 3000，`autoStartNapcatIfInstalled`、`apiNapcatRestart` 与 SSE 心跳判的是 WS 3001
+ * —— 而 SSE 那颗还把结果当 `proto` 字段**每 3 秒推给页面**。写死的后果不是报错，而是
+ * **换了端口的部署上面板连探都不探**：屏幕上「协议端」永远"断"、「登录账号」永远"未登录"，
+ * 机器人却照常收发（用户在真机上报过一次一模一样的形状，那一半由 §96⑧ 钉在
+ * `state-collector.js` 上）。**§96⑧ 只扫那一个文件**，所以本文件这一半长期没有闸 ——
+ * 现在由 §96⑧b 盯着这里，配 `win-53.mjs` 的 M11–M13 三条变异。
+ */
+const onebotProbePorts = () => onebotEndpointOf(readConfig()?.onebot);
 /** 「重启机器人」两次动作之间的沉降：等进程真的没了，再去起下一个。 */
 const BRIDGE_SETTLE_MS = 1200;
 /** 报错正文回显给页面的长度：够看清卡在哪一步，又不至于把整份 docker 输出塞进响应。 */
@@ -1549,12 +1573,32 @@ async function stopBridge() {
     return { ok: false, msg: '机器人没在运行' };
   }
 
-  // 并行收：killTree 自带 TERM →（等 grace）→ KILL，串行做会变成"点一次停止等 3 秒 × N"。
-  await Promise.all(all.map((p) => killTree(p, KILL_GRACE_MS)));
+  // 先走优雅退出（Windows 上 `taskkill /T` 不投递 JS 信号，补写会整段丢）：
+  // 写一条 shutdown 控制命令 → 每 200ms 看进程是否消失，最多 6 秒。
+  let how = 'kill';
+  const cmd = issueCommand('shutdown');
+  if (cmd.ok) {
+    for (let i = 0; i < 30 && all.some((p) => pidAlive(p)); i += 1) {
+      await new Promise((s) => setTimeout(s, 200));
+    }
+    if (!all.some((p) => pidAlive(p))) {
+      how = 'shutdown';
+    } else {
+      // 强杀前把这条没被执行的命令清掉：否则下一次启动会"起来即退出"。
+      clearCommand(cmd.id);
+    }
+  }
+
+  // 优雅退出没成（或命令发不出去）：并行收。killTree 自带 TERM →（等 grace）→ KILL，
+  // 串行做会变成"点一次停止等 3 秒 × N"。
+  if (all.some((p) => pidAlive(p))) {
+    await Promise.all(all.map((p) => killTree(p, KILL_GRACE_MS)));
+  }
   for (let i = 0; i < 20 && all.some((p) => pidAlive(p)); i += 1) {
     await new Promise((s) => setTimeout(s, 300));
   }
   const left = all.filter((p) => pidAlive(p));
+  if (how !== 'shutdown') how = left.length ? 'forced' : 'kill';
 
   state.bridge = null;
   state.bridgePid = null;
@@ -1566,10 +1610,12 @@ async function stopBridge() {
   }
   return {
     ok: true,
+    how,
     // 如实报数：清掉 1 个和清掉 4 个是两件事，藏起来就等于把这次事故又变成隐形的
-    msg: all.length > 1
-      ? `机器人已停止（共清掉 ${all.length} 个实例：${all.join(', ')}）`
-      : `机器人已停止（pid ${all[0]}）`,
+    msg: (all.length > 1
+      ? `机器人已停止（共清掉 ${all.length} 个实例：${all.join(', ')}`
+      : `机器人已停止（pid ${all[0]}`)
+      + `，方式：${how === 'shutdown' ? '优雅退出（补写已完成）' : how === 'kill' ? '信号停止' : '强制结束'}）`,
   };
 }
 
@@ -2137,11 +2183,20 @@ async function apiConfigUndo(req, res, url) {
 const apiConfig = makeConfigRoute({ baseUrlReject, sameUrl, bridgeRunning, waitEffectiveApplied });
 
 async function apiGroups(req, res, url) {
-  const r = await httpGet(3000, '/get_group_list', 10000);
+  const r = await httpGet(onebotProbePorts().httpPort, '/get_group_list', 10000);
   if (!r.ok) return sendJson(res, { ok: false, error: '协议端还没连上', groups: [] });
   try {
-    const j = JSON.parse(r.body);
-    const groups = (j.data || []).map((g) => ({ id: String(g.group_id), name: g.group_name || '' }));
+    const rep = classifyOneBotReply(JSON.parse(r.body));
+    if (!rep.businessOk) {
+      // ⚠️ 以前这里只判 `j.status==='ok' || retcode===0`，且失败时也回 `ok:true + 空表` ——
+      //    "列群失败"在界面上长得像"这个号一个群都没有"。现在失败就说失败。
+      return sendJson(res, {
+        ok: false,
+        error: `协议端返回业务失败：${rep.message || rep.code}`,
+        groups: [],
+      });
+    }
+    const groups = (rep.data || []).map((g) => ({ id: String(g.group_id), name: g.group_name || '' }));
     return sendJson(res, { ok: true, groups });
   } catch {
     return sendJson(res, { ok: false, error: '返回内容解析失败', groups: [] });
@@ -2250,7 +2305,8 @@ async function apiSwitch(req, res, url) {
   //    保住内置那套 —— 而它对自定义是 no-op（判据在 `PRESET_KEYS.includes` 里）。
   if (target === 'custom') {
     const id = String(body.id || '').trim();
-    const one = customBrainsOf(cfg).brains[id];
+    const allBrains = customBrainsOf(cfg).brains;
+    const one = Object.hasOwn(allBrains, id) ? allBrains[id] : null;
     if (!one) {
       say(`✗ 找不到这套自定义大脑（id=${id || '空'}）`);
       return sendJson(res, { ok: false, steps, error: `找不到这套自定义大脑（id=${id || '空'}）` }, 400);
@@ -2439,7 +2495,7 @@ async function apiCustomBrainSave(req, res, url) {
   const { brains } = customBrainsOf(cfg);
 
   const wantId = String(body.id || '').trim();
-  const editing = (wantId && brains[wantId]) || null;
+  const editing = (wantId && Object.hasOwn(brains, wantId) && brains[wantId]) || null;
 
   // ── 地址：新增必填，编辑时留空 = 不改 ──
   const rawBase = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '';
@@ -2545,7 +2601,7 @@ async function apiCustomBrainRename(req, res, url) {
   cfg.llm = cfg.llm || {};
   const id = String(body.id || '').trim();
   const name = String(body.name ?? '').trim();
-  if (!id || !cfg.llm.customBrains?.[id]) {
+  if (!id || !Object.hasOwn(cfg.llm.customBrains || {}, id)) {
     return sendJson(res, { ok: false, error: '找不到这套大脑（可能已被删掉）' }, 404);
   }
   // ⚠️ 名字清空时**回落到兜底名**而不是存一个空串 —— 界面上会显示一个没有名字的按钮，
@@ -2571,7 +2627,7 @@ async function apiCustomBrainDelete(req, res, url) {
   const cfg = readConfig() || {};
   cfg.llm = cfg.llm || {};
   const id = String(body.id || '').trim();
-  if (!id || !cfg.llm.customBrains?.[id]) {
+  if (!id || !Object.hasOwn(cfg.llm.customBrains || {}, id)) {
     return sendJson(res, { ok: false, error: '找不到这套大脑（可能已经删过了）' }, 404);
   }
   const gone = cfg.llm.customBrains[id];
@@ -2663,12 +2719,13 @@ async function apiOnekeyStart(req, res, url) {
     ? '… 等待协议端就绪，同时启动本机模型（并行）'
     : '… 等待 QQ 协议端就绪');
 
-  const onebotTask = waitFor(async () => (await httpGet(3000, '/get_login_info', ONEBOT_PROBE_TIMEOUT_MS)).ok, ONEBOT_READY_DEADLINE_MS, ONEBOT_PROBE_GAP_MS)
+  const onebotHttpPort = onebotEndpointOf(cfg?.onebot).httpPort;
+  const onebotTask = waitFor(async () => (await httpGet(onebotHttpPort, '/get_login_info', ONEBOT_PROBE_TIMEOUT_MS)).ok, ONEBOT_READY_DEADLINE_MS, ONEBOT_PROBE_GAP_MS)
     .then((ok) => {
       // ⚠️ Windows 上的失败原因**不是**"扫码/容器"：NapCat 是个独立窗口的应用，
       //    最常见的情形是用户压根没启动它。提示必须指向那里，否则会把人引去翻容器。
       say(ok ? '✔ 协议端已就绪' : (IS_WIN
-        ? '✗ 协议端没响应 —— 请先启动 NapCat 并扫码登录（它是个单独的窗口，不在容器里）'
+        ? '✗ 协议端没响应 —— 请先启动协议端并完成登录（NapCat / SnowLuma 等；它是个单独的窗口，不在容器里）'
         : '✗ 协议端没响应（可能要扫码登录，看左侧状态）'));
       return ok;
     });
@@ -2706,7 +2763,7 @@ async function apiOnekeyStart(req, res, url) {
   const failed = [];
   if (!onebotReady) {
     failed.push(IS_WIN
-      ? '协议端没响应 —— 请先启动 NapCat 并扫码登录（它是个单独的窗口，不在容器里）'
+      ? '协议端没响应 —— 请先启动协议端并完成登录（NapCat / SnowLuma 等；它是个单独的窗口，不在容器里）'
       : '协议端没响应（可能要扫码登录，看左侧状态）');
   }
   if (needLocal && !localReady) failed.push('本机模型没起来');
@@ -2891,10 +2948,8 @@ async function apiCustomMemoryDelete(req, res, url) {
   const body = await readBody(req);
   const rows = listAutoMemory().filter((m) => m.id !== String(body.id || ''));
   try {
-    fs.writeFileSync(
-      AUTO_MEMORY_PATH,
-      rows.map((m) => JSON.stringify(m)).join('\n') + (rows.length ? '\n' : '')
-    );
+    // `listAutoMemory()` 是「最新在前」，磁盘是「最旧在前」—— 顺序还原在唯一写口里做。
+    writeAutoMemory(rows);
     pushLog('· 已删除 1 条自动记忆');
     return sendJson(res, { ok: true, msg: '已删除' });
   } catch (e) {
@@ -3223,7 +3278,8 @@ async function autoStartNapcatIfInstalled() {
     pushLog('· 协议端未安装 —— 打开「总览 → 运行 → 运行状态」，点『自动查找并安装』（会扫描下载/桌面里已解压的 NapCat）');
     return;
   }
-  if (await portOpen(3001)) { pushLog('· 协议端已经在运行（3001 有应答）—— 没有重复拉起'); return; }
+  const { wsPort } = onebotProbePorts();
+  if (await portOpen(wsPort)) { pushLog(`· 协议端已经在运行（${wsPort} 有应答）—— 没有重复拉起`); return; }
   const r = startNativeNapcat({});
   pushLog(r.ok ? `✔ ${r.msg}` : `✗ ${r.msg}`);
 }
@@ -3296,14 +3352,15 @@ async function apiNapcatRestart(req, res, url) {
   // ⚠️ 已经在跑时**不重启**：NapCat 的重启 = 掉登录态 = 要重新扫码。
   //    "拉起"是用户这一刻真正需要的；"重启"留给以后做成显式动作。
   if (nativePresent() && !(await cachedDockerUp())) {
-    if (await portOpen(3001)) {
-      pushLog('· 协议端已经在运行（3001 有应答）—— 没有重启它（重启会掉登录态）');
+    const { wsPort } = onebotProbePorts();
+    if (await portOpen(wsPort)) {
+      pushLog(`· 协议端已经在运行（${wsPort} 有应答）—— 没有重启它（重启会掉登录态）`);
       return sendJson(res, { ok: true, output: '协议端已经在运行 —— 没有动它' });
     }
     // ⚠️ 没登录时**真重启**（杀干净再拉起）：以前这里只 `startNativeNapcat()`，
     //    旧的 NapCat 还活着 ⇒ 点多少次"重启协议端"二维码都不会换（2026-10-13 真机）。
     pushLog('… 重启协议端（先停掉旧的，再拉起）');
-    const r = await restartNativeNapcat(killTree);
+    const r = await restartNativeNapcat(killTree, { wsPort: onebotProbePorts().wsPort });
     pushLog(r.ok ? `✔ ${r.msg}` : `✗ ${r.msg}`);
     return sendJson(res, { ok: r.ok, output: r.msg }, r.ok ? 200 : 400);
   }
@@ -3498,9 +3555,12 @@ async function apiConsoleStream(req, res, url) {
   let closed = false;
   const stop = () => { if (closed) return; closed = true; clearInterval(beat); SSE_CLIENTS.delete(res); };
   // 心跳：既是 liveness（浏览器能自己重连），也把"在不在跑"带下去
+  // ⚠️ WS 端口在**这条流打开时取一次**（不写死 3001）：换端口要重连才生效，而浏览器自己会重连；
+  //    每 3 秒读一次 config.json 不值得。这颗结果是当 `proto` 推给页面的 —— 它就是"屏幕上的端口"。
+  const beatWsPort = onebotProbePorts().wsPort;
   const beat = setInterval(() => {
     if (closed) return;
-    Promise.resolve(portOpen(3001))
+    Promise.resolve(portOpen(beatWsPort))
       .then((proto) => {
         if (closed) return;
         res.write(`event: state\ndata: ${JSON.stringify({
@@ -3597,6 +3657,93 @@ async function apiPanelQuit(req, res, url) {
   return undefined;
 }
 
+/* ══════════════ 角色卡「AI 认领」（2026-10-21 · Win-v0.1.2 移植）══════════
+ * 把一张不标准格式的卡里的文字，归到十维的标准字段上 —— 这是"完整但不标准的卡
+ * 永远分不出级"的解法。提示词与解析都在 `src/persona-adopt.js`（纯函数叶子），
+ * 这里只做进程壳；认领**不直接改配置**：结果先回前端预览，用户点「写进这张卡」
+ * 才合并进草稿，保存仍走 `/api/config`。
+ *
+ * ⚠️ 它花一次模型调用 → 归写路由（token + 审计 + 同源），而不是 READ_ONLY_POST。
+ */
+const ADOPT_TIMEOUT_MS = 110000;
+function runAdopt(payload) {
+  return new Promise((resolve) => {
+    let out = '';
+    let err = '';
+    let done = false;
+    const finish = (r) => { if (!done) { done = true; resolve(r); } };
+    let child;
+    try {
+      child = spawn(NODE, [path.join(PROGRAM_ROOT, 'scripts', 'adopt-card.mjs')], {
+        cwd: PROGRAM_ROOT,
+        env: { ...process.env, QQBOT_CONFIG: CONFIG_FILE },
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+    } catch (e) {
+      return finish({ ok: false, error: `起不来认领脚本：${e?.message || e}` });
+    }
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch { /* 已经退了 */ }
+      finish({ ok: false, error: `认领超时（${Math.round(ADOPT_TIMEOUT_MS / 1000)} 秒）—— 本机模型慢的话再点一次` });
+    }, ADOPT_TIMEOUT_MS);
+    child.stdout.on('data', (c) => { out += c; });
+    child.stderr.on('data', (c) => { err += c; });
+    child.on('error', (e) => { clearTimeout(timer); finish({ ok: false, error: `起不来认领脚本：${e?.message || e}` }); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      const lines = out.trim().split('\n').filter(Boolean);
+      let data = null;
+      try { data = JSON.parse(lines[lines.length - 1] || ''); } catch { /* 下面统一报错 */ }
+      finish(data || { ok: false, error: '认领脚本没输出可解析的 JSON', detail: (out + err).slice(-800) });
+    });
+    // 卡文本走 stdin：它是用户输入，进 argv 会撞上"以 - 开头"和长度两道坑。
+    child.stdin.write(JSON.stringify(payload));
+    child.stdin.end();
+  });
+}
+
+async function apiPersonaAdopt(req, res, url) {
+  const body = await readBody(req);
+  const name = String(body.name || '').slice(0, 40);
+  const text = String(body.text || '').slice(0, 12000);
+  const fields = body.fields && typeof body.fields === 'object' && !Array.isArray(body.fields) ? body.fields : {};
+  if (text.trim().length < 20) {
+    return sendJson(res, { ok: false, error: '这张卡里没有可认领的文字（至少 20 字）' }, 400);
+  }
+  pushLog(`… 角色卡 AI 认领：${name || '未命名'}（${text.length} 字）`);
+  const r = await runAdopt({ name, text, fields });
+  pushLog(r.ok ? `✓ AI 认领：认出 ${r.wrote.length} 维` : `✗ AI 认领失败：${r.error}`);
+  return sendJson(res, r, r.ok ? 200 : 500);
+}
+
+/* ══════════════ 假 QQ 会话（2026-10-21 · Win-v0.1.2 移植）══════════════════
+ * 四条路由只做**转发**：会话逻辑（斜杠命令、什么时候能说话）仍然只有
+ * `scripts/fake-qq.mjs` 那一份实现，这里只是它的进程壳。
+ * ⚠️ start 的"真机器人在不在跑"在**这一层**问：写进 lib 就得在那里引 pidfile/进程扫描。
+ * ⚠️ SANDBOX 只挡"起真机器人"；假 QQ 恰恰是它的替代品，所以这里不拦。
+ */
+async function apiFakeState(req, res, url) {
+  return sendJson(res, fakeSnapshot(Number(url.searchParams.get('since') || 0)));
+}
+
+async function apiFakeStart(req, res, url) {
+  const body = await readBody(req);
+  return sendJson(res, fakeStart(
+    { offline: body.offline === true, sandbox: body.sandbox === true },
+    { bridgeRunning: bridgeRunning() },
+  ));
+}
+
+async function apiFakeSend(req, res, url) {
+  const body = await readBody(req);
+  return sendJson(res, fakeSend(body.text));
+}
+
+async function apiFakeStop(req, res, url) {
+  return sendJson(res, fakeStop());
+}
+
 const apiUpdateState = makeUpdateRoute({ updater: UPDATE, action: 'state' });
 const apiUpdateCheck = makeUpdateRoute({ updater: UPDATE, action: 'check' });
 const apiUpdateDownload = makeUpdateRoute({ updater: UPDATE, action: 'download' });
@@ -3670,6 +3817,13 @@ const API_ROUTES = [
   { path: '/api/panel/quit', method: 'POST', handler: apiPanelQuit },
   // 窗口记忆（2026-10-16）：独立窗口的位置与尺寸上报（页面 resize / 移动 / 关窗前发）。
   { path: '/api/panel/window', method: 'POST', handler: apiPanelWindow },
+  // 角色卡 AI 认领（2026-10-21）：写路由（花一次模型调用、记用量），结果只预览。
+  { path: '/api/persona/adopt', method: 'POST', handler: apiPersonaAdopt },
+  // 假 QQ 会话（2026-10-21）：状态 GET；起 / 说 / 停是 POST（在 WRITE_ROUTES）。
+  { path: '/api/fake-qq/state', handler: apiFakeState },
+  { path: '/api/fake-qq/start', method: 'POST', handler: apiFakeStart },
+  { path: '/api/fake-qq/send', method: 'POST', handler: apiFakeSend },
+  { path: '/api/fake-qq/stop', method: 'POST', handler: apiFakeStop },
 ];
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
@@ -3925,6 +4079,8 @@ function restartPanel() {
 function shutdown() {
   PANEL_SHUTTING_DOWN = true;
   try { UPDATE.stop(); } catch { /* 退出路径不许再抛 */ }
+  // 假 QQ 是面板起的子进程 —— 面板退了她也活不成（它会攥着临时锁，变成孤儿）。
+  try { fakeDispose(); } catch { /* 退出路径不许再抛 */ }
   // 故意不杀机器人：控制台只是「面板」，机器人是独立进程。
   // 要停机器人请用面板里的「一键全停」。
   server.close(() => process.exit(0));

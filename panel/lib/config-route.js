@@ -222,6 +222,13 @@ export function makeConfigRoute(deps) {
     // 私聊白名单（2026-10-12；面板上现在叫「同意私聊的 QQ 号」）。它与 `groups` 是**同一个闸的两半**（brain.js 按消息类型二选一），
     // 所以键名不同、形状与清洗规则必须逐条一致 —— 半扇门开着等于没有门。
     if (Array.isArray(body.privateUsers)) cfg.allow.private = body.privateUsers.map((x) => String(x).trim()).filter(Boolean);
+    // 主人 QQ（顶层 `owner.qq`，2026-10-21）：它是"睡眠叫醒"的唯一身份判据，
+    // 加载时会把主人自动补进 `allow.private`（Q26f 裁决③）。面板此前**写不了**这一格，
+    // 于是"主人私聊叫醒"在界面上既看不见也改不了。只收 5–12 位纯数字，去重。
+    if (Array.isArray(body.ownerQq)) {
+      const owners = [...new Set(body.ownerQq.map((x) => String(x).trim()).filter((q) => /^\d{5,12}$/.test(q)))];
+      cfg.owner = { ...(cfg.owner || {}), qq: owners };
+    }
     // 黑名单。优先级高于白名单（src/brain.js 的 decide() 里先判 deny），
     // 所以界面上要写清楚"进了黑名单就不管白名单了"，否则用户会以为两个都设了是"取交集"。
     cfg.deny = cfg.deny || {};
@@ -229,7 +236,14 @@ export function makeConfigRoute(deps) {
     if (Array.isArray(body.denyUsers)) cfg.deny.users = body.denyUsers.map((x) => String(x).trim()).filter(Boolean);
     cfg.trigger = cfg.trigger || {};
     if (typeof body.requireAtInGroup === 'boolean') cfg.trigger.requireAtInGroup = body.requireAtInGroup;
-    if (typeof body.interjectChance === 'number') cfg.trigger.interjectChance = Math.min(1, Math.max(0, body.interjectChance));
+    if (typeof body.interjectChance === 'number' && Number.isFinite(body.interjectChance)) {
+      cfg.trigger.interjectChance = Math.min(1, Math.max(0, body.interjectChance));
+    }
+    // 单会话小时上限（2026-10-21）：只约束主动/插话；直呼类豁免在 brain.throttleReason 里。
+    if (typeof body.perHourPerSession === 'number' && Number.isFinite(body.perHourPerSession)) {
+      cfg.throttle = cfg.throttle || {};
+      cfg.throttle.perHourPerSession = Math.round(Math.min(600, Math.max(1, body.perHourPerSession)));
+    }
     /* 插话冷却（`trigger.interjectCooldownMs`，2026-10-17）：
        机器人侧从 `src/brain.js` 起就一直在读它（`lastInterjectAt < interjectCooldownMs` ⇒ 不插话），
        而这条路由的 trigger 白名单里**从来没有**它 ⇒ 面板就算画了滑块，保存也会被静默丢掉

@@ -71,11 +71,14 @@ export function forwardSegmentsOf(segments) {
 }
 
 /**
- * 段里那个 id（转发卡片上的 `res_id`）——**只作兜底**。
+ * 段里那个 id（转发卡片上的 resId）——**兜底那一次用的就是它，不是可有可无的一步**。
  *
- * ⚠️ 参考实现的真机实测（2026-09-05，SnowLuma/NapCat）：`get_forward_msg` **只认
- *    `message_id`**；`res_id` 会过期，报 `payload is empty`。所以调用方**先**用
- *    `message_id`，失败了才拿这个 id 再试一次，两个都不行就退回占位符。
+ * ⚠️ 旧注释「协议端只认 `message_id`，`res_id` 会过期报 `payload is empty`」把 **SnowLuma 一家**
+ *    的行为当成了通用行为（2026-10-20 源码取证订正；三家入参都只有 `message_id`/`id` 两个键）。
+ *    实物上这个 id 三家都要：LLBot 把它当**唯一**入口（两个键都按 resId 字符串解读，整数
+ *    message_id 明确不认）、SnowLuma 把它当**首选**（`id` 优先于 `message_id`）、
+ *    NapCat 在拿到非数字时用它做**降级下载**。所以它删不得 —— 判据与逐家出处见
+ *    `src/index.js` 的展开入口和 `docs/DEEP-IMPROVE.md` 的 D23-2 订正段。
  *
  * @param {unknown} segments
  * @returns {string} 没有则空串

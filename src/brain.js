@@ -1,10 +1,13 @@
 import scoped from './logger.js';
 import { supportsVision } from './llm.js';
 import {
-  REPLY_LENGTHS, SCENES, PLAY_RULES, ENHANCE, ENHANCE_KEYS,
+  REPLY_LENGTHS, SCENES, PLAY_RULES, ENHANCE, ENHANCE_KEYS, PERSONA_KEYS,
   activeManualMemory, personaFingerprint,
 } from './custom-config.js';
-import { pickSkillsForPrompt, skillLines } from './skills.js';
+import { pickSkillsForPrompt, pickPersonaCard, skillLines } from './skills.js';
+import { memoryScopeOf } from './memory-scope.js';
+// 好友私聊按群友接待：好友表来自协议端（index.js 拉取），这里只做成员判定。
+import { isFriend } from './friends.js';
 import { autoMemoryForPrompt, recordsForPrompt, recallForPrompt, wantsRecall, RECALL_MAX } from './memory.js';
 import { scanEgress } from './egress.js';
 import { budgetOf, applyBudget, fitHistory, SAVING_DROP } from './context-budget.js';
@@ -42,12 +45,12 @@ import { scanInternalMarks, stripInternalMarks } from './internal-marks.js';
 //    住在 `reply-text.js` 的文本清理族里，不属于任何"功能"。
 import {
   renderSpeakerLine, trailingBlankLines, lateSendReason,
-  REST_LINE_WOKE, REST_LINE_EMERGENCY, REST_LINE_DROWSY, CATCHUP_LINE, restLineOf,
+  REST_LINE_WOKE, REST_LINE_EMERGENCY, REST_LINE_DROWSY, CATCHUP_LINE, PATROL_LINE, restLineOf,
   isBareMedia, escapeRe, stripLinks, stripThink, hardWrap, stripFaceMarks,
 } from './reply-text.js';
 export {
   renderSpeakerLine, trailingBlankLines, lateSendReason,
-  REST_LINE_WOKE, REST_LINE_EMERGENCY, REST_LINE_DROWSY, CATCHUP_LINE, restLineOf,
+  REST_LINE_WOKE, REST_LINE_EMERGENCY, REST_LINE_DROWSY, CATCHUP_LINE, PATROL_LINE, restLineOf,
   isBareMedia, escapeRe, stripLinks, stripThink, hardWrap, stripFaceMarks,
 };
 
@@ -131,6 +134,8 @@ export class Brain {
     this.store = store;
     /** 当前生效的人设指纹，用来判断热重载该不该丢掉旧人设的会话历史 */
     this.fp = personaFingerprint(cfg?.custom, cfg?.persona?.name);
+    /** 好友表（空集 = 还没拉到 / 拉取失败 ⇒ 好友私聊一律不放行） */
+    this.friendIds = new Set();
   }
 
   /**
@@ -174,7 +179,9 @@ export class Brain {
    * B8 又加了一道**纯图/纯表情闸门**（S-BARE，见下方注释）：它同样只是判定，
    * 宽限期取的是 `session.lastReplyAt`，不写任何状态。
    */
-  decide(session, evt, parsed, { now = Date.now(), roll = Math.random(), repliedToMe = false } = {}) {
+  decide(session, evt, parsed, {
+    now = Date.now(), roll = Math.random(), repliedToMe = false, heatWeight = 1, patrol = null,
+  } = {}) {
     const { trigger } = this.cfg;
     const custom = this.cfg.custom || {};
 
@@ -205,7 +212,10 @@ export class Brain {
     //    "是不是我发的"要拿我发过的 id 去比 —— 那件事由 `src/reply-track.js` 回答，
     //    调用方把结论当 `repliedToMe` 传进来（纯函数不许自己去读进程状态）。
     // ⚠️ 默认 `false`：既有的三参调用（含测试）语义**逐字不变**。
-    const named = parsed.mentionedSelf || this.#hasAlias(trigText) || repliedToMe === true;
+    // 巡逻轮的文本是**一批积压的摘要**，里面出现机器人名字/关键词不代表"被点名"——
+    // 不排除的话，摘要里只要有人提过它，巡逻就被判成 named/keyword，绕开巡逻概率。
+    const named = !evt?.isPatrol
+      && (parsed.mentionedSelf || this.#hasAlias(trigText) || repliedToMe === true);
     if (named) {
       const why = parsed.mentionedSelf ? '被 @ 了' : (this.#hasAlias(trigText) ? '叫了名字' : '引了我的话');
       return ok('named', why);
@@ -223,7 +233,7 @@ export class Brain {
     // 它**不受**「必须 @」和主动发言总闸限制：命中关键词是用户写死的规则，
     // 语义上属于"被叫到"，不是"自己插嘴"。把它关在主动发言闸后面，
     // 用户会觉得"我明明设了关键词却不回，是不是坏了"。
-    const hit = this.#hitKeyword(trigText);
+    const hit = evt?.isPatrol ? '' : this.#hitKeyword(trigText);
     if (hit) return ok('keyword', `命中关键词「${hit}」`);
 
     if (trigger.requireAtInGroup) return deny_('群聊未被点名');
@@ -232,6 +242,17 @@ export class Brain {
     // 关掉之后，插话 / 定时主动 / 定时消息**全部**不发声 —— 这是"让它闭嘴"唯一的一处开关，
     // 免得用户要一个个去关三个地方。
     if (custom.allowProactive === false) return deny_('主动发言已关闭');
+
+    // ── 巡逻轮（0.1.1 的 flushGroup：攒了一批积压，问一轮模型接不接）──
+    // 位置固定在主动发言总闸之后：巡逻也是"自己找话"，总闸关掉就该一起停。
+    // 也固定在 requireAtInGroup 之后 —— 用户配了「群里必须 @ 才理」，巡逻开口等于绕过他的设定。
+    // ⚠️ 这里**不再看**插话冷却：巡逻有自己的最短间隔（src/patrol.js 的计划函数）。
+    if (evt?.isPatrol) {
+      if (!patrol) return deny_('巡逻轮缺计划');
+      if (now - (session?.lastDirectAt || 0) < 15000) return deny_('刚被点名过，不巡逻', patrol);
+      if (roll < patrol.chance) return ok('patrol', `巡逻：${patrol.count} 条积压`, patrol);
+      return deny_('巡逻掷骰未中', patrol);
+    }
 
     // ── 纯图 / 纯表情不主动接话（B8 · S-BARE）──
     // 「必须 @」关掉之后，群里有人发张图、一个字都不带，旧实现会一路走到随机插话，
@@ -268,6 +289,12 @@ export class Brain {
       const plan = interjectPlanOf({
         session, now, base: trigger.interjectChance, tuning: interjectTuningOf(trigger),
       });
+      // 热度权重（按人关系温度）：冷的时候就少冒头。与活跃期提权**相乘**，不是二选一；
+      // 两个都只压不放（上限 1）。
+      if (heatWeight < 1) {
+        plan.heatWeight = heatWeight;
+        plan.chance = Math.max(0, Math.min(1, plan.chance * heatWeight));
+      }
       // 用入参 roll 而不是就地 Math.random()：判定要可复现、可被调用两次而不产生差异。
       // 冷却的记账已挪到调用方（冷却的语义是"决策生效了"，属于后果，不属于判定）。
       if (roll < plan.chance) return ok('interject', '随机插话', plan);
@@ -284,6 +311,22 @@ export class Brain {
    * 为它们建会话、记背景消息是纯内存浪费（且只增不减）。
    * 判定只此一份，decide 内部也走这里，两边不会漂移。
    */
+  /**
+   * 「好友私聊按群友接待」：白名单没写他、但他在好友表里 ⇒ 放行。
+   * ⚠️ 表还没拉到（空集）时全部失败关闭；开关 `custom.allowFriendsPrivate` 关掉回旧行为。
+   * ⚠️ 好友不等于管理员：叫醒、夜间产出收件人这些仍由 `isOwner` 判，这里不碰。
+   */
+  #friendPrivateAllowed(evt) {
+    if (this.cfg?.custom?.allowFriendsPrivate === false) return false;
+    return isFriend(this.friendIds, evt?.user_id);
+  }
+
+  /** 协议端好友表（QQ 号集合）。由 `src/index.js` 刷新。 */
+  setFriendIds(ids) {
+    this.friendIds = ids && typeof ids.has === 'function' ? ids : new Set();
+    return this;
+  }
+
   #gateReason(evt) {
     const { allow, deny } = this.cfg;
     if (deny.groups.includes(String(evt.group_id ?? ''))) return '命中群黑名单';
@@ -291,8 +334,14 @@ export class Brain {
     const allowed =
       evt.message_type === 'group'
         ? allow.groups.includes(String(evt.group_id)) || allow.allowAllWhenEmpty
-        : allow.private.includes(String(evt.user_id)) || allow.allowAllWhenEmpty;
-    if (!allowed) return evt.message_type === 'group' ? '群不在白名单' : '对方不在「同意私聊的 QQ 号」里';
+        : allow.private.includes(String(evt.user_id))
+          || allow.allowAllWhenEmpty
+          || this.#friendPrivateAllowed(evt);
+    if (!allowed) {
+      return evt.message_type === 'group'
+        ? '群不在白名单'
+        : '对方不在「同意私聊的 QQ 号」里，也不在好友表里';
+    }
     return '';
   }
 
@@ -365,6 +414,10 @@ export class Brain {
   buildMessagesWithMeta(session, evt, parsed, opts = {}) {
     const { persona, context, reply } = this.cfg;
     const custom = this.cfg.custom || {};
+    // 角色卡（按人 > 按群 > 全局）—— 卡在，就把 24 项人格快照压到全局配置上：
+    // 这是「换群即换人」的唯一落点。没卡时 `card` 为 null，下面全部回落到原样，
+    // 所以老配置的行为逐字不变。
+    const card = this.personaCardFor(evt);
     // 时间注入口（OPS-FIXTURE）：跨轮工作记忆的"约 N 分钟前"是个判据，
     // 判据一旦直接读墙钟，就只能在真机上等 30 分钟才能验一次 —— 那等于没法验。
     const now = Number.isFinite(opts.now) ? opts.now : Date.now();
@@ -381,7 +434,7 @@ export class Brain {
     // 稳定段（前缀缓存要命中的就是它，越靠前越值钱）
     const base = sec('base', '身份与说话方式', { drop: false });
 
-    base.lines.push(`你正在 QQ 上和人聊天。你的名字是「${persona.name}」。`);
+    base.lines.push(`你正在 QQ 上和人聊天。你的名字是「${card?.name || persona.name}」。`);
     base.lines.push('');
     base.lines.push('## 说话方式（很重要）');
     base.lines.push('1. 用日常口语，像真人打字，不要客服腔、不要播音腔。');
@@ -406,7 +459,7 @@ export class Brain {
     // ── 人设：人格文件是"底子"，工作台里填的是"日常人设"，两段一起给 ──
     // 顺序按"模型理解的顺序"排：先"我是谁"，再"我想要什么 / 怕什么"，然后才是怎么说话。
     // 全空就整节不出现 —— 空白的小标题会让模型去猜，不如不给。
-    const cp = custom.persona || {};
+    const cp = mergeCardFields(custom.persona || {}, card, PERSONA_KEYS);
     const personaBits = [];
     const identity = [
       cp.age && `年龄：${cp.age}`,
@@ -422,6 +475,7 @@ export class Brain {
     if (cp.logic) personaBits.push(`遇事的反应逻辑：${cp.logic}`);
     if (cp.attitude) personaBits.push(`你对群里这些人现在的态度：${cp.attitude}`);
     if (cp.status) personaBits.push(`你现在的状态：${cp.status}`);
+    if (card?.background) personaBits.push(`（补充设定：${card.background}）`);
     /* 「爱用的表情」那一行已于 2026-10-17 删除：表情能力整体下线，
        留着它等于在提示词里暗示"你可以发表情"，而发送侧已经不会拼表情段。
        `persona.faces` 这个字段本身不动（旧 config.json 里可能还留着值），只是不再读。 */
@@ -438,7 +492,7 @@ export class Brain {
     // 放在人物设定**之后、扮演规则之前**：先"你是谁"，再"更细怎么演"，最后"演的规矩"。
     // 留空的项**整条不出现在提示词里**（这就是需求文档说的"可选、非必填"）——
     // 空白小标题会让模型去猜，不如不给。
-    const enh = custom.enhance || {};
+    const enh = mergeCardFields(custom.enhance || {}, card, ENHANCE_KEYS);
     const enhLines = ENHANCE_KEYS
       .filter((k) => enh[k])
       .map((k) => `- ${ENHANCE[k].label}：${enh[k]}`);
@@ -486,7 +540,16 @@ export class Brain {
     // 手动记忆**永远常驻**：它是用户明确要求"必须记住"的事，不随"自动记录"开关变。
     // 自动记忆只取最近的若干条 —— 全塞进去的话，这一节会比人格本身还长，
     // 小模型会被它带跑偏。
-    const memSel = this.memorySelection({ chatKey: session?.key, userId: evt.user_id });
+    // 记忆作用域：有卡按卡（同卡跨群共用一份），没卡才按会话（`src/memory-scope.js`）。
+    // `hint` 是这一轮的话 —— 选记忆时先用它算相关度，而不是只按"谁先说的"排队。
+    // `fallbackChatKey` 只用于**读取**：旧版按群存的记忆不会因为启用了卡就突然消失。
+    const memKey = this.memoryKeyFor(evt, session, card);
+    const memSel = this.memorySelection({
+      chatKey: memKey,
+      fallbackChatKey: card ? session?.key : '',
+      userId: evt.user_id,
+      hint: triggerTextOf(parsed),
+    });
     const memSec = sec('memory', '记忆', { trimFrom: 'newest' });
     // ⚠️ 三条来源**各自独立**，不许用同一个 `if` 管着它们。
     //    真机实测（2026-09-23）：结构化记忆原本被关在 `if (mem.length)` 里面 ——
@@ -514,7 +577,13 @@ export class Brain {
     }
 
     // ── 特殊场景：用户只填了他关心的那几条，空的就不占版面 ──
-    const sceneLines = Object.entries(custom.scenes || {})
+    // 卡里存过场景快照就覆盖（只覆盖非空项；卡里没存 = 沿用当前场景）。
+    const scenes = { ...(custom.scenes || {}) };
+    const cardScenes = card?.fields?.scenes && typeof card.fields.scenes === 'object' ? card.fields.scenes : {};
+    for (const [k, v] of Object.entries(cardScenes)) {
+      if (SCENES[k] && typeof v === 'string' && v.trim()) scenes[k] = v;
+    }
+    const sceneLines = Object.entries(scenes)
       .filter(([k, v]) => v && SCENES[k])
       .map(([k, v]) => `- ${SCENES[k].label}：${v}`);
     const sceneSec = sec('scenes', '特殊场景');
@@ -575,7 +644,9 @@ export class Brain {
       batch: context.ambientBatch,
     });
     // 超预算要从**最老**的开始丢：背景消息的价值随时间递减，丢最新的一条等于装作没听见
-    const ambientSec = sec('ambient', '背景消息', { trimFrom: 'oldest' });
+    // `keepHead:1` 保住下一行那段标题：从最老开始裁时，第一次 shift() 丢的正是它，
+    // 模型会把背景消息误当自己参与过的对话。
+    const ambientSec = sec('ambient', '背景消息', { trimFrom: 'oldest', keepHead: 1 });
     if (ambientPick.entries.length) {
       ambientSec.lines.push('## 刚才群里的消息（你没参与的，作为背景）');
       for (const m of ambientPick.entries) ambientSec.lines.push(renderSpeakerLine(m.speaker, m.text));
@@ -652,6 +723,7 @@ export class Brain {
     // 补看轮回的是一条**几小时前的**消息，不给这句话，模型会当成"刚发生的"来接，
     // 或者反过来开始道歉"我刚才没看手机" —— 那不是人，那是客服。
     if (opts.catchUp) volatileSec.lines.push(CATCHUP_LINE);
+    if (opts.patrol) volatileSec.lines.push(PATROL_LINE);
     volatileSec.lines.push(`当前时间：${new Date(now).toLocaleString('zh-CN', { hour12: false })}`);
     volatileSec.lines.push(
       evt.message_type === 'group'
@@ -896,6 +968,44 @@ export class Brain {
     );
   }
 
+  /**
+   * 这一轮生效的角色卡（`custom.skills` 里 `kind:'persona'` 的那张）。
+   * 判据全在 `src/skills.js` 的 `pickPersonaCard`（纯函数、可单测）。
+   */
+  personaCardFor(evt) {
+    return pickPersonaCard(this.cfg.custom?.skills, {
+      groupId: evt?.group_id, userId: evt?.user_id,
+    });
+  }
+
+  /**
+   * 这一轮记忆该落在哪个作用域（`card:<卡 id>` 或原会话键）。
+   * ⚠️ 读写必须用**同一个**键：写进 `card:x`、读却按 `群:y` 过滤，
+   * 表现就是「它一个字都不记得」—— 而且日志里什么都看不出来。
+   */
+  memoryKeyFor(evt, session, card = null) {
+    return memoryScopeOf(session?.key, (card || this.personaCardFor(evt))?.id);
+  }
+
+  /**
+   * 角色卡切换时清掉该会话里**旧卡说过的话**（保留用户侧，保住"在聊什么"）。
+   * 对方把这件事故意留成已知限制（全局指纹管不到按群的卡），这里补上：
+   * 否则在面板上给某个群换卡，旧口吻会一直残留到 12 轮历史自然挤掉。
+   */
+  syncCard(session, evt) {
+    if (!session) return null;
+    const card = this.personaCardFor(evt);
+    const id = card?.id || '';
+    if (session.cardId !== id) {
+      const before = Array.isArray(session.history) ? session.history.length : 0;
+      if (before) session.history = session.history.filter((m) => m.role !== 'assistant');
+      session.cardId = id;
+      const dropped = before - (Array.isArray(session.history) ? session.history.length : 0);
+      if (dropped) log.info(`角色卡切换（${session.key}）→ 丢弃 ${dropped} 条旧卡发言（避免继续模仿旧口吻）`);
+    }
+    return card;
+  }
+
   remember(session, role, content) {
     session.history.push({ role, content });
     // ⚠️ 这里用**全局** recentTurns，不是档位收窄后的那份（D9a）——
@@ -921,8 +1031,9 @@ export class Brain {
     // 每条给一个自增 id：C-AMBIENT 的"粘性"要认得出来"上一条还是不是这一条"。
     // 只靠下标不行 —— 窗口每滑一次下标就全变了，粘性会永远失配。
     // 存档恢复回来的条目没有 id，由 pickAmbient 里的 ensureIds 补（幂等）。
+    // `at` 是巡逻的唯一时间依据（存档会把它剥掉；旧条目因此不被巡逻误读）。
     session.ambientSeq = (Number.isFinite(session.ambientSeq) ? session.ambientSeq : 0) + 1;
-    session.ambient.push({ id: session.ambientSeq, speaker, text, userId: String(userId || '') });
+    session.ambient.push({ id: session.ambientSeq, speaker, text, userId: String(userId || ''), at: Date.now() });
     if (session.ambient.length > cap) session.ambient.splice(0, session.ambient.length - cap);
   }
 
@@ -939,7 +1050,7 @@ export class Brain {
    * 所以调用方拿到原因字符串就跳过，并**把它写进日志** —— 见 src/index.js 与
    * src/proactive.js 的两个调用点。
    */
-  throttleReason(session, now = Date.now()) {
+  throttleReason(session, now = Date.now(), { kind = '' } = {}) {
     const { minIntervalMs, perMinutePerSession, perHourPerSession } = this.cfg.throttle;
     if (now - session.lastReplyAt < minIntervalMs) return `距上次回复不足 ${minIntervalMs}ms`;
     // 记录**保留一小时**：分钟窗口要从这里面再筛一次，小时窗口直接看长度。
@@ -948,8 +1059,13 @@ export class Brain {
     session.recentReplies = session.recentReplies.filter((t) => now - t < 3600000);
     const lastMinute = session.recentReplies.filter((t) => now - t < 60000).length;
     if (lastMinute >= perMinutePerSession) return `本会话一分钟内已回复 ${lastMinute} 次`;
-    if (session.recentReplies.length >= perHourPerSession) {
-      return `本会话一小时内已回复 ${session.recentReplies.length} 次（上限 ${perHourPerSession}）`;
+    // 直呼类（私聊 / @ / 叫名字 / 关键词）**不受小时上限**：它是用户点名要的回复，
+    // 被"今天配额用完了"静默拦掉，表现就是"它明明在线却不理我"。
+    // 但分钟级与 1.5 秒防抖仍生效 —— 那两道防的是瞬时刷屏，不是总量。
+    // `markReplied` 照旧记录所有出口：直呼回复仍占小时额度，会让后续随机插话更早停下。
+    const direct = kind === 'private' || kind === 'named' || kind === 'keyword';
+    if (!direct && session.recentReplies.length >= perHourPerSession) {
+      return `本会话一小时内已回复 ${session.recentReplies.length} 次（上限 ${perHourPerSession}，直呼类不受此限）`;
     }
     return null;
   }
@@ -990,6 +1106,20 @@ function ok(kind, reason, interject) {
   if (interject) r.interject = interject;
   return r;
 }
+/**
+ * 把角色卡的 24 项快照压到全局人格/增强上：**只覆盖非空项**。
+ * 卡里没填的字段沿用全局设定 —— 这是"卡只换一部分人设"也能工作的前提。
+ */
+function mergeCardFields(base, card, keys) {
+  const out = { ...(base || {}) };
+  const fields = card?.fields && typeof card.fields === 'object' ? card.fields : {};
+  for (const k of keys) {
+    const v = fields[k];
+    if (typeof v === 'string' && v.trim()) out[k] = v;
+  }
+  return out;
+}
+
 function deny_(reason, interject) {
   const r = { respond: false, reason };
   if (interject) r.interject = interject;

@@ -54,11 +54,40 @@
  *  ② **`172` 段只认 16–31**：整个 `172.0.0.0/8` 里有公网地址，
  *     写宽了会把真的云端调用判成免费。
  */
-const LOCAL_HOST_RE =
-  /(^|\/\/)(127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:|\/|$)/i;
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '0.0.0.0']);
+
+/**
+ * 取出 URL 的 host 段。没有 scheme 的（用户常直接写 `127.0.0.1:8080/v1`）
+ * 按 `http://` 解析；解析失败一律空串（宁可判"不是本机"，也不靠整串正则猜）。
+ */
+function hostnameOf(base) {
+  const s = String(base || '').trim();
+  if (!s) return '';
+  let u;
+  try {
+    u = new URL(s.includes('://') ? s : `http://${s}`);
+  } catch {
+    return '';
+  }
+  return String(u.hostname || '').replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+}
+
+function isPrivateIPv4(host) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return false;
+  const [a, b, c, d] = m.slice(1).map(Number);
+  if ([a, b, c, d].some((n) => n < 0 || n > 255)) return false;
+  return a === 10
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || a === 127
+    || (a === 0 && b === 0 && c === 0 && d === 0);
+}
 
 export function isLocalBase(base) {
-  return LOCAL_HOST_RE.test(String(base || ''));
+  const host = hostnameOf(base);
+  if (!host) return false;
+  return LOCAL_HOSTS.has(host) || isPrivateIPv4(host);
 }
 
 /**
@@ -203,8 +232,12 @@ export function consoleHostReject(base) {
       + '（新加坡地域是 dashscope-intl，美国是 dashscope-us —— 三个地域的密钥不通用）。';
   }
   // ② 已知厂商域名 + 控制台路径 ⇒ 同一个结论、另一条判据（见上面 CONSOLE_PATH_RE 的理由）
-  const provider = providerOf(text);
-  if (!Object.hasOwn(PROVIDER_HOST_END_RE, provider)) return '';
+  // ⚠️ 厂商只按 **host 段**认：用整串 `providerOf(text)` 的话，
+  //    中转地址的查询串里出现 `api.deepseek.com` 就会被误判成"这是 DeepSeek 控制台"，
+  //    合法中转反而填不进去。
+  const host = String(u.hostname || '').replace(/\.$/, '').toLowerCase();
+  const provider = Object.keys(PROVIDER_HOST_END_RE).find((p) => PROVIDER_HOST_END_RE[p].test(host));
+  if (!provider) return '';
   if (!CONSOLE_PATH_RE.test(u.pathname)) return '';
   return `这看起来是**控制台网页**（${u.hostname}${u.pathname}），不是接口地址 —— `
     + '机器人的请求会打到那个页面上，发不出去。请到该服务商的「API 文档 / 接口地址」那一页复制：'

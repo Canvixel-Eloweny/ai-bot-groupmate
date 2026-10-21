@@ -535,6 +535,30 @@ export function wantsRecall(text) {
  */
 export const RECALL_MAX = 3;
 
+/** 拆词：整段 + 2 字滑窗。`searchRecords` 与注入排序共用这一份（别写两遍）。 */
+function termsOf(q) {
+  const terms = new Set();
+  for (const m of String(q ?? '').match(/[\u4e00-\u9fa5A-Za-z0-9]+/g) || []) {
+    if (m.length >= 2) terms.add(m);
+    for (let i = 0; i + 2 <= m.length; i += 1) terms.add(m.slice(i, i + 2));
+  }
+  return terms;
+}
+
+/**
+ * 这条记录跟这一轮的话有多相关：命中的词越多越高（封顶 3）。
+ * 只用来**排序**，不参与任何门控 —— 不相关不等于该丢，只是排后面。
+ */
+function relevanceOf(r, terms) {
+  if (!terms || !terms.size) return 0;
+  let hits = 0;
+  for (const t of terms) {
+    if (r.text.includes(t) || (r.detail && r.detail.includes(t))) hits += 1;
+    if (hits >= 3) break;
+  }
+  return hits;
+}
+
 /**
  * ────────────────────────────────────────────────────────────────────────
  *  本地检索（D-M3 · 把"你还记得吗"变成能答的问题）
@@ -570,16 +594,13 @@ export function searchRecords(items, query, opts = {}) {
   const now = Number.isFinite(opts.now) ? opts.now : Date.now();
   const limit = Number.isFinite(opts.limit) ? Math.max(1, opts.limit) : 5;
   const chatKey = String(opts.chatKey ?? '').trim();
+  // 读旧记忆时允许带一个回退键（启用角色卡后，旧 `group:<id>` 记忆不会突然消失）。
+  const keys = new Set([chatKey, String(opts.fallbackChatKey ?? '').trim()].filter(Boolean));
 
   // 拆词：中文不切词，按 2 字及以上的连续片段 + 整句一起匹配。
   // 用**包含**而不是相等：用户问"还记得臭肥鱼吗"，正文是"不喜欢被叫臭肥鱼"，
   // 只判相等会一条都捞不出来。
-  const terms = new Set();
-  for (const m of q.match(/[\u4e00-\u9fa5A-Za-z0-9]+/g) || []) {
-    if (m.length >= 2) terms.add(m);
-    // 长句再切 2 字滑窗，让"臭肥鱼吗"也能命中"臭肥鱼"
-    for (let i = 0; i + 2 <= m.length; i += 1) terms.add(m.slice(i, i + 2));
-  }
+  const terms = termsOf(q);
   if (!terms.size) return { hits: [], scanned: 0, reason: 'no-terms' };
 
   const hits = [];
@@ -588,7 +609,7 @@ export function searchRecords(items, query, opts = {}) {
     const n = normalizeRecord(raw);
     if (!n) continue;
     scanned += 1;
-    if (chatKey && n.provenance.chatKey !== chatKey) continue;
+    if (keys.size && !keys.has(n.provenance.chatKey)) continue;
     if (!opts.includeDead && n.status !== 'confirmed' && n.status !== 'candidate') continue;
     let score = 0;
     const why = [];
@@ -648,8 +669,10 @@ export function renderRecalled(hits, { max = 3 } = {}) {
  *   而真因是那条已经淡出阈值 —— 这两种处置完全不同（一个该调预算，一个本就不该提）。
  *
  * @param {object[]} records
- * @param {{chatKey?:string, userId?:string, now?:number, budgetChars?:number,
- *          maxItems?:number, activationFloor?:number}} opts
+ * @param {{chatKey?:string, fallbackChatKey?:string, userId?:string, now?:number, budgetChars?:number,
+ *          maxItems?:number, activationFloor?:number, hint?:string}} opts
+ *   · `fallbackChatKey` —— 只用于**读取**旧作用域（启用卡后旧 `group:<id>` 记忆仍可见）；
+ *   · `hint` —— 这一轮用户说的话：只用来算相关度排序（没给就退化成旧顺序）。
  * @returns {{lines:string[], picked:object[], dropped:number, droppedStale:number,
  *           droppedBudget:number, budgetChars:number, maxItems:number}}
  */
@@ -659,32 +682,36 @@ export function selectForPrompt(records, opts = {}) {
   const maxItems = Number.isFinite(opts.maxItems) ? opts.maxItems : PROMPT_MAX_ITEMS;
   const floor = Number.isFinite(opts.activationFloor) ? opts.activationFloor : ACTIVATION_FLOOR;
   const chatKey = String(opts.chatKey ?? '').trim();
+  const keys = new Set([chatKey, String(opts.fallbackChatKey ?? '').trim()].filter(Boolean));
   const userId = String(opts.userId ?? '').trim();
 
-  // ①②③ 门控一次走完：范围（按会话隔离）→ 状态（未复证一律不进）→ 淡忘（低于阈值不进）
+  // ①②③ 门控一次走完：范围（按卡/会话隔离）→ 状态（未复证一律不进）→ 淡忘（低于阈值不进）
   const kept = [];
   let droppedStale = 0;
   for (const r of records || []) {
     const n = normalizeRecord(r);
     if (!n) continue;
     if (n.status !== 'confirmed') continue;
-    if (chatKey && n.provenance.chatKey !== chatKey) continue;
+    if (keys.size && !keys.has(n.provenance.chatKey)) continue;
     // ⚠️ 缺 lastSeenAt / 半衰期时 `activationOf` 回 1（不淡忘）—— 于是这里**不会**误拦
     //    （宁可多带一条，也不要因为"记录不完整"把有效记忆静默丢掉）。
     if (activationOf(n, now) < floor) { droppedStale += 1; continue; }
     kept.push(n);
   }
 
-  // ④ 排序：本人优先 → 巩固度 → 激活度 → 最近
+  // ④ 排序：**跟这一轮的话有多相关** → 本人 → 巩固度 → 激活度 → 最近
+  // `hint` 只影响顺序，不放松上面任何一道门控；相关度全 0 时与改造前逐字相同。
+  const hTerms = termsOf(opts.hint);
   const scored = kept
     .map((r) => ({
       r,
+      rel: relevanceOf(r, hTerms),
       me: userId && r.provenance.userId === userId ? 1 : 0,
       c: consolidationOf(r),
       a: activationOf(r, now),
     }))
     .sort((x, y) =>
-      y.me - x.me || y.c - x.c || y.a - x.a || y.r.lastSeenAt - x.r.lastSeenAt);
+      y.rel - x.rel || y.me - x.me || y.c - x.c || y.a - x.a || y.r.lastSeenAt - x.r.lastSeenAt);
 
   // ⑤ 预算：**条数与字符谁先到算谁**；装不下就留痕，不静默丢
   const lines = [];

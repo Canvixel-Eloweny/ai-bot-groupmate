@@ -30,7 +30,7 @@
  * 注意它**只是放行类的枚举**：拒绝（`deny_`）不给 kind —— 拒绝没有档位，
  * 拒绝的理由本身就是文案（「插话冷却中」），足够定位，不需要再挂一个身份。
  */
-export const DECISION_KINDS = ['private', 'named', 'keyword', 'interject'];
+export const DECISION_KINDS = ['private', 'named', 'keyword', 'interject', 'patrol'];
 
 /**
  * kind → 档位。**这是全项目唯一的一份映射**。
@@ -43,6 +43,8 @@ export const TIER_OF_KIND = {
   named: 'direct',
   keyword: 'keyword',
   interject: 'interject',
+  // 巡逻是「攒了一批积压再问一轮」，与随机插话同属"没人叫它"，按最省的一档收。
+  patrol: 'interject',
 };
 
 /** 全部档位。`direct` 是「不退让」的那一档，见 `contextLimitsOf`。 */

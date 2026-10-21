@@ -36,6 +36,22 @@ export function scopeMatches(scope, ctx) {
   return false;
 }
 
+/**
+ * 这一轮生效的**角色卡**（没有就是 `null`）。
+ *
+ * 和「技能」分开挑：卡不是"本事"，它是"你是谁" —— 它替换人格段，不跟知识包抢字数预算。
+ * 按"最具体优先"：按人 > 按群 > 全局；同档取数组里第一张。
+ */
+export function pickPersonaCard(skills, ctx) {
+  const live = (skills || []).filter(
+    (s) => s && s.enabled && s.kind === 'persona' && scopeMatches(s.scope, ctx)
+  );
+  const rank = (s) => (s.scope?.type === 'user' ? 0 : s.scope?.type === 'group' ? 1 : 2);
+  let best = null;
+  for (const s of live) if (!best || rank(s) < rank(best)) best = s;
+  return best;
+}
+
 /** 一个知识包这一轮该不该上：填了触发词就要求命中，没填就是"总是带上" */
 function packHit(skill, text) {
   if (!skill?.triggers?.length) return true;
@@ -54,11 +70,9 @@ function packHit(skill, text) {
 export function pickSkillsForPrompt(skills, ctx, text) {
   const live = (skills || []).filter((s) => s && s.enabled && scopeMatches(s.scope, ctx));
 
-  // 角色卡同一个会话只取第一张 —— 两张卡同时注入会互相打架，模型会变成四不像
-  const card = live.find((s) => s.kind === 'persona');
-  const packs = live.filter((s) => s.kind === 'pack' && packHit(s, text));
-
-  const picked = [...(card ? [card] : []), ...packs];
+  // 角色卡**不在这里**：它进的是人格段（见 `pickPersonaCard`），不是技能段。
+  // 早期两张卡都往这里塞，结果是卡既改不了人设、又占掉知识包的字数预算。
+  const picked = live.filter((s) => s.kind === 'pack' && packHit(s, text));
 
   // 条数 + 总字数双闸。字数不够时**跳过这一条**而不是直接截断整份列表 ——
   // 后面可能还有一条很短的能进，一刀切会把机会也砍掉。

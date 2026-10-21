@@ -1160,6 +1160,13 @@ Windows 7/8/8.1 与 32 位系统本就不在支持面（§3、§12）。
 与 `installer/toolchain.json` 的 pin 一致 —— 所以本机填 runtime 不是"随手找个 node"，
 是同一份钉住的字节。
 
+⚠️ **订正（2026-10-21 · 桥已加固）**：上面「用户通道被堵死、只能从 system 通道杀进程」的处置已成历史。
+桥 agent 现在把每条 `exec` 放进**独立子进程**并带超时（默认 600s，最小 5s），超时 `taskkill /T /F`
+杀整棵进程树；实测连续 3 轮「超时后立即 hostname」均正常，不再需要另一条通道去救。
+另：`where makensis` 在 PowerShell 里是 `Where-Object` 的别名，恒返回空 + exit 0，
+**不能**用来判断 NSIS 装没装 —— 用绝对路径 `Test-Path` 或 `Get-Command`。
+（详见技能 `win-mac-bridge-ops` §2b/§9；本机真实路径 `C:\Program Files (x86)\NSIS\makensis.exe`，v3.13。）
+
 ### 21.5 探针原文（第 3 行那条事实的出处，逐字节照录）
 
 命令形态：对四个源各取 `Range: bytes=0-2999999`、`--max-time 25`。

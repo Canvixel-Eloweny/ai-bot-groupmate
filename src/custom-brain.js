@@ -105,7 +105,8 @@ export function normalizeCustomBrain(raw, { id = '', fallbackName = '自定义�
  */
 export function customBrainsOf(cfg) {
   const rawMap = cfg?.llm?.customBrains;
-  const brains = {};
+  // null 原型：`constructor` / `__proto__` 这类 id 不能靠原型属性伪装成"存在"。
+  const brains = Object.create(null);
   const dropped = [];
   if (!rawMap || typeof rawMap !== 'object' || Array.isArray(rawMap)) {
     return { brains, dropped };

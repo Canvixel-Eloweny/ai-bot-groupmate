@@ -1,5 +1,6 @@
 {
   "onebot": {
+    "backend": "auto",
     "wsUrl": "ws://127.0.0.1:3001",
     "accessToken": "",
     "reconnectBackoffMs": [
@@ -16,11 +17,11 @@
     "apiKey": "",
     "model": "qwen3.8-max",
     "thinking": {
-      "mode": "auto",
-      "level": "low"
+      "mode": "off",
+      "level": "medium"
     },
     "temperature": 1,
-    "maxTokens": 1500,
+    "maxTokens": 400,
     "timeoutMs": 60000,
     "localSize": "4b",
     "keys": {
@@ -30,7 +31,7 @@
     },
     "fallbackModel": "",
     "fallbackModels": [
-      "qwen3.8-max",
+      "qwen3.7-flash",
       "qwen3.8-flash",
       "qwen3.7-plus",
       "qwen3.5-plus",
@@ -40,7 +41,7 @@
     ],
     "features": {
       "webSearch": false,
-      "vision": false
+      "vision": true
     },
     "localChannel": "qwenchat",
     "presets": {
@@ -59,33 +60,35 @@
         },
         "features": {
           "webSearch": false,
-          "vision": false
+          "vision": false,
+          "stickers": false
         }
       },
       "deepseek": {
         "baseUrl": "https://api.deepseek.com/v1",
         "model": "deepseek-flash",
         "fallbackModels": [],
-        "maxTokens": 1500,
+        "maxTokens": 400,
         "temperature": 1,
         "context": {
           "recentTurns": 12,
           "ambientMessages": 20
         },
         "thinking": {
-          "mode": "on",
-          "level": "low"
+          "mode": "off",
+          "level": "medium"
         },
         "features": {
           "webSearch": false,
-          "vision": false
+          "vision": false,
+          "stickers": false
         }
       },
       "zhipu": {
         "baseUrl": "https://open.bigmodel.cn/api/paas/v4/",
-        "model": "glm-4.6v",
+        "model": "glm-4.5-air",
         "fallbackModels": [
-          "glm-4.5-air",
+          "glm-4.6v",
           "glm-4.7",
           "glm-5.2",
           "glm-5",
@@ -93,26 +96,76 @@
           "glm-4.7-flash",
           "glm-4.6v-flash"
         ],
-        "maxTokens": 1500,
+        "maxTokens": 400,
         "temperature": 1,
         "context": {
           "recentTurns": 12,
           "ambientMessages": 20
         },
         "thinking": {
-          "mode": "on",
-          "level": "low"
+          "mode": "off",
+          "level": "high"
         },
         "features": {
           "webSearch": false,
-          "vision": true
+          "vision": false,
+          "stickers": false
         }
       },
       "qwen": {
         "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "model": "qwen3.8-max",
+        "model": "qwen3.7-flash",
         "fallbackModels": [
+          "qwen3.8-flash",
+          "qwen3.7-plus",
+          "qwen3.5-plus",
+          "qwen3-max",
           "qwen3.8-max",
+          "qwen-turbo",
+          "qwen-long"
+        ],
+        "maxTokens": 400,
+        "temperature": 1,
+        "context": {
+          "recentTurns": 12,
+          "ambientMessages": 20
+        },
+        "thinking": {
+          "mode": "off",
+          "level": "medium"
+        },
+        "features": {
+          "webSearch": false,
+          "vision": false,
+          "stickers": false
+        }
+      }
+    },
+    "customBrains": {
+      "custom-1792063967945": {
+        "id": "custom-1792063967945",
+        "name": "1",
+        "baseUrl": "https://api.deepseek.com/v1",
+        "model": "deepseek-flash",
+        "apiKey": "",
+        "fallbackModels": [],
+        "features": {
+          "vision": false,
+          "thinking": false,
+          "webSearch": false
+        },
+        "maxTokens": 400,
+        "temperature": 1,
+        "catalogVersion": "V4.1-Flash-1017"
+      },
+      "custom-1792221129332": {
+        "id": "custom-1792221129332",
+        "name": "12",
+        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen3.8-max",
+        "apiKey": "",
+        "fallbackModels": [
+          "qwen3.7-flash",
           "qwen3.8-flash",
           "qwen3.7-plus",
           "qwen3.5-plus",
@@ -120,30 +173,26 @@
           "qwen-turbo",
           "qwen-long"
         ],
-        "maxTokens": 1500,
-        "temperature": 1,
-        "context": {
-          "recentTurns": 12,
-          "ambientMessages": 20
-        },
-        "thinking": {
-          "mode": "auto",
-          "level": "low"
-        },
         "features": {
-          "webSearch": false,
-          "vision": false
-        }
+          "vision": true,
+          "thinking": true,
+          "webSearch": false
+        },
+        "maxTokens": 400,
+        "temperature": 1
       }
     },
-    "customBrains": {},
-    "activeCustomId": ""
+    "activeCustomId": "custom-1792221129332",
+    "declaredFeatures": {
+      "vision": true,
+      "webSearch": false,
+      "thinking": true,
+      "functions": false
+    }
   },
   "allow": {
     "private": [],
-    "groups": [
-      "填你的群号，例如 123456789"
-    ],
+    "groups": [],
     "allowAllWhenEmpty": false
   },
   "owner": {
@@ -161,7 +210,7 @@
       "肥鱼"
     ],
     "interjectChance": 0.15,
-    "interjectCooldownMs": 300000,
+    "interjectCooldownMs": 600000,
     "bareGraceMs": 300000,
     "interjectActiveWindowMs": 1800000,
     "interjectActiveBoost": 1.5,
@@ -195,6 +244,7 @@
         "memory": 3000,
         "scenes": 2500,
         "skills": 2000,
+        "extensions": 2000,
         "ambient": 3000,
         "speech": 800
       },
@@ -245,17 +295,7 @@
     "playRules": true,
     "skills": [],
     "plugins": {
-      "enabled": [
-        "echo-guard",
-        "bot-emotion",
-        "wiki-search",
-        "bili-info",
-        "api-deals",
-        "people-memory",
-        "image-lib",
-        "memory-admin",
-        "send-forward"
-      ],
+      "enabled": [],
       "settings": {}
     },
     "replyStyle": {
@@ -281,6 +321,15 @@
       "quietHours": {
         "from": 23,
         "to": 8
+      },
+      "patrol": {
+        "enabled": true,
+        "minUnread": 5,
+        "silenceMin": 10,
+        "minGapMin": 20,
+        "chance": 0.5,
+        "maxLines": 24,
+        "maxChars": 1800
       }
     },
     "allowProactive": true,
@@ -327,6 +376,26 @@
       "banned": [],
       "antiFlood": true,
       "filterLinks": true
+    },
+    "peak": {
+      "enabled": true,
+      "muteUnmentioned": true
+    },
+    "allowFriendsPrivate": true,
+    "wait": {
+      "enabled": true,
+      "minMs": 400,
+      "maxMs": 2500,
+      "perCharMs": 15,
+      "mergeMs": 1200,
+      "holdMs": 6000,
+      "holdText": "我想想…",
+      "typing": true
+    },
+    "image": {
+      "send": false,
+      "view": false,
+      "root": "images-out"
     }
   },
   "launch": {

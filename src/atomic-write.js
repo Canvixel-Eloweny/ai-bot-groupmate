@@ -37,26 +37,47 @@ export function tmpPathOf(file) {  const dir = path.dirname(file);
   return path.join(dir, `.${base}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
 }
 
-/**
- * rename，并在 EPERM / EACCES 时先 chmod 再试一次。
- *
- * 为什么要这一层：macOS 上目标文件被设为只读（或被锁）时，rename 会 EPERM，
- * 而此时**临时文件已经写完**了 —— 不重试就直接失败，等于这次写入整个丢掉。
- * chmod 失败也要继续试 rename：目标可能根本不存在，那时 rename 本来就能成功。
- */
-function renameOrChmodRetry(tmp, file) {
+/** 同步小睡（原子写是同步 API，不能 await）。`Atomics.wait` 不占 CPU。 */
+function sleepSync(ms) {
   try {
-    fs.renameSync(tmp, file);
-    return;
-  } catch (e) {
-    if (e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
-    try {
-      fs.chmodSync(file, 0o600);
-    } catch {
-      /* 目标不存在时必然失败，无所谓 —— 下面那一试才是正解 */
-    }
-    fs.renameSync(tmp, file);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
+  } catch {
+    /* 个别环境禁 SharedArrayBuffer：退化成"立刻重试"，不阻断写入 */
   }
+}
+
+/**
+ * rename，并在 EPERM / EACCES / EBUSY 时退避重试。
+ *
+ * 为什么要这一层：
+ *   · macOS 上目标被设为只读时 rename 会 EPERM；
+ *   · Windows 上 Defender 实时扫描、搜索索引、资源管理器预览会**瞬时**占住目标，
+ *     同样是 EPERM/EBUSY。旧实现只 chmod 后立刻重试一次 —— chmod 释放不了别人的句柄，
+ *     一次瞬时占用就等于这次写入直接丢失。
+ * 退避序列 0/25/75/200ms 覆盖"扫描/索引很快结束"的常见时长；仍然失败才算真失败。
+ * `chmod` 只在 POSIX 语义下有意义的错误上做，且失败不阻断后续重试。
+ */
+export function renameWithRetry(tmp, file, {
+  rename = fs.renameSync,
+  chmod = fs.chmodSync,
+  sleep = sleepSync,
+  delays = [0, 25, 75, 200],
+} = {}) {
+  let last;
+  for (let i = 0; i < delays.length; i += 1) {
+    if (delays[i] > 0) sleep(delays[i]);
+    try {
+      rename(tmp, file);
+      return { attempts: i + 1 };
+    } catch (e) {
+      last = e;
+      if (e.code !== 'EPERM' && e.code !== 'EACCES' && e.code !== 'EBUSY') throw e;
+      if (e.code === 'EPERM' || e.code === 'EACCES') {
+        try { chmod(file, 0o600); } catch { /* 目标不存在时必然失败 */ }
+      }
+    }
+  }
+  throw last;
 }
 
 /**
@@ -68,7 +89,7 @@ export function writeTextAtomic(file, text, { mode } = {}) {
   const tmp = tmpPathOf(file);
   try {
     fs.writeFileSync(tmp, text, mode == null ? undefined : { mode });
-    renameOrChmodRetry(tmp, file);
+    renameWithRetry(tmp, file);
   } catch (e) {
     try {
       fs.unlinkSync(tmp);

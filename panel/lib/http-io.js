@@ -37,13 +37,25 @@ export function sendJson(res, obj, code = 200) {
 export function readBody(req) {
   return new Promise((resolve) => {
     let buf = '';
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
     req.on('data', (c) => {
+      if (done) return;
       buf += c;
-      if (buf.length > 1e6) req.destroy();
+      if (buf.length > 1e6) {
+        // 只 destroy 不 settle 会让 Promise 永不返回（客户端看到的是连接重置，
+        // 服务端这条请求也永远挂着）。超限一律按"空对象"交给下游按缺字段拒绝。
+        req.destroy();
+        finish({});
+      }
     });
     req.on('end', () => {
-      try { resolve(JSON.parse(buf || '{}')); } catch { resolve({}); }
+      try { finish(JSON.parse(buf || '{}')); } catch { finish({}); }
     });
+    // destroy / 客户端中断都不再发 end —— 这三条是 Promise 唯一的兜底。
+    req.on('close', () => finish({}));
+    req.on('aborted', () => finish({}));
+    req.on('error', () => finish({}));
   });
 }
 

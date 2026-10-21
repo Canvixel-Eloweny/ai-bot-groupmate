@@ -23,6 +23,9 @@ import { customBrainsOf, materializeBrain } from './custom-brain.js';
 // 去 UTF-8 BOM。它是零依赖叶子里的一条纯字符串判据，扩展包清单与「读 config.json」
 // 共用同一份 —— 各写一份 `.replace(/^\uFEFF/, '')` 就是又一处会各自腐烂的语义。
 import { stripBom } from './plugin-manifest.js';
+// L3 聚合层：后端选择（auto = 连上后按 get_version_info 识别）。
+// 判据与合法值住 `src/backend/registry.js`，这里只做一次归一化。
+import { normalizeBackend } from './backend/registry.js';
 
 const log = scoped('config');
 
@@ -57,7 +60,14 @@ function readJson(file) {
   //    `plugin-manifest.js` 里存在（扩展包清单也吃 BOM）。**改用那一份** ——
   //    "BOM 怎么去"现在全项目只有一个答案，面板侧（`panel/lib/config-io.js`）也引的是它。
   //    （顺带一个实际差别：`stripBom` 看的是**首字符码元**而不是正则，不吃回溯也不吃 g 标志。）
-  return JSON.parse(stripBom(fs.readFileSync(file, 'utf8')));
+  const text = fs.readFileSync(file, 'utf8');
+  try {
+    return JSON.parse(stripBom(text));
+  } catch (e) {
+    // 坏一个字符就抛裸 SyntaxError 的话，用户只看到 "Unexpected token"，
+    // 不知道是哪个文件；也不能静默回落模板 —— 那会把白名单整份换掉。
+    throw new Error(`配置文件不是合法 JSON：${file}（${e.message}）`);
+  }
 }
 
 function asInt(v, fallback) {
@@ -343,6 +353,9 @@ export function loadConfig(overridePath) {
 
   const cfg = {
     onebot: {
+      // `auto` = 连上后问一次 get_version_info；显式值优先（用户知道自己在接什么时，
+      // 不该被一条自报字符串改掉合并转发的参数顺序）。
+      backend: normalizeBackend(raw.onebot?.backend),
       wsUrl: String(raw.onebot?.wsUrl ?? 'ws://127.0.0.1:3001'),
       // 协议端令牌同样是凭据，同样支持 `env:NAME`（B9 · K-ENV）。
       // 同一份文件里"有的凭据能走环境变量、有的不能"就是半迁移，会误导下一个人。
@@ -391,7 +404,7 @@ export function loadConfig(overridePath) {
       // ⚠️ 这里存的是**归一化后**的那份（Key 已解析）。机器人侧只认这一份。
       customBrains,
       activeCustomId: activeCustom ? activeCustom.id : '',
-      temperature: Number(raw.llm?.temperature ?? 1.0),
+      temperature: numOr('temperature', raw.llm?.temperature, Number),
       maxTokens: asInt(raw.llm?.maxTokens, 400),
       timeoutMs: asInt(raw.llm?.timeoutMs, 60000),
     },
@@ -413,7 +426,7 @@ export function loadConfig(overridePath) {
     trigger: {
       requireAtInGroup: raw.trigger?.requireAtInGroup !== false,
       aliases: Array.isArray(raw.trigger?.aliases) ? raw.trigger.aliases.map((s) => String(s)).filter(Boolean) : [],
-      interjectChance: Math.min(1, Math.max(0, Number(raw.trigger?.interjectChance ?? 0))),
+      interjectChance: numOr('interjectChance', raw.trigger?.interjectChance, Number),
       interjectCooldownMs: asInt(raw.trigger?.interjectCooldownMs, 300000),
       /**
        * D12b（报告 E15）：插话时机的四个参数 —— 活跃期 TTL / 活跃期乘子 / 冷场阈值 / 冷场乘子。
@@ -470,7 +483,7 @@ export function loadConfig(overridePath) {
     },
     throttle: {
       minIntervalMs: numOr('minIntervalMs', raw.throttle?.minIntervalMs, asInt),
-      perMinutePerSession: Math.max(1, asInt(raw.throttle?.perMinutePerSession, 8)),
+      perMinutePerSession: numOr('perMinutePerSession', raw.throttle?.perMinutePerSession, asInt),
       /**
        * 小时级上限（B8 · S-HOUR）。
        *
@@ -479,7 +492,7 @@ export function loadConfig(overridePath) {
        * "别让账号看起来像机器"没有任何约束力。
        * 它不是"发够了就报错"，而是让超过的部分**静默不发**并把原因写进日志。
        */
-      perHourPerSession: Math.max(1, asInt(raw.throttle?.perHourPerSession, 60)),
+      perHourPerSession: numOr('perHourPerSession', raw.throttle?.perHourPerSession, asInt),
       globalConcurrency: Math.max(1, asInt(raw.throttle?.globalConcurrency, 1)),
     },
     persona: {

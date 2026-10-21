@@ -20,6 +20,14 @@
  *      **教训：把"更明显"当成"更对"，方向就反了。**
  *   ③ **幅度要极小**：1°（`MAX_DEG`）。参考实现默认 12°，这里连它的 1/10 都不到 ——
  *      职责只是"这块是可以碰的"这一丝反馈，不是表演。
+ *   ④ **回落弹簧不许继承指针速度**（2026-10-20 · 第三次报"大幅翻面"的根因）。
+ *      前两次查的是 preserve-3d 与 perspective，都不是这一次的原因：
+ *      `MotionValue.set()` 用 `performance.now()` 的差值记录速度，而 pointermove
+ *      在同一个 JS 任务里连发时 `dt` 可以是几十微秒 —— **2° 的位移被记成上万 deg/s**。
+ *      `leave()` 又把这个速度交给回落弹簧 ⇒ 欠阻尼解大幅过冲。
+ *      真实浏览器实测**原始角 301.78°**（1° 的卡被甩过大半圈，用户看到的就是"360° 翻转"）。
+ *      ⇒ 回落的初始速度显式取 0（`RELEASE.initialVelocity`），写变量处再夹一道 ±MAX_DEG。
+ *      ⚠️ 回归测试必须**带速度**穿梭；在同一个坐标上派发事件的旧测试速度恒 0，是假绿。
  *
  * ── 与 `sortable.js` 的关键区别：**它为什么一个"重绘守卫"都不需要** ────────
  *   `paintPage()` 每 3 秒把整页 `innerHTML` 重建一次。sortable 必须自己挡重绘，
@@ -55,6 +63,9 @@
        而不是"被弹了一下"（这里是环境氛围，不是操作反馈）。 */
   var MAX_DEG = 1;
   var SPRING = { stiffness: 150, damping: 20, mass: 1 };
+  /* 回落的语义是"卡片浮回原位"，不是"把指针甩出去" ⇒ 初始速度显式取 0。
+     继承速度会把快速穿梭时 `set()` 记下的上万 deg/s 交给弹簧（见头部第 ④ 条）。 */
+  var RELEASE = Object.assign({}, SPRING, { initialVelocity: 0 });
 
   /** 当前正在倾斜的那一张（全局最多一张 —— 多张同斜会互相抢注意力）。 */
   var active = null;
@@ -72,8 +83,13 @@
     if (r) return r;
     r = el.__tilt = { rx: M.motionValue(0), ry: M.motionValue(0), hs: null };
     var write = function () {
-      el.style.setProperty('--tilt-rx', r.rx.get().toFixed(2) + 'deg');
-      el.style.setProperty('--tilt-ry', r.ry.get().toFixed(2) + 'deg');
+      /* 最后一道视觉保险：原始值无论被谁写到多大，卡片最多只到 ±MAX_DEG。
+         根因修复在 `RELEASE.initialVelocity = 0`；这里夹的是"将来又长出一条新路径"的情况。 */
+      var rx = r.rx.get(), ry = r.ry.get();
+      if (!isFinite(rx)) rx = 0;
+      if (!isFinite(ry)) ry = 0;
+      el.style.setProperty('--tilt-rx', Math.max(-MAX_DEG, Math.min(MAX_DEG, rx)).toFixed(2) + 'deg');
+      el.style.setProperty('--tilt-ry', Math.max(-MAX_DEG, Math.min(MAX_DEG, ry)).toFixed(2) + 'deg');
     };
     r.rx.on(write); r.ry.on(write);
     return r;
@@ -139,7 +155,7 @@
       if (active !== el) el.classList.remove('tilt-on');
     };
     /* ⚠️ **两个句柄都存进 `r.hs`** —— 详见 `stopAll` 的说明（漏一个就是 30 条并发）。 */
-    r.hs = [M.animate(r.rx, 0, SPRING), M.animate(r.ry, 0, SPRING)];
+    r.hs = [M.animate(r.rx, 0, RELEASE), M.animate(r.ry, 0, RELEASE)];
     /* `onSettle` 是 motion.js 里**唯一**那份"句柄结束"适配（不许在这里另写一份）。 */
     M.onSettle(r.hs[1], done);
   }

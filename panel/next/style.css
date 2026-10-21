@@ -763,14 +763,33 @@ a:hover { text-decoration: underline; }
 }
 .navrow > .nav1 { grid-column: 2; justify-self: center; }
 
+/* ⚠️⚠️ 2026-10-20 订正（只增不减，下面 1253px 的推导原样保留作历史）：
+   那个算式**漏了"岛居中"的代价** —— 三列的左右两列是 `1fr` 等宽，
+   二级栏只拿到 `(视口 − 岛宽) / 2`，不是"视口 − 岛宽 − 其他"。
+   实测二级栏自身 444px（运行）～548px（大脑，页签名更长），岛 805px ⇒
+   并排需要 `2 × 二级栏 + 岛 + 两个 gap` ≈ 1725～1925px，远高于 1280。
+   症状正是用户截图那一段：1815 → 1629 时末尾页签被 `.nav2` 的隐藏滚动条静默吃掉，
+   再窄到 1280 以下反而正常（已经换成上下两行）。
+   ⇒ 1280 这一档保留为**无 JS 兜底**；真正的换行判定在
+   `app.js: syncNavrowStack()` —— 按当前功能域的实测页签宽度决定，装不下就加 `.is-stacked`。
+   （只靠固定断点只有两个选择：要么「大脑」在 1815 下裁字，要么「运行」过早换行。） */
+.navrow.is-stacked { grid-template-columns: 1fr; height: auto; row-gap: 0; }
+.navrow.is-stacked > .nav2wrap { grid-column: 1; justify-self: stretch; }
+.navrow.is-stacked > .nav1 { grid-column: 1; justify-self: stretch; justify-content: center; }
+/* ⚠️ 上面这条 `justify-content: center` **只许挂在 .is-stacked 下**（2026-10-20）：
+   并排时 `.nav1` 的宽度就是岛的宽度，任何分布声明都是空转（B39/B41 踩过两次，见 `.nav1` 注释）；
+   换行后 `.nav1` 被拉满整行，此时父容器已经没有"用列宽居中"的办法了 —— 由它自己居中，
+   才与用户要的"岛在屏幕中间"一致。`.nav-inner` 仍可被压到视口内横滚（min-width 不会撑破）。 */
+
 @media (max-width: 1280px) {
   /* ⚠️ 单列 = 上下两行。断点来历：二级栏实测最宽 ~392px + 岛 ~805px + gap 16
      + 左右内边距 40 = **1253px**；低于它并排就一定挤（用户实机就在这个区间）。
      ⚠️ `row-gap: 0`：换行后两行之间**不留缝** —— 那一格若空着，背后滚动的正文
-     会从缝里直接透出来（吸顶区中间裂开一条，与"融合"的要求相反）。 */
+     会从缝里直接透出来（吸顶区中间裂开一条，与"融合"的要求相反）。
+     ⚠️ 2026-10-20 起它只是**兜底**：带 JS 时 `.is-stacked` 会更早接手（见上一条订正）。 */
   .navrow { grid-template-columns: 1fr; height: auto; row-gap: 0; }
   .navrow > .nav2wrap { grid-column: 1; justify-self: stretch; }
-  .navrow > .nav1 { grid-column: 1; justify-self: stretch; }
+  .navrow > .nav1 { grid-column: 1; justify-self: stretch; justify-content: center; }
 }
 
 
@@ -909,6 +928,11 @@ body.eg-on .nav-inner {
         自己再写一遍 `height: var(--h-nav2)` 就是**两份定义**，改一处会漂。 */
   display: flex; align-items: center; gap: var(--s3);
   height: 100%;
+  /* ⚠️ §103（2026-10-20）：二级滑块的坐标基准。JS 按 `.sub.offsetLeft` 定位，
+     而 `offsetLeft` 是相对**最近的定位祖先** —— 少了这行它会一路锚到 `.navrow`（视觉错位且不报错）。
+     写在这里而不是另起一条 `.nav2wrap{position:relative}`：同选择器两条规则会让既有变异锚点
+     `^\.nav2wrap \{` 命中 2 处（mutate-lint 当场判 INVALID）。 */
+  position: relative;
   /* ⚠️⚠️ B30：**不再通栏** —— 玻璃只包住二级选项本身（用户原话：
      "横条不要太长，只需要模糊玻璃包含二级选项即可…右边那些都不要"）。
      宽度随内容收缩（fit-content），右缘用 clip-path 切出**斜角**：
@@ -986,16 +1010,35 @@ body.eg-on .nav-inner {
    `outline-offset: 2px` 画在元素**外**，`.nav2` 的 `overflow` 只裁子元素，不裁它。 */
 .sub:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
 .sub[aria-selected="true"] { background: transparent; color: var(--c-sub-on); font-weight: 600; }
-/* 下划线：`left/right: 8px` 内缩 ⇒ 宽度**自动跟随按钮宽度**
-   （标签越长下划线越长，正是"短胶囊"的观感），**无需 JS 对准**。 */
-.sub[aria-selected="true"]::after {
-  content: ""; position: absolute; left: 8px; right: 8px; bottom: -3px;
-  height: 2px; border-radius: var(--r-pill); background: var(--c-accent);
-  transform: scaleX(0); transform-origin: 50% 50%;
-  transition: transform var(--dur) var(--ease);
+/* ⚠️⚠️ **2026-10-20 裁决（只增不减，上面三条理由原样保留）**：
+   上面那段"下划线更省"的推理在**静态观感**上成立，但它漏了一件事 ——
+   **位移本身承载语义**（§6.4 第 3 条）：下划线是"淡入淡出"，滑块是"从哪滑到哪"。
+   按 `MOTION-METHODOLOGY §6.4` 的三条准入（有序状态 / 用户反复拨 / 位移承载语义），
+   导航**三条全中**，一级已经按 S2 做了，二级却停在 S1 —— 这就是"教规与实物不一致"。
+   本轮把二级也升到 S2：滑块由 `.nav2-ind` 承载（静态元素 + `Motion` 驱动），
+   `::after` 退役。**代价照旧存在**（每帧写 `style.width/transform`），
+   所以参数取得比一级更软、且只在"选中项变化"时跑，不是常驻帧循环。
+   ⚠️ 旧的三条理由仍然有效：**别把它当成"当年写错了"** —— 它是当时的正确取舍，
+      变的是需求（导航要"切换发生了"这件事可见）。 */
+
+/* ── 二级导航滑块（2026-10-20 · §103）──────────────────────────────────
+   与 `.nav-ind` 同构：**静态元素**、位置/宽度由 JS 写、`Motion` 弹簧驱动。
+   为什么不用 `::after` 的 `scaleX`：下划线只能"出现/消失"，无法表达位移方向；
+   而且它的宽度由 `left/right` 内缩自动得出，改不了"从上一项滑过来"。
+   ⚠️ 坐标基准是 `.nav2wrap`（所以给它 `position: relative`），
+      并**减去 `#nav2` 的 `scrollLeft`** —— 窄屏 `.nav2` 横向滚动时，
+      子元素的 `offsetLeft` 不随滚动变化，不减就会与按钮错位。 */
+/* 2026-10-21：用户要求「位置稍微往上移 + 加粗」⇒ bottom 3→6px、height 2→3px。
+   旧 `::after` 的 bottom:-3px 换算已是历史，现位置不再由它推导。 */
+.nav2-ind {
+  position: absolute; left: 0; bottom: 6px;
+  height: 3px; width: 0;
+  border-radius: var(--r-pill); background: var(--c-accent);
+  transform: translateX(0);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--dur) var(--ease);
 }
-.sub[aria-selected="true"]::after,
-.sub[aria-selected="true"]:hover::after { transform: scaleX(1); }
+.nav2-ind.ready { opacity: 1; }
 /* B30：`.page-meta`（「即时页 / 点一下立刻生效」）整条删除 —— 节点与填充代码
    （index.html / app.js renderNav2）同步移除，别让样式留成一个"看不见但还在"的孤儿。 */
 
@@ -1339,6 +1382,35 @@ input[type="date"], input[type="time"] { font-variant-numeric: tabular-nums; }
 .seg label:has(input:checked) { background: var(--c-surface); box-shadow: 0 1px 2px var(--c-shadow-2); }
 .seg input:checked + span { color: var(--c-accent); font-weight: 600; }
 .seg input:focus-visible + span { outline: 2px solid var(--c-accent-ring); outline-offset: 2px; border-radius: var(--r-sm); }
+
+/* ── 分段选择器的「滑动高亮块」（2026-10-20）─────────────────────────────
+   机制取自 Watermelon Highlight（wm-hl）：
+     MIT，Copyright (c) 2026 Watermelon Platform Contributors。
+     上游原文 demos/watermelon.css 的 `.wm-hl .hp`：一块 position:absolute 的纯色底，
+     由 JS 按选中项 offset 写 transform，首次定位后加 .lit 淡入。
+   本文件是**适配本项目令牌的改写版**，与上游的差异逐条列在这里（算法未改）：
+     ① 垂直 → 水平：translateY → translateX；
+     ② 上游宽度固定 calc(100% - 8px)，本项目标签宽度不一 ⇒ 增加 width 过渡（同一 duration/easing）；
+     ③ 480ms 是上游节奏，本项目配置界面偏静 ⇒ 改用令牌 --dur / --ease；
+     ④ 上游只在 hover 时激活；本项目由 `:checked` 驱动（见 app.js mountSegHp）；
+     ⑤ 被选中项原本自带底色，现在改由滑块提供，故 :has(input:checked) 的底色置空；
+     ⑥ **位移与宽度不用 CSS 过渡，改用 WAAPI**：`paintPage` 每次整页重建 `#page`，
+        点一下旧节点就被换掉 ⇒ CSS 过渡永远没有机会跑（真机实测：120ms 内节点已卸载，
+        逐帧采样只拿到 2 个值）。所以动画在**新节点**上从旧坐标滑过去，见 `positionSegHp`。
+        这里只保留 opacity 过渡（淡入与重建无关）。
+   ⚠️ 减弱动效由 JS 判（`M.reducedMotion()`）直接落位，不注册任何帧循环。 */
+.seg { position: relative; }
+.seg .seg-hp {
+  position: absolute; z-index: 0; left: 2px; top: 2px;
+  height: calc(var(--h-ctl) - 8px); width: 0;
+  border-radius: var(--r-sm); background: var(--c-surface);
+  box-shadow: 0 1px 2px var(--c-shadow-2);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--dur) linear;
+}
+.seg.lit .seg-hp { opacity: 1; }
+.seg label { z-index: 1; }
+.seg label:has(input:checked) { background: transparent; box-shadow: none; }
 
 /* ── 按钮 ─────────────────────────────────────────────────────────────── */
 .btn {
@@ -1791,6 +1863,27 @@ details.det pre { margin: 0; }
   animation: sp .7s linear infinite; vertical-align: -2px;
 }
 @keyframes sp { to { transform: rotate(360deg) } }
+
+/* ── 右键浮层（2026-10-20 · 只改呈现层，行为不变）──────────────────────
+   数值规格借自 bencho 的 SortMenu：`transform-origin: 100% 0`、入场关键帧只写 `from`、
+   时长 180ms 档。⚠️ bencho **无公开仓库、无许可声明** ⇒ 只借数值，未取任何代码行。
+   ⚠️ 用 `position: fixed`（锚点是 `clientX/Y`）：`absolute` 会随页面滚动漂走。
+   ⚠️ z-index 75：低于 `.modal`(80)、高于吸顶三层（≤60）；两者不会同时出现
+      （点任一菜单项会先 `closeCtxMenu()` 再执行动作）。 */
+.ctxmenu {
+  position: fixed; z-index: 75; left: 0; top: 0;
+  min-width: 190px; max-width: 300px;
+  padding: var(--s3);
+  border: 1px solid var(--c-line-strong); border-radius: var(--r-sm);
+  background: var(--c-surface); box-shadow: var(--c-shadow-3);
+  transform-origin: 100% 0;
+  animation: ctx-in 180ms cubic-bezier(.4, 0, .2, 1) both;
+}
+@keyframes ctx-in { from { opacity: 0; transform: translateY(-4px) scale(.96); } }
+.ctxmenu .ctx-h { font-weight: 600; margin-bottom: var(--s2); }
+.ctxmenu .ctx-i { color: var(--c-text-2); font-size: var(--t-xs); margin-bottom: var(--s3); }
+.ctxmenu .btn { display: flex; width: 100%; justify-content: flex-start; margin-top: 4px; }
+@media (prefers-reduced-motion: reduce) { .ctxmenu { animation: none; } }
 
 .modal {
   position: fixed; inset: 0; z-index: 80; display: grid; place-items: center;
@@ -2440,3 +2533,20 @@ html[data-vt="circle-blur"]::view-transition-new(root) {
 .upd-off input[type="file"] { max-width: 280px; font-size: 12px; }
 .upd-off > .hint { margin-top: 6px; }
 .upd-off #upd-off-status.bad { color: var(--c-danger); }
+
+/* ── 角色卡十维分级（2026-10-21 · Win-v0.1.2 移植）──────────────────────
+   圆点颜色只表达档位；数值/文案全部由后端下发（src/persona-grade.js）。 */
+.cgdot {
+  width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none;
+  background: var(--c-text-3);
+}
+.cgdot.t-gray { background: var(--c-text-3); }
+.cgdot.t-green { background: var(--c-ok); }
+.cgdot.t-blue { background: var(--c-info); }
+.cgdot.t-purple { background: var(--c-accent); }
+.cgdot.t-gold { background: #c99a2e; }
+.cg-dims {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px 12px; margin-top: 8px;
+}
+.cg-dim { display: flex; align-items: center; gap: 6px; font-size: 12px; }

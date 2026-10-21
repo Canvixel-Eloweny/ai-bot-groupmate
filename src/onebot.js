@@ -2,6 +2,9 @@ import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import scoped from './logger.js';
 import { probeForwardSegment } from './forward-probe.js';
+// L3 归一层（2026-10-20）：`status === 'ok' || retcode === 0` 这条判据会把
+// 「业务失败仍回 retcode 200」的后端当成成功（Lagrange 实证）；归一判据只有一份。
+import { classifyOneBotReply } from './backend/normalize.js';
 
 const log = scoped('onebot');
 
@@ -128,8 +131,16 @@ export function flattenMessage(segments, selfId, opts = {}) {
   return { text: text.trim(), bareText: bareText.trim(), mentionedSelf, replyTo, images };
 }
 
+/**
+ * 机器人自己问 `get_status` 的周期。
+ * 为什么不能只靠事件里的 heartbeat：NapCat 的 `heartInterval` 只有 ws-server/ws-client
+ * 两种模式可配，HTTP 内嵌 WS 那条是硬编码；LLBot/官方等后端更不保证推。
+ * 周期探活是唯一不依赖后端配置的观测面（30s 与 NapCat 默认心跳同量级）。
+ */
+const STATUS_PROBE_MS = 30000;
+
 export class OneBotClient extends EventEmitter {
-  /** @param {{wsUrl:string, accessToken:string, reconnectBackoffMs:number[]}} opts */
+  /** @param {{wsUrl:string, accessToken:string, reconnectBackoffMs:number[], statusProbeMs?:number}} opts */
   constructor(opts) {
     super();
     this.opts = opts;
@@ -140,21 +151,54 @@ export class OneBotClient extends EventEmitter {
     this.seq = 0;
     this.attempt = 0;
     this.closedByUs = false;
+    // ── 可观测面（B2/B3/B4 · 2026-10-20）──────────────────────────────────────
+    // 进程内存里的"最近一次"时刻；面板通过 effective.json 读到它们（不另开端口）。
+    this.lastFrameAt = 0;        // 任何入站帧（含 echo 回包）
+    this.lastHeartbeatAt = 0;    // meta_event/heartbeat
+    this.heartbeatIntervalMs = 0;// 后端自报的心跳间隔（0 = 没报过）
+    this.lastStatusAt = 0;       // 最近一次周期探活实际发出的时刻
+    this.lastStatusOk = null;    // null = 还没问过；true/false = 最近一次的结果
+    this.statusTimer = null;
+    this.stats = { calls: 0, timeouts: 0 };
+    const probeMs = opts.statusProbeMs === undefined ? STATUS_PROBE_MS : Number(opts.statusProbeMs);
+    this.statusProbeMs = Number.isFinite(probeMs) && probeMs > 0 ? probeMs : 0;
     // 待触发的重连定时器句柄。每次真的排了新的就把上一个清掉 ——
     // 否则连接失败时 error+close 反复触发，会排出多个各自独立的 setTimeout，
     // 它们全都到点各连一次；后连上的覆盖 this.ws，先到的成了孤儿，
     // 而孤儿的 close 又会再排一个 —— 级联放大。
     this.reconnectTimer = null;
+    // ── 存活看门狗（B3 · 2026-10-21）──────────────────────────────────────
+    // QQ 被腾讯踢下线时 NapCat 进程还活着、3001 还开着 —— 只靠 `close` 重连永远等不到。
+    // 这里只做一件事：**连续收不到任何入站帧**时主动 terminate，把重连交回 close 里那唯一一条路。
+    this.connectedAt = 0;
+    this.botOffline = false;
+    this.botOfflineAt = 0;
+    this.reconnects = 0;
+    this.watchdogKills = 0;
+    this.lastDropReason = '';
+    const stale = Number(opts.staleMs);
+    this.staleMs = Number.isFinite(stale) && stale > 0 ? stale : 90000;
+    this.watchdogTimer = null;
   }
 
   start() {
     this.closedByUs = false;
     this.#connect();
+    this.#startStatusProbe();
+    this.#startWatchdog();
     return this;
   }
 
   stop() {
     this.closedByUs = true;
+    if (this.statusTimer) {
+      clearInterval(this.statusTimer);
+      this.statusTimer = null;
+    }
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
     // 已经排出去的重连要撤掉：closedByUs 只在 close 回调里被读，
     // 而定时器到点时是一次全新的调用，那条路上根本不会经过那个判断。
     if (this.reconnectTimer) {
@@ -182,6 +226,11 @@ export class OneBotClient extends EventEmitter {
     ws.on('open', () => {
       this.connected = true;
       this.attempt = 0;
+      this.connectedAt = Date.now();
+      this.lastFrameAt = Date.now();
+      this.lastHeartbeatAt = 0;
+      this.botOffline = false;
+      this.botOfflineAt = 0;
       log.info('协议端已连接');
       this.emit('ready');
     });
@@ -193,11 +242,14 @@ export class OneBotClient extends EventEmitter {
     });
 
     ws.on('close', (code) => {
+      // 旧 socket 的迟到 close 不许清掉新连接：先认"这条还是不是当前那条"。
+      if (this.ws !== ws) return;
       this.connected = false;
       this.selfId = null;
       this.#rejectAllPending('连接已断开');
       if (this.closedByUs) return;
       if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+      this.reconnects += 1;
       const backoff = this.opts.reconnectBackoffMs;
       const delay = backoff[Math.min(this.attempt, backoff.length - 1)];
       this.attempt += 1;
@@ -220,13 +272,24 @@ export class OneBotClient extends EventEmitter {
       log.debug('收到非 JSON 报文，已忽略');
       return;
     }
+    this.lastFrameAt = Date.now();
 
     if (payload.echo !== undefined && this.pending.has(payload.echo)) {
-      const { resolve, reject, timer } = this.pending.get(payload.echo);
+      const { resolve, reject, timer, action } = this.pending.get(payload.echo);
       clearTimeout(timer);
       this.pending.delete(payload.echo);
-      if (payload.status === 'ok' || payload.retcode === 0) resolve(payload.data ?? payload);
-      else reject(new Error(`API 返回失败: retcode=${payload.retcode} ${payload.message ?? ''}`));
+      const reply = classifyOneBotReply(payload);
+      if (reply.businessOk) {
+        resolve(reply.data ?? payload);
+      } else {
+        const err = new Error(`API 返回失败: retcode=${payload.retcode} ${payload.message ?? ''}`);
+        // 把归一层的结果挂在错误上：调用方按 `code` 分支，不比中文文案。
+        err.code = reply.code;
+        err.transportOk = reply.transportOk;
+        err.businessOk = false;
+        err.action = action || '';
+        reject(err);
+      }
       return;
     }
 
@@ -236,7 +299,40 @@ export class OneBotClient extends EventEmitter {
       return;
     }
 
+    // 心跳事件（B2）：只记录，不改连接状态 —— 它证明的是"对面还在推"，
+    // 不能反过来当"连上了"（lifecycle/open 才是连接判据）。
+    if (payload.post_type === 'meta_event' && payload.meta_event_type === 'heartbeat') {
+      this.lastHeartbeatAt = Date.now();
+      const iv = Number(payload.interval);
+      if (Number.isFinite(iv) && iv > 0) this.heartbeatIntervalMs = iv;
+      // NapCat 的 `status.online` 就是 QQ 账号在线状态。false 时**不重连** ——
+      // 重连替代不了扫码/重新登录，只会多一次风控判定。
+      const online = payload.status?.online;
+      if (online === false && !this.botOffline) {
+        this.botOffline = true;
+        this.botOfflineAt = Date.now();
+        this.lastDropReason = '账号已掉线（心跳 status.online=false）';
+        log.warn('协议端心跳报告账号已掉线 —— 不重启协议端，等它自己重登或扫码');
+        this.emit('offline', { at: this.botOfflineAt, reason: this.lastDropReason });
+      } else if (online === true && this.botOffline) {
+        this.botOffline = false;
+        this.botOfflineAt = 0;
+        log.info('协议端心跳报告账号已恢复在线');
+      }
+      this.emit('heartbeat', payload);
+      return;
+    }
+
     if (payload.self_id && !this.selfId) this.selfId = String(payload.self_id);
+
+    // 账号掉线的另一条信号（NapCat：`notice/bot_offline`）。与心跳 status 同源，
+    // 但有的后端只发这一条；两条都认，避免"面板一直绿、其实已经掉线"。
+    if (payload.post_type === 'notice' && payload.notice_type === 'bot_offline') {
+      this.botOffline = true;
+      this.botOfflineAt = Date.now();
+      this.lastDropReason = `账号已掉线${payload.message ? `：${payload.message}` : ''}`;
+      this.emit('offline', { at: this.botOfflineAt, reason: this.lastDropReason });
+    }
 
     if (payload.post_type === 'message') {
       this.emit('message', payload);
@@ -257,18 +353,96 @@ export class OneBotClient extends EventEmitter {
   call(action, params = {}, timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
       if (!this.connected || !this.ws) {
-        reject(new Error('协议端未连接'));
+        const err = new Error('协议端未连接');
+        err.code = 'not_connected';
+        reject(err);
         return;
       }
       const echo = `q${++this.seq}`;
       const timer = setTimeout(() => {
         this.pending.delete(echo);
-        reject(new Error(`API 超时: ${action}`));
+        this.stats.timeouts += 1;
+        const err = new Error(`API 超时: ${action}`);
+        err.code = 'timeout';
+        err.action = action;
+        reject(err);
       }, timeoutMs);
       timer.unref?.();
-      this.pending.set(echo, { resolve, reject, timer });
+      this.pending.set(echo, { resolve, reject, timer, action });
+      this.stats.calls += 1;
       this.ws.send(JSON.stringify({ action, params, echo }));
     });
+  }
+
+  /** 周期 `get_status`：不依赖后端推心跳，也不拿自报的 online/good 当健康判据。 */
+  #startStatusProbe() {
+    if (!this.statusProbeMs || this.statusTimer) return;
+    this.statusTimer = setInterval(() => this.#probeStatus(), this.statusProbeMs);
+    this.statusTimer.unref?.();
+  }
+
+  #probeStatus() {
+    if (!this.connected) return;
+    this.lastStatusAt = Date.now();
+    this.call('get_status', {}, 5000)
+      .then(() => { this.lastStatusOk = true; })
+      .catch(() => { this.lastStatusOk = false; });
+  }
+
+  /**
+   * 存活看门狗：每 tick 只看"最后入站帧"。
+   * ⚠️ 只 `terminate()`，**绝不自己 `#connect()`** —— 重连仍只有 close 回调这一条实现。
+   *   自己再连一份会绕过退避、并让旧 socket 的 close 与新连接互相踩。
+   */
+  #startWatchdog() {
+    if (this.watchdogTimer || !(this.staleMs > 0)) return;
+    const tick = Math.max(2000, Math.min(10000, Math.floor(this.staleMs / 3)));
+    this.watchdogTimer = setInterval(() => this.#checkLiveness(), tick);
+    this.watchdogTimer.unref?.();
+  }
+
+  #checkLiveness() {
+    if (!this.connected || !this.ws) return;
+    // 后端报过心跳间隔 ⇒ 以心跳为准（get_status 的回包也会刷新 lastFrameAt，
+    // 只看帧会让"心跳停了但动作还答"永远不触发）；没报过心跳的后端才退回看任意帧。
+    const beatKnown = this.heartbeatIntervalMs > 0 && this.lastHeartbeatAt > 0;
+    const last = beatKnown
+      ? this.lastHeartbeatAt
+      : Math.max(this.lastFrameAt || 0, this.connectedAt || 0);
+    if (!last) return;
+    const idle = Date.now() - last;
+    if (idle <= this.staleMs) return;
+    this.watchdogKills += 1;
+    this.lastDropReason = `事件流停摆 ${Math.round(idle / 1000)} 秒`;
+    log.warn(`协议端 ${this.lastDropReason}（阈值 ${this.staleMs}ms）—— 主动断开，交给既有退避重连`);
+    this.emit('stale', { lastFrameAt: last, idleMs: idle, staleMs: this.staleMs });
+    try { this.ws.terminate(); } catch { /* 已断开 */ }
+  }
+
+  /**
+   * 给面板的**只读**健康快照（B4）：机器人此刻看到的连接、心跳与超时。
+   * ⚠️ 不含"健康/不健康"的结论 —— 判断留给面板与维护者；这里只摆时刻与计数。
+   */
+  healthSnapshot() {
+    return {
+      connected: this.connected,
+      selfId: this.selfId || '',
+      connectedAt: this.connectedAt,
+      lastFrameAt: this.lastFrameAt,
+      lastHeartbeatAt: this.lastHeartbeatAt,
+      heartbeatIntervalMs: this.heartbeatIntervalMs,
+      botOffline: this.botOffline,
+      botOfflineAt: this.botOfflineAt,
+      reconnects: this.reconnects,
+      watchdogKills: this.watchdogKills,
+      lastDropReason: this.lastDropReason,
+      statusProbeIntervalMs: this.statusProbeMs,
+      lastStatusAt: this.lastStatusAt,
+      lastStatusOk: this.lastStatusOk,
+      calls: this.stats.calls,
+      timeouts: this.stats.timeouts,
+      pending: this.pending.size,
+    };
   }
 
   /**

@@ -493,7 +493,7 @@ console.log('\n【15】赠送额度接口 /api/zhipu/packages');
 console.log('\n【16】技能注册表 / 人设指纹 / 新增字段归一化（纯函数，不走 HTTP）');
 let savedCustom = null;
 {
-  const { pickSkillsForPrompt, scopeMatches } = await import('../src/skills.js');
+  const { pickSkillsForPrompt, pickPersonaCard, scopeMatches } = await import('../src/skills.js');
   const { readCustom, personaFingerprint, SKILL_IN_PROMPT } = await import('../src/custom-config.js');
 
   // ── 作用范围 ──
@@ -521,8 +521,13 @@ let savedCustom = null;
     hit([mk('a', { triggers: ['运势'] })], '今天天气不错').length === 0
     && hit([mk('a', { triggers: ['运势'] })], '看看我的运势').join() === 'a');
   check('★ 知识包没填触发词 → 每轮都带上（用户自己的选择）', hit([mk('a')]).join() === 'a');
-  check('★ 角色卡同一个会话只取第一张（两张卡会互相打架）',
-    hit([mk('c1', { kind: 'persona' }), mk('c2', { kind: 'persona' })]).join() === 'c1');
+  // 2026-10-21（Win-v0.1.2 移植）：角色卡从技能段升到人格段 ——
+  // 它不再占知识包预算，也不该出现在 pickSkillsForPrompt 的结果里。
+  check('★ 角色卡不进技能段（它走人格段）',
+    hit([mk('c1', { kind: 'persona' }), mk('c2', { kind: 'persona' })]).length === 0);
+  check('★ 同一会话多张卡只取第一张（pickPersonaCard，两张卡会互相打架）',
+    pickPersonaCard([mk('c1', { kind: 'persona', scope: { type: 'global', id: '' } }),
+      mk('c2', { kind: 'persona', scope: { type: 'global', id: '' } })], { groupId: '100' })?.id === 'c1');
   check(`★ 同时命中的技能压到上限 ${SKILL_IN_PROMPT} 条`,
     hit([mk('a'), mk('b'), mk('c'), mk('d'), mk('e')]).length === SKILL_IN_PROMPT);
 

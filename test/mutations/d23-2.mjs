@@ -74,21 +74,19 @@ const M2 = {
   expect: 'BLOCKED',
 };
 
-// ── M3：参数尝试的顺序就是语义（协议端只认 message_id；res_id 会过期） ────────
+// ── M3：参数尝试的顺序就是语义（第一步挡 resId 过期，兜底那步挡 LLBot） ────────
 const M3 = {
   id: 'M3',
-  note: '两个参数尝试对调顺序（res_id 排在 message_id 之前）—— 真机上会永远走那条"过期 id"的路、天天报 payload is empty。预期 BLOCKED（§52⑥ 顺序判据）',
-  file: IDX,
-  anchor: /const attempts = \[\];\n/,
+  note: '把 NapCat 的 forwardOrder 对调（res_id 排在 message_id 之前）—— L3 之后顺序只有一个决定点'
+    + '（registry 的后端表）；对调后先撞上的就是过期 resId 那条路（SnowLuma 报 payload is empty、'
+    + 'NapCat 报 ResId无效），而 message_id 那条正规回查永远走不到。预期 BLOCKED（§52⑥ 顺序判据）',
+  file: 'src/backend/registry.js',
+  anchor: /napcat:\s*\{[\s\S]{0,500}?forwardOrder: \['message_id', 'id'\]/,
   count: 1,
-  apply: (s) => {
-    const mid = "    if (evt.message_id !== undefined && evt.message_id !== null && String(evt.message_id)) {\n"
-      + "      attempts.push({ via: 'message_id', params: { message_id: Number(evt.message_id) || evt.message_id } });\n"
-      + '    }\n';
-    const res = '    const resId = forwardResIdOf(evt.message);\n'
-      + "    if (resId) attempts.push({ via: 'res_id', params: { id: resId } });\n";
-    return s.replace(mid + res, res + mid);
-  },
+  apply: (s) => s.replace(
+    /(napcat:\s*\{[\s\S]{0,500}?)forwardOrder: \['message_id', 'id'\]/,
+    "$1forwardOrder: ['id', 'message_id']"
+  ),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };

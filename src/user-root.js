@@ -170,10 +170,10 @@ export const userFile = (rel = '') => path.join(ROOTS.userRoot, rel);
 /** 面板运行态路径（USER_ROOT/panel）。 */
 export const panelFile = (name = '') => path.join(ROOTS.panelStateDir, name);
 
-/** 只建启动必需的三层；napcat 由协议端安装流程自己建。 */
+/** 建启动必需的三层 + 图片工具的本机目录；napcat 由协议端安装流程自己建。 */
 export function ensureUserDirs({ roots = ROOTS, fsApi = fs } = {}) {
-  for (const dir of [roots.userRoot, roots.panelStateDir, roots.dataDir]) {
-    fsApi.mkdirSync(dir, { recursive: true });
+  for (const dir of [roots.userRoot, roots.panelStateDir, roots.dataDir, path.join(roots.dataDir, 'images-out')]) {
+    fsApi.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
   return roots;
 }

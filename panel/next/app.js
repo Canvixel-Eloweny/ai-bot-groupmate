@@ -177,10 +177,9 @@ async function refresh(silent = false) {
   //    每次都会跑 ⇒ 结果是：
   //      · 顶栏与页面内容**实时更新**；
   //      · 告警条**冻结在页面首次连上那一帧**，之后再也不变。
-  //    用户看到的就是"同一页自相矛盾"：条子说「实例锁被占着、pid 9996、面板没在跑机器人」，
-  //    而下面的卡片同时显示「机器人 在跑 pid 7920」。
+  //    用户看到的就是"同一页自相矛盾"：条子还停在旧状态，而下面的卡片已经实时更新。
   //
-  //    受影响的不止实例锁那一条 —— 「内存很紧」（pressure≥90）一旦亮起，
+  //    受影响的是所有条子 —— 「内存很紧」（pressure≥90）一旦亮起，
   //    就算内存降下来也不会消失；「面板服务端是旧代码」「没拿到 token」同理。
   //
   //    所以它必须和 paintTop / softPaint 一样，**每次拿到新状态都重绘**。
@@ -574,11 +573,42 @@ const ACTIONS = {
     } finally { busy(false); }
   },
   'panel.restart': async () => { busy(true, '重启面板…'); try { const before = j(S.state, ['panel', 'pid']); const r = await post('/api/panel/restart'); if (!r.restarted) { toast(r.msg || '已是最新，没有重启'); busy(false); return; } toast('正在重启，几秒后自动刷新…', 'ok'); await waitPanelPid(before); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  /* ── 假 QQ 会话（2026-10-21 · Win-v0.1.2 移植）──────────────────────────
+     三条写路由（start / send / stop）+ 一个只读状态轮询。写的是**服务端**的进程，
+     不是草稿 —— 所以这里不碰 S.draft / markDirty()。 */
+  'fake.start': async () => {
+    const o = fakeOpts();
+    if (!o.sandbox && j(S.state, ['bridge', 'running'])) {
+      return toast('真机器人在跑：先停它，或勾上「沙箱数据」再启动', 'warn');
+    }
+    busy(true, '起假 QQ…');
+    try {
+      const r = await post('/api/fake-qq/start', { offline: o.offline, sandbox: o.sandbox });
+      if (!r?.ok) return toast(r?.msg || '起不来', 'bad');
+      S.extra.fakeSince = 0; S.extra.fakeLines = [];
+      toastResult(r, '已启动');
+      await fakePoll();
+    } catch (e) { toast(`启动失败：${e.message}`, 'bad'); }
+    finally { busy(false); }
+  },
+  'fake.stop': async () => { try { const r = await post('/api/fake-qq/stop'); toastResult(r, '已停止'); } catch (e) { toast(`停止失败：${e.message}`, 'bad'); } },
+  'fake.send': async () => {
+    const text = String(S.volatile['fake.text'] ?? '').trim();
+    if (!text) return toast('先写一句要发的话', 'warn');
+    await fakeSay(text, true);
+  },
+  'fake.cmd': async (p) => { await fakeSay(`/${p}`); },
+  'fake.clear': () => { S.extra.fakeLines = []; paintFake(); },
+  'fake.opt': (p) => { const o = fakeOpts(); o[p] = !o[p]; paintPage(false); },
   'config.undo': async () => { if (!confirm('撤销上一次保存？配置会整份退回那一版。')) return; busy(true, '撤销中…'); try { const r = await post('/api/config/undo', { steps: 1 }); toastResult(r, '已撤销'); await refresh(true); } catch (e) { toast(`撤销失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'try.run': async () => { const text = String(S.volatile['try.text'] || '').trim(); if (!text) return toast('先写一句要它回的话', 'warn'); busy(true, '跑完整链路…'); try { S.extra.tryOut = await post('/api/try', { text }); paintPage(false); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'skill.add.pack': () => addSkill('pack'), 'skill.add.persona': () => addSkill('persona'),
   'skill.apply': (i) => applyPersonaCard(Number(i)),
-  'row.add': (p) => { draftArr(p).push(''); touchC(p); markDirty(); paintPage(false); },
+  'skill.snap': (i) => snapPersonaCard(Number(i)),
+  'cg.do': (p) => fillCardDim(p),
+  'cg.adopt': (i) => adoptCard(Number(i)),
+  // 定时消息的新条目必须是对象：推空串的话 `schedAction` 会在 strict mode 抛错。
+  'row.add': (p) => { draftArr(p).push({ at: '', text: '', prompt: '', target: 'group', enabled: true }); touchC(p); markDirty(); paintPage(false); },
   'row.del': (p) => {
     const [path, i] = String(p).split('|');
     draftArr(path).splice(Number(i), 1);
@@ -871,6 +901,62 @@ function brainDelete(id) {
   ]);
 }
 
+/* ── 右键浮层（2026-10-20 · 只改**呈现层**）─────────────────────────────
+   原来右键大脑标签弹的是**居中 modal**（信息 + 三个动作）。现在弹在**光标锚点旁**，
+   信息与三个动作一字不改。数值规格借自 bencho 的 SortMenu：
+   `transform-origin: 100% 0`、入场关键帧**只写 from**（其余交给浏览器插值）、时长档 160/180/220ms。
+   ⚠️ bencho **无公开仓库、无许可声明** ⇒ 只借数值，**未取任何代码行**。
+   ⚠️ 浮层挂在 `document.body` 上（`position: fixed`）：它不参与 `#page` 的 3 秒重建，
+      但**重建后目标节点可能已被换掉** ⇒ 动作只认打开时捕获的 `b.id`，不回头查 DOM。
+   ⚠️ 关闭路径必须齐：点外部 / Escape / 滚动 / 尺寸变化 / 页面重建 —— 漏任何一个都会
+      "菜单飘在屏幕上关不掉"，而且没有任何报错。 */
+let ctxMenu = null;
+
+function closeCtxMenu() {
+  if (!ctxMenu) return;
+  ctxMenu.remove();
+  ctxMenu = null;
+}
+
+function openCtxMenu(ev, title, info, items) {
+  closeCtxMenu();
+  const m = document.createElement('div');
+  m.className = 'ctxmenu';
+  m.setAttribute('role', 'menu');
+  m.setAttribute('aria-label', title);
+  m.innerHTML = `<div class="ctx-h">${esc(title)}</div>`
+    + (info ? `<div class="ctx-i">${info}</div>` : '')
+    + items.map((it, i) => `<button role="menuitem" type="button" data-ci="${i}" class="btn ${it.style || 'btn-ghost'}">${esc(it.label)}</button>`).join('');
+  document.body.appendChild(m);
+  /* 先量后夹：直接按 clientX/Y 放会在右下角溢出视口（菜单一半在屏幕外，且看不出来是 bug）
+     ⚠️ 量的是 `offsetWidth/offsetHeight`（布局尺寸），**不是** `getBoundingClientRect()` ——
+        入场关键帧带 `scale(.96)`，而 rect 会把动画的缩放算进去 ⇒ 量小约 4%，
+        动画结束菜单比算出来的大，右/下边缘就会溢出（真机实测溢出 4px）。 */
+  const mw = m.offsetWidth, mh = m.offsetHeight;
+  const pad = 8;
+  m.style.left = `${Math.max(pad, Math.min(ev.clientX, window.innerWidth - mw - pad))}px`;
+  m.style.top = `${Math.max(pad, Math.min(ev.clientY, window.innerHeight - mh - pad))}px`;
+  m.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-ci]');
+    if (!btn) return;
+    const it = items[Number(btn.dataset.ci)];
+    closeCtxMenu();
+    it.run();
+  });
+  ctxMenu = m;
+  const first = m.querySelector('[data-ci]');
+  if (first) first.focus({ preventScroll: true });
+}
+
+document.addEventListener('pointerdown', (e) => {
+  if (ctxMenu && !ctxMenu.contains(e.target)) closeCtxMenu();
+}, true);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeCtxMenu();
+});
+window.addEventListener('scroll', () => closeCtxMenu(), { passive: true, capture: true });
+window.addEventListener('resize', () => closeCtxMenu());
+
 /* 右键菜单：**委托在 document 上** —— 列表每 3 秒重绘一次，
    绑在按钮节点上会在第一次重绘后就失效（而症状只是"右键没反应"，看不出原因）。 */
 document.addEventListener('contextmenu', (ev) => {
@@ -879,7 +965,7 @@ document.addEventListener('contextmenu', (ev) => {
   const b = brainById(el.dataset.brain || '');
   if (!b) return;
   ev.preventDefault();
-  modal(`「${b.name}」`, `<div class="rows">
+  openCtxMenu(ev, `「${b.name}」`, `<div class="rows">
       <div class="row flat"><span class="grow">模型</span><span class="mono">${esc(b.model)}</span></div>
       <div class="row flat"><span class="grow">接口</span><span class="mono">${esc(b.baseUrl)}</span></div>
       <div class="row flat"><span class="grow">密钥</span><span>${b.hasKey ? '已填' : '<b>还没填</b>'}</span></div>
@@ -1046,6 +1132,110 @@ function snapshotPersonaFields() {
   for (const k of Object.keys(meta.scenes || {})) out.scenes[k] = String(getPath(S.draft.custom, `scenes.${k}`) ?? '');
   return out;
 }
+/**
+ * 把当前人格 / 增强 / 场景重新拍进一张已有的角色卡。
+ * 新建时已经拍过一次；这个按钮是给"改完人格后更新卡"用的。
+ */
+function snapPersonaCard(i) {
+  const sk = draftArr('skills')[i];
+  if (!sk) return;
+  sk.fields = snapshotPersonaFields();
+  touchC('skills'); markDirty(); paintPage(false);
+  toast('已把当前人格 / 增强 / 场景存进这张卡 —— 记得保存', 'ok');
+}
+
+/** 卡里全部可读文字（AI 认领的素材）。 */
+function cardTextOf(sk) {
+  const parts = [
+    sk?.name,
+    sk?.background,
+    ...(Array.isArray(sk?.examples) ? sk.examples : []),
+    ...Object.values(sk?.fields || {}),
+  ];
+  return parts.map((x) => String(x || '').trim()).filter(Boolean).join('\n');
+}
+
+/**
+ * 「写进这张卡」：把这一维的答案追加进卡字段，立刻保存并重新分级。
+ * 只追加用户自己写的一句话；机器搬来的内容走 `applyAdopt`，只填空字段。
+ */
+function fillCardDim(p) {
+  const [i, dimId] = String(p || '').split('|');
+  const g = (j(S.state || DEMO, ['personaCards'], []) || [])[Number(i)];
+  if (!g) return toast('没找到这张卡（可能刚被删了，刷新一下）', 'warn');
+  const input = document.querySelector(`[data-a="cg.fill"][data-p="${i}|${dimId}"]`);
+  const text = String((input && input.value) || '').trim();
+  if (!text) return toast('先写一句话再点', 'warn');
+  const arr = draftArr('skills');
+  const idx = arr.findIndex((sk) => sk.kind === 'persona' && ((g.id && sk.id === g.id) || sk.name === g.name));
+  if (idx < 0) return toast('草稿里没有这张卡（可能刚被删了，刷新一下）', 'warn');
+  const gap = (g.gaps || []).find((x) => x.id === dimId) || {};
+  const key = gap.field || '';
+  if (!key) return toast('这一维没有可写的字段', 'warn');
+  const cur = String(arr[idx].fields?.[key] || '').trim();
+  arr[idx].fields = { ...(arr[idx].fields || {}), [key]: cur ? `${cur} ${text}` : text };
+  touchC('skills'); markDirty();
+  toast(`已写进「${gap.label || dimId}」的 ${key}`, 'ok');
+  return commitDraft();
+}
+
+/** 「AI 认领」：模型按十维归位，先预览，用户点确认才写；只填空字段。 */
+async function adoptCard(i) {
+  if (!S.online) return DEMO_BLOCK();
+  const g = (j(S.state || DEMO, ['personaCards'], []) || [])[Number(i)];
+  if (!g) return toast('没找到这张卡（可能刚被删了，刷新一下）', 'warn');
+  const arr = draftArr('skills');
+  const idx = arr.findIndex((sk) => sk.kind === 'persona' && ((g.id && sk.id === g.id) || sk.name === g.name));
+  if (idx < 0) return toast('草稿里没有这张卡（可能刚被删了，刷新一下）', 'warn');
+  const sk = arr[idx];
+  const text = cardTextOf(sk);
+  if (text.length < 20) return toast('这张卡里只有名字，没有可认领的文字 —— 先把内容填进背景或示例', 'warn');
+  busy(true, 'AI 认领中（一次模型调用，约 5–30 秒）…');
+  try {
+    const r = await api('/api/persona/adopt', {
+      method: 'POST',
+      body: { name: sk.name, text, fields: sk.fields || {} },
+      timeout: 160000,
+    });
+    const wrote = Array.isArray(r.wrote) ? r.wrote : [];
+    if (!wrote.length) throw new Error('这一趟没认出任何一维');
+    S.extra.adopt = { idx, wrote };
+    modal('AI 认领预览', `
+      <p class="hint">模型只从卡里已有的文字里搬，素材没提到的维度它留空。<b>只填这张卡里还空着的字段</b>，你已经写过的内容一律不动。</p>
+      <div class="rows">${wrote.map((w) => {
+        const already = String((sk.fields || {})[w.field] || '').trim();
+        return `<div class="row flat">
+        <div class="row-h"><b>${esc(w.label)}</b><span class="spacer"></span>
+          <span class="mono hint">→ ${esc(w.field)} · ${w.chars} 字</span>
+          ${already ? '<span class="tag warn">已有内容，会跳过</span>' : ''}</div>
+        <div class="hint">${esc(w.text)}</div>
+      </div>`;
+      }).join('')}</div>
+      ${Array.isArray(r.missing) && r.missing.length ? `<p class="hint">没认出来的维度：${esc(r.missing.join('、'))} —— 素材里可能确实没写，别硬补。</p>` : ''}
+    `, [{ label: '写进这张卡', style: 'btn-primary', run: applyAdopt }]);
+  } catch (e) { toast(`认领失败：${e.message}`, 'bad'); } finally { busy(false); }
+}
+
+function applyAdopt() {
+  const a = S.extra.adopt;
+  S.extra.adopt = null;
+  if (!a) return closeModal();
+  const sk = draftArr('skills')[a.idx];
+  if (!sk) return closeModal();
+  const fields = { ...(sk.fields || {}) };
+  let n = 0;
+  for (const w of a.wrote) {
+    if (String(fields[w.field] || '').trim()) continue; // 已有内容的不覆盖
+    fields[w.field] = w.text;
+    n++;
+  }
+  sk.fields = fields;
+  if (!n) { closeModal(); return toast('这些字段本来就有内容，一个都没覆盖', 'warn'); }
+  touchC('skills'); markDirty(); closeModal();
+  toast(`已认领 ${n} 个字段 —— 保存后重新分级`, 'ok');
+  return commitDraft();
+}
+
 function addSkill(kind) {
   // ⚠️ 建**角色卡**时快照当前人格（2026-10-15 · B4 / Issue #5）：
   //    面板上没有任何地方能编辑卡内字段，不快照的话新建出来就是一张永远填不进去的
@@ -1228,10 +1418,6 @@ function renderBanners() {
     out.push(`<div class="banner"><b>内存很紧</b><span class="spacer"></span>
       <span>占用 ${j(s, ['memory', 'pressure'])}%。再挤下去 Docker 会被系统悄悄杀掉（表现为"容器凭空消失"）—— 建议先停本机模型。</span></div>`);
   }
-  if (S.online && j(s, ['bridge', 'lock']) && !j(s, ['bridge', 'running'])) {
-    out.push(`<div class="banner"><b>实例锁被占着</b><span class="spacer"></span>
-      <span>pid ${j(s, ['bridge', 'lock', 'pid'])} 持有锁，而面板这边没在跑机器人 —— 这种情况下点「启动机器人」会被拒。清锁是危险动作，交脚本或人工。</span></div>`);
-  }
   const upd = UPD.state || j(s, ['update'], null);
   if (upd && upd.enabled && (upd.phase === 'available' || upd.phase === 'ready')) {
     const latest = upd.latest && upd.latest.version ? ` ${upd.latest.version}` : '';
@@ -1339,6 +1525,35 @@ function renderNav2() {
     <button class="sub" role="tab" data-s="${i}" aria-selected="${i === S.si}">${esc(su.label)}</button>`).join('');
   /* B30：原来这里还往 `#pageMeta` 填「即时页 / 点一下立刻生效」，该节点已整块删除 ——
      草稿页的保存入口仍是页面底部的保存条（savebar），功能不受影响。 */
+  syncNavrowStack();
+  syncNav2Indicator(false);
+}
+
+/* ── 吸顶导航行：并排 ⇄ 上下两行（2026-10-20 · 修「临界宽度吞页签」）──────
+   为什么不能只靠 `@media`：灵动岛是**视口居中**的，左右两列各分
+   `(视口 − 岛宽) / 2`；而二级栏宽度**随功能域变化**（实测 444～548px，
+   「大脑」的页签名最长）。固定断点落在中间时，末尾页签会被 `.nav2` 的
+   隐藏滚动条静默裁掉 —— 用户实机：1815 → 1629 时「终端」消失，再窄到
+   1280 以下反而正常（那时已经换成两行）。
+   ⇒ 按当前页签的**实测总宽**决定：装不下就加 `.is-stacked`，整行改上下两行；
+   不再依赖"能滚但看不出来"的横向滚动。
+   ⚠️ 比较对象是**假设仍并排时**的左列宽，不是当前实际宽：换行后二级栏会占满
+      整行，拿换行后的宽去比会永远"装得下"，于是再也回不到并排（来回抖动）。
+   ⚠️ 只在 `renderNav2()` 与 resize 时量，不放进 3 秒轮询 —— 它要读
+      `getBoundingClientRect`，放进轮询就是每 3 秒一次强制同步布局。 */
+function syncNavrowStack() {
+  const row = $id('navrow'), inner = $id('navInner'), nav = $id('nav2'), wrap = $id('nav2wrap');
+  if (!row || !inner || !nav || !wrap) return;
+  const rowGap = parseFloat(getComputedStyle(row).columnGap) || 0;
+  const leftCol = (row.getBoundingClientRect().width - inner.getBoundingClientRect().width - rowGap * 2) / 2;
+  const ncs = getComputedStyle(nav), wcs = getComputedStyle(wrap);
+  const subs = [...nav.children];
+  const navW = subs.reduce((sum, el) => sum + el.getBoundingClientRect().width, 0)
+    + (parseFloat(ncs.columnGap) || 0) * Math.max(0, subs.length - 1)
+    + parseFloat(ncs.paddingLeft) + parseFloat(ncs.paddingRight)
+    + parseFloat(wcs.paddingLeft) + parseFloat(wcs.paddingRight);
+  /* +1px 余量：亚像素舍入会让两边差零点几像素，不加会随窗口 1px 抖动来回换行。 */
+  row.classList.toggle('is-stacked', navW > leftCol + 1);
 }
 
 /* ════════════════════════════════════════════ 7b. 导航滑块（灵动岛） ═══
@@ -1374,11 +1589,15 @@ function bindNavIndicator() {
   const el = $id('navInd');
   const M = window.Motion;
   if (!el || !M) return null;
-  const ind = { el, x: M.motionValue(0), w: M.motionValue(0), anims: [], inited: false };
+  const ind = { el, x: M.motionValue(0), w: M.motionValue(0), anims: [], inited: false, tx: -1, tw: -1 };
   ind.apply = () => {
+    const x = ind.x.get(), w = ind.w.get();
+    /* 非有限值一律不写：`translateX(NaN)` 会被 CSS 忽略、元素停在上一帧，
+       而 `width(NaN)` 会让它静默消失 —— 由 sync 的 bad 分支负责跳回目标。 */
+    if (!Number.isFinite(x) || !Number.isFinite(w)) return;
     const k = 1 + Math.min(Math.abs(ind.x.velocity()) * NAV_STRETCH_PER_PX_S, NAV_STRETCH_MAX);
-    el.style.width = `${ind.w.get().toFixed(2)}px`;
-    el.style.transform = `translateX(${ind.x.get().toFixed(2)}px)`
+    el.style.width = `${Math.max(0, w).toFixed(2)}px`;
+    el.style.transform = `translateX(${x.toFixed(2)}px)`
       + ` scaleX(${k.toFixed(4)}) scaleY(${M.areaPreservingScaleX(k).toFixed(4)})`;
   };
   ind.x.on(ind.apply);
@@ -1405,10 +1624,19 @@ function syncNavIndicator(instant) {
   const sel = document.querySelector('#navInner .grp[aria-selected="true"]');
   if (!sel) return;
   const x = sel.offsetLeft, w = sel.offsetWidth;
+  /* ⚠️⚠️ 目标没变就**不重启**（2026-10-21 · 真机 bug）。
+     `paintPage(false)` 会被页面数据刷新高频调用；以前每次都 stop + animate，
+     弹簧带着当前速度反复重来，速度会被指数放大（实测滑块被写到
+     translateX(66662px) / width(21304px)，再被 `.nav2wrap` 的 clip-path 裁掉）。
+     同一目标下的重复同步必须是**空操作**，让在途弹簧自己收敛。 */
+  if (!instant && ind.inited
+      && Math.abs(ind.tx - x) < 0.5 && Math.abs(ind.tw - w) < 0.5) return;
+  ind.tx = x; ind.tw = w;
   const M = window.Motion;
   ind.anims.forEach((a) => a.stop());          // 打断上一段：不重置速度，见上面 ④
   ind.anims = [];
-  if (instant || !ind.inited || M.reducedMotion()) {
+  const bad = !Number.isFinite(ind.x.get()) || !Number.isFinite(ind.w.get());
+  if (instant || !ind.inited || bad || M.reducedMotion()) {
     ind.x.jump(x); ind.w.jump(w);
   } else if (Math.abs(ind.x.get() - x) > 0.5 || Math.abs(ind.w.get() - w) > 0.5) {
     ind.anims = [M.animate(ind.x, x, NAV_SPRING), M.animate(ind.w, w, NAV_SPRING)];
@@ -1418,6 +1646,66 @@ function syncNavIndicator(instant) {
   scrollNavTo(sel);
 }
 
+/* ── 二级导航滑块（2026-10-20 · 契约 §103）────────────────────────────
+   与 `.nav-ind` 同构：**静态元素** + `Motion` 弹簧 + 首帧 jump、之后 animate。
+   为什么不再用 `.sub::after` 的 `scaleX`：下划线只能"出现/消失"，
+   **位移本身不承载语义**；而导航符合 §6.4 三条准入（有序 / 反复拨 / 位移即语义），
+   所以二级也升到 S2。`style.css` 里保留了当年"下划线更省"的三条理由，并写明本轮裁决。
+   ⚠️ 坐标基准是 `.nav2wrap`；`#nav2` 横向滚动时子元素 `offsetLeft` **不跟着变**，
+      必须减 `scrollLeft`，否则窄屏一滚就与按钮错开（且不会有任何报错）。
+   ⚠️ 减弱动效不在这里判：`Motion.animate` 内部会直接落位（motion.js 已实现）。 */
+const NAV2_SPRING = { stiffness: 300, damping: 30, mass: .7 };   // 比一级（340/30/.85）软一档：行程更短
+const NAV2_INSET = 8;                                            // 与退役下划线的 left/right:8px 对齐
+let nav2Ind = null;
+
+function bindNav2Indicator() {
+  const el = $id('nav2Ind');
+  const nav = $id('nav2');
+  const M = window.Motion;
+  if (!el || !nav || !M) return null;
+  const ind = { el, x: M.motionValue(0), w: M.motionValue(0), anims: [], inited: false, tx: -1, tw: -1 };
+  ind.apply = () => {
+    const x = ind.x.get(), w = ind.w.get();
+    if (!Number.isFinite(x) || !Number.isFinite(w)) return;   // 理由同一级滑块
+    el.style.width = `${Math.max(0, w).toFixed(2)}px`;
+    el.style.transform = `translateX(${x.toFixed(2)}px)`;
+  };
+  ind.x.on(ind.apply);
+  ind.w.on(ind.apply);
+  nav.addEventListener('scroll', () => syncNav2Indicator(true), { passive: true });
+  nav2Ind = ind;
+  return ind;
+}
+
+/** 让二级滑块对齐当前选中页签。`instant` 为真时直接落位（首屏 / 滚动 / 尺寸变化）。 */
+function syncNav2Indicator(instant) {
+  const ind = nav2Ind || bindNav2Indicator();
+  if (!ind) return;
+  const nav = $id('nav2');
+  const sel = nav && nav.querySelector('.sub[aria-selected="true"]');
+  if (!sel) return;
+  const x = sel.offsetLeft + NAV2_INSET - nav.scrollLeft;
+  const w = Math.max(0, sel.offsetWidth - NAV2_INSET * 2);
+  /* ⚠️⚠️ 目标没变就**不重启**（2026-10-21 · 用户视频里的"横线乱跑/消失"根因）：
+     `paintPage(false)` 会被"日志与审计"页的取数回环高频调用（已在该页的 loader 里断开），
+     以前每次同步都 stop + animate，弹簧带着速度重来会被指数放大 —— 实测写出
+     translateX(66662px) / width(21304px)，横线冲出玻璃条后被 clip-path 裁掉。
+     重复同步必须空操作，在途弹簧继续跑。 */
+  if (!instant && ind.inited
+      && Math.abs(ind.tx - x) < 0.5 && Math.abs(ind.tw - w) < 0.5) return;
+  ind.tx = x; ind.tw = w;
+  const M = window.Motion;
+  ind.anims.forEach((a) => a.stop());      // 打断上一段：不重置速度（同 `.nav-ind` 的 ④）
+  ind.anims = [];
+  const bad = !Number.isFinite(ind.x.get()) || !Number.isFinite(ind.w.get());
+  if (instant || !ind.inited || bad || M.reducedMotion()) {
+    ind.x.jump(x); ind.w.jump(w);
+  } else if (Math.abs(ind.x.get() - x) > 0.5 || Math.abs(ind.w.get() - w) > 0.5) {
+    ind.anims = [M.animate(ind.x, x, NAV2_SPRING), M.animate(ind.w, w, NAV2_SPRING)];
+  }
+  ind.inited = true;
+  ind.el.classList.add('ready');
+}
 /* ══════════════════════════════════════════════════════════════════════════
    重绘保状态：`<details>` 的展开 + 容器的滚动位置（2026-10-04）
    ──────────────────────────────────────────────────────────────────────────
@@ -1504,10 +1792,14 @@ function restorePageState(keep) {
 
 /* ════════════════════════════════════════════════ 8. 页面渲染 ═══ */
 function paintPage(rebuildNav = true) {
-  if (rebuildNav) { renderNav1(); renderNav2(); }
+  /* ⚠️ 只在**切页**（rebuildNav）时关右键浮层，**不在 3 秒轮询时关**：
+     轮询每 3 秒把 `#page` 重建一次，若每次都关，菜单活不过 3 秒（用户还没看清就没了）。
+     安全前提：动作只认打开时捕获的 `b.id`，不回头查 DOM ⇒ 轮询换掉节点不影响点击。 */
+  if (rebuildNav) { closeCtxMenu(); renderNav1(); renderNav2(); }
   else {
     document.querySelectorAll('#nav1 .grp').forEach((b, i) => b.setAttribute('aria-selected', String(i === S.gi)));
     document.querySelectorAll('#nav2 .sub').forEach((b, i) => b.setAttribute('aria-selected', String(i === S.si)));
+    syncNav2Indicator(false);
   }
   /* ⚠️⚠️ 首屏**不许**先摆一屏"演示数据"（2026-10-12 · 真机截图抓到的现象）：
      面板发来的页面在拿到第一份 /api/state 之前 `S.state` 是 null，
@@ -1753,12 +2045,74 @@ function readyChecklist(s) {
   /* 只取**个数**，不把群号打印到检查表里 —— 群号是真实标识符，
      这一块又常被整屏截给别人看；要核对具体是哪几个，去「触发方式」那一页看。 */
   const groupCount = (j(s, ['config', 'groups'], []) || []).length;
+  const privateCount = (j(s, ['config', 'privateUsers'], []) || []).length;
+  const ownerCount = (j(s, ['config', 'owners'], []) || []).length;
+  const cfgSource = j(s, ['config', 'source'], 'config.json');
+
+  const agent = j(s, ['ports', 'onebotAgent'], null);
+  const botHealth = agent?.bot || null;
+  /* 时刻显示成 HH:MM:SS：两个来源（面板探测 / 机器人心跳）要能一眼对表，
+     相对时间（"3 秒前"）反而会把"两个时刻差了多少"藏起来。 */
+  const hhmmss = (ms) => {
+    const n = Number(ms);
+    if (!Number.isFinite(n) || n <= 0) return '—';
+    const d = new Date(n);
+    return [d.getHours(), d.getMinutes(), d.getSeconds()]
+      .map((x) => String(x).padStart(2, '0')).join(':');
+  };
 
   const ok = wsOk && httpOk;
+  /* 事件流与端口分开判（B3）：端口全绿而事件流已死，正是"看起来正常、其实不回话"的那一格。
+     `account-offline` 必须明说"不要重启协议端" —— 重启替代不了重新登录，只会多一次风控。 */
+  const live = j(s, ['onebot', 'verdict'], 'unknown');
+  const liveInfo = {
+    ok: { ok: true, txt: '事件流：正常（心跳与连接都在）' },
+    unknown: { ok: true, txt: '事件流：暂无可判数据（机器人可能刚启动）' },
+    'port-only': { ok: false, txt: '事件流：端口在听，但机器人没收到任何帧 —— 先确认机器人已连上，别急着扫码' },
+    'ws-down': { ok: false, txt: '事件流：WS 没连上 —— 协议端在跑的话，看它是否允许 3001 的 OneBot 连接' },
+    'account-offline': { ok: false, txt: '事件流：QQ 账号已掉线 —— **不要重启协议端**，等它自己重登或重新扫码' },
+    stalled: { ok: false, txt: '事件流：心跳已停摆 —— 看门狗会主动断开并按既有退避重连' },
+    'actions-dead': { ok: false, txt: '事件流：帧还在，但动作探测连败 —— 协议端可能半死，先看日志再决定是否重启' },
+    down: { ok: false, txt: '事件流：HTTP 与 WS 都不通 —— 协议端没起来，或端口与配置对不上' },
+  }[live] || { ok: false, txt: `事件流：${live}` };
   const out = [
     { ok,
       txt: `协议端：WS ${wsNo || '—'} ${wsOk ? '在听' : '没在听'} · HTTP ${httpNo || '—'} ${httpOk ? '通' : '不通'}`
         + (ok ? '' : ' —— 点「重启协议端」把协议端拉起来（首次要扫码）') },
+    liveInfo,
+    /* 协议端**自报**的身份与版本（2026-10-20 补，数据来自同一处探测：
+       `panel/lib/state-collector.js` 的 `/get_version_info` + `/get_status`）。
+       上一行只说"有没有人答 HTTP"，这一行说"答的是谁、报的哪一版"——
+       换协议端或版本与 QQ 客户端对不上时，这是第一眼线索。
+       ⚠️ 这一行**恒绿**（只摆事实）：有的家没实现这两条动作（LLBot 未取证、官方群侧无此端点），
+          把"它没答"报成故障等于把"这家没实现"说成"我方坏了"；而 `online/good` 是自报值，
+          有的家写死 true，不能拿来当健康判据。 */
+    { ok: true,
+      txt: agent && agent.answered
+        ? `协议端自报：${agent.appName || '未报名称'} ${agent.appVersion || '—'}`
+          + ` · OneBot ${agent.protocolVersion || '—'}`
+          + (agent.statusAnswered
+            ? ` · 自报 online=${agent.selfOnline ? 'yes' : 'no'} good=${agent.selfGood ? 'yes' : 'no'}（自报值，不作健康判据）`
+            : '')
+        : '协议端自报：这一家没有回答 get_version_info（NapCat / SnowLuma / Lagrange 有实现，'
+          + 'LLBot 未取证、官方群侧没有这个端点）—— 不影响使用' },
+    /* 机器人侧看到的协议端连接（B6 · 双时刻）：与上一行**并排**，不合并 ——
+       上一行是"面板此刻问到了什么"，这一行是"机器人守着的 WS / 心跳 / 超时"。
+       两个来源的采样周期不同（面板 3 秒轮询、机器人 20 秒刷快照），合成一句会让人
+       以为它们是同一时刻的事实。⚠️ 恒绿：机器人没在跑 / 还没到第一次快照都只是
+       "没有数据"，不是故障。 */
+    { ok: true,
+      txt: botHealth
+        ? `机器人心跳：${botHealth.connected ? 'WS 已连' : 'WS 未连'}`
+          + ` · 最后心跳 ${hhmmss(botHealth.lastHeartbeatAt)}`
+          + (Number(botHealth.heartbeatIntervalMs) > 0
+            ? `（间隔 ${Math.round(Number(botHealth.heartbeatIntervalMs) / 1000)}s）`
+            : '（后端未报间隔）')
+          + ` · 状态探测 ${botHealth.lastStatusOk === true ? '正常'
+            : botHealth.lastStatusOk === false ? '失败' : '还没问过'}`
+          + ` · 动作超时 ${Number(botHealth.timeouts) || 0} 次`
+          + ` · 面板探测 ${hhmmss(agent?.probedAt)}`
+        : `机器人心跳：机器人未在跑或还没到第一次快照（面板探测 ${hhmmss(agent?.probedAt)}）` },
     { ok: true, txt: `控制台：pid ${j(s, ['panel', 'pid'], '—')} 运行中` },
   ];
   /* Key 只有**云端大脑**才需要（`keyNotNeeded` 是本机模型那一路）——
@@ -1775,6 +2129,18 @@ function readyChecklist(s) {
     txt: groupCount > 0
       ? `放行的群聊：${groupCount} 个`
       : '放行的群聊：还没填 —— 去「发言与时机 → 触发方式 → 放行的群号」把允许它说话的群号填上' });
+  /* 私聊与主人（2026-10-21）：私聊报告的真因就是这两格都空 ——
+     "加了白名单却没生效"在界面上没有任何反馈，用户只能以为它坏了。 */
+  out.push({ ok: privateCount > 0 || ownerCount > 0,
+    txt: (privateCount > 0 || ownerCount > 0)
+      ? `私聊：放行 ${privateCount} 人${ownerCount ? ` · 主人 ${ownerCount} 人（会自动补进私聊）` : ''}`
+      : '私聊：白名单为空 —— 谁私聊它都不会回。去「发言与时机 → 触发方式 → 同意私聊的 QQ 号」填上；配「主人 QQ」也会自动补进去' });
+  /* 配置来源（2026-10-21）：没有 config.json 时机器人读的是模板，而面板保存写的是 config.json。
+     用户看到"保存成功"却不生效，原因就在这一格。 */
+  out.push({ ok: cfgSource === 'config.json',
+    txt: cfgSource === 'config.json'
+      ? '配置文件：config.json'
+      : '配置文件：正在用 config.example.json 模板 —— 面板保存不会写进模板，先点一次「保存」生成 config.json' });
   out.push({ ok: botRunning,
     txt: botRunning
       ? '机器人本体：在跑'
@@ -1967,71 +2333,68 @@ const RENDER = {
   seg: (x) => {
     const cur = String(valueOf(x) ?? '');
     const opts = typeof x.options === 'function' ? x.options(S.state || DEMO) : x.options;
-    return `<div class="f">${regd(x)}${lb(x)}<div class="seg">${opts.map((o) => `
+    return `<div class="f">${regd(x)}${lb(x)}<div class="seg" data-seg="${esc(x.id || '')}">${opts.map((o) => `
       <label${o.title ? ` title="${esc(o.title)}"` : ''}><input type="radio" name="${esc(x.id)}" value="${esc(o.v)}" ${String(o.v) === cur ? 'checked' : ''} ${ctlA(x)}><span>${esc(o.l)}</span></label>`).join('')}</div>${hintOf(x)}</div>`;
   },
-  /* ── 档位刻度（2026-10-02）────────────────────────────────────────────
+  /* ── 档位进度条（`ticks` · 2026-10-21 由竖向刻度改为横向）────────────
      ⚠️ **它是 `seg` 的另一种呈现，不是新的一套数据契约**：
         读值走 `valueOf(x)`、写值走 `setValue(x, v)`、选项来源与 `seg` **同一个**
         `x.options`（多半是函数，从后端 `customMeta` 取）。所以任何一处改数据
-        两边都跟着变，不存在"刻度那份数据是抄的"。
+        两边都跟着变，不存在"进度条那份数据是抄的"。
 
-     ── 为什么某些档位值得用刻度而不是等宽按钮 ──────────────────────────
-     档位有**顺序**（短→中→长 / 低→高），而 `.seg` 把三档排成等宽按钮 ——
-     按钮之间的间距是"它们是同类"的意思，**不表达"谁比谁多"**。
-     刻度把高度接���来（近→高），于是**不用读文字就知道大概在哪一档**。
+     ── 为什么是横向进度条，而不是竖向刻度 / 等宽按钮 ──────────────────
+     档位有**顺序**（短→中→长 / 低→高）。`.seg` 把三档排成等宽按钮，
+     间距只表达"它们同类"，**不表达"谁比谁多"**；竖向刻度能表达顺序，
+     但对「回复长短」这种三档格子来说，竖柱会被读成柱状图。
+     横向进度条把"当前走到第几档"画成一段液面，既保留顺序，又与项目里
+     既有的 `range` 控件同一种材质 —— 用户不用学第二套视觉语言。
 
-     ⚠️ 成本也要说清：3 档时两种都够用，刻度的优势要到 **4 档以上**才明显。
-        下面是 3 档（短/中/长），所以刻度在这里是"更好一点"而不是"必须"。
+     ⚠️ 液面宽度是**档位覆盖的轨道比例**（选第 i 档 ⇒ 前 i+1 段亮），
+        不是业务百分比。所以这里只把档名写成大字，**不再显示 0%/50%/100%**
+        —— 那个数字不是"回复长短的百分比"，写出来只会让人以为它可量化。
 
-     ⚠️ **无障碍**：这**不是** radio group，刻度在 DOM 里是 `role="slider"`；
-        键盘 ← → 换档、原生 radio 仍然在（视觉隐藏）负责表单语义与读屏。
-        两条通道并存会让读屏念出两次，所以原生那组用 `.tkx-native` 移出可视区
-        而不是 `display:none`（后者会让它**从无障碍树里消失**）。 */
+     ⚠️ **少于 3 档自动退回 `seg`**：2 档时进度条与两个等宽按钮信息量相同，
+        只多一层指针逻辑。守卫按实际档数判，不写死"至少 3 档"——
+        思考强度的档数由模型能力表下发，可能只有 2 档。
+
+     ⚠️ **无障碍**：可视层是 `role="slider"`，原生 radio 仍在（视觉隐藏）
+        负责表单语义与读屏；键盘 ← → 换档。两条通道并存会让读屏念两次，
+        所以原生那组用 `.tkx-native` 移出可视区而不是 `display:none`
+        （后者会让它**从无障碍树里消失**）。 */
   ticks: (x) => {
     const cur = String(valueOf(x) ?? '');
     const opts = typeof x.options === 'function' ? x.options(S.state || DEMO) : (x.options || []);
-
-    /* ⚠️ **少于 3 档自动退回 `seg`**，不是硬套刻度。
-       理由：2 档时"一根亮一根暗"和"两个等宽按钮"信息量**完全相同**，
-       而刻度多占一行高度、多一个可聚焦元素、多一套指针逻辑。
-       刻度的优势要到 3 档才出现（高度差能表达顺序），4 档才明显。
-       ⚠️ 这条守卫是**按实际档数判**的，不是写死"至少 3 档"——
-         思考强度的档数由**模型能力表**下发，可能只有 2 档。 */
     if (opts.length < 3) return RENDER.seg(x);
 
     const n = opts.length;
     const idx = Math.max(0, opts.findIndex((o) => String(o.v) === cur));
-    const pct = n > 1 ? Math.round((idx / (n - 1)) * 100) : 0;
-
-    /* 刻度高度：基础 52% + 正弦波纹。波纹让 3 根柱子看起来是"一族"，
-       而 3 根一模一样的柱子会被读成"3 个并列项"而不是"一串档位"。
-       点亮的额外 +26% —— 高度差与未点亮的基线同为 26px，
-       于是"点亮了"这件事在长度上足够明显，又不至于变成实心块。 */
-    const wave = (i) => 52 + Math.round(Math.sin(i / 1.9) * 12) + (i <= idx ? 26 : 0);
-    const ticks = opts.map((o, i) =>
-      `<span class="tkx-tick" data-on="${i <= idx}" data-near="${i === idx}"
-             style="height:${wave(i)}%"></span>`).join('');
+    /* 每一档占 1/n 的轨道；选到第 i 档 ⇒ 液面覆盖前 i+1 段。
+       不用 idx/(n-1)：那会让第一档停在 0%，看起来像"什么都没选"。 */
+    const pctOf = (i) => Math.round(((i + 1) / n) * 1000) / 10;
+    const stops = Array.from({ length: n - 1 }, (_, i) =>
+      `<i class="tkx-stop" aria-hidden="true" style="left:${(((i + 1) / n) * 100).toFixed(3)}%"></i>`).join('');
     const legend = opts.map((o, i) =>
-      `<span${i === idx ? ' style="color:var(--c-text-2)"' : ''}>${esc(o.l)}</span>`).join('');
+      `<span${i === idx ? ' data-on="true"' : ''}>${esc(o.l)}</span>`).join('');
 
-    return `<div class="f">${regd(x)}${lb(x)}
-      <div class="tkx" data-tk="${esc(x.id)}" data-scrub="0" data-n="${n}">
-        <div class="tkx-head">
-          <span class="tkx-fig">${pct}<i>%</i></span>
-          <span class="tkx-name">${esc(opts[idx]?.l || '')}</span>
-          <span class="tkx-delta" data-show="0"></span>
-        </div>
-        <!-- 视觉刻度行：整行一个 handler（见 app.js 里 mountTicks 的注释） -->
-        <div class="tkx-row" data-tk-row role="slider" tabindex="0"
-             aria-label="${esc(x.label || '档位')}" aria-valuemin="0" aria-valuemax="${n - 1}"
-             aria-valuenow="${idx}" aria-valuetext="${esc(opts[idx]?.l || '')}">${ticks}</div>
-        <div class="tkx-legend">${legend}</div>
-        <!-- 原生 radio：无障碍与表单语义的真正载体，视觉上移出但**不进无障碍树** -->
-        <div class="tkx-native" aria-hidden="false">${opts.map((o) => `
-          <label><input type="radio" name="${esc(x.id)}" value="${esc(o.v)}"
-                 ${String(o.v) === cur ? 'checked' : ''} ${ctlA(x)}><span>${esc(o.l)}</span></label>`).join('')}</div>
-      </div>${hintOf(x)}</div>`;
+    return `<div class="f tkx" data-tk="${esc(x.id)}" data-n="${n}" style="--p:${pctOf(idx)}%">
+      ${regd(x)}
+      <div class="rng-head">
+        ${lb(x)}
+        <b class="rng-val tkx-name">${esc(opts[idx]?.l || '')}</b>
+      </div>
+      <!-- 整行一个 handler（见 mountTicks）：点击 / 拖动 / 键盘都只改原生 radio，
+           不另开写值路径。液面只是读数，不接事件。 -->
+      <div class="rng-track tkx-row" data-tk-row role="slider" tabindex="0"
+           aria-label="${esc(x.label || '档位')}" aria-valuemin="0" aria-valuemax="${n - 1}"
+           aria-valuenow="${idx}" aria-valuetext="${esc(opts[idx]?.l || '')}">
+        <span class="rng-fill"></span>${stops}
+      </div>
+      <div class="tkx-legend">${legend}</div>
+      <!-- 原生 radio：无障碍与表单语义的真正载体，视觉上移出但**不进无障碍树** -->
+      <div class="tkx-native" aria-hidden="false">${opts.map((o) => `
+        <label><input type="radio" name="${esc(x.id)}" value="${esc(o.v)}"
+               ${String(o.v) === cur ? 'checked' : ''} ${ctlA(x)}><span>${esc(o.l)}</span></label>`).join('')}</div>
+      ${hintOf(x)}</div>`;
   },
 
   /* ── 进度条（`range` · 2026-10-17）──────────────────────────────────────
@@ -2304,7 +2667,7 @@ const RENDER = {
           <span class="tag ${sk.kind === 'persona' ? 'accent' : 'info'}">${sk.kind === 'persona' ? '角色卡' : '知识包'}</span>
           <input type="text" style="flex:1;min-width:100px;" value="${esc(sk.name)}" data-a="skill.set" data-p="${i}|name" />
           <label class="sw flat"><input type="checkbox" ${sk.enabled !== false ? 'checked' : ''} data-a="skill.set" data-p="${i}|enabled"><span class="track"></span><span class="txt">启用</span></label>
-          ${sk.kind === 'persona' ? `<button class="btn btn-xs" data-a="skill.apply" data-p="${i}" title="把这张卡的人格快照写进人格设定">套用到人格设定</button>` : ''}
+          ${sk.kind === 'persona' ? `<button class="btn btn-xs" data-a="skill.snap" data-p="${i}" title="把当前的人格 / 增强 / 场景重新拍进这张卡（按群生效靠这份快照）">存当前人格</button> <button class="btn btn-xs" data-a="skill.apply" data-p="${i}" title="把这张卡的人格快照写进人格设定">套用到人格设定</button>` : ''}
           <button class="btn btn-xs btn-danger" data-a="skill.del" data-p="${i}">删</button>
         </div>
         <div class="f-inline">
@@ -2317,6 +2680,40 @@ const RENDER = {
           ${sk.scope?.type && sk.scope.type !== 'global' ? `<input type="text" style="width:130px;" value="${esc(sk.scope.id || '')}" placeholder="${sk.scope.type === 'group' ? '群号' : 'QQ 号'}" data-a="skill.set" data-p="${i}|scopeId" />` : ''}
         </div>
         <textarea rows="2" placeholder="背景知识 / 它是谁" data-a="skill.set" data-p="${i}|background">${esc(sk.background || '')}</textarea>
+      </div>`).join('')}</div>`;
+  },
+  /* 角色卡分级（十维）：数据全由后端算好（`state.personaCards`，判据在 src/persona-grade.js）。
+     ⚠️ 面板不算分、不写门槛 —— 抄一份门槛表的后果是"界面上的金和真正判定的金不是一个数"。 */
+  cardGrade: (x) => {
+    const cards = j(S.state || DEMO, ['personaCards'], []) || [];
+    if (!cards.length) {
+      return '<div class="empty">还没有角色卡。去「知识包与角色卡」新建一张，'
+        + '填好人格设定后点那张卡的「存当前人格」，回来这里看分数。</div>';
+    }
+    const dot = (tier) => `<span class="cgdot t-${esc(tier)}"></span>`;
+    return `<div class="rows">${cards.map((g, i) => `
+      <div class="row">
+        <div class="row-h">
+          ${dot(g.cellTier)}
+          <b class="grow">${esc(g.name)}${g.enabled === false ? ' <span class="tag plain">未启用</span>' : ''}</b>
+          <span class="tag ${g.cellTier === 'gold' ? 'accent' : 'plain'}">${esc(g.cell)}</span>
+          <span class="hint">覆盖 ${Math.round(g.coverage * 100)}% · 最低 ${Math.round(g.minScore * 100)}% · 缺 ${g.gaps.length} 维</span>
+          ${g.gaps.length ? `<button class="btn btn-xs" data-a="cg.adopt" data-p="${i}" title="把这张卡里已有的文字交给模型，按十维归到标准字段（先预览再写，只填空字段）">AI 认领</button>` : ''}
+        </div>
+        <div class="hint">${esc(g.advice)}</div>
+        <div class="cg-dims">${g.dims.map((d) => `<div class="cg-dim">
+          ${dot(d.tier)}<b>${esc(d.label)}</b>
+          <span class="hint">${Math.round(d.score * 100)}% · ${d.filledChars} 字${d.cueHits.length ? ` · 命中「${esc(d.cueHits.slice(0, 3).join('、'))}」` : ''}</span>
+        </div>`).join('')}</div>
+        ${g.gaps.length ? `<details class="det"><summary>缺 ${g.gaps.length} 维 —— 抄问题，把答案写下来就补进去了</summary>
+          ${g.gaps.map((gp) => `<div class="f">
+            <div class="f-lb"><b>${esc(gp.label)}</b> <span class="hint">${Math.round(gp.score * 100)}%</span></div>
+            <div class="hint">${esc(gp.question)}</div>
+            <div class="f-inline">
+              <input class="grow" type="text" placeholder="一句话就行（会写进字段 ${esc(gp.hint)}）" data-a="cg.fill" data-p="${i}|${esc(gp.id)}">
+              <button class="btn btn-xs" data-a="cg.do" data-p="${i}|${esc(gp.id)}">写进这张卡</button>
+            </div>
+          </div>`).join('')}</details>` : '<div class="hint">十维都够材料了。</div>'}
       </div>`).join('')}</div>`;
   },
   memOverview: (x) => {
@@ -2405,13 +2802,16 @@ const RENDER = {
         <input type="time" style="width:112px;" value="${esc(k.at || '')}" data-a="sched.set" data-p="${i}|at" />
         ${x.detailed ? `<input type="date" style="width:150px;" value="${esc(k.date || '')}" title="留空 = 每天这个点；填了就只在那天发一次（⚠️ 当前存不住，见下方说明）" data-a="sched.set" data-p="${i}|date" />` : ''}
         <input type="text" class="grow" value="${esc(k.text || '')}" placeholder="到点要发的内容" data-a="sched.set" data-p="${i}|text" />
+        ${x.detailed ? `<input type="text" class="grow" value="${esc(k.prompt || '')}" title="填了就改成：到点让模型按这句现写（夜间摘要/周报）。填了 prompt 时上面的原文不再使用。" placeholder="或：让模型现写（例：把今天群里聊的事写个摘要）" data-a="sched.set" data-p="${i}|prompt" />
+        <select style="width:110px;" title="现写出来的东西发到哪" data-a="sched.set" data-p="${i}|target">
+          ${[['group', '发群里'], ['owner', '发主人私聊']].map(([v, l]) => `<option value="${v}" ${(k.target || 'group') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>` : ''}
         ${x.detailed ? `<select style="width:110px;" data-a="sched.set" data-p="${i}|on">
           ${[['any', '每天'], ['workday', '只工作日'], ['rest', '只休息日']].map(([v, l]) => `<option value="${v}" ${(k.on || 'any') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>` : ''}
         <label class="sw flat"><input type="checkbox" ${k.enabled !== false ? 'checked' : ''} data-a="sched.set" data-p="${i}|enabled"><span class="track"></span><span class="txt">启用</span></label>
         <button class="btn btn-xs btn-danger" data-a="row.del" data-p="${esc(x.path)}|${i}">×</button>
       </div>`).join('') : '<div class="empty">还没有定时消息。加了之后到点会自动在那个群发一句。</div>'}</div>
       <div class="btn-row"><button class="btn btn-ghost btn-sm" data-a="row.add" data-p="${esc(x.path)}">加一条</button>
-        <span class="hint">到点后 30 分钟内都还算数（被限流挡一下会自己重试），超窗才收尾成「错过」。</span></div></div>`;
+        <span class="hint">到点后 30 分钟内都还算数（被限流挡一下会自己重试），超窗才收尾成「错过」。填了「让模型现写」的条目：发主人私聊的不受睡眠与免打扰管（那是不往群里开口），发群里的照旧管。</span></div></div>`;
   },
   /**
    * 节假日表：**可以编辑了**（2026-10-02 修完数据链路之后）。
@@ -2802,6 +3202,73 @@ const RENDER = {
       <pre class="term-body mono" id="termBody"></pre>
     </div>`;
   },
+  /* ── 假 QQ 会话（2026-10-21 · Win-v0.1.2 移植）────────────────────────── */
+  fakeView: () => {
+    const on = !!S.extra.fakeRunning;
+    const opts = fakeOpts();
+    const opt = (k, label, hint) => `<label class="sw flat" title="${esc(hint)}">
+        <input type="checkbox" data-a="fake.opt" data-p="${k}" ${opts[k] ? 'checked' : ''} ${on ? 'disabled' : ''}>
+        <span class="track"></span><span class="txt">${esc(label)}</span></label>`;
+    const cmd = (label, p, hint = '') => `<button class="btn btn-ghost btn-sm" data-a="fake.cmd" data-p="${p}" ${on ? '' : 'disabled'} title="${esc(hint)}">${esc(label)}</button>`;
+    return `<div class="f">
+      <div class="f-inline">
+        <span id="fakeBadge" class="tag ${on ? 'ok' : 'plain'}">${on ? `会话在跑${S.extra.fakePid ? ` · pid ${S.extra.fakePid}` : ''}` : '没在跑'}</span>
+        <span class="spacer"></span>
+        <button class="btn btn-primary btn-sm" data-a="fake.start" ${on ? 'disabled' : ''}>启动会话</button>
+        <button class="btn btn-danger btn-sm" data-a="fake.stop" ${on ? '' : 'disabled'}>停止会话</button>
+      </div>
+      <div class="f-inline" style="gap:14px;flex-wrap:wrap;">
+        ${opt('offline', '离线假模型', '不调真模型：固定回话、不花钱、断网可用')}
+        ${opt('sandbox', '沙箱数据', '换成空的临时 data（不碰真实 data，真机器人可以在跑）')}
+      </div>
+      <div class="f-inline" style="gap:6px;flex-wrap:wrap;">
+        ${cmd('切私聊', 'private', '下一句走私聊（管理员路径）')}
+        ${cmd('切回群', 'group')}
+        ${cmd('开关 @', 'at', '关掉 = 没被点名的群消息，用来看巡逻 / 插话逻辑')}
+        ${cmd('看程序日志', 'log', '相当于 /log：打最后 20 行程序日志')}
+      </div>
+      <pre class="term-body mono" id="fakeBody"></pre>
+    </div>`;
+  },
+  /* 巡逻与热度的现状（只读）。数据来自机器人每 30 秒写的
+     `data/patrol-state.json`（面板读盘，不经机器人转发 —— 机器人没跑也能看上一次的样子）。 */
+  patrolView: () => {
+    const d = (S.state || DEMO).patrol;
+    if (!d) return '<div class="empty">这一版的面板还没下发巡逻快照（需要重启面板加载新代码）。</div>';
+    if (!d.ok) {
+      return `<div class="f"><div class="hint">${esc(d.reason || '还没写过快照')}</div>
+        <div class="hint">机器人启动后每 30 秒会写一次 <code>data/patrol-state.json</code>；
+          没跑过就是空表 —— 这不是故障。</div></div>`;
+    }
+    const rows = Array.isArray(d.rows) ? d.rows : [];
+    if (!rows.length) return '<div class="f"><div class="empty">还没有受管的群会话（先让机器人在群里收到一条消息）。</div></div>';
+    const t = d.tuned || {};
+    const bar = (pct) => `<span class="track" style="display:inline-block;width:64px;height:6px;border-radius:3px;background:var(--c-line);vertical-align:middle;overflow:hidden;"><span style="display:block;height:100%;width:${Math.max(2, Math.min(100, pct))}%;background:var(--c-accent);"></span></span>`;
+    return `<div class="f">
+      <div class="f-inline" style="flex-wrap:wrap;gap:8px;">
+        <span class="tag ${t.enabled === false ? 'plain' : 'accent'}">巡逻${t.enabled === false ? '已关闭' : '开着'}</span>
+        <span class="hint">门槛：积压 ≥ ${esc(String(t.minUnread ?? '—'))} · 安静 ≥ ${esc(String(t.silenceMin ?? '—'))} 分钟 · 间隔 ≥ ${esc(String(t.minGapMin ?? '—'))} 分钟 · 基础概率 ${Math.round((Number(t.chance) || 0) * 100)}%</span>
+        <span class="spacer"></span>
+        <span class="hint">${d.updatedAt ? `快照于 ${new Date(d.updatedAt).toLocaleTimeString()}` : ''}</span>
+      </div>
+      ${rows.map((r) => {
+        const last = Number(r.lastPatrolAt) || 0;
+        const ago = last ? `${Math.max(0, Math.round((Date.now() - last) / 60000))} 分钟前` : '还没巡逻过';
+        return `<div class="row flat">
+          <div class="f-inline" style="flex-wrap:wrap;gap:8px;">
+            <span class="tag ${r.unread ? 'warn' : 'plain'}">群 ${esc(r.group)}</span>
+            <span class="hint">压着 <b>${esc(String(r.unread))}</b> 条积压 · 安静 ${esc(String(r.silenceMin))} 分钟 · 上次巡逻 ${esc(ago)}</span>
+            <span class="spacer"></span>
+            <span class="hint">群活跃 ${bar(r.heat)} ${esc(String(r.heat))}%</span>
+          </div>
+          ${(r.people || []).length ? `<div class="f-inline" style="flex-wrap:wrap;gap:6px;padding-top:4px;">
+            ${(r.people || []).map((u) => `<span class="chip" title="关系温度 ${u.pct}%（${esc(u.band || '')}）">${esc(u.qq)} <span class="hint">${esc(String(u.pct))}% ${esc(u.band || '')}</span></span>`).join('')}
+          </div>` : '<div class="hint">还没有按人的热值（它跟谁聊过，这里就会出现）。</div>'}
+        </div>`;
+      }).join('')}
+      <div class="hint">「群活跃」看最近 30 分钟的消息量；「关系温度」按人算 —— 连着找它聊天会掉温，安静下来慢慢回升。两者都只<b>压</b>主动开口的概率，不会让它越过「必须 @ / 拉黑 / 免打扰」这些硬闸。</div>
+    </div>`;
+  },
   auditList: (x) => {
     const d = S.extra.audit;
     if (!d) return `<div class="f"><div class="empty">正在读取…</div><div class="btn-row"><button class="btn btn-ghost btn-sm" data-a="audit.load">刷新</button></div></div>`;
@@ -3039,6 +3506,63 @@ async function loadNapcatTail() {
 }
 
 /* ════════════════════════════════════════════════ 9. 页面显示时拉数据 ═══ */
+/* ── 假 QQ 会话的轮询与回显（2026-10-21 · Win-v0.1.2 移植）────────────────
+   1.5 秒轮询足够（输出频率是"人打一句"）；回显缓冲在前端也留一份，
+   因为整页每 3 秒重建，`<pre>` 每次都是新节点。 */
+function fakeOpts() {
+  if (!S.extra.fakeOpt) S.extra.fakeOpt = { offline: false, sandbox: false };
+  return S.extra.fakeOpt;
+}
+function fakeLines() { return Array.isArray(S.extra.fakeLines) ? S.extra.fakeLines : (S.extra.fakeLines = []); }
+function paintFake() {
+  const box = $id('fakeBody');
+  if (!box) return;
+  const lines = fakeLines();
+  box.textContent = lines.length ? lines.join('\n') : '（还没启动 —— 点「启动会话」）';
+  box.scrollTop = box.scrollHeight;
+  const badge = $id('fakeBadge');
+  if (badge) {
+    const on = !!S.extra.fakeRunning;
+    badge.textContent = on ? `会话在跑${S.extra.fakePid ? ` · pid ${S.extra.fakePid}` : ''}` : '没在跑';
+    badge.className = `tag ${on ? 'ok' : 'plain'}`;
+  }
+}
+async function fakeSay(text, clearInput = false) {
+  if (!S.extra.fakeRunning) return toast('会话没在跑 —— 先点「启动会话」', 'warn');
+  try {
+    const r = await post('/api/fake-qq/send', { text });
+    if (!r?.ok) return toast(r?.msg || '没发出去', 'bad');
+    if (clearInput) { S.volatile['fake.text'] = ''; const el = $id('fake.text'); if (el) el.value = ''; }
+    await fakePoll();
+  } catch (e) { toast(`发送失败：${e.message}`, 'bad'); }
+}
+async function fakePoll() {
+  try {
+    const r = await api(`/api/fake-qq/state?since=${S.extra.fakeSince || 0}`);
+    if (!r) return;
+    const changedRun = Boolean(r.running) !== Boolean(S.extra.fakeRunning);
+    S.extra.fakeRunning = !!r.running;
+    S.extra.fakePid = r.pid || 0;
+    const lines = fakeLines();
+    for (const l of r.lines || []) lines.push(l.text);
+    if (lines.length > 400) lines.splice(0, lines.length - 400);
+    if (r.seq) S.extra.fakeSince = r.seq;
+    // 跑/停切换时整页重画一次（按钮的 disabled 在渲染里定），平时只动回显框。
+    if (changedRun) paintPage(false); else paintFake();
+  } catch { /* 面板没响应就安静等下一轮 */ }
+}
+let fakeTimer = null;
+function mountFake() {
+  paintFake();
+  if (!fakeTimer) {
+    fakeTimer = setInterval(() => {
+      if (!$id('fakeBody')) { clearInterval(fakeTimer); fakeTimer = null; return; }
+      fakePoll();
+    }, 1500);
+  }
+  fakePoll();
+}
+
 function onPageShown(su) {
   const ids = new Set((su.cards || []).flatMap((c) => (c.ctrls || []).map((x) => x.t)));
   if (ids.has('sesList') && !S.extra.sessions) loadSessions();
@@ -3046,11 +3570,79 @@ function onPageShown(su) {
   if (ids.has('logList')) loadLogs();
   if (ids.has('auditList')) loadAudit();
   if (ids.has('termView')) mountTerm();
+  if (ids.has('fakeView')) mountFake();
   mountLiquidSwitches();
   mountMorphIcons();
   mountTicks();
   mountRouteSort();
   markTiltables();
+  mountSegHp();
+}
+
+/* ── 分段选择器的滑动高亮块（.seg → .seg-hp）────────────────────────────
+   机制取自 Watermelon Highlight（wm-hl）：
+     MIT，Copyright (c) 2026 Watermelon Platform Contributors。
+     上游做法照抄：一块 position:absolute 的块 + 按选中项 offset 写 transform，
+     首次定位后加 `.lit` 淡入（原文见 demos/js.txt 的 `hp.style.transform = 'translateY(' + (it.offsetTop - items[0].offsetTop) + 'px)'`）。
+   本项目改写（与 style.css 同名注释成对）：按 `:checked` 定位（上游按 hover）、水平轴、
+   宽度随标签变化、时长走 --dur 令牌、减弱动效时直接落位。
+   ⚠️ `paintPage` 每 3 秒整页重建 ⇒ 每次重建后都要重挂；**坐标现量不缓存**
+      —— 缓存会在重建后错位，而且不会有任何报错（本仓典型的静默失效形状）。 */
+function mountSegHp() {
+  document.querySelectorAll('#page .seg').forEach((seg, k) => positionSegHp(seg, false, k));
+}
+
+/* 记住每一处 `.seg` 上一次的高亮位置（键 = 控件 id，退化时用页内序号）。
+   ⚠️ 为什么必须「记住」：`paintPage` 每次整页重建 `#page`，`change` 一发生旧节点就被换掉
+      —— 于是 CSS `transition` 永远没有机会跑（新节点一出现就已经在终点）。
+      真机实测：点完 120ms 内旧 `.seg` 即被卸载，逐帧采样只能拿到 2 个值。
+      ⇒ 动画必须**跨节点**做：在新节点上从**旧坐标**用 WAAPI 滑到新坐标。 */
+const SEG_POS = new Map();
+
+/** 读 `--dur` 令牌并转成毫秒（不写死 160：本仓时长只有令牌一处来源）。 */
+function segDurMs(hp) {
+  const v = getComputedStyle(hp).getPropertyValue('--dur').trim();   // 形如 ".16s"
+  const n = parseFloat(v) || 0.16;
+  return /ms$/.test(v) ? n : n * 1000;
+}
+
+function positionSegHp(seg, animate, fallbackKey) {
+  let hp = seg.querySelector(':scope > .seg-hp');
+  if (!hp) {
+    hp = document.createElement('span');
+    hp.className = 'seg-hp';
+    hp.setAttribute('aria-hidden', 'true');
+    seg.insertBefore(hp, seg.firstChild);
+  }
+  const labels = [...seg.querySelectorAll(':scope > label')];
+  if (!labels.length) return;
+  const cur = labels.find((l) => l.querySelector('input:checked')) || labels[0];
+  const x = cur.offsetLeft - labels[0].offsetLeft;
+  const w = cur.offsetWidth;
+  const key = seg.dataset.seg || `#${fallbackKey ?? 0}`;
+  const prev = SEG_POS.get(key);
+  SEG_POS.set(key, { x, w });
+
+  const M = window.Motion;
+  const reduced = M ? M.reducedMotion() : false;
+  const moved = prev && (prev.x !== x || prev.w !== w);
+
+  /* 直接落位：首帧 / 没变 / 减弱动效 —— 一律先关过渡再写值，避免"从 0 长出来" */
+  if (!animate || !moved || reduced) {
+    hp.style.transform = `translateX(${x}px)`;
+    hp.style.width = `${w}px`;
+    seg.classList.add('lit');
+    return;
+  }
+
+  hp.style.transform = `translateX(${x}px)`;
+  hp.style.width = `${w}px`;
+  seg.classList.add('lit');
+  hp.animate(
+    [{ transform: `translateX(${prev.x}px)`, width: `${prev.w}px` },
+      { transform: `translateX(${x}px)`, width: `${w}px` }],
+    { duration: segDurMs(hp), easing: 'cubic-bezier(.4, 0, .2, 1)' },
+  );
 }
 
 /**
@@ -3139,69 +3731,49 @@ function mountTicks() {
     const n = radios.length;
 
     /* 客户端坐标 → 档位下标。
-       ⚠️ 两个坑都在这里：
-       ① **不能用 `offsetLeft`**：`.tkx` 可能被写在 `transform: scale()` 的容器里
-          （实验室页就是），此时 offset 仍是布局坐标而 clientX 是屏幕坐标，
-          会差一个缩放倍数。必须 `getBoundingClientRect()`。
-       ② **不能用整行宽度**去均分：刻度是**定宽 22px + 起点对齐**（不铺满），
-          均分整行会在档数多时把"手指在右边空白处"也算成一个档位 ——
-          实际是"点击空白 = 选中最后一档"，而视觉上那里什么都没有。
-          ⇒ 改成**按刻度实际排布反查**：找出第 i 格的中点，落在哪个区间就是哪一档。 */
-    const at = (clientX) => {
+       横向进度条是**等分轨道**：每一档占 1/n，点/拖到哪一段就是哪一档。
+       这比旧的"按每根刻度中点反查"更简单，也不会在右侧留白处把
+       "点空白"判成最后一档 —— 因为整条轨道都是有效区域。
+       ⚠️ 仍然必须用 `getBoundingClientRect()`，不能用 `offsetLeft`：
+         面板会在 `transform: scale()` 的容器里渲染（实验室页），
+         offset 仍是布局坐标而 clientX 是屏幕坐标，会差一个缩放倍数。 */
+    const slotAt = (clientX) => {
       const b = row.getBoundingClientRect();
       if (!b || !b.width) return null;
-      const ticks = row.children;
-      if (!ticks.length) return null;
-      /* 超出最后���格 ⇒ 判为最后一档（点在右侧空白里不该是"没反应"） */
-      for (let i = 0; i < ticks.length; i++) {
-        const r = ticks[i].getBoundingClientRect();
-        if (clientX < r.left + r.width / 2) return i;
-      }
-      return ticks.length - 1;
+      const t = (clientX - b.left) / b.width;
+      return Math.min(n - 1, Math.max(0, Math.floor(t * n)));
     };
+    const pctOf = (i) => Math.round(((i + 1) / n) * 1000) / 10;
+    const labelOf = (i) => radios[i]?.parentElement?.querySelector('span')?.textContent || '';
 
-    /* 光标预览：**只改样式，不写值**。 */
+    /* 光标预览：**只改样式，不写值**。液面、当前档名、标签高亮一起跟着走。
+       ⚠️ 离开时传 null ⇒ 回到"真正选中的那一档"，不是停在最后悬停的位置。 */
     let cur = null;
-    const paintCursor = (i) => {
-      const ticks = row.children;
-      for (let k = 0; k < ticks.length; k++) {
-        ticks[k].toggleAttribute('data-cursor', i === k);
-      }
-      box.setAttribute('data-scrub', i == null ? '0' : '1');
-      const fig = box.querySelector('.tkx-fig');
+    const paint = (i) => {
+      const k = i == null ? radios.findIndex((r) => r.checked) : i;
+      const kk = k < 0 ? 0 : k;
+      box.style.setProperty('--p', `${pctOf(kk)}%`);
       const name = box.querySelector('.tkx-name');
-      const delta = box.querySelector('.tkx-delta');
-      if (i == null) {
-        if (delta) { delta.setAttribute('data-show', '0'); }
-        return;
-      }
-      const base = radios.findIndex((r) => r.checked);
-      const pct = Math.round((i / Math.max(1, n - 1)) * 100);
-      if (fig) fig.innerHTML = `${pct}<i>%</i>`;
-      if (name && radios[i]) name.textContent = radios[i].parentElement?.querySelector('span')?.textContent || '';
-      if (delta) {
-        const d = pct - Math.round((base / Math.max(1, n - 1)) * 100);
-        if (d !== 0) {
-          delta.textContent = (d > 0 ? '+' : '') + d;
-          delta.setAttribute('data-show', '1');
-          delta.setAttribute('data-up', d > 0 ? 'true' : 'false');
-        } else delta.setAttribute('data-show', '0');
-      }
-      cur = i;
+      if (name) name.textContent = labelOf(kk);
+      box.querySelectorAll('.tkx-legend > span').forEach((s, j) => s.toggleAttribute('data-on', j === kk));
+      box.setAttribute('data-scrub', i == null ? '0' : '1');
+      return kk;
     };
+    const paintCursor = (i) => { paint(i); cur = i; };
 
     /* 真正提交：**点原生 radio**，让它去跑 change 绑定。
-       ⚠️ 刻度层**自己不改值** —— 那样就多了一条写值的路，
+       ⚠️ 可视层**自己不改值** —— 那样就多了一条写值的路，
           而"一个元素一个写入口"是本项目的红线。
-       ⚠️ 提交后必须**同步 aria-valuenow / valuetext**：
-         实测（自检页）漏了这一步 ⇒ 读屏念的还是旧档位，**与视觉不一致**。
-         视觉那一半靠下次 `paintPage` 重渲染，而当前这一次的 ARIA 不会自己更新。 */
+       ⚠️ 提交后必须**同步 aria-valuenow / valuetext 与液面**：
+         漏了 ARIA ⇒ 读屏念旧档位；漏了液面 ⇒ 视觉停在旧档位，
+         要等下一次 paintPage 才追上（看起来像"点了没反应"）。 */
     const commit = (i) => {
       if (i == null) return;
       const r = radios[i];
       if (r && !r.checked) r.click();     // click ⇒ change ⇒ 既有保存链路
       row.setAttribute('aria-valuenow', String(i));
-      row.setAttribute('aria-valuetext', (r && r.parentElement?.querySelector('span')?.textContent) || '');
+      row.setAttribute('aria-valuetext', labelOf(i));
+      paint(i);
     };
 
     let down = false;
@@ -3211,13 +3783,13 @@ function mountTicks() {
       /* 指针捕获在"指针已不在"时会抛（合成事件、真实的手指已离开），
          而拖动不靠它也能用 —— 必须 try/catch。 */
       try { row.setPointerCapture(e.pointerId); } catch { /* 非活动指针 */ }
-      paintCursor(at(e.clientX));
+      paintCursor(slotAt(e.clientX));
     };
     const onMove = (e) => {
       /* 鼠标悬停就跟随；触摸必须按住 ——
          否则手指在滚动时路过这一行，档位也会跟着跳。 */
       if (e.pointerType !== 'mouse' && !down) return;
-      paintCursor(at(e.clientX));
+      paintCursor(slotAt(e.clientX));
     };
     const onUp = (e) => {
       /* 释放捕获同样会抛（从未成功捕获时）—— 必须 catch，
@@ -3429,14 +4001,30 @@ async function loadChats() {
 async function loadLogs() {
   try {
     const d = await api(`/api/logs?since=${S.logCursor}`);
-    if (d.reset || !S.extra.logs) S.extra.logs = { lines: [] };
-    S.extra.logs.lines = S.extra.logs.lines.concat(d.lines || []).slice(-400);
+    const fresh = Array.isArray(d.lines) ? d.lines : [];
+    const reset = Boolean(d.reset) || !S.extra.logs;
+    /* ⚠️⚠️ 没有新行就**不重画**（2026-10-21 · 真机 bug 根因之一）：
+       `onPageShown()` 每次重画都会再调本函数，而本函数末尾的 `softPaint()`
+       又会触发下一次重画 —— 一行不判就是一个本地回环（实测每秒上千次）。
+       回环把 `syncNav2Indicator()` 变成每帧重启弹簧，最终让二级滑块数值发散、
+       飞出导航条并被裁掉。守卫之后：有新行才重画，回环在第二轮自然停下。 */
+    if (!reset && !fresh.length) return;
+    if (reset) S.extra.logs = { lines: [] };
+    S.extra.logs.lines = S.extra.logs.lines.concat(fresh).slice(-400);
     S.logCursor = d.total || 0;
     softPaint();
   } catch { /* 同上 */ }
 }
 async function loadAudit() {
-  try { S.extra.audit = await api('/api/audit?limit=200'); softPaint(); } catch { /* 同上 */ }
+  try {
+    const next = await api('/api/audit?limit=200');
+    /* 同 loadLogs：内容没变就不重画，否则 onPageShown 会把它变成取数回环。 */
+    const sig = JSON.stringify(next || []);
+    if (S.extra.auditSig === sig) return;
+    S.extra.audit = next;
+    S.extra.auditSig = sig;
+    softPaint();
+  } catch { /* 同上 */ }
 }
 /**
  * 读出**当前服务商**的模型清单（给右侧「云端设置」的下拉用）。
@@ -3488,7 +4076,7 @@ const INLINE_ACTIONS = [
   'logs.load', 'audit.load', 'packages.load',
   'route.up', 'route.down', 'route.del', 'route.add', 'route.reset', 'route.undo', 'route.clean',
   'plugin.toggle', 'plugin.set', 'memlist.set', 'memlist.del', 'memlist.add',
-  'sched.set', 'skill.set', 'skill.del',
+  'sched.set', 'skill.set', 'skill.del', 'cg.fill',
   'holidays.add', 'holidays.del', 'holidays.kind', 'holidays.ren',
   'import.file', 'zip.file', 'zip.pick',
   'field', 'field-local', 'feat', '__modal', '__modal-close',
@@ -3526,6 +4114,15 @@ function auditActions() {
   }
 }
 
+/* `.seg` 选中态变化：**委托一次**，不随 3 秒重建重复绑定。
+   （给每次重建出来的新元素各绑一次 = 监听器随轮询累积，是本仓反复踩过的泄漏形状。） */
+document.addEventListener('change', (ev) => {
+  const inp = ev.target;
+  if (!(inp instanceof HTMLInputElement) || inp.type !== 'radio') return;
+  const seg = inp.closest('.seg');
+  if (seg) positionSegHp(seg, true);
+});
+
 document.addEventListener('click', async (ev) => {
   const nav1 = ev.target.closest('#nav1 .grp');
   if (nav1) { S.gi = Number(nav1.dataset.g); S.si = 0; paintPage(true); window.scrollTo({ top: 0 }); return; }
@@ -3552,6 +4149,8 @@ document.addEventListener('click', async (ev) => {
   const el = ev.target.closest('[data-a]');
   if (!el) return;
   const a = el.dataset.a, p = el.dataset.p;
+  // 卡级补全的输入框：点它只是聚焦，不是动作（否则会落进 ACTIONS 的兜底提示）。
+  if (a === 'cg.fill') return;
 
   /* 顶栏与保存条 */
   if (a === 'onekey-start') return ACTIONS['onekey.start']();
@@ -4026,7 +4625,7 @@ $id('themeBtn').addEventListener('click', toggleTheme);
 let navResizeT = 0;
 window.addEventListener('resize', () => {
   clearTimeout(navResizeT);
-  navResizeT = setTimeout(() => syncNavIndicator(true), 120);
+  navResizeT = setTimeout(() => { syncNavrowStack(); syncNavIndicator(true); syncNav2Indicator(true); }, 120);
 });
 
 /* ════════════════════════════════════════════════ 11. 启动 ═══ */
@@ -4084,7 +4683,14 @@ window.addEventListener('resize', () => {
   paintPage(true);
   refresh();
   openUpdateStream();
-  setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 3000);
+  let refreshTimer = setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 3000);
+  /* 测试专用：暂停 3 秒轮询。面板 QA 往 `S.state` 注入夹具后要在**同一个事件循环**里
+     完成断言 —— 轮询若在中间触发，会把夹具换回服务端数据（表现为"展开态突然收回"）。
+     业务代码不许调它；重画请用 `__nextRepaint`。 */
+  window.__nextPauseRefresh = (on) => {
+    if (on) { clearInterval(refreshTimer); refreshTimer = null; }
+    else if (!refreshTimer) refreshTimer = setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 3000);
+  };
 })();
 
 /* ════════════════════════════════════════ 窗口几何跟踪（2026-10-16）════
