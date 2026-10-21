@@ -174,7 +174,15 @@ export function cfgPath() {
     // 未被点名的消息本来就一律不回，「安静期内不回」就是一条**真空断言**（永远绿）。
     // 用「菠萝」而不是「天气」：T2 拿「今天天气不错」证明"未被点名不回"，
     // 换成「天气」会把它一起打破。
-    custom: { trigger: { keywords: ['菠萝'] } },
+    custom: {
+      trigger: { keywords: ['菠萝'] },
+      /* CI runner 是 UTC，而峰谷闸按 runner 本地时间判工作日 09–12 / 14–18。
+         UTC 15:37 正好落在峰段：T2 的「没被点名」会先被 peak 短路，T340 拿不到
+         decide 的未读痕迹，T36b 还会多出 stage=peak。峰谷的时间窗已由
+         test/check-peak.mjs 的纯函数夹具确定性钉住；端到端这边统一关掉，
+         否则同一份代码会随 runner 所在时区/运行时刻变红（2026-10-21 CI 实测）。 */
+      peak: { enabled: false },
+    },
   };
   const p = tmpPath('smoke', 'json');
   fs.writeFileSync(p, JSON.stringify(cfg, null, 2));

@@ -2668,7 +2668,10 @@ async function main() {
       const skips = tl.filter((r) => r.kind === 'skip');
       // D9b：`command` 是新增的一类 ——「/安静」执行了但**故意不回复**。
       // 它必须留在允许集里，否则"指令生效了却看不见"会变成一条无从查证的静默。
-      const SKIP_STAGES = ['decide', 'throttle', 'command'];
+      /* `peak` 是主链路真实会写的一类 skip（峰谷闸在未读消费之前短路）。
+         它必须算合法 stage —— 否则端到端用例在 UTC runner 的工作日高峰时段
+         会把它当成"没标 stage"而变红，而产品行为本来就是对的。 */
+      const SKIP_STAGES = ['decide', 'throttle', 'command', 'peak'];
       check('T36b 「没回」的那一轮也落盘了，且标了 stage（决策没答应 / 被限流 / 指令不回复）',
         skips.length > 0 && skips.every((r) => SKIP_STAGES.includes(r.stage)),
         `skip=${skips.length}｜${skips.map((r) => `${r.stage}:${r.reason}`).join(' / ').slice(0, 140)}`);
