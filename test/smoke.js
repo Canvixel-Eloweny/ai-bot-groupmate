@@ -10453,7 +10453,11 @@ const fs = require('node:fs');
       ck383(normalizeSplitToken('||') === '||', "'||' 被动了");
 
       // ② 守门层（src/brain.js）：即使有人绕过归一化把空串递进来，也不许逐字切分
-      const cfgWin53 = loadConfig();
+      /* ⚠️ 不能 `loadConfig()` 无参：公开仓/CI 没有 `config.json`，会落到
+         `config.example.json` 的空白名单并当场抛错（2026-10-21 CI 实测）。
+         这一条只测 splitToken 的守门，用本进程的 smoke 夹具配置即可 ——
+         它已经带了 mock LLM 与白名单，且不读用户仓库里的真实配置。 */
+      const cfgWin53 = loadConfig(cfile);
       const brainOf53 = (tok) => {
         const c = { ...cfgWin53, reply: { ...cfgWin53.reply, splitToken: tok } };
         return new Brain(c, new SessionStore(c));
