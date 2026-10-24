@@ -38,17 +38,18 @@
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const ARG = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : d; };
 /* 默认指向**面板自己发的那个路由**（不是另起的小服务）：同源、自带 token、
    而且验的就是用户真的会打开的那一条路径（控制台在根上）。 */
 const URL_ = ARG('url', 'http://127.0.0.1:8788/');
-const OUT = ARG('out', '/tmp/next-verify');
+const OUT = ARG('out', path.join(os.tmpdir(), 'next-verify'));
 const WIDTH = Number(ARG('width', 1440));
 const HEIGHT = 1100;
 const DPORT = 9333 + (process.pid % 200);
-const PROFILE = `/tmp/cdp-next-${process.pid}`;
+const PROFILE = path.join(os.tmpdir(), `cdp-next-${process.pid}`);
 
 const EDGE = '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const CHROME_CANDIDATES = [

@@ -257,7 +257,7 @@ try {
   const shot = async (name) => {
     const m = await send('Page.captureScreenshot', { format: 'png' });
     const data = m.result?.data;
-    if (data) fs.writeFileSync(path.join('/tmp', name), Buffer.from(data, 'base64'));
+    if (data) fs.writeFileSync(path.join(os.tmpdir(), name), Buffer.from(data, 'base64'));
   };
 
   await send('Page.enable');
