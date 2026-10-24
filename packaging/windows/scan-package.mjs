@@ -15,7 +15,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /**
  * 真值来源所在的开发仓。
@@ -27,8 +27,8 @@ import { fileURLToPath } from 'node:url';
  */
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(process.env.QQBOT_SRC || path.join(HERE, '..', '..'));
-const { KNOWN_REAL, KNOWN_REAL_LOADED, KNOWN_REAL_SOURCE } = await import(path.join(SRC, 'scripts/known-real.mjs'));
-const { EXTRA_CREDENTIAL_SHAPES, PLACEHOLDER_RE } = await import(path.join(SRC, 'scripts/credential-shapes.mjs'));
+const { KNOWN_REAL, KNOWN_REAL_LOADED, KNOWN_REAL_SOURCE } = await import(pathToFileURL(path.join(SRC, 'scripts/known-real.mjs')).href);
+const { EXTRA_CREDENTIAL_SHAPES, PLACEHOLDER_RE } = await import(pathToFileURL(path.join(SRC, 'scripts/credential-shapes.mjs')).href);
 
 const TARGET = path.resolve(process.argv[2] || '.');
 const TEXT_EXT = new Set([
