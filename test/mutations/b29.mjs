@@ -41,6 +41,7 @@
  */
 const CSS = 'panel/next/style.css';
 const PAGE = 'panel/next/index.html';
+const APP = 'panel/next/app.js';
 
 // ── V1：深色块漏一个灵动岛令牌 → 计数胶囊在深色下继承错色 ─────────────────────
 const V1 = {
@@ -196,35 +197,30 @@ const V9 = {
   expect: 'BLOCKED',
 };
 
-// ── V16：抽掉二级栏的 min-width:0 ⇒ 它压不动，只能把岛挤走（用户报的遮挡）──
+// ── V16：给二级宽度加回 300px 下限（「系统」只有 3 页签时会留空）──────────
 const V16 = {
   id: 'V16',
-  note: '把 `.navrow > .nav2wrap` 的 `min-width: 0` 删掉 —— flex item 默认 '
-    + '`min-width: auto`（= 内容宽）**压不动**，空间不够时它把灵动岛挤出/压住，'
-    + '**整条二级栏被盖住**（用户实机截图 B40 的起因）。'
-    + '⚠️ 这是**纯几何**退化：两层都还画得好好的、玻璃也都在，'
-    + '**页面上没有任何报错**；而本机窗口宽（1440）时压根看不出来。'
-    + '预期 BLOCKED（§60⑧N8③）',
-  anchor: /\.navrow > \.nav2wrap \{[^}]*?min-width: 0;/,
+  note: '把 `layoutNavDock()` 的 `target = Math.min(contentW, maxW)` 改成'
+    + '`Math.max(300, Math.min(contentW, maxW))` —— 系统/插件这类少页签的域会重新'
+    + '撑到 300px，二级窄条里留一大片空。预期 BLOCKED（§60⑧N8④ 二级宽度按内容收缩）',
+  anchor: /const target = Math\.min\(contentW, maxW\);/,
   count: 1,
-  file: CSS,
-  apply: (s) => s.replace(/(\.navrow > \.nav2wrap \{[^}]*?)min-width: 0;/, '$1'),
+  file: APP,
+  apply: (s) => s.replace('const target = Math.min(contentW, maxW);', 'const target = Math.max(300, Math.min(contentW, maxW));'),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };
 
-// ── V17：把吸顶行退回块级 ⇒ 退回 B39 那个"两个块级兄弟"的遮挡形态 ───────────
+// ── V17：把肩线 clip-path 去掉（退回矩形玻璃）──────────────────────────────
 const V17 = {
   id: 'V17',
-  note: '把 `.navrow` 的 `display: grid` 改成 `display: block` —— '
-    + '两个子层立刻变回**各自占满整行宽度**的块级盒子，横向必然重叠：'
-    + '岛的玻璃从左边压过来，**二级栏整条被盖住**（就是用户报的那一幕）。'
-    + '⚠️ 这条打的是**根因**而不是某个数值 —— B39 的错正是"用负 margin 让两个块级兄弟叠行"，'
-    + '而块级盒子**完全无法分配水平空间**。预期 BLOCKED（§60⑧N8①）',
-  anchor: /\.navrow \{[^}]*?display: grid;/,
+  note: '把 `paintNavDock()` 的 `dock.style.clipPath = path(...)` 换成 `none` ——'
+    + '连续肩线立即消失，整条玻璃退回矩形，而页面其它部分完全正常。'
+    + '预期 BLOCKED（§60⑧N8③ 肩线必须写进 clip-path）',
+  anchor: /dock\.style\.clipPath = /,
   count: 1,
-  file: CSS,
-  apply: (s) => s.replace(/(\.navrow \{[\s\S]*?)display: grid;/, '$1display: block;'),
+  file: APP,
+  apply: (s) => s.replace(/dock\.style\.clipPath = [^\n]+;/, "dock.style.clipPath = 'none';"),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };
@@ -243,39 +239,18 @@ const V18 = {
   expect: 'BLOCKED',
 };
 
-// ── V19：删掉 1280px 换行退路 ⇒ 窄屏下二级栏被压到看不见 ─────────────────────
-const V19 = {
-  id: 'V19',
-  note: '把 `@media (max-width: 1280px)` 里的 `grid-template-columns: 1fr`（单列）改回三列 —— '
-    + '空间不够并排时**没有退路**：实测二级栏被压到 ~90px、五个 tab 一个都看不见'
-    + '（"不遮住了但没法用"）。⚠️ **本机窗口宽，这一档完全看不出来** —— '
-    + '只有用户那种小窗口才会现形，而那时他已经报过一次了。预期 BLOCKED（§60⑧N8⑤）',
-  anchor: /\.navrow \{ grid-template-columns: 1fr; height: auto; row-gap: 0; \}/,
-  count: 1,
-  file: CSS,
-  apply: (s) => s.replace('.navrow { grid-template-columns: 1fr; height: auto; row-gap: 0; }', '.navrow { grid-template-columns: 1fr auto 1fr; height: auto; row-gap: 0; }'),
-  layer: 'check-wb',
-  expect: 'BLOCKED',
-};
-
 // ── V10：触摸设备的媒体查询漏改 --h-nav2────────────────────────────────────
 const V10 = {
   id: 'V10',
-  note: '从 `@media (pointer:coarse)` 里删掉 --h-nav2 —— 触摸设备上二级栏比 :root 里'
-    + '低一档，两层不齐平（而且 `.sub` 被 min-height:44px 顶起，`.nav2` 实际装不下）。'
+  note: '从 `@media (pointer:coarse)` 里删掉 --h-nav2 —— 触摸设备上二级行高度会漂，'
+    + '一级/二级不再共用同一套尺寸。'
     + '⚠️ **本机只有鼠标，这条路径无法靠肉眼发现**。'
     + '预期 BLOCKED（§60⑧N9 三处媒体查询都要改）',
-  // ⚠️ 锚点用**字符串**而不是正则（首版写了正则、带 `\n`，结果 mutate 把
-  //    `\n` 当字面量两个字符去匹配 ⇒ 命中 0，实测报 INVALID）。
-  //    锚点只锚那一行的 `:root {...}`，避开任何注释。
-  // ⚠️⚠️ **这个锚点写死了 `--h-nav2: 58px`** —— B39 把它改成 60px（与 --h-nav1 相等），
-  //    锚点就命中 0、整条报 INVALID。**改取值的那一次必须一起改锚点**，
-  //    否则"变异失效"会被读成"防线失效"，方向正好相反。
-  anchor: ':root { --h-nav1: 60px; --h-nav-item: 44px; --h-nav2: 60px; }\n  .btn,',
+  anchor: ':root { --h-nav1: 60px; --h-nav-item: 44px; --h-nav2: 50px; }\n  .nav2-ind {',
   count: 1,
   file: CSS,
   apply: (s) => s.replace(
-    '@media (pointer: coarse) {\n  :root { --h-nav1: 60px; --h-nav-item: 44px; --h-nav2: 60px; }',
+    '@media (pointer: coarse) {\n  :root { --h-nav1: 60px; --h-nav-item: 44px; --h-nav2: 50px; }',
     '@media (pointer: coarse) {\n  :root { --h-nav1: 60px; --h-nav-item: 44px; }'),
   layer: 'check-wb',
   expect: 'BLOCKED',
@@ -312,32 +287,18 @@ const V12 = {
   expect: 'BLOCKED',
 };
 
-// ── V13：DOM 顺序错（静态层必须单独判，否则 N7/N8 全绿而页面是错的）──────────
+// ── V13：DOM 顺序错（静态层必须单独判）──────────────────────────────────────
 const V13 = {
   id: 'V13',
-  note: '把 .nav2wrap 整块挪回 .nav1 之后 —— B29 的"上移"**本质是改 DOM 顺序**'
-    + '（三层都是 position:sticky 且都在正常文档流，文档顺序决定谁在上）。'
-    + '⚠️ N7/N8 判的是**样式里写的** top 与 z-index，改 DOM 顺序它们一条都不报 '
-    + '⇒ 首版这条挂在 verify 层，但实测 mutate **不支持该层**'
-    + '（只认 check-wb / smoke / sandbox / panel），报"未指定层"。'
-    + '所以补了 N14 判 DOM 先后，把它挪回 check-wb。'
-    + '预期 BLOCKED（§60⑧N14 三层 DOM 先后）',
-  /* ⚠️⚠️ 锚点**不许把中间那段注释写死**（2026-10-04 修复）。
-     旧锚点写的是 `<div class="nav2wrap"…</div>\n\n<!-- ══+ 一级导航` —— 而 B30 在
-     两者之间**插了一段 B30 的说明注释**（删 `.page-meta` 那次），于是锚点命中 0、
-     整个 V13 报 INVALID。**这正是本工具纪律③要拦的形态**：锚点失效必须硬失败，
-     不能混进"拦住/没拦住"。
-     ⇒ 现在只用两个**结构锚**（nav2wrap 块 → nav1 块）串起来，中间夹什么注释都不管。 */
-  anchor: /<div class="nav2wrap"[\s\S]*?<\/div>[\s\S]*?<nav class="nav1"[\s\S]*?<\/nav>/,
+  note: '把一/二级换回旧顺序（nav2wrap 在 nav1 之前）—— 导航改版的层级是'
+    + '一级在上、二级在下，DOM 顺序就是层级本身；只改样式 top/z-index 不会改变实际层序。'
+    + '预期 BLOCKED（§60⑧N14 topbar → nav1 → nav2wrap）',
+  anchor: /<nav class="nav1"[\s\S]*?<\/nav>[\s\S]*?<div class="nav2wrap"[\s\S]*?<\/div>/,
   count: 1,
   file: PAGE,
   apply: (s) => {
-    const m = /(<div class="nav2wrap"[\s\S]*?<\/div>)([\s\S]*?)(<nav class="nav1"[\s\S]*?<\/nav>)/.exec(s);
+    const m = /(<nav class="nav1"[\s\S]*?<\/nav>)([\s\S]*?)(<div class="nav2wrap"[\s\S]*?<\/div>)/.exec(s);
     if (!m) return s;
-    /* 把 nav2wrap 块搬到 nav1 **之后**（顺序从 `nav2wrap → nav1` 变成 `nav1 → nav2wrap`）。
-       ⚠️ 三块都要留在结果里：旧实现写成 `${m[2]}\n${m[1]}`，**把 nav1 整块丢了** ——
-       它照样能 BLOCKED（N14 取不到 nav1 就报红），但拦住的理由变成了"元素没了"，
-       而不是"顺序反了"。变异要打的必须是**它声称打的那件事**。 */
     return s.replace(m[0], `${m[2]}${m[3]}\n${m[1]}`);
   },
   layer: 'check-wb',
@@ -376,20 +337,4 @@ const V15 = {
   expect: 'BLOCKED',
 };
 
-// ── V20：三列改成 `2fr auto` ⇒ 岛仍"居中"但左列更宽，视觉上偏 ───────────────
-const V20 = {
-  id: 'V20',
-  note: '把 `grid-template-columns: 1fr auto 1fr` 改成 `2fr auto` —— '
-    + '岛**仍然**在视口正中（它独占 auto 列），但左列比右列宽一倍，'
-    + '二级栏（贴左）与岛之间的空档不再对称 ⇒ **看起来仍然是偏的**。'
-    + '⚠️ 这条专打"只判有没有 auto 那一列"的松判据 —— 岛居中不等于布局对称。'
-    + '预期 BLOCKED（§60⑧N8① 必须是 `1fr auto 1fr`）',
-  anchor: /grid-template-columns: 1fr auto 1fr;/,
-  count: 1,
-  file: CSS,
-  apply: (s) => s.replace('grid-template-columns: 1fr auto 1fr;', 'grid-template-columns: 2fr auto;'),
-  layer: 'check-wb',
-  expect: 'BLOCKED',
-};
-
-export default [V20, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19];
+export default [V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18];

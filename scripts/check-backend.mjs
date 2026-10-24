@@ -79,8 +79,9 @@ hit(/data:\s*businessOk\s*\?\s*\(data \?\? null\)\s*:\s*null/.test(norm),
 // ③ 能力与自报：一律不信任上游。
 hit(/export function selfReportTrustOf\(backendId\)[\s\S]{0,600}?online:\s*false[\s\S]{0,300}?good:\s*false/
   .test(norm), 'selfReportTrustOf 没有把 online/good 一律标 false —— 上游会写死 true');
-hit(/canSend:\s*\{\s*image:\s*'untrusted',\s*record:\s*'untrusted'\s*\}/.test(norm),
-  'capabilitiesOf 的 canSend 不是 untrusted —— LLBot 的 can_send_* 恒 true，不能当能力真值');
+hit(/canSend:\s*\{\s*\.\.\.UNTRUSTED_CAN_SEND\s*\}/.test(norm)
+  && /export const UNTRUSTED_CAN_SEND\s*=\s*Object\.freeze\(\{\s*image:\s*'untrusted',\s*record:\s*'untrusted'\s*,?\s*\}\)/.test(reg),
+  'capabilitiesOf 的 canSend 没有从 registry 的 UNTRUSTED_CAN_SEND 单源取 —— LLBot 的 can_send_* 恒 true，不能当能力真值');
 
 // ④ 合并转发顺序只有一个决定点。
 hit(/for \(const key of b\.forwardOrder\)/.test(norm),

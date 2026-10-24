@@ -177,11 +177,11 @@ export default [
     id: 'M15',
     note: '离线路径偷偷联网 —— 离线更新不应依赖网络',
     file: 'panel/lib/update-offline.js',
-    anchor: /import \{ readBody, readBodyBuffer, sendJson \} from '\.\/http-io\.js';/g,
+    anchor: /import \{ readBody, readBodyToFile, sendJson \} from '\.\/http-io\.js';/g,
     count: 1,
     apply: (s) => s.replace(
-      "import { readBody, readBodyBuffer, sendJson } from './http-io.js';",
-      "import { readBody, readBodyBuffer, sendJson } from './http-io.js';\nconst mutationFetch = () => fetch('https://example.com');"
+      "import { readBody, readBodyToFile, sendJson } from './http-io.js';",
+      "import { readBody, readBodyToFile, sendJson } from './http-io.js';\nconst mutationFetch = () => fetch('https://example.com');"
     ),
     layer: 'check-wb',
     expect: 'BLOCKED',

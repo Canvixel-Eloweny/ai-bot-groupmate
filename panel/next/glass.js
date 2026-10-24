@@ -88,6 +88,9 @@ const G_MAX_SIDE = 2400;    // 单边健全上限（防病态宽高比把贴图�
       ⚠️ 降模糊**不影响顶栏文字对比度** —— 底色由白纱决定，不由模糊决定
       （实测 tb-titles 8.86:1 / pill 8.67:1），只影响"顶栏背后内容的可辨度"。 */
 const G_DEFAULTS = {
+  /* `map` 是新增的贴图族开关：`ramp` 保持产品原行为，`sdf` 供制作站/弹层使用。
+     产品候选不传 override ⇒ 永远 ramp，顶栏/保存条的像素不会因这次扩展改变。 */
+  map: 'ramp',
   scale: -85, chroma: 5, border: 0.06, mapBlur: 18,
   core: 0.38, blur: 8, saturate: 140, brightness: 1.02,
 };
@@ -194,6 +197,86 @@ function gBuildMap(w, h, radius, o) {
   try { return c.toDataURL('image/png'); } catch { return null; }
 }
 
+/** 环形透镜位移贴图（SDF 版，制作站/未来弹层用）。
+ *
+ *  与 ramp 的区别：ramp 是"左→右、上→下"两条斜坡，只在边缘弯折；
+ *  这里是按圆角矩形 SDF 算出的**边缘带**：距边越近位移越大，中心回中性，
+ *  方向沿外法线 ⇒ 看起来像一块有厚度的玻璃把边缘的背景折进来。
+ *
+ *  `edgeBand` 是带宽（占短边比例或像素，调用方决定）；`center` 是可选的向心位移，
+ *  用来模拟圆钮中心的轻微放大；默认 0，不影响产品。
+ *  ⚠️ `putImageData` 会忽略 `ctx.filter`，所以先画到临时 canvas 再模糊绘入。
+ */
+function gBuildMapSdf(w, h, radius, o) {
+  const cw = Math.max(2, Math.round(w * G_MAP_SCALE));
+  const ch = Math.max(2, Math.round(h * G_MAP_SCALE));
+  const c = document.createElement('canvas');
+  c.width = cw; c.height = ch;
+  const ctx = c.getContext('2d');
+  if (!ctx) return null;
+  const img = ctx.createImageData(cw, ch);
+  const data = img.data;
+  const hx = cw / 2;
+  const hy = ch / 2;
+  const rr = Math.max(0, Math.min(radius * G_MAP_SCALE, hx, hy));
+  const band = Math.max(1, (o.edgeBand > 0 ? o.edgeBand * Math.min(w, h) : Math.min(w, h) * o.border) * G_MAP_SCALE);
+  const curve = Math.max(0.2, o.curve || 1.6);
+  const center = Math.max(0, Math.min(1, o.center || 0));
+  const smooth = (t) => t * t * (3 - 2 * t);
+  const sdf = (x, y) => {
+    const qx = Math.abs(x - hx) - (hx - rr);
+    const qy = Math.abs(y - hy) - (hy - rr);
+    const ax = Math.max(qx, 0);
+    const ay = Math.max(qy, 0);
+    return Math.hypot(ax, ay) + Math.min(Math.max(qx, qy), 0) - rr;
+  };
+  for (let y = 0; y < ch; y += 1) {
+    for (let x = 0; x < cw; x += 1) {
+      const px = x + 0.5;
+      const py = y + 0.5;
+      const d = sdf(px, py);
+      let m = 0;
+      /* 最外 0.5px 留中性：避免位移把元素外的像素拉进来（与 ramp 的 G_EDGE_CLAMP 同目的） */
+      if (d < -0.5) {
+        const t = Math.max(0, Math.min(1, 1 + d / band));
+        m = Math.pow(smooth(t), curve);
+      }
+      let nx = 0;
+      let ny = 0;
+      if (m > 0) {
+        const dx = sdf(px + 1, py) - sdf(px - 1, py);
+        const dy = sdf(px, py + 1) - sdf(px, py - 1);
+        const len = Math.hypot(dx, dy) || 1;
+        nx = dx / len;
+        ny = dy / len;
+      }
+      let vx = m * nx;
+      let vy = m * ny;
+      if (center > 0) {
+        const cx = (px - hx) / hx;
+        const cy = (py - hy) / hy;
+        vx -= center * (1 - m) * cx;
+        vy -= center * (1 - m) * cy;
+      }
+      const i = (y * cw + x) * 4;
+      data[i] = Math.round(G_NEUTRAL + 127 * Math.max(-1, Math.min(1, vx)));
+      data[i + 1] = G_NEUTRAL;
+      data[i + 2] = Math.round(G_NEUTRAL + 127 * Math.max(-1, Math.min(1, vy)));
+      data[i + 3] = 255;
+    }
+  }
+  const tmp = document.createElement('canvas');
+  tmp.width = cw; tmp.height = ch;
+  const tctx = tmp.getContext('2d');
+  if (!tctx) return null;
+  tctx.putImageData(img, 0, 0);
+  ctx.clearRect(0, 0, cw, ch);
+  ctx.filter = 'blur(' + (o.mapBlur * G_MAP_SCALE).toFixed(2) + 'px)';
+  ctx.drawImage(tmp, 0, 0);
+  ctx.filter = 'none';
+  try { return c.toDataURL('image/png'); } catch { return null; }
+}
+
 /** SVG 元素工厂 */
 function gSvgEl(name, attrs) {
   const n = document.createElementNS(G_SVG_NS, name);
@@ -217,6 +300,8 @@ function gBuildLensFilter(inst) {
     id: inst.id, x: '-25%', y: '-25%', width: '150%', height: '150%',
     primitiveUnits: 'userSpaceOnUse', 'color-interpolation-filters': 'sRGB',
   });
+  inst.filterEl = f;
+  inst.disp = [];
   const img = gSvgEl('feImage', {
     x: '0', y: '0', width: inst.w, height: inst.h,
     preserveAspectRatio: 'none', result: 'map',
@@ -228,10 +313,12 @@ function gBuildLensFilter(inst) {
   const dN = ['dR', 'dG', 'dB'];
   const cN = ['cR', 'cG', 'cB'];
   for (let i = 0; i < 3; i += 1) {
-    f.appendChild(gSvgEl('feDisplacementMap', {
+    const node = gSvgEl('feDisplacementMap', {
       in: 'SourceGraphic', in2: 'map', scale: scales[i],
       xChannelSelector: 'R', yChannelSelector: 'B', result: dN[i],
-    }));
+    });
+    inst.disp.push(node);
+    f.appendChild(node);
   }
   for (let j = 0; j < 3; j += 1) {
     f.appendChild(gSvgEl('feColorMatrix', {
@@ -255,9 +342,12 @@ function gMakeGlass(el, extra) {
   };
 
   const measure = () => {
+    /* 用布局尺寸而不是 getBoundingClientRect：SVG 滤镜的 userSpaceOnUse 是元素
+       自己的局部坐标。父级若做了 transform: scale()（制作站的缩放舞台），
+       rect 会带缩放、贴图就会比元素大一截或小一截；offsetWidth 不受影响。 */
     const r = el.getBoundingClientRect();
-    inst.w = Math.max(1, Math.round(r.width));
-    inst.h = Math.max(1, Math.round(r.height));
+    inst.w = Math.max(1, Math.round(el.offsetWidth || r.width));
+    inst.h = Math.max(1, Math.round(el.offsetHeight || r.height));
   };
   // 圆角从计算样式读：玻璃用元素自己的圆角，改 --r-* 时两边不会走散
   const radius = () => parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
@@ -265,7 +355,11 @@ function gMakeGlass(el, extra) {
   const build = () => {
     const old = document.getElementById(inst.id);
     if (old && old.parentNode) old.parentNode.removeChild(old);
-    if (!inst.mapURL) inst.mapURL = gBuildMap(inst.w, inst.h, radius(), inst.opts);
+    if (!inst.mapURL) {
+      inst.mapURL = inst.opts.map === 'sdf'
+        ? gBuildMapSdf(inst.w, inst.h, radius(), inst.opts)
+        : gBuildMap(inst.w, inst.h, radius(), inst.opts);
+    }
     if (!inst.mapURL) return false;
     gDefs().appendChild(gBuildLensFilter(inst));
     return true;
@@ -283,14 +377,34 @@ function gMakeGlass(el, extra) {
   apply();
 
   // 尺寸真的变了才重建贴图。轮询不碰它 → 不会被高频调用。
-  inst.refresh = () => {
+  inst.refresh = (force) => {
     const pw = inst.w;
     const ph = inst.h;
     measure();
-    if (pw === inst.w && ph === inst.h) return;
+    if (!force && pw === inst.w && ph === inst.h) return;
     inst.mapURL = null;
     build();
     apply();
+  };
+  /* 制作站的旋钮走这里：只改 scale/chroma 时不动贴图，只改滤镜节点；改贴图参数才重建。
+     ⚠️ 仍无 rAF/interval；防抖由调用方做（与 ResizeObserver 的 90ms 同一口径）。 */
+  inst.set = (next) => {
+    const mapKeys = ['map', 'edgeBand', 'border', 'core', 'mapBlur', 'curve', 'center'];
+    /* 只有贴图参数**真的变了**才重建：制作站每次滑杆都会把整份 opts 传进来，
+       旧写法一看到键就重建 ⇒ 拖「折射强度/色散」也在重画整张 SDF，手感发滞。 */
+    const needsMap = mapKeys.some((k) => Object.prototype.hasOwnProperty.call(next, k) && next[k] !== inst.opts[k]);
+    Object.assign(inst.opts, next);
+    if (needsMap) {
+      inst.mapURL = null;
+      if (!build()) return inst;
+    } else if (inst.disp && inst.disp.length === 3) {
+      const o = inst.opts;
+      const chroma = Math.max(0, o.chroma) / 100;
+      const scales = [o.scale, o.scale * (1 + chroma), o.scale * (1 + chroma * 2)];
+      for (let i = 0; i < 3; i += 1) inst.disp[i].setAttribute('scale', scales[i]);
+    }
+    apply();
+    return inst;
   };
   inst.destroy = () => {
     if (inst.ro) inst.ro.disconnect();
@@ -300,6 +414,12 @@ function gMakeGlass(el, extra) {
     el.style.removeProperty('-webkit-backdrop-filter');
     el.removeAttribute('data-eg-mode');
     inst.mapURL = null;
+    inst.disp = [];
+    inst.filterEl = null;
+    /* 制作站会反复重建场景：销毁后必须从实例表摘掉，否则 API 的 instances
+       越积越多，每个旧实例还攥着 DOM 与 opts。 */
+    const at = gInstances.indexOf(inst);
+    if (at >= 0) gInstances.splice(at, 1);
   };
   // jsdom 没有 ResizeObserver：缺它只是不自动重算，不影响首屏，所以用 typeof 守卫。
   if (typeof ResizeObserver !== 'undefined') {
@@ -313,7 +433,7 @@ function gMakeGlass(el, extra) {
 
 /** 拆掉全部实例与 SVG 容器（initGlass 的重入先拆再建就靠这一点）。 */
 function gDestroyAll() {
-  for (const g of gInstances) g.destroy();
+  for (const g of [...gInstances]) g.destroy();
   gInstances.length = 0;
   if (gDefsRoot && gDefsRoot.parentNode) gDefsRoot.parentNode.removeChild(gDefsRoot);
   gDefsRoot = null;
@@ -358,4 +478,21 @@ function initGlass(root) {
 
 // 本文件在 index.html 里位于 body 底部（app.js 之前）—— 静态候选元素此刻已在 DOM 里，
 // 直接执行即可。savebar 虽然常态 hidden，但元素存在、hidden 只是不显示，标注照常工作。
+if (typeof window !== 'undefined') {
+  window.EstrellaGlass = Object.freeze({
+    version: '3',
+    defaults: Object.freeze(Object.assign({}, G_DEFAULTS)),
+    support: Object.freeze({
+      parse: G_LENS_PARSE,
+      engine: G_CAN_REFRACT,
+      probe: G_LENS_OK,
+      lens: G_LENS_OK,
+    }),
+    make: gMakeGlass,
+    buildMap: gBuildMap,
+    buildMapSdf: gBuildMapSdf,
+    destroyAll: gDestroyAll,
+    instances: gInstances,
+  });
+}
 initGlass();

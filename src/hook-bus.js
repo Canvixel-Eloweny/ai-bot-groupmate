@@ -32,10 +32,14 @@
  *
  *  ⚠️ **零依赖叶子**：不 import 任何东西。它被机器人进程与测试同时加载。
  *
- *  ⚠️ 已知盲区（写明，不假装没有）：**没有超时**。
- *  钩子里写一个 `await new Promise(() => {})` 会让这一轮回复永远挂住。
- *  本批不设超时，理由是"扩展包是用户自己装的、且加载前要过白名单"；
- *  真要闭合得靠进程级看门狗，与收益不成比例。
+ *  ⚠️ 单条钩子有超时（2026-10-23）：默认 `HOOK_TIMEOUT_MS` = 5000 ms，可在
+ *  `custom.plugins.hookTimeoutMs` 里改（钳制 100–120000）。超时按 fail-open
+ *  放行并记一条 `errors`，**继续跑后面的钩子**，不置否决。
+ *
+ *  ⚠️ 超时**不能取消**已经在跑的 Promise：它仍可能在之后修改共享 payload
+ *  （尤其 `before-llm-messages` 的 `messages` 数组）。深拷贝会破坏包的有意
+ *  原地修改，所以这里选择接受这个残余风险，并在超时日志里点名 owner。
+ *  另外 N 条钩子是**串行**的，最坏累计 N × timeout；本层不设总预算。
  */
 
 /**
@@ -56,7 +60,16 @@ export const HOOK_POINTS = Object.freeze([
   'before-tool',
   'after-tool',
   'after-response',
+  // 2026-10-23：宿主扩展点（**不是**参考实现的 5 点之一）。
+  // 入站消息被放行之后、决策之前触发 —— "没被回复的消息"也要能被插件看到，
+  // 否则好感度 / 心情这类"按所有消息记账"的包永远只有被点名的那几条。
+  // 只通知、不否决：返回值里的 `block` 不在这里消费（否决语义仍只在 before-tool）。
+  'after-incoming-message',
 ]);
+
+/** 单条钩子的默认超时（毫秒）与硬天花板。默认值同时登记在 `field-schema.js`。 */
+export const HOOK_TIMEOUT_MS = 5000;
+export const HOOK_TIMEOUT_LIMIT = 120000;
 
 /** 否决的判据键。参考实现用的是 `block`，保持一致（扩展包不用改一行） */
 const VETO_KEY = 'block';
@@ -66,13 +79,16 @@ const VETO_KEY = 'block';
  *
  * @param {{log?:{info?:Function,warn?:Function}}} deps
  */
-export function createHookBus({ log } = {}) {
+export function createHookBus({ log, timeoutMs = HOOK_TIMEOUT_MS } = {}) {
   const warn = (m) => log?.warn?.(m);
+  const cap = Math.max(100, Math.min(HOOK_TIMEOUT_LIMIT, Math.trunc(Number(timeoutMs)) || HOOK_TIMEOUT_MS));
   /** @type {Map<string, Array<{owner:string, fn:Function}>>} */
   const points = new Map();
   for (const p of HOOK_POINTS) points.set(p, []);
 
   return {
+    /** 生效的单条超时（面板 / 快照只读它，不自己再算一遍） */
+    timeoutMs: cap,
     /**
      * 注册一个钩子。
      * @returns {boolean} 是否受理（未知钩子点 / 非函数 → false，并告警）
@@ -137,11 +153,32 @@ export function createHookBus({ log } = {}) {
 
       let ran = 0;
       let vetoed = null;
+      // 哨兵值：超时用 resolve 而不是 reject —— 后者会在迟到的 Promise 上留下
+      // 未处理拒绝的风险，而这里只想"先往下走"。
+      const TIMED_OUT = Symbol('hook-timeout');
       for (const h of list) {
         ran += 1;
+        let timer = null;
+        // 包一层 Promise.resolve()：同步 throw 也变成 reject，走同一个 catch。
+        const run = Promise.resolve().then(() => h.fn(payload));
+        // 超时后原 Promise 仍可能在跑；挂一个空 catch，避免它迟到的 reject
+        // 变成 unhandled rejection（race 已经settled，不会再消费它）。
+        run.catch(() => {});
+        const timeout = new Promise((resolve) => {
+          // ⚠️ 不要 unref：短生命周期进程（测试 / 一次性脚本）里，唯一的定时器被
+          // unref 后事件循环会直接空转退出，超时永远不触发 —— 表现为"emit 挂住"。
+          // 代价是进程最多多活 cap 毫秒（默认 5 秒），换来确定性的放行。
+          timer = setTimeout(() => resolve(TIMED_OUT), cap);
+        });
         try {
           // eslint-disable-next-line no-await-in-loop -- 顺序执行是刻意的：注册顺序 = 判定顺序
-          const v = await h.fn(payload);
+          const v = await Promise.race([run, timeout]);
+          if (v === TIMED_OUT) {
+            const message = `钩子超时（>${cap}ms），已放行`;
+            errors.push({ owner: h.owner, message });
+            warn(`扩展包「${h.owner}」的钩子「${key}」${message}`);
+            continue;
+          }
           if (!vetoed && v && typeof v === 'object' && v[VETO_KEY] === true) {
             vetoed = {
               // reason 可能是任意类型（扩展包自己写的）—— 统一成字符串，
@@ -155,6 +192,8 @@ export function createHookBus({ log } = {}) {
           const message = String(e?.message ?? e);
           errors.push({ owner: h.owner, message });
           warn(`扩展包「${h.owner}」的钩子「${key}」出错（已放行）：${message}`);
+        } finally {
+          if (timer) clearTimeout(timer);
         }
       }
       return { vetoed, ran, errors };

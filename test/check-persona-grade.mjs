@@ -98,7 +98,7 @@ const schemaJs = fs.readFileSync(path.join(APP, 'panel/next/schema.js'), 'utf8')
 const appJs = fs.readFileSync(path.join(APP, 'panel/next/app.js'), 'utf8');
 const css = fs.readFileSync(path.join(APP, 'panel/next/style.css'), 'utf8');
 ok('状态下发里算了分级', /personaCards: \(custom\.skills \|\| \[\]\)/.test(collector) && /gradePersonaCard\(sk\)/.test(collector));
-ok('面板页存在（角色卡分级）', schemaJs.includes("id: 'cardgrade'") && schemaJs.includes("t: 'cardGrade'"));
+ok('面板控件存在（角色卡分级）', schemaJs.includes("id: 'cg'") && schemaJs.includes("t: 'cardGrade'"));
 ok('渲染器存在', /cardGrade: \(x\) =>/.test(appJs));
 ok('补全动作接线', appJs.includes('cg.fill') && appJs.includes('cg.do') && /function fillCardDim\(/.test(appJs));
 ok('补全写的是 gap.field 且会保存', /gap\.field/.test(appJs) && /return commitDraft\(\)/.test(appJs));

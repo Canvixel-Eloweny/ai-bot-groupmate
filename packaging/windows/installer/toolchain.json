@@ -6,6 +6,14 @@
     "mirror": "https://cdn.npmmirror.com/binaries/node/v22.23.3/node-v22.23.3-win-x64.zip",
     "sha256": "2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71"
   },
+  "electron": {
+    "version": "44.9.3",
+    "zip": "electron-v44.9.3-win32-x64.zip",
+    "size": 158508870,
+    "url": "https://github.com/electron/electron/releases/download/v44.9.3/electron-v44.9.3-win32-x64.zip",
+    "mirror": "https://npmmirror.com/mirrors/electron/44.9.3/electron-v44.9.3-win32-x64.zip",
+    "sha256": "41a1ffa0541cb0f2c9b9fe920dd2cef1793ad0ea2ada1a9582958880f4d1b23c"
+  },
   "nsis": {
     "version": "3.13",
     "note": "NSIS 3.x; on the test VM installed via winget NSIS.NSIS (SourceForge direct download returned 403). Verify makensis -VERSION."

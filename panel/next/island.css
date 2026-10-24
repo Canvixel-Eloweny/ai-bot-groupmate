@@ -1,0 +1,160 @@
+/* HUD 信息岛样式：仅玻璃材质（跟随主题自动切换），没有 HUD 核材质。
+   灰圈只在切换中出现，且被 .isle 的圆角裁切。 */
+#tbPills { justify-content: center; overflow: visible; }
+
+.isle {
+  --isle-accent: #006b7c;
+  --isle-accent-ink: #fff;
+  --isle-ink: 66, 78, 94;
+  position: relative;
+  display: block;
+  width: var(--isle-w, 360px);
+  height: var(--isle-h, 38px);
+  flex: none;
+  margin-inline: auto;
+  padding: 0;
+  border: 1px solid var(--c-eg-rim-soft, var(--c-line));
+  border-radius: calc(var(--isle-h, 38px) / 2);
+  overflow: hidden;
+  isolation: isolate;
+  color: var(--c-text);
+  /* 磨砂玻璃：高不透明度白纱 + 模糊，背后是糊的、不是能看穿的 */
+  background: rgba(255, 255, 255, .84);
+  -webkit-backdrop-filter: blur(20px) saturate(1.25);
+  backdrop-filter: blur(20px) saturate(1.25);
+  box-shadow:
+    0 6px 18px -8px var(--c-shadow-2, rgba(20, 40, 80, .28)),
+    inset 0 1px 0 rgba(255, 255, 255, .68);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+html[data-theme="dark"] .isle {
+  --isle-accent: #ff9a4d;
+  --isle-accent-ink: #241a10;
+  --isle-ink: 196, 206, 220;
+  background: rgba(17, 26, 43, .88);
+}
+.isle::before {
+  content: ""; position: absolute; inset: 0; z-index: 5; pointer-events: none; border-radius: inherit;
+  box-shadow: inset 0 -10px 16px -14px rgba(20, 40, 80, .28), inset 1px 0 0 rgba(255, 255, 255, .18), inset -1px 0 0 rgba(255, 255, 255, .18);
+}
+.isle:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 3px; }
+.isle[data-tone="warn"] { box-shadow: 0 6px 18px -8px var(--c-shadow-2, rgba(20, 40, 80, .28)), inset 0 0 0 1px var(--c-warn-line); }
+.isle[data-tone="bad"] { box-shadow: 0 6px 18px -8px var(--c-shadow-2, rgba(20, 40, 80, .28)), inset 0 0 0 1px var(--c-danger-line); }
+
+/* 入场层 */
+.isle-welcome {
+  position: absolute; inset: 0; z-index: 4;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px; pointer-events: none; white-space: nowrap; opacity: 0;
+}
+.isle-welcome b { font-size: clamp(12px, calc(var(--isle-h) * .34), 16px); font-weight: 600; letter-spacing: .01em; color: var(--c-text); }
+.isle-welcome i { font-style: normal; font-size: max(8px, calc(var(--isle-h) * .2)); letter-spacing: .22em; text-transform: uppercase; color: var(--c-text-2); }
+.isle-sweep {
+  position: absolute; top: -30%; bottom: -30%; left: 0; width: 46%; z-index: 4; pointer-events: none; opacity: 0;
+  background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, .55) 50%, transparent 100%);
+  transform: translateX(-140%) skewX(-14deg);
+}
+
+/* 标题态（切换中） */
+.isle-title {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px; pointer-events: none; opacity: 0; white-space: nowrap;
+}
+.isle-title .tag { font-style: normal; font-size: max(8px, calc(var(--isle-h) * .18)); letter-spacing: .2em; color: var(--c-text-2); }
+.isle-title .name { font-size: clamp(12px, calc(var(--isle-h) * .44), 18px); font-weight: 600; color: var(--c-text); }
+
+/* 图标 */
+.isle-icon {
+  position: absolute; left: 50%; top: 50%; z-index: 2;
+  transform: translate(-50%, -50%) translateX(var(--icon-final, 0px));
+  pointer-events: none;
+}
+.plate {
+  display: grid; place-items: center;
+  width: var(--isle-plate, 24px); height: var(--isle-plate, 24px);
+  border-radius: 22%;
+  transform: scale(.714);
+  background: var(--isle-accent);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .18), inset 0 1px 0 rgba(255, 255, 255, .4);
+}
+.plate svg { width: var(--isle-glyph, 15px); height: var(--isle-glyph, 15px); color: var(--isle-accent-ink); display: block; }
+
+/* 数据 */
+.isle-data {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; align-items: center; gap: var(--isle-gap, 8px);
+  padding: 0 8px 0 var(--isle-data-inset, 50px);
+}
+.isle-data .primary { display: flex; align-items: baseline; gap: 3px; min-width: 0; overflow: hidden; }
+.isle-data .primary b {
+  font-size: clamp(12px, calc(var(--isle-h) * .46), 18px); font-weight: 600; letter-spacing: -.2px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.isle-data .primary i { font-style: normal; font-size: max(8px, calc(var(--isle-h) * .3)); color: var(--c-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isle-data .grow { flex: 1 1 auto; min-width: 6px; }
+.isle-data .right { display: flex; align-items: baseline; flex: none; }
+.isle-data .right b { font-size: clamp(10px, calc(var(--isle-h) * .42), 16px); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.isle-data .ring { position: relative; flex: none; width: var(--isle-ring, 30px); height: var(--isle-ring, 30px); display: grid; place-items: center; }
+.isle-data .ring::before { content: ""; position: absolute; inset: calc(var(--isle-ring, 30px) * .09); border-radius: 50%; background: var(--c-surface-3, var(--c-surface-2)); }
+.isle-data .ring > svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.isle-data .ring-track { fill: none; stroke: var(--c-line-strong, var(--c-line)); stroke-width: 3.4; }
+.isle-data .ring-arc { fill: none; stroke: var(--isle-accent); stroke-width: 3.4; stroke-linecap: round; transition: stroke-dashoffset .45s cubic-bezier(.4, 0, .2, 1); }
+.isle-data .ring-glyph { position: relative; z-index: 1; display: grid; place-items: center; color: var(--isle-accent); }
+.isle-data .ring-glyph svg { width: var(--isle-ring-glyph, 12px); height: var(--isle-ring-glyph, 12px); }
+
+/* 灰圈：只在切换中出现，被 .isle 裁切 */
+.isle-ripple-host { position: absolute; left: 50%; top: 50%; z-index: 1; width: 0; height: 0; pointer-events: none; transform: translateX(var(--icon-final, 0px)); }
+.ripple { position: absolute; left: 0; top: 0; border-radius: 50%; transform: translate(-50%, -50%) scale(0); opacity: 0; pointer-events: none; }
+.ripple.r1 {
+  width: calc(var(--isle-h, 38px) * 2.95); height: calc(var(--isle-h, 38px) * 2.95);
+  background: radial-gradient(circle, rgba(var(--isle-ink), .92) 0 50%, rgba(var(--isle-ink), .48) 64%, transparent 74%);
+}
+.ripple.r2 { width: calc(var(--isle-h, 38px) * 4.07); height: calc(var(--isle-h, 38px) * 4.07); border: 1px solid rgba(var(--isle-ink), .58); }
+.ripple.r3 { width: calc(var(--isle-h, 38px) * 5.16); height: calc(var(--isle-h, 38px) * 5.16); border: 1px solid rgba(var(--isle-ink), .4); }
+
+/* 紧凑（空间不足）：只留图标 + 主值，隐藏次要值与环 */
+.isle.compact .isle-data .primary i,
+.isle.compact .isle-data .ring,
+.isle.compact .isle-data .right { display: none; }
+.isle.compact .isle-welcome i { display: none; }
+
+/* 弹层 */
+.isle-pop {
+  position: fixed; z-index: 90; width: 320px; max-width: calc(100vw - 16px);
+  transform-origin: 50% 0;
+  padding: 10px; border-radius: 14px;
+  background: rgba(255, 255, 255, .95); border: 1px solid var(--c-line);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(18px) saturate(1.2);
+  box-shadow: 0 18px 48px -18px rgba(20, 40, 80, .45);
+}
+html[data-theme="dark"] .isle-pop { background: rgba(17, 26, 43, .96); }
+.isle-pop-head { display: flex; align-items: baseline; justify-content: space-between; padding: 2px 6px 8px; color: var(--c-text-2); font-size: 12px; }
+.isle-pop-head b { font-size: 13px; color: var(--c-text); }
+.isle-pop-list { display: grid; gap: 2px; max-height: 300px; overflow: auto; }
+.isle-pop-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: 0; border-radius: 9px; background: transparent; color: var(--c-text); text-align: left; cursor: pointer; }
+.isle-pop-row:hover { background: var(--c-surface-3, rgba(120, 150, 200, .12)); }
+.isle-pop-row.on { background: var(--c-accent-weak, rgba(120, 160, 220, .18)); }
+.isle-pop-ico { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: var(--c-surface-3, rgba(120, 150, 200, .12)); color: var(--c-text-2); flex: none; }
+.isle-pop-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.isle-pop-name b { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isle-pop-name i { font-style: normal; font-size: 10px; color: var(--c-text-2); }
+.isle-pop-val { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--c-text); }
+.isle-pop-val i { font-style: normal; font-size: 10px; color: var(--c-text-2); }
+.isle-pop-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--c-idle, #94a3b8); }
+.isle-pop-dot.ok { background: var(--c-ok, #00b42a); }
+.isle-pop-dot.warn { background: var(--c-warn, #faad14); }
+.isle-pop-dot.bad { background: var(--c-danger, #ff4d4f); }
+.isle-pop-foot { display: flex; gap: 6px; padding: 8px 2px 2px; }
+.isle-pop-foot button {
+  flex: 1; height: 28px; border-radius: 8px; border: 1px solid var(--c-line);
+  background: var(--c-surface-2); color: var(--c-text-2); font-size: 12px; cursor: pointer;
+}
+.isle-pop-foot button:hover { color: var(--c-text); border-color: var(--c-line-strong); }
+.isle-pop-foot button.primary { background: var(--c-accent); border-color: var(--c-accent); color: #fff; }
+
+@media (prefers-reduced-motion: reduce) {
+  .isle, .isle *, .isle-pop { transition: none !important; animation: none !important; }
+}

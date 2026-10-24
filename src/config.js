@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { PROGRAM_ROOT, CONFIG_FILE, PERSONA_DIR } from './user-root.js';
+import {
+  PROGRAM_ROOT, CONFIG_FILE, PERSONA_DIR, personaFileCandidates, resolvePersonaFile,
+} from './user-root.js';
 import scoped from './logger.js';
 import { readCustom } from './custom-config.js';
 import { PACE_DEFAULTS } from './pace.js';
@@ -22,7 +24,7 @@ import { isLocalBase, providerOf } from './net-rules.js';
 import { customBrainsOf, materializeBrain } from './custom-brain.js';
 // 去 UTF-8 BOM。它是零依赖叶子里的一条纯字符串判据，扩展包清单与「读 config.json」
 // 共用同一份 —— 各写一份 `.replace(/^\uFEFF/, '')` 就是又一处会各自腐烂的语义。
-import { stripBom } from './plugin-manifest.js';
+import { isSafeRelPath, stripBom } from './plugin-manifest.js';
 // L3 聚合层：后端选择（auto = 连上后按 get_version_info 识别）。
 // 判据与合法值住 `src/backend/registry.js`，这里只做一次归一化。
 import { normalizeBackend } from './backend/registry.js';
@@ -405,7 +407,7 @@ export function loadConfig(overridePath) {
       customBrains,
       activeCustomId: activeCustom ? activeCustom.id : '',
       temperature: numOr('temperature', raw.llm?.temperature, Number),
-      maxTokens: asInt(raw.llm?.maxTokens, 400),
+      maxTokens: asInt(raw.llm?.maxTokens, 1200),
       timeoutMs: asInt(raw.llm?.timeoutMs, 60000),
     },
     allow,
@@ -562,9 +564,20 @@ function normalizeThinking(v) {
 
 function loadPersona(relFile) {
   if (!relFile) return '';
-  const file = path.resolve(PERSONA_DIR, relFile);
-  if (!fs.existsSync(file)) {
-    log.warn(`人格文件不存在，将使用空人格: ${file}`);
+  const raw = String(relFile).trim();
+  if (!raw) return '';
+  // 与「导出人格」同一条安全判据：config.json 是用户可编辑输入，
+  // `../../.env` 这类路径不许被读进人格文本（H-03 的同形防护）。
+  if (!isSafeRelPath(raw)) {
+    log.warn(`人格文件路径不安全（绝对路径 / 盘符 / .. / NUL），将使用空人格: ${raw}`);
+    return '';
+  }
+  // P1 路径回归修复（2026-10-22）：同时接受 `qq-chat.md` 与历史写法 `persona/qq-chat.md`。
+  // 旧实现直接 resolve(PERSONA_DIR, relFile)，后者会变成 persona/persona/qq-chat.md。
+  const file = resolvePersonaFile(raw, { personaDir: PERSONA_DIR });
+  if (!file) {
+    const tried = personaFileCandidates(raw, { personaDir: PERSONA_DIR });
+    log.warn(`人格文件不存在，将使用空人格。已尝试: ${tried.join(' / ')}`);
     return '';
   }
   return fs.readFileSync(file, 'utf8').trim();

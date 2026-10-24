@@ -14,6 +14,7 @@
 
 import { GROUPS, CTRL_KINDS, $, brainPickOf } from './schema.js';
 import { DEMO } from './demo-state.js';
+import { initSettings } from './settings.js';
 // `href` 的协议白名单（第 10 轮 · 开源前审查 H-01）。⚠️ 与 `esc` 是**两件事**：
 // esc 防"跳出属性"，它防"协议可执行"。`javascript:` 一个待转义字符都不含，
 // 只靠 esc 挡不住。行为判据在 smoke（那个模块是零依赖叶子，能直接 import）。
@@ -91,6 +92,20 @@ function toast(msg, cls = '') {
   setTimeout(() => el.remove(), cls === 'bad' ? 6000 : 3200);
 }
 
+/** 只有在 Electron 壳里才返回 API；普通浏览器没有 IPC，继续走 HTTP。 */
+function shellApi() {
+  const api = window.estrellaShell;
+  return api && api.isShell ? api : null;
+}
+
+/** 只有在 Electron 壳里、且窗口被隐藏时才发系统通知；普通浏览器是 no-op。 */
+function shellNotify(title, body) {
+  if (!document.hidden) return;
+  const api = shellApi();
+  if (!api || typeof api.notify !== 'function') return;
+  try { void api.notify({ title, body }); } catch { /* 壳通知失败不影响面板 */ }
+}
+
 /**
  * 写操作的**统一回报**（2026-10-14 立）。
  *
@@ -118,6 +133,45 @@ function busy(on, txt = '处理中…') {
 /* `head`（2026-10-17）：标题右侧的附加控件。
    加它的直接原因是「添加自定义模型」要在标题旁摆云端/本地切换 —— 那是**表单的模式**，
    不属于表单内容；塞进 body 第一行会让人以为它是"第一个字段"。 */
+let glassScrimRO = null;
+/* 渐进模糊遮罩（2026-10-22）：与 #modal 相邻，三层 backdrop-filter 在 CSS 里，
+   这里只负责"弹窗中心 → 遮罩椭圆"与面积分档。关闭立即隐藏，不做退出动画
+   —— 卡住的全屏遮罩比瞬间关闭更糟。 */
+function glassScrimSync() {
+  const box = $id('modalBox');
+  const scrim = $id('glassScrim');
+  if (!box || !scrim) return;
+  const r = box.getBoundingClientRect();
+  scrim.style.setProperty('--gsc-cx', (r.left + r.width / 2) + 'px');
+  scrim.style.setProperty('--gsc-cy', (r.top + r.height / 2) + 'px');
+  scrim.style.setProperty('--gsc-rx2', Math.max(320, r.width / 2 + Math.min(innerWidth, 1440) * 0.26) + 'px');
+  scrim.style.setProperty('--gsc-ry2', Math.max(240, r.height / 2 + innerHeight * 0.24) + 'px');
+  scrim.style.setProperty('--gsc-rx3', Math.max(220, r.width / 2 + Math.min(innerWidth, 1440) * 0.1) + 'px');
+  scrim.style.setProperty('--gsc-ry3', Math.max(180, r.height / 2 + innerHeight * 0.09) + 'px');
+  const area = innerWidth * innerHeight;
+  scrim.dataset.layers = area > 5000000 ? '1' : (area > 2400000 ? '2' : '3');
+}
+function glassScrimShow() {
+  const scrim = $id('glassScrim');
+  if (!scrim) return;
+  scrim.hidden = false;
+  glassScrimSync();
+  requestAnimationFrame(() => scrim.classList.add('on'));
+  if (typeof ResizeObserver !== 'undefined') {
+    if (glassScrimRO) glassScrimRO.disconnect();
+    glassScrimRO = new ResizeObserver(glassScrimSync);
+    glassScrimRO.observe($id('modalBox'));
+  }
+  window.addEventListener('resize', glassScrimSync);
+}
+function glassScrimHide() {
+  const scrim = $id('glassScrim');
+  if (!scrim) return;
+  scrim.classList.remove('on');
+  scrim.hidden = true;
+  if (glassScrimRO) { glassScrimRO.disconnect(); glassScrimRO = null; }
+  window.removeEventListener('resize', glassScrimSync);
+}
 function modal(title, html, actions = [], head = '') {
   const box = $id('modalBox');
   box.innerHTML = `<div class="modal-h"><h3>${esc(title)}</h3>${head ? `<span class="spacer"></span>${head}` : ''}</div>
@@ -128,8 +182,9 @@ function modal(title, html, actions = [], head = '') {
     </div>`;
   $id('modal').hidden = false;
   modal._actions = actions;
+  glassScrimShow();
 }
-const closeModal = () => { $id('modal').hidden = true; modal._actions = []; };
+const closeModal = () => { glassScrimHide(); $id('modal').hidden = true; modal._actions = []; };
 
 /* ════════════════════════════════════════════════ 3. API ═══ */
 async function api(path, { method = 'GET', body = null, raw = false, timeout = 120000 } = {}) {
@@ -189,6 +244,7 @@ async function refresh(silent = false) {
   softPaint();
   announceLogin();
   announceModelSync();
+  announceShellBotState();
   if (!silent && !S.online) return;
 }
 
@@ -212,6 +268,15 @@ function announceModelSync() {
   if (!fresh.length) return;
   for (const e of fresh) toast(`${e.title}${e.detail ? ` · ${e.detail}` : ''}`, 'ok');
   try { localStorage.setItem(SYNC_SEEN_KEY, JSON.stringify([...seen, ...fresh.map((e) => e.id)].slice(-20))); } catch { /* 无痕模式 */ }
+}
+
+let lastBridgeRunning = null;
+function announceShellBotState() {
+  const running = !!(S.state && S.state.bridge && S.state.bridge.running);
+  if (lastBridgeRunning === true && !running) {
+    shellNotify('机器人已停止', '面板仍在运行；打开面板查看「启动链路」。');
+  }
+  lastBridgeRunning = running;
 }
 
 /**
@@ -381,7 +446,11 @@ function discardDraft() {
 
 /* ════════════════════════════════════════════════ 5. 动作表 ═══ */
 const post = (url, body) => api(url, { method: 'POST', body });
-const DEMO_BLOCK = () => { toast('演示模式：这一页没有连上后端，写操作不会发送', 'warn'); };
+const DEMO_BLOCK = () => {
+  toast(shellApi()
+    ? '后端未连接：先点告警条里的「重启面板」'
+    : '演示模式：这一页没有连上后端，写操作不会发送', 'warn');
+};
 
 const ACTIONS = {
   'onekey.start': async () => { busy(true, '一键启动中…'); try { const r = await post('/api/onekey/start'); stepsOf(r); toastResult(r, '已启动'); await refresh(true); } catch (e) { toast(`启动失败：${e.message}`, 'bad'); } finally { busy(false); } },
@@ -402,7 +471,7 @@ const ACTIONS = {
       toast(r.ok ? '已打开文件夹 —— 把 NapCat.Shell 里的文件拖进去即可，页面会自动检测' : (r.msg || '打不开'), r.ok ? 'ok' : 'bad');
     } catch (e) { toast(`失败：${e.message}`, 'bad'); }
   },
-  'onekey.stop': async () => { if (!confirm('结束本次运行？机器人 + 本机模型 + 容器一起停，面板也会退出。')) return; busy(true, '结束中…'); try { const r = await post('/api/onekey/stop'); stepsOf(r); if (r && r.panelExiting) { document.body.innerHTML = '<div style="font:16px/1.8 system-ui,sans-serif;padding:48px;text-align:center"><h2>已结束并退出</h2><p>机器人、模型、容器与控制台进程都已停止。</p><p>这个窗口可以关掉了；下次双击图标会重新拉起。</p></div>'; return; } toastResult(r, '已结束'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'onekey.stop': async () => { if (!confirm('结束本次运行？机器人 + 本机模型 + 协议端一起停，面板也会退出。')) return; busy(true, '结束中…'); try { const r = await post('/api/onekey/stop'); stepsOf(r); if (r && r.panelExiting) { document.body.innerHTML = '<div style="font:16px/1.8 system-ui,sans-serif;padding:48px;text-align:center"><h2>已结束并退出</h2><p>机器人、模型、协议端与控制台进程都已停止。</p><p>这个窗口可以关掉了；下次双击图标会重新拉起。</p></div>'; return; } toastResult(r, '已结束'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'bridge.start': async () => { busy(true, '启动机器人…'); try { const r = await post('/api/bridge/start'); toastResult(r, '已启动'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'bridge.stop': async () => { if (!confirm('停止机器人？')) return; busy(true, '停止中…'); try { const r = await post('/api/bridge/stop'); toastResult(r, '已停止'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'cmd.sleep': () => bridgeCmd('sleep'), 'cmd.wake': () => bridgeCmd('wake'),
@@ -417,6 +486,9 @@ const ACTIONS = {
     const si = gi >= 0 ? GROUPS[gi].subs.findIndex((x) => x.id === 'panel') : -1;
     if (gi >= 0 && si >= 0) { S.gi = gi; S.si = si; paintPage(true); }
   },
+  /* HUD 信息岛：重播入场 / 恢复默认（「维护 → HUD调整」页的两颗按钮）。 */
+  'hud.entrance': () => { if (window.Island) window.Island.replayEntrance(); },
+  'hud.reset': () => { if (window.Island) window.Island.resetConfig(); },
   'update.check': async () => {
     try {
       const r = await post('/api/update/check');
@@ -453,6 +525,9 @@ const ACTIONS = {
       paintUpdateBox();
       busy(false);
       modal('正在安装', '<div class="empty">安装器已启动，应用即将关闭。安装完成后请重新打开控制台。</div>', [{ label: '知道了', style: 'btn-primary' }]);
+      // 有壳时让壳先走完整退出链（bridge/stop → panel/quit → stop.mjs），
+      // 否则 Electron 会锁着 versions/<ver>/app/electron 目录，安装器换不动。
+      setTimeout(() => { try { window.estrellaShell?.quit?.(); } catch { /* 浏览器模式没有壳 */ } }, 800);
     } catch (e) { toast(`安装失败：${e.message}`, 'bad'); }
   },
   'update.offline.verify': async () => {
@@ -487,9 +562,10 @@ const ACTIONS = {
       busy(false);
     }
   },
+  'protocol.start': async () => { busy(true, '拉起协议端…'); try { const r = await post('/api/protocol/start'); toast(r.msg || '已发起', r.ok ? 'ok' : 'bad'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'napcat.restart': async () => { busy(true, '重启容器…'); try { const r = await post('/api/napcat/restart'); toast(r.output || '已重启', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'qrcode.refresh': async () => { await doQrRefresh(); },
-  'stopall': async () => { if (!confirm('一键全停：机器人 + 本机模型 + QQ 容器？')) return; busy(true, '全停中…'); try { const r = await post('/api/stop-all'); toastResult(r, '已全停'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'stopall': async () => { if (!confirm('一键全停：机器人 + 本机模型 + 协议端？')) return; busy(true, '全停中…'); try { const r = await post('/api/stop-all'); toastResult(r, '已全停'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'local.start': async () => { busy(true, '拉起本机模型…'); try { const r = await post('/api/local-model/start'); toastResult(r, '已启动'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'local.stop': async () => { busy(true, '停止本机模型…'); try { const r = await post('/api/local-model/stop'); toastResult(r, '已停止'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'switch.local': () => switchBrain('local'), 'switch.cloud': () => switchBrain('cloud'),
@@ -559,6 +635,19 @@ const ACTIONS = {
   'panel.quit': async () => {
     if (!confirm('退出控制台？\n\n机器人是独立进程，不会被一起停掉。\n退掉之后控制台不再占着文件，整个目录就能删了。')) return;
     busy(true, '正在退出…');
+    const api = shellApi();
+    if (api && typeof api.quitConsole === 'function') {
+      try {
+        const r = await api.quitConsole();
+        if (r && r.ok === false) throw new Error(r.error || '退出失败');
+        TERM.quit = true;
+        paintPage(false);
+        toast('控制台已退出（机器人继续运行）', 'ok');
+      } catch (e) {
+        toast(`退出失败：${e.message}`, 'bad');
+      } finally { busy(false); }
+      return;
+    }
     try {
       await post('/api/panel/quit');
       TERM.quit = true;
@@ -572,7 +661,37 @@ const ACTIONS = {
       toast('控制台已退出', 'ok');
     } finally { busy(false); }
   },
-  'panel.restart': async () => { busy(true, '重启面板…'); try { const before = j(S.state, ['panel', 'pid']); const r = await post('/api/panel/restart'); if (!r.restarted) { toast(r.msg || '已是最新，没有重启'); busy(false); return; } toast('正在重启，几秒后自动刷新…', 'ok'); await waitPanelPid(before); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'panel.restart': async () => {
+    busy(true, '重启面板…');
+    const api = shellApi();
+    if (api && typeof api.restartPanel === 'function') {
+      try {
+        const before = j(S.state, ['panel', 'pid']);
+        const r = await api.restartPanel();
+        if (!r || r.ok === false) {
+          toast(`失败：${(r && r.error) || '重启失败'}`, 'bad');
+          busy(false);
+          return;
+        }
+        if (!r.restarted) { toast(r.msg || '已是最新，没有重启'); busy(false); return; }
+        toast('正在重启，几秒后自动刷新…', 'ok');
+        // 壳会在新面板就绪后重载窗口；这一层只兜“壳没来得及重载”的路径。
+        await waitPanelPid(before);
+      } catch (e) {
+        toast(`失败：${e.message}`, 'bad');
+      } finally { busy(false); }
+      return;
+    }
+    try {
+      const before = j(S.state, ['panel', 'pid']);
+      const r = await post('/api/panel/restart');
+      if (!r.restarted) { toast(r.msg || '已是最新，没有重启'); busy(false); return; }
+      toast('正在重启，几秒后自动刷新…', 'ok');
+      await waitPanelPid(before);
+    } catch (e) {
+      toast(`失败：${e.message}`, 'bad');
+    } finally { busy(false); }
+  },
   /* ── 假 QQ 会话（2026-10-21 · Win-v0.1.2 移植）──────────────────────────
      三条写路由（start / send / stop）+ 一个只读状态轮询。写的是**服务端**的进程，
      不是草稿 —— 所以这里不碰 S.draft / markDirty()。 */
@@ -1103,10 +1222,6 @@ async function openQrModal() {
     paint();
   }, 5000);
 }
-function addRow(path, make) {
-  draftArr(path).push(make ? make() : '');
-  touchC(path); markDirty(); paintPage(false);
-}
 function draftArr(path) {
   let a = getPath(S.draft.custom, path);
   if (!Array.isArray(a)) {
@@ -1285,9 +1400,29 @@ function balanceText(r) {
   const v = r.total ?? r.balance ?? r.left ?? null;
   return v == null ? '—' : String(v);
 }
-async function doExport(what) {
+async function doExportSelected(scopes) {
   if (!S.online) return DEMO_BLOCK();
-  const fmt = S.volatile['ex.fmt'] || 'json';
+  const ids = [...new Set((scopes || []).filter((x) => typeof x === 'string' && x))];
+  if (!ids.length) return toast('先选至少一项再导出', 'warn');
+  busy(true, '打包中…');
+  try {
+    const q = ids.map(encodeURIComponent).join(',');
+    const r = await fetch(`/api/custom/export?what=selected&format=zip&mask=1&scopes=${q}`,
+      HAS_TOKEN ? { headers: { Authorization: `Bearer ${TOKEN}` } } : {});
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `qqbot-selected-${new Date().toISOString().slice(0, 10)}.zip`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('已开始下载所选数据', 'ok');
+  } catch (e) { toast(`导出失败：${e.message}`, 'bad'); } finally { busy(false); }
+}
+
+async function doExport(what, forceFmt = '') {
+  if (!S.online) return DEMO_BLOCK();
+  const fmt = forceFmt || S.volatile['ex.fmt'] || 'json';
   const mask = S.volatile['ex.mask'] === false ? '0' : '1';
   busy(true, '打包中…');
   try {
@@ -1346,41 +1481,14 @@ async function installZip(file) {
 /* ════════════════════════════════════════════════ 6. 顶栏 / 告警 ═══ */
 function paintTop() {
   const s = S.state || DEMO;
-  const dst = j(s, ['docker', 'daemon']), dapp = j(s, ['docker', 'app']);
-  const cp = j(s, ['memory', 'pressure']);
-  const set = (id, text, cls) => { const el = $id(id); el.className = `pill ${cls || ''}`; el.innerHTML = `<span class="dot"></span>${esc(text)}`; };
-  // ⚠️ 首屏（还没拿到第一份状态）时**不许**显示"演示模式"：面板发来的页面只要还在
-  //    等第一份 /api/state，说"演示模式"就是在描述一个用户根本没进入的状态
-  //    （与 paintPage 里那条同源，2026-10-12）。只有**拿到过数据又断开**才叫演示模式。
-  const modeText = S.state
-    ? (j(s, ['panel', 'stale']) ? '面板跑着旧代码' : '已连接')
-    : (HAS_TOKEN ? '正在连接…' : '演示模式（未连后端）');
-  const modeCls = S.state ? (j(s, ['panel', 'stale']) ? 'warn' : 'on') : 'warn';
-  set('pillMode', modeText, modeCls);
-  set('pillBridge', j(s, ['bridge', 'running']) ? `机器人在跑 · ${fmtDur(j(s, ['bridge', 'uptimeMs'], 0))}` : '机器人没在跑', j(s, ['bridge', 'running']) ? 'on' : 'off');
-  /* ⚠️ 第 53 轮（B2）：`container.applicable === false` 表示**这台机器根本没走容器这条路**
-     （Windows 便携版用原生 NapCat、不装 Docker）⇒ 不许再说"Docker 没跑"——
-     那是一句假警报，用户会去查一个不存在的容器。灰（off）= "这条路线不适用"，
-     不是失败也不是等待。判据来自后端，页面不按平台自己猜。 */
-  set('pillContainer',
-    j(s, ['container', 'running'])
-      ? (j(s, ['container', 'loggedIn']) ? '容器已登录' : '容器在跑 · 未登录')
-      : (j(s, ['container', 'applicable']) === false
-        ? '原生 NapCat（不用容器）'
-        : (dapp ? 'Docker 在跑 · 容器没起' : 'Docker 没跑')),
-    j(s, ['container', 'running'])
-      ? (j(s, ['container', 'loggedIn']) ? 'on' : 'warn')
-      : (j(s, ['container', 'applicable']) === false ? 'off' : (dst ? 'warn' : 'off')));
-  set('pillLocal', j(s, ['localModel', 'running']) ? '本机模型在跑' : '本机模型没跑', j(s, ['localModel', 'running']) ? 'on' : 'off');
-  // ⚠️ 内存读数可能是 **null**（Windows 上采不到、后端如实降级）——
-  //    那时这颗药丸必须说"暂不支持"，**不许**显示「内存 0%」
-  //    （第 53 轮 B2：那会让"采不到"看起来像"很空"，是谎话）。
-  if (cp == null) set('pillMem', '内存 暂不支持', 'off');
-  else set('pillMem', `内存 ${cp}%`, cp >= 90 ? 'bad' : cp >= 75 ? 'warn' : 'on');
+  // 顶栏状态岛（island.js）：原来的五颗胶囊已并入岛内，这里只喂状态、不碰 DOM。
+  if (window.Island) window.Island.update(S.state || null, { online: S.online });
   const sub = j(s, ['account', 'nickname']);
   $id('subline').textContent = S.online
     ? `${j(s, ['config', 'provider'], '?')} · ${j(s, ['effective', 'model'], '—')}${sub ? ` · ${sub}` : ''} · 面板 pid ${j(s, ['panel', 'pid'], '—')}`
-    : '未连上后端 —— 下面是离线演示快照（写操作不会发送）';
+    : (shellApi()
+      ? '后端未连接 —— 窗口还在，可用告警条里的「重启面板」重新拉起'
+      : '未连上后端 —— 下面是离线演示快照（写操作不会发送）');
   $id('footStat').textContent = `一级域 ${GROUPS.length} · 页面 ${GROUPS.reduce((n, g) => n + g.subs.length, 0)} · 控件类型 ${CTRL_KINDS.length}`;
 }
 
@@ -1402,8 +1510,15 @@ function renderBanners() {
   const s = S.state || DEMO;
   const out = [];
   if (!S.online) {
-    out.push(`<div class="banner info"><b>演示模式</b><span class="spacer"></span>
-      <span>这一页没有连上后端。要看真实数据：在项目根目录跑 <code>node tools/serve-next.mjs</code>，然后打开它给出的地址。</span></div>`);
+    if (shellApi()) {
+      out.push(`<div class="banner bad"><b>控制台后端没有响应</b><span class="spacer"></span>
+        <span>窗口还在，但面板进程已经退出。可以直接重新拉起，不用关掉窗口；机器人不受影响。</span>
+        <button class="btn btn-sm" data-a="panel.restart">重启面板</button>
+        <button class="btn btn-sm" data-a="panel.quit">退出控制台</button></div>`);
+    } else {
+      out.push(`<div class="banner info"><b>演示模式</b><span class="spacer"></span>
+        <span>这一页没有连上后端。要看真实数据：在项目根目录跑 <code>node tools/serve-next.mjs</code>，然后打开它给出的地址。</span></div>`);
+    }
   }
   if (S.online && !HAS_TOKEN) {
     out.push(`<div class="banner"><b>没拿到面板 token</b><span class="spacer"></span>
@@ -1502,6 +1617,11 @@ function openUpdateStream() {
       if (phase !== UPD.lastPhase) {
         UPD.lastPhase = phase;
         renderBanners();
+        if (phase === 'ready') {
+          const ver = UPD.state && UPD.state.latest && UPD.state.latest.version
+            ? `新版本 ${UPD.state.latest.version} ` : '';
+          shellNotify('更新已下载', `${ver}已校验通过；打开面板点「立即安装」。`);
+        }
       }
       paintUpdateBox();
     } catch { /* 坏帧丢掉即可 */ }
@@ -1514,46 +1634,124 @@ function renderNav1() {
   const inner = $id('navInner');
   /* ⚠️ 只摘**按钮**，不动 `.nav-ind` —— 指示器是 index.html 里的静态元素，
      让它活过每一次重建是"切换时能滑过去"的**前提**（见 index.html 的注释）。
-     用 `innerHTML = …` 一把换掉最省事，但那会把指示器一起清掉。 */
+     用 `innerHTML = …` 一把换掉最省事，但那会把指示器一起清掉。
+     导航显示短标签；完整名称放进 title/aria-label，页面头仍用全名。 */
   inner.querySelectorAll('.grp').forEach((b) => b.remove());
   inner.insertAdjacentHTML('afterbegin', GROUPS.map((g, i) => `
-    <button class="grp" role="tab" data-g="${i}" aria-selected="${i === S.gi}">${esc(g.label)}<span class="cnt">${g.subs.length}</span></button>`).join(''));
+    <button class="grp" role="tab" data-g="${i}" aria-selected="${i === S.gi}" title="${esc(g.label)}（${g.subs.length} 页）" aria-label="${esc(g.label)}（${g.subs.length} 页）">${esc(g.short || g.label)}<span class="cnt">${g.subs.length}</span></button>`).join(''));
+  layoutNavDock(false);
 }
 function renderNav2() {
   const g = GROUPS[S.gi];
   $id('nav2').innerHTML = g.subs.map((su, i) => `
-    <button class="sub" role="tab" data-s="${i}" aria-selected="${i === S.si}">${esc(su.label)}</button>`).join('');
+    <button class="sub" role="tab" data-s="${i}" aria-selected="${i === S.si}" title="${esc(su.label)}" aria-label="${esc(su.label)}">${esc(su.short || su.label)}</button>`).join('');
   /* B30：原来这里还往 `#pageMeta` 填「即时页 / 点一下立刻生效」，该节点已整块删除 ——
      草稿页的保存入口仍是页面底部的保存条（savebar），功能不受影响。 */
-  syncNavrowStack();
+  layoutNavDock(true);
   syncNav2Indicator(false);
 }
 
-/* ── 吸顶导航行：并排 ⇄ 上下两行（2026-10-20 · 修「临界宽度吞页签」）──────
-   为什么不能只靠 `@media`：灵动岛是**视口居中**的，左右两列各分
-   `(视口 − 岛宽) / 2`；而二级栏宽度**随功能域变化**（实测 444～548px，
-   「大脑」的页签名最长）。固定断点落在中间时，末尾页签会被 `.nav2` 的
-   隐藏滚动条静默裁掉 —— 用户实机：1815 → 1629 时「终端」消失，再窄到
-   1280 以下反而正常（那时已经换成两行）。
-   ⇒ 按当前页签的**实测总宽**决定：装不下就加 `.is-stacked`，整行改上下两行；
-   不再依赖"能滚但看不出来"的横向滚动。
-   ⚠️ 比较对象是**假设仍并排时**的左列宽，不是当前实际宽：换行后二级栏会占满
-      整行，拿换行后的宽去比会永远"装得下"，于是再也回不到并排（来回抖动）。
-   ⚠️ 只在 `renderNav2()` 与 resize 时量，不放进 3 秒轮询 —— 它要读
-      `getBoundingClientRect`，放进轮询就是每 3 秒一次强制同步布局。 */
-function syncNavrowStack() {
-  const row = $id('navrow'), inner = $id('navInner'), nav = $id('nav2'), wrap = $id('nav2wrap');
-  if (!row || !inner || !nav || !wrap) return;
-  const rowGap = parseFloat(getComputedStyle(row).columnGap) || 0;
-  const leftCol = (row.getBoundingClientRect().width - inner.getBoundingClientRect().width - rowGap * 2) / 2;
-  const ncs = getComputedStyle(nav), wcs = getComputedStyle(wrap);
-  const subs = [...nav.children];
-  const navW = subs.reduce((sum, el) => sum + el.getBoundingClientRect().width, 0)
-    + (parseFloat(ncs.columnGap) || 0) * Math.max(0, subs.length - 1)
-    + parseFloat(ncs.paddingLeft) + parseFloat(ncs.paddingRight)
-    + parseFloat(wcs.paddingLeft) + parseFloat(wcs.paddingRight);
-  /* +1px 余量：亚像素舍入会让两边差零点几像素，不加会随窗口 1px 抖动来回换行。 */
-  row.classList.toggle('is-stacked', navW > leftCol + 1);
+/* ── 吸顶导航：一级在上、二级在下（2026-10-22）──────────────────────────
+   船（dock）宽度 = 一级内容宽 + 16；二级宽度 = 当前域二级内容宽（按内容收缩/展开）。
+   中间肩线用 42 × 11.5、控制点 0.618 的三次贝塞尔；曲率从 0 到 0，避免硬拐点。
+   ⚠️ 二级宽度**没有 300px 下限**：3 个页签的「系统」就应收到 ~150，而不是留一大片空。
+   ⚠️ 只在 renderNav1/renderNav2/resize 时量；不要放进 3 秒轮询（getBoundingClientRect
+      会强制同步布局）。 */
+let navDockW = 0;
+let navDockRaf = 0;
+
+function navCssPx(name, fallback) {
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+  return Number.isFinite(v) ? v : fallback;
+}
+
+function layoutNavDock(animate) {
+  const row = $id('navrow'), inner = $id('navInner'), nav2 = $id('nav2');
+  const wrap = $id('nav2wrap'), dock = $id('navDock');
+  if (!row || !inner || !nav2 || !wrap || !dock) return;
+  const avail = row.getBoundingClientRect().width;
+  const l1w = inner.scrollWidth + 16;
+  const desired = Math.min(avail, l1w);
+  dock.style.width = `${Math.max(240, desired)}px`;
+
+  const H1 = navCssPx('--h-nav1', 48);
+  const shoulder = navCssPx('--nav-shoulder', 42);
+  const contentW = nav2.scrollWidth + 8;
+  const maxW = Math.max(120, desired - 2 * (H1 / 2 + shoulder + 4));
+  const target = Math.min(contentW, maxW);
+
+  if (!navDockW) navDockW = target;
+  if (animate && Math.abs(navDockW - target) > 0.5) animateNavDock(navDockW, target);
+  else { navDockW = target; setNav2Width(target); }
+}
+
+function setNav2Width(w) {
+  const wrap = $id('nav2wrap');
+  if (!wrap) return;
+  wrap.style.width = `${w}px`;
+  paintNavDock();
+}
+
+function animateNavDock(from, to) {
+  cancelAnimationFrame(navDockRaf);
+  const M = window.Motion;
+  if (M && M.reducedMotion && M.reducedMotion()) { navDockW = to; setNav2Width(to); return; }
+  const t0 = performance.now();
+  const dur = 380;
+  const ease = (t) => 1 - Math.pow(1 - t, 3);
+  const step = (now) => {
+    const p = Math.min(1, (now - t0) / dur);
+    const w = from + (to - from) * ease(p);
+    navDockW = w;
+    setNav2Width(w);
+    if (p < 1) navDockRaf = requestAnimationFrame(step);
+    else { navDockW = to; setNav2Width(to); }
+  };
+  navDockRaf = requestAnimationFrame(step);
+}
+
+function paintNavDock() {
+  const dock = $id('navDock'), edge = $id('navDockEdge'), wrap = $id('nav2wrap');
+  const path = edge && edge.querySelector('path');
+  if (!dock || !edge || !wrap || !path) return;
+  const W = dock.getBoundingClientRect().width;
+  const H1 = navCssPx('--h-nav1', 48);
+  const H2 = navCssPx('--h-nav2', 30);
+  const T = navCssPx('--nav-shoulder', 42);
+  const HT = navCssPx('--nav-rise', 11.5);
+  const R2 = navCssPx('--nav-r2', 11.5);
+  const H = H1 + H2;
+  const R1 = H1 / 2;
+  const TW = Math.max(20, Math.min(wrap.getBoundingClientRect().width, W - 2 * (R1 + T + 2)));
+  const TL = (W - TW) / 2;
+  const TR = TL + TW;
+  const K = 0.6180339887498949;
+  const n = (v) => (Number.isFinite(v) ? v : 0).toFixed(2);
+  const d = [
+    `M ${n(R1)} 0`,
+    `L ${n(W - R1)} 0`,
+    `A ${n(R1)} ${n(R1)} 0 0 1 ${n(W)} ${n(R1)}`,
+    `L ${n(W)} ${n(H1 - R1)}`,
+    `A ${n(R1)} ${n(R1)} 0 0 1 ${n(W - R1)} ${n(H1)}`,
+    `L ${n(TR + T)} ${n(H1)}`,
+    `C ${n(TR + T - K * T)} ${n(H1)}, ${n(TR)} ${n(H1 + HT - K * HT)}, ${n(TR)} ${n(H1 + HT)}`,
+    `L ${n(TR)} ${n(H1 + H2 - R2)}`,
+    `A ${n(R2)} ${n(R2)} 0 0 1 ${n(TR - R2)} ${n(H1 + H2)}`,
+    `L ${n(TL + R2)} ${n(H1 + H2)}`,
+    `A ${n(R2)} ${n(R2)} 0 0 1 ${n(TL)} ${n(H1 + H2 - R2)}`,
+    `L ${n(TL)} ${n(H1 + HT)}`,
+    `C ${n(TL)} ${n(H1 + HT - K * HT)}, ${n(TL - T + K * T)} ${n(H1)}, ${n(TL - T)} ${n(H1)}`,
+    `L ${n(R1)} ${n(H1)}`,
+    `A ${n(R1)} ${n(R1)} 0 0 1 0 ${n(H1 - R1)}`,
+    `L 0 ${n(R1)}`,
+    `A ${n(R1)} ${n(R1)} 0 0 1 ${n(R1)} 0`,
+    'Z',
+  ].join(' ');
+  dock.style.clipPath = `path("${d}")`;
+  edge.setAttribute('viewBox', `0 0 ${n(W)} ${n(H)}`);
+  edge.setAttribute('width', n(W));
+  edge.setAttribute('height', n(H));
+  path.setAttribute('d', d);
 }
 
 /* ════════════════════════════════════════════ 7b. 导航滑块（灵动岛） ═══
@@ -1616,6 +1814,14 @@ function scrollNavTo(sel) {
   if (left - inner.scrollLeft < pad) inner.scrollLeft = Math.max(0, left - pad);
   else if (right - inner.scrollLeft > inner.clientWidth - pad) inner.scrollLeft = right - inner.clientWidth + pad;
 }
+/** 把二级选中项带进窄条的可见区（同上：只动 `.nav2` 的 scrollLeft）。 */
+function scrollNav2To(sel) {
+  const nav = $id('nav2');
+  if (!nav || nav.scrollWidth <= nav.clientWidth) return;
+  const pad = 12, left = sel.offsetLeft, right = left + sel.offsetWidth;
+  if (left - nav.scrollLeft < pad) nav.scrollLeft = Math.max(0, left - pad);
+  else if (right - nav.scrollLeft > nav.clientWidth - pad) nav.scrollLeft = right - nav.clientWidth + pad;
+}
 
 /** 让指示器对齐当前选中项。`instant` 为真时直接落位（首屏 / 尺寸变化）。 */
 function syncNavIndicator(instant) {
@@ -1655,7 +1861,7 @@ function syncNavIndicator(instant) {
       必须减 `scrollLeft`，否则窄屏一滚就与按钮错开（且不会有任何报错）。
    ⚠️ 减弱动效不在这里判：`Motion.animate` 内部会直接落位（motion.js 已实现）。 */
 const NAV2_SPRING = { stiffness: 300, damping: 30, mass: .7 };   // 比一级（340/30/.85）软一档：行程更短
-const NAV2_INSET = 8;                                            // 与退役下划线的 left/right:8px 对齐
+const NAV2_INSET = 0;                                            // 胶囊直接盖住整颗二级页签
 let nav2Ind = null;
 
 function bindNav2Indicator() {
@@ -1684,6 +1890,7 @@ function syncNav2Indicator(instant) {
   const nav = $id('nav2');
   const sel = nav && nav.querySelector('.sub[aria-selected="true"]');
   if (!sel) return;
+  scrollNav2To(sel);
   const x = sel.offsetLeft + NAV2_INSET - nav.scrollLeft;
   const w = Math.max(0, sel.offsetWidth - NAV2_INSET * 2);
   /* ⚠️⚠️ 目标没变就**不重启**（2026-10-21 · 用户视频里的"横线乱跑/消失"根因）：
@@ -2016,7 +2223,7 @@ function capChips(items, chipFn) {
  *
  * 为什么要有它：维护者点了一次「一键启动」，失败了，而原因是"模型的 API Key 没填"。
  * 那条信息其实**一直在**（`schema.js` 的 `config.hasKey` → 「尚未配置」），
- * 但它在「大脑 → 云端设置」页里 —— 人得先想到去那儿看。于是空态从
+ * 但它在「模型 → 云端设置」页里 —— 人得先想到去那儿看。于是空态从
  * 「还没有动作」变成一张**只摆事实的检查表**：一眼看出"还差什么、去哪儿补"。
  *
  * ⚠️ 纪律（破了就会长出第二个真相源）：
@@ -2121,20 +2328,20 @@ function readyChecklist(s) {
     out.push({ ok: hasKey,
       txt: hasKey
         ? '模型的 API Key：已填'
-        : '模型的 API Key：还没填 —— 去「大脑 → 云端设置」填上（不填的话机器人起得来，但一被叫到就回不了话）' });
+        : '模型的 API Key：还没填 —— 去「模型 → 云端设置」填上（不填的话机器人起得来，但一被叫到就回不了话）' });
   }
   /* 放行的群聊（2026-10-14 维护者要求加，插在 Key 与机器人本体之间）：
      "配了哪些群"是最容易忘的一步 —— 装好了、灯全绿，群里却没人理，多半是它。 */
   out.push({ ok: groupCount > 0,
     txt: groupCount > 0
       ? `放行的群聊：${groupCount} 个`
-      : '放行的群聊：还没填 —— 去「发言与时机 → 触发方式 → 放行的群号」把允许它说话的群号填上' });
+      : '放行的群聊：还没填 —— 去「发言 → 触发方式 → 放行的群号」把允许它说话的群号填上' });
   /* 私聊与主人（2026-10-21）：私聊报告的真因就是这两格都空 ——
      "加了白名单却没生效"在界面上没有任何反馈，用户只能以为它坏了。 */
   out.push({ ok: privateCount > 0 || ownerCount > 0,
     txt: (privateCount > 0 || ownerCount > 0)
       ? `私聊：放行 ${privateCount} 人${ownerCount ? ` · 主人 ${ownerCount} 人（会自动补进私聊）` : ''}`
-      : '私聊：白名单为空 —— 谁私聊它都不会回。去「发言与时机 → 触发方式 → 同意私聊的 QQ 号」填上；配「主人 QQ」也会自动补进去' });
+      : '私聊：白名单为空 —— 谁私聊它都不会回。去「发言 → 触发方式 → 同意私聊的 QQ 号」填上；配「主人 QQ」也会自动补进去' });
   /* 配置来源（2026-10-21）：没有 config.json 时机器人读的是模板，而面板保存写的是 config.json。
      用户看到"保存成功"却不生效，原因就在这一格。 */
   out.push({ ok: cfgSource === 'config.json',
@@ -2257,7 +2464,8 @@ const RENDER = {
       /* 状态只许来自闭集 —— 拼错一个字符串会得到"没有颜色的状态"，
          而那与"状态正常"在页面上长得一样。 */
       if (['ok', 'warn', 'bad', 'off'].indexOf(st) < 0) st = 'off';
-      return `<div class="sg-cell" data-st="${st}">
+      const goAttr = it.go ? ` data-go="${esc(it.go)}" title="点击前往对应页"` : '';
+      return `<div class="sg-cell" data-st="${st}"${goAttr}>
         <div class="sg-ico">${Icons.icon(it.ico, { size: 20 })}</div>
         <div class="sg-body">
           <div class="sg-label">${esc(it.label)}</div>
@@ -2460,7 +2668,7 @@ const RENDER = {
   /* ── 领域块 ── */
   sleepLine: (x) => {
     const s = S.state || DEMO, sl = j(s, ['custom', 'sleep'], {});
-    if (!sl.enabled) return `<div class="hint">作息：<b>未启用</b> —— 它从不睡。要开去「发言与时机 → 睡眠作息」。</div>`;
+    if (!sl.enabled) return `<div class="hint">作息：<b>未启用</b> —— 它从不睡。要开去「发言 → 主动与免打扰」。</div>`;
     return `<div class="hint">作息：<b>${esc(sl.bed)}</b> 睡 → <b>${esc(sl.wake)}</b> 自然醒${sl.goodnight ? ` · 睡前道晚安：「${esc(sl.goodnight)}」` : ''}；叫醒关键词 ${sl.wakeWords?.length ? esc(sl.wakeWords.join('、')) : '（没设）'}。</div>`;
   },
   sleepDetail: (x) => {
@@ -2611,6 +2819,24 @@ const RENDER = {
       <colgroup><col style="width:38%"><col><col></colgroup>
       <thead><tr><th>来源</th><th class="num">条数</th><th class="num">token</th></tr></thead>
       <tbody>${rs.map((r) => `<tr><td>${esc(r.label || r.key)}</td><td class="num">${fmtNum(r.calls)}</td><td class="num">${fmtNum(r.tokens)}</td></tr>`).join('')}</tbody>
+    </table></div></div>`;
+  },
+  usageByChat: (x) => {
+    const s = S.state || DEMO, rs = j(s, ['usage', 'byChat'], []) || [];
+    if (!rs.length) return `<div class="f">${lb({ label: x.label })}<div class="empty">还没有按会话分的账。</div></div>`;
+    return `<div class="f">${lb({ label: x.label })}<div class="scroll-y"><table class="tbl">
+      <colgroup><col style="width:42%"><col><col><col style="width:86px"></colgroup>
+      <thead><tr><th>会话</th><th class="num">条数</th><th class="num">token</th><th class="num">花费</th></tr></thead>
+      <tbody>${rs.map((r) => `<tr><td class="mono">${esc(r.key)}</td><td class="num">${fmtNum(r.calls)}</td><td class="num">${fmtNum(r.tokens)}</td><td class="num">¥${Number(r.cost || 0).toFixed(4)}</td></tr>`).join('')}</tbody>
+    </table></div></div>`;
+  },
+  usageByDay: (x) => {
+    const s = S.state || DEMO, rs = j(s, ['usage', 'byDay'], []) || [];
+    if (!rs.length) return `<div class="f">${lb({ label: x.label })}<div class="empty">还没有按天的账。</div></div>`;
+    return `<div class="f">${lb({ label: x.label })}<div class="scroll-y"><table class="tbl">
+      <colgroup><col style="width:38%"><col><col><col style="width:86px"></colgroup>
+      <thead><tr><th>日期</th><th class="num">条数</th><th class="num">token</th><th class="num">花费</th></tr></thead>
+      <tbody>${rs.map((r) => `<tr><td class="mono">${esc(r.key)}</td><td class="num">${fmtNum(r.calls)}</td><td class="num">${fmtNum(r.tokens)}</td><td class="num">¥${Number(r.cost || 0).toFixed(4)}</td></tr>`).join('')}</tbody>
     </table></div></div>`;
   },
   /**
@@ -2933,9 +3159,16 @@ const RENDER = {
     if (!ext || !ext.ok) return '<div class="empty">读不到插件目录。</div>';
     const sum = ext.sum || {};
     const rt = j(s, ['effective', 'extensions'], null);
+    const enabled = draftArr('plugins.enabled').length;
+    const maxPlugins = Number(s.custom?.plugins?.max) || 256;
+    const toolMax = Number(s.custom?.tools?.max) || 64;
+    const overStatic = sum.over || 0;
+    const overRun = rt?.sum?.over ?? 0;
     return `<div class="f">
-      <div class="hint">扫到 ${sum.total || 0} 个插件：可加载 ${sum.load || 0} · 未启用 ${sum.skip || 0} · 有问题 ${sum.reject || 0}。
-        ${rt ? `机器人侧：已加载 ${rt.sum?.loaded ?? 0} · 未启用 ${rt.sum?.pending ?? 0} · 失败 ${rt.sum?.failed ?? 0}。` : '机器人没在跑，看不到运行期状态。'}</div>
+      <div class="hint">扫到 ${sum.total || 0} 个插件：可加载 ${sum.load || 0} · 未启用 ${sum.skip || 0} · 有问题 ${sum.reject || 0} · <b>超过上限 ${overStatic}</b>（上限 ${maxPlugins}）。
+        ${rt ? `机器人侧：已加载 ${rt.sum?.loaded ?? 0} · 未启用 ${rt.sum?.pending ?? 0} · 失败 ${rt.sum?.failed ?? 0} · 超上限 ${overRun} · 空载 ${rt.sum?.empty ?? 0}。` : '机器人没在跑，看不到运行期状态。'}</div>
+      <div class="hint">已启用 <b>${enabled}</b> / 上限 <b>${maxPlugins}</b>${overStatic ? `（超出 ${overStatic} 个不会加载；取消勾选别的包或调大上限即可）` : ''} ·
+        工具 <b>${rt?.limits?.toolsUsed ?? '?'}</b> / 上限 <b>${rt?.limits?.tools ?? toolMax}</b>（工具 schema 会进每一轮请求，别调太大）。</div>
       <div class="hint"><b>不支持热插拔</b>：改完白名单要重启机器人（那正是插件板上出现「待重启」的原因）。装完 ZIP 也不会自动启用。</div>
     </div>`;
   },
@@ -2972,9 +3205,17 @@ const RENDER = {
     if (!items.length) return '<div class="empty">还没有装插件。</div>';
     return `<div class="pgrid">${items.map((it) => {
       const bad = it.action === 'reject';
+      const over = it.action === 'over';
       const checked = on.has(it.id) && !bad;
       const run = rtById[it.id];
-      const badge = !rt ? '' : (!checked ? '' : run ? `<span class="tag ${run.state === 'failed' ? 'bad' : 'ok'}">${esc(run.state || '')}</span>` : '<span class="tag warn">待重启</span>');
+      const hookCount = (run?.hooks || []).reduce((n, [, c]) => n + Number(c || 0), 0);
+      const toolCount = (run?.tools || []).length;
+      const hookErr = (run?.hookErrors || []);
+      const toolErr = (run?.toolErrors || []);
+      // 运行期徽标：over 也要显示（它不是 rejects，开关仍可勾选）。
+      const badge = !rt ? ''
+        : over ? '<span class="tag warn">超上限·未加载</span>'
+          : (!checked ? '' : run ? `<span class="tag ${run.state === 'failed' ? 'bad' : 'ok'}">${esc(run.state || '')}</span>` : '<span class="tag warn">待重启</span>');
       return `<section class="card pcard" data-plugin="${esc(it.id)}">
         <div class="pcard-h">
           <label class="sw flat" title="${bad ? '这个插件有问题，勾了也不会加载' : '勾上才启用'}">
@@ -2990,6 +3231,11 @@ const RENDER = {
             ${badge}
             ${it.netSelf ? '<span class="tag warn" title="这个插件自带联网：它用自己的 fetch，不受浏览锁定约束">自带联网</span>' : ''}
             ${bad ? '<span class="tag bad">有问题</span>' : ''}
+            ${run ? `<span class="tag ${hookCount ? 'ok' : 'warn'}" title="运行期实际挂上的钩子数">钩子 ${hookCount}</span>` : ''}
+            ${run ? `<span class="tag ${toolCount ? 'ok' : 'warn'}" title="运行期实际注册的工具数">工具 ${toolCount}</span>` : ''}
+            ${run?.empty ? '<span class="tag bad" title="既没挂上钩子、也没注册工具 —— 装了等于没装（先看下面的告警）">空载</span>' : ''}
+            ${hookErr.length ? `<span class="tag bad" title="${esc(hookErr.map((e) => `${e.point}: ${e.reason}`).join('\n'))}">钩子未挂 ${hookErr.length}</span>` : ''}
+            ${toolErr.length ? `<span class="tag bad" title="${esc(toolErr.map((e) => `${e.id || e.name || '?'}: ${e.reason}`).join('\n'))}">工具未注册 ${toolErr.length}</span>` : ''}
           </div>
           <div class="hint">${esc(it.detail || '')}</div>
           ${(it.problems || []).length ? `<div class="hint bad">${esc(it.problems.join('；'))}</div>` : ''}
@@ -3343,14 +3589,36 @@ function pluginSettingsRow(it) {
   return `<div class="f" style="gap:6px;">
     <span class="hint">设置（共 ${spec.length} 项，改完点底部「保存并生效」）</span>${body}</div>`;
 }
+/** 把一次 `plugin.set` 控件变化写进草稿。click 不写、change 才写 —— 见调用点的注释。 */
+function commitPluginSetting(el, p) {
+  const [extId, key] = String(p || '').split('|');
+  const it = (S.state?.extensions?.items || []).find((e) => e.id === extId);
+  const field = (it?.settingsSpec || []).find((f) => f.key === key);
+  if (!field) return toast(`「${key}」不在这个包的清单里，已拒绝写入`, 'bad');
+  // bool 必须写**布尔**：以前写 'true'/'false' 字符串，重画时 `val === true` 判不过，
+  // 复选框又变回未勾选 —— 用户以为"存不上"。其余类型按控件原样取。
+  let v;
+  if (field.kind === 'bool') v = el.checked === true;
+  else if (field.kind === 'list') v = String(el.value || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  else v = el.value;
+  setPath(S.draft.custom, `plugins.settings.${extId}.${key}`, v);
+  touchC(`plugins.settings.${extId}.${key}`);
+  markDirty();
+  return undefined;
+}
+
 function pluginSettingHtml(extId, f) {
   const path = `plugins.settings.${extId}.${f.key}`;
   const raw = getPath(S.draft.custom, path);
-  const val = raw !== undefined ? raw : f.value;
+  // 回填优先级：草稿（本次未保存）→ 服务端当前值 → 清单默认值。
+  // 中间这层以前缺了：保存成功 + 刷新后控件显示清单默认值，用户以为"存不上"。
+  const fromState = getPath((S.state || DEMO).custom, path);
+  const val = raw !== undefined ? raw : (fromState !== undefined ? fromState : f.value);
   const common = `data-a="plugin.set" data-p="${esc(extId)}|${esc(f.key)}"`;
   const tip = `清单默认值：${JSON.stringify(f.def)}`;
   if (f.kind === 'bool') {
-    return `<label class="sw flat" title="${esc(tip)}"><input type="checkbox" ${val === true ? 'checked' : ''} ${common}>
+    // 兼容旧草稿里的字符串写法（'true'/'false'），新写入一律布尔。
+    return `<label class="sw flat" title="${esc(tip)}"><input type="checkbox" ${(val === true || val === 'true') ? 'checked' : ''} ${common}>
       <span class="track"></span><span class="txt mono">${esc(f.key)}</span></label>`;
   }
   if (f.kind === 'number') {
@@ -3928,8 +4196,9 @@ function mountMorphIcons() {
       键盘可达性、disabled 态全都要重写，而收益只是好看一点。
    ══════════════════════════════════════════════════════════════════════════ */
 
-/** 总闸。改成 false（或把liquid-toggle.js 的 script 标签删掉）就完全退回原生开关。 */
-const LIQUID_ON = true;
+/** 总闸。2026-10-23 起关掉：所有开关统一改用 .sw .track 的弹性滑块
+    （uiverse sour-vampirebat-66 配方）；液态层文件与接线保留，改回 true 即恢复。 */
+const LIQUID_ON = false;
 
 /** 已挂载的实例：`宿主 label` → { ctl, liquid }。重挂前统一 destroy。 */
 const _liqMounted = new Map();
@@ -4105,7 +4374,7 @@ function auditActions() {
   //    以前这里还圈了一个 `#tabs` —— 那是**旧页面**的元素 id，旧页面删掉之后
   //    它永远匹配不到：一个查不到东西的选择器不会报错，只会让自检悄悄少查一块。
   //    顶栏那四个名字靠 `SHELL_ACTIONS` 才认得出来，别把它删了。
-  for (const el of document.querySelectorAll('#page [data-a], .topbar [data-a], .savebar [data-a]')) {
+  for (const el of document.querySelectorAll('#page [data-a], .topbar [data-a], .savebar [data-a], #settingsPanel [data-a]')) {
     const a = el.dataset.a;
     if (!known.has(a) && !a.startsWith('export.')) unknown.add(a);
   }
@@ -4124,6 +4393,15 @@ document.addEventListener('change', (ev) => {
 });
 
 document.addEventListener('click', async (ev) => {
+  // 状态卡上的「点击前往对应页」：data-go="组id/子页id"（2026-10-22）。
+  // 用**id**而不是索引：插/删页签时索引会漂，id 不会。
+  const goEl = ev.target.closest('[data-go]');
+  if (goEl) {
+    const [gid, sid] = String(goEl.dataset.go || '').split('/');
+    const gi = GROUPS.findIndex((g) => g.id === gid);
+    const si = gi >= 0 ? GROUPS[gi].subs.findIndex((s) => s.id === sid) : -1;
+    if (gi >= 0 && si >= 0) { S.gi = gi; S.si = si; paintPage(true); window.scrollTo({ top: 0 }); return; }
+  }
   const nav1 = ev.target.closest('#nav1 .grp');
   if (nav1) { S.gi = Number(nav1.dataset.g); S.si = 0; paintPage(true); window.scrollTo({ top: 0 }); return; }
   const nav2 = ev.target.closest('#nav2 .sub');
@@ -4198,18 +4476,6 @@ document.addEventListener('click', async (ev) => {
     toast(i >= 0 ? `已取消勾选 ${p}` : `已勾选 ${p} —— 点底部「保存并生效」，然后重启机器人才生效`, 'warn');
     return;
   }
-  if (a === 'plugin.set') {
-    const [extId, key] = String(p).split('|');
-    const it = (S.state?.extensions?.items || []).find((e) => e.id === extId);
-    const field = (it?.settingsSpec || []).find((f) => f.key === key);
-    if (!field) return toast(`「${key}」不在这个包的清单里，已拒绝写入`, 'bad');
-    let v = field.kind === 'bool' ? (el.checked ? 'true' : 'false') : el.value;
-    if (field.kind === 'list') v = String(v || '').split('\n').map((s) => s.trim()).filter(Boolean);
-    setPath(S.draft.custom, `plugins.settings.${extId}.${key}`, v);
-    touchC(`plugins.settings.${extId}.${key}`);
-    markDirty();
-    return;
-  }
   if (a === 'memlist.set' || a === 'memlist.del' || a === 'memlist.add') return memListAction(a, p, el);
   if (a === 'sched.set') return schedAction(p, el);
   if (a === 'holidays.add') {
@@ -4238,13 +4504,17 @@ document.addEventListener('click', async (ev) => {
   if (a === 'zip.file') { /* 由 change 事件处理 */ return; }
   if (a === 'zip.pick') { document.querySelector('[data-a="zip.file"]')?.click(); return; }
   if (a === 'export.all') return doExport('all');
+  if (a === 'export.diag') return doExport('diag', 'zip');
   if (a.startsWith('export.')) return doExport(a.slice(7));
   // ⚠️ `feat` 与 `holidays.ren` 同样由 change 处理（2026-10-15 修 · B1 / Issue #5）：
   //    它们是 `data-a` 动作，click 会先于 change 冒到这里；此前只登记了 `field` 两个，
   //    于是点任一能力开关（识图 / 联网 / 表情）都会**同时**弹一条红字
   //    「未实现的动作：feat」—— 设置其实由 change 正常保存了（另一条 toast 是真的），
   //    但红字会让用户以为功能坏了。这两个名字必须与 `INLINE_ACTIONS` 逐项对齐。
-  if (['field', 'field-local', 'feat', 'holidays.ren'].includes(a)) return; // 由 change 处理
+  // `plugin.set` 同理（2026-10-23）：它以前只在 click 里读值 —— 而"点进输入框"
+  // 会先触发一次 click（那时值还是旧的），打字只触发 change ⇒ 保存的是旧值/空串。
+  // 现在 click 只登记、change 才提交；复选框的 click 之后也必有一次 change。
+  if (['field', 'field-local', 'feat', 'holidays.ren', 'plugin.set'].includes(a)) return; // 由 change 处理
 
   const fn = ACTIONS[a];
   if (!fn) { toast(`未实现的动作：${a}`, 'bad'); return; }
@@ -4331,6 +4601,7 @@ document.addEventListener('change', async (ev) => {
     touchC('holidays'); markDirty(); paintPage(false);
     return;
   }
+  if (a === 'plugin.set') { commitPluginSetting(el, el.dataset.p); return; }
   if (a === 'import.file') { const f = el.files?.[0]; if (f) previewImport(f); return; }
   if (a === 'zip.file') { const f = el.files?.[0]; if (f) installZip(f); return; }
 });
@@ -4595,27 +4866,53 @@ function setTheme(v) {
   if (!k) return;
   try { localStorage.setItem(k, v); } catch { /* 隐私模式下忽略 */ }
 }
-/* 图标语义与 beui 原件一致：深色下画太阳（点了去浅色），浅色下画月亮。 */
-function paintThemeBtn() {
-  const btn = $id('themeBtn');
-  if (btn) btn.innerHTML = Icons.icon(themeDark() ? 'sun' : 'moon', { size: 18 });
+
+/* 主题色：值与首屏启动层共用同一个观察孔（`next-accent`）。CSS 的 7 套
+   令牌在 style.css 里，这里只负责写 <html data-accent> 与持久化。 */
+function setAccent(v) {
+  const allowed = (window.__accentBoot && Array.isArray(window.__accentBoot.values))
+    ? window.__accentBoot.values
+    : ['ocean'];
+  const id = allowed.includes(v) ? v : 'ocean';
+  document.documentElement.dataset.accent = id;
+  const k = window.__accentBoot && window.__accentBoot.key;
+  if (k) {
+    try { localStorage.setItem(k, id); } catch { /* 隐私模式下忽略 */ }
+  }
 }
-async function toggleTheme(ev) {
-  const next = themeDark() ? 'light' : 'dark';
+
+/* 深浅切换：设置层的两态按钮调用这里。source 是被点按钮（VT 圆心）；
+   没有 source（例如恢复默认外观）就只换色，不播揭开动画。 */
+async function applyTheme(next, source) {
+  const target = next === 'dark' ? 'dark' : 'light';
+  if (target === (themeDark() ? 'dark' : 'light')) return;
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (!THEME_VT_ON || reduce || !document.startViewTransition) { setTheme(next); paintThemeBtn(); return; }
+  if (!THEME_VT_ON || reduce || !document.startViewTransition || !source
+    || typeof source.getBoundingClientRect !== 'function') {
+    setTheme(target);
+    return;
+  }
   const root = document.documentElement;
-  const r = ev.currentTarget.getBoundingClientRect();
-  /* 发散圆心 = 按钮此刻的圆心（每次点击现算 —— 顶栏是吸顶元素，滚动后位置会变） */
+  const r = source.getBoundingClientRect();
   root.style.setProperty('--vt-origin',
     `${Math.round(r.left + r.width / 2)}px ${Math.round(r.top + r.height / 2)}px`);
   root.dataset.vt = 'circle-blur';
-  /* 图标换进 VT 的**新快照**里（写在 update 回调中），按钮跟着整页一起揭开 */
-  const vt = document.startViewTransition(() => { setTheme(next); paintThemeBtn(); });
+  const vt = document.startViewTransition(() => { setTheme(target); });
   try { await vt.finished; } catch { /* 动画被跳过（文档隐藏等）不算失败 */ }
   delete root.dataset.vt;
 }
-$id('themeBtn').addEventListener('click', toggleTheme);
+
+/* 字体风格（只影响这一页，不进配置、不发写请求）—— 与深浅切换同性质。
+   键名与首屏启动共用 `window.__fontBoot`（splash.js 里唯一一份）；
+   默认无衬线，选了衬线后由 `<html data-font-style="serif">` 接管 `--font`。 */
+function setFontStyle(v) {
+  const style = v === 'serif' ? 'serif' : 'sans';
+  document.documentElement.dataset.fontStyle = style;
+  const k = window.__fontBoot && window.__fontBoot.key;
+  if (k) {
+    try { localStorage.setItem(k, style); } catch { /* 隐私模式下忽略 */ }
+  }
+}
 
 /* 窗口尺寸变化 → 指示器必须重算。
    岛是 `width: fit-content`、选项宽度跟着断点令牌变，所以"选中项在哪、多宽"每次都会变；
@@ -4625,7 +4922,7 @@ $id('themeBtn').addEventListener('click', toggleTheme);
 let navResizeT = 0;
 window.addEventListener('resize', () => {
   clearTimeout(navResizeT);
-  navResizeT = setTimeout(() => { syncNavrowStack(); syncNavIndicator(true); syncNav2Indicator(true); }, 120);
+  navResizeT = setTimeout(() => { layoutNavDock(false); syncNavIndicator(true); syncNav2Indicator(true); }, 120);
 });
 
 /* ════════════════════════════════════════════════ 11. 启动 ═══ */
@@ -4659,7 +4956,21 @@ window.addEventListener('resize', () => {
   } else {
     document.documentElement.dataset.theme = 'light';
   }
-  paintThemeBtn();
+
+  /* 主题色同理：键名与闭集合只在 splash.js 里写一次。 */
+  if (window.__accentBoot && typeof window.__accentBoot.apply === 'function') {
+    window.__accentBoot.apply();
+  } else {
+    document.documentElement.dataset.accent = 'ocean';
+  }
+
+  /* 字体偏好由 splash.js 在 <head> 里同步写好；这里再问一次是为了
+     单独跑 app.js（没有入口页）时也有确定值。 */
+  if (window.__fontBoot && typeof window.__fontBoot.apply === 'function') {
+    window.__fontBoot.apply();
+  } else {
+    document.documentElement.dataset.fontStyle = 'sans';
+  }
 
   /* 静态标记里只剩 data-a 了 —— 混进 data-act 这类别的属性名，按钮会**静默失效**
      （事件处理器只认 data-a）。已实测踩过一次：顶栏与保存条四个按钮全点不动。 */
@@ -4672,6 +4983,33 @@ window.addEventListener('resize', () => {
      —— 顶层 `const S` 在 ES module 作用域里，`Runtime.evaluate` 的全局作用域看不见它。
      ⚠️ 业务代码里别用它，这只是一个观察孔。 */
   window.__next = S;
+  /* 设置层齿轮也走图标表（与顶栏/卡片同一套路径数据，不内联第二个 SVG）。 */
+  const gearRot = $id('setGearRot');
+  if (gearRot && window.Icons) gearRot.innerHTML = Icons.icon('gear', { size: 22 });
+  /* HUD调整页的保存回执：island.js 写 localStorage 后调它，给用户一句"已保存"。
+     以前保存函数返回 null（不走 /api/config），面板不会弹提示 —— 用户会以为没存上。 */
+  window.__nextHudToast = (msg) => toast(msg, 'ok');
+
+  /* 左下角设置层：只注入状态与写入口，设置模块不反向依赖 app.js。 */
+  initSettings({
+    getState: () => S,
+    api,
+    post,
+    toast,
+    refresh,
+    applyTheme,
+    setAccent,
+    setFontStyle,
+    exportSelected: doExportSelected,
+  });
+
+  /* 弹层里的「HUD 调整」：跳到「维护 → HUD调整」。事件由 island.js 派发，
+     避免 isle 直接依赖 app.js 的内部状态。 */
+  document.addEventListener('hud:open-settings', () => {
+    const gi = GROUPS.findIndex((g) => g.id === 'sys');
+    const si = gi >= 0 ? GROUPS[gi].subs.findIndex((x) => x.id === 'hud') : -1;
+    if (gi >= 0 && si >= 0) { S.gi = gi; S.si = si; paintPage(true); window.scrollTo({ top: 0 }); }
+  });
 
   /* 第二条观察孔：`paintPage` 的别名。**只有自检脚本用它** —— 它要先往
      `S.state` 里灌一批夹具数据（比如 40 条记忆），再强制重画一次好断言

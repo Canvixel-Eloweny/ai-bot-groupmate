@@ -10,7 +10,7 @@
  *    已在 S-12 第六批（2026-10-05）整块删除 —— 取源、清单、反向闸门见第 6 / 58 / 66 段。
  */
 import fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,7 +89,7 @@ console.log = (first, ...rest) => {
  *       提交门 `pre-commit.sh` 正是因此才把 `node_modules` **软链**进闸门用的临时 worktree。
  *       记在这里是为了下次有人量到 17 时**别以为闸门坏了**。
  */
-const MIN_CONTRACTS = 131;
+const MIN_CONTRACTS = 160;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -138,6 +138,7 @@ import {
 import {
   DOCS_KEEP, INTERNAL_DOC_NAME_RE, isPublishedByDocsRule, isHeldBackDoc, isHeldBackRoot, HOLD_BACK_ROOT,
 } from './lib/publish-docs.mjs';
+import { isPublishCopy, isHeldBackForGates } from './lib/publish-copy.mjs';
 
 // ── 扫描器自己的两个 IO 工具：**唯一实现**（第 11 轮 · M-05）─────────────────────
 //
@@ -152,6 +153,29 @@ import {
 //    这两个函数恰恰是 IO。塞进去等于一边声称"这层不许有 IO"、一边往里加 IO ——
 //    下一个照文件头找边界的人会踩空。搬到本文件顶部（所有段都在它下面）是更小的改动、也不撒谎。
 const read = (rel) => stripComments(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
+
+/**
+ * 文档读取的**发布感知**入口（P3-5 · 2026-10-24）。
+ *
+ * `docs/desktop/**` 按设计不随公开拷贝发布，而 §154–§158 要读它们做内容断言。
+ * 在公开拷贝上：
+ *   · 路径确实属于 held-back → 记一次跳过、返回 `null`，调用方只跳过**文档内容**断言；
+ *   · 路径不在 held-back（说明是代码该在却没有）→ 仍然 throw，绝不 fail-open。
+ * 开发仓（非发布拷贝）缺失任何文档仍按原样抛错。
+ */
+const skippedDocs = [];
+const readDoc = (rel) => {
+  const norm = String(rel).replace(/^\.\.\//, '').replace(/^\.\//, '');
+  try {
+    return read(`../${norm}`);
+  } catch (e) {
+    if (IS_PUBLISH_COPY && isHeldBackForGates(norm)) {
+      skippedDocs.push(norm);
+      return null;
+    }
+    throw e;
+  }
+};
 
 /**
  * 「机器人入口那一族」的**合并取源**（H-10 第 22 轮）。
@@ -184,15 +208,7 @@ const readBridge = () => `${read('../src/index.js')}\n${read('../src/bridge-io.j
  *    `make-publish-copy.mjs` 写入，**不含任何真值**）。桩本身也被本文件断言
  *    "必须指向 `make-publish-copy`"，所以它不能被人随手写一句来骗过这里。
  */
-const IS_PUBLISH_COPY = (() => {
-  try {
-    return fs
-      .readFileSync(new URL('../docs/PUBLISH-CHECKLIST.md', import.meta.url), 'utf8')
-      .includes('对外拷贝里的**桩**');
-  } catch {
-    return false;
-  }
-})();
+const IS_PUBLISH_COPY = isPublishCopy(REPO);
 
 // ── 面板「业务逻辑」的唯一取源（第 19 轮 · H-10 第二半收尾）───────────────────
 //
@@ -500,22 +516,41 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
       bad++; n++;
       console.log('✗ 跨源闸排在鉴权之前 —— 会把不带 Origin 的本机脚本（curl / launcher.sh）先拒掉（S-05）');
     }
-    // ⚠️ **判据自己的弱形状**（R38）：只验"调用了 `LOOPBACK_HOST_RE.test(`"是不够的 ——
-    //    把那个常量本身改成 `/.*/`（或 `/localhost/`），调用点一个字没动，闸却没了。
-    //    所以还要验**常量长什么样**：必须锚定（^…$）且真的含回环地址。
-    const hostRe = /const LOOPBACK_HOST_RE = ([^;\n]+);/.exec(srv)?.[1] || '';
-    if (!hostRe) {
+    // ⚠️ **判据自己的弱形状**（R38 / P3-1 · 2026-10-24）：端口由系统分配后，
+    //    Host/Origin 不能再判「回环 + 任意数字端口」—— 同机另一个回环服务也会过闸。
+    //    必须判**等于本次实际监听的端口**（ACTUAL_PORT），且实际端口未知时 fail-closed。
+    const hostFn = /function isLoopbackHost\([\s\S]*?\n}/.exec(srv)?.[0] || '';
+    if (!hostFn) {
       bad++; n++;
-      console.log('✗ 找不到 LOOPBACK_HOST_RE 常量的定义（S-05）');
+      console.log('✗ 找不到 isLoopbackHost() 的函数体（S-05 / P3-1）');
     } else {
-      if (!/\^/.test(hostRe) || !/\$/.test(hostRe)) {
+      if (!/Number\(u\.port\)\s*===\s*ACTUAL_PORT/.test(hostFn)) {
         bad++; n++;
-        console.log(`✗ LOOPBACK_HOST_RE 没有用 ^…$ 锚定 —— 攻击者域名只要**包含**回环字样就能过（S-05）`);
+        console.log('✗ isLoopbackHost() 没有把 Host 端口与 ACTUAL_PORT 比相等 —— 任意回环端口都能过（S-05 / P3-1）');
       }
-      if (!/127\\?\.0\\?\.0\\?\.1|127\.0\.0\.1/.test(hostRe)) {
+      if (!/!\s*ACTUAL_PORT/.test(hostFn) || !/return false/.test(hostFn)) {
         bad++; n++;
-        console.log('✗ LOOPBACK_HOST_RE 里没有 127.0.0.1 —— 放宽成任意 Host 等于没有这道闸（S-05）');
+        console.log('✗ isLoopbackHost() 在实际端口未知时没有 fail-closed（S-05）');
       }
+      if (!/isLoopbackName\(/.test(hostFn)) {
+        bad++; n++;
+        console.log('✗ isLoopbackHost() 没有用回环名判据 —— 任意域名都能过（S-05）');
+      }
+    }
+    const originFn = /function isLoopbackOrigin\([\s\S]*?\n}/.exec(srv)?.[0] || '';
+    if (!originFn || !/Number\(u\.port\)\s*===\s*ACTUAL_PORT/.test(originFn)
+      || !/isLoopbackName\(/.test(originFn)) {
+      bad++; n++;
+      console.log('✗ isLoopbackOrigin() 没有把 Origin 端口与 ACTUAL_PORT 比相等（S-05 / P3-1）');
+    }
+    const names = (/const PANEL_LOOPBACK_HOSTS = new Set\(\[[^\n]*\]\);/.exec(srv) || [''])[0];
+    if (!/127\.0\.0\.1/.test(names) || !/localhost/.test(names) || !/\[::1\]/.test(names)) {
+      bad++; n++;
+      console.log('✗ PANEL_LOOPBACK_HOSTS 缺 127.0.0.1/localhost/[::1] —— 回环名集合不完整（S-05）');
+    }
+    if (/LOOPBACK_HOST_RE/.test(srv)) {
+      bad++; n++;
+      console.log('✗ 旧的 LOOPBACK_HOST_RE 又回来了 —— 它只判"回环 + 任意端口"，P3-1 后必须按 ACTUAL_PORT 比相等（S-05）');
     }
     // 反向：判据许可是"只拦带了却不对的"，恒 true / 恒 false 都是错的。
     //   恒 true = 闸形同虚设；恒 false = 把 curl 与 launcher 一起拒了。
@@ -552,6 +587,10 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
       if (!/new URL\(origin\)/.test(swFn)) {
         bad++; n++;
         console.log('✗ sameSiteWrite() 没有用 new URL() 解析 Origin —— 只比对字符串的话，`https://evil.com` 和 `http://127.0.0.1:8788` 分不开（S-05）');
+      }
+      if (!/isLoopbackOrigin\(u\)/.test(swFn)) {
+        bad++; n++;
+        console.log('✗ sameSiteWrite() 没有把 Origin 交给 isLoopbackOrigin() —— 端口相等这条判据没接上（S-05 / P3-1）');
       }
       if (!/=== 'same-origin'/.test(swFn)) {
         bad++; n++;
@@ -1387,6 +1426,9 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
   let n = 0;
   const srv = stripComments(fs.readFileSync(new URL('../panel/server.js', import.meta.url), 'utf8'));
   const idx = stripComments(fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8'));
+  // H-10 第 22 轮：落盘口那一族整块搬进 `src/bridge-io.js`；`shouldClearStale`
+  // 的**消费点**也跟着走了。契约必须盯实现所在文件，不能继续盯历史上曾经在的文件。
+  const bio = stripComments(fs.readFileSync(new URL('../src/bridge-io.js', import.meta.url), 'utf8'));
 
   // ── O-OWNER ──
   for (const f of fs.readdirSync(new URL('../src/', import.meta.url))) {
@@ -1412,10 +1454,12 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
   }
 
   // ── O-EPHEMERAL ──
-  // 判据只有一份：机器人（要不要留）与面板（信不信）都 import 它
-  if (!/from '\.\/ephemeral\.js'/.test(idx)) {
+  // 判据只有一份：机器人（要不要留）与面板（信不信）都 import 它。
+  // ⚠️ H-10 起机器人的消费点在 `bridge-io.js`（index 只调用它转出的
+  //    `markThinking` / `clearStaleThinking`）；契约盯新家，别盯旧文件。
+  if (!/from '\.\/ephemeral\.js'/.test(bio)) {
     bad++; n++;
-    console.log('✗ src/index.js 没有用 ephemeral.js 的判据 —— 清理孤儿记录的规则会和面板侧漂移');
+    console.log('✗ src/bridge-io.js 没有用 ephemeral.js 的判据 —— 清理孤儿记录的规则会和面板侧漂移');
   }
   if (!/from '\.\.\/src\/ephemeral\.js'/.test(srv)) {
     bad++; n++;
@@ -1952,6 +1996,15 @@ const LIB_SRC_ALLOW = [
   //   user-root.js → 1 模块（自己）。只 import node:fs / node:os / node:path / node:url，
   //   是程序根 / 安装根 / 用户数据根的唯一解析处；面板与机器人共用。
   'user-root.js',
+  // ── 2026-10-23（B1a 桌面壳自启）新增一项 ──
+  //   desktop/autostart.js → 1 模块（自己）。只 import node:fs / node:os /
+  //   node:path / node:child_process；只做 Startup 快捷方式与 StartupApproved 三态。
+  //   面板要它才能让「开机自启」开关读系统状态，而不是只信 config.json。
+  'desktop/autostart.js',
+  // P1-10（2026-10-23）：崩溃/退出记录只做字段归一化；身份脱敏是独立叶子。
+  // 两者都零业务依赖；面板诊断包与测试读同一份形状，避免三处各写一份 JSON。
+  'desktop/crash-record.js',
+  'redact-identifiers.js',
 ];
 
 // 7) 后端拆分接线（B11b-1 · AR-SERVERSPLIT）。
@@ -2101,8 +2154,15 @@ const LIB_SRC_ALLOW = [
       // 原生 NapCat（Windows 便携包）—— 只依赖 L0 的 `paths.js`（拿 ROOT）与 node 内置，
       // 零业务依赖 ⇒ **L1**。它不许反过来被 L0 引用（那会构成循环）。
       'panel/lib/napcat-native.js': 1,
+      // 协议端进程级守护（2026-10-22）—— 纯判据 + 注入式实例，**零 import** ⇒ L1。
+      // 它不直接碰进程/端口；探测与拉起由 server.js 注入。
+      'panel/lib/protocol-guard.js': 1,
       // D21：ZIP 编解码（只用 `node:zlib` 内置）—— 与 `sessions.js` 同层（L1）。
       'panel/lib/zip.js': 1,
+      // P1-10：上一次面板退出记录（只依赖 L0 + src/desktop/crash-record 零依赖叶子）⇒ L1。
+      'panel/lib/last-exit.js': 1,
+      // P1-10：诊断包（依赖 L1 zip/last-exit + 两个 src 零依赖叶子）⇒ L2。
+      'panel/lib/diagnostics.js': 2,
       // D21：扩展包安装的判据 + 三步落盘。它依赖 L1 的 `zip.js` 与两个 **src 零依赖叶子**
       // （`plugin-manifest.js` 的路径/清单判据、`atomic-write.js` 的临时文件命名形状），
       // 所以是 L2。它**不许**被 L0/L1 反过来引用（那会绕开"先校验后落盘"的顺序）。
@@ -3705,7 +3765,14 @@ const LIB_SRC_ALLOW = [
       //    `NIGHTLY_MAX_TOKENS`（700，> LOW_TOKEN，不属于小额度调用）。这里从**模块本体**
       //    取值，不在契约里抄第二个 700 —— 否则改默认值时两处必漂。
       const nightlyMod = await import(new URL('../src/nightly.js', import.meta.url));
-      const KNOWN_IMPORTED_TOKENS = { NIGHTLY_MAX_TOKENS: nightlyMod.NIGHTLY_MAX_TOKENS };
+      // 2026-10-23：识图额度下限也是"从模块本体取值"的写法。不登记它 →
+      // 这里会把 `maxTokens: VISION_MIN_MAX_TOKENS` 判成"变量认不出"而 fail-closed，
+      // 红在"额度闸看不见它"，而不是红在额度本身（假红会把人骗去删判据）。
+      const imageMod = await import(new URL('../src/images.js', import.meta.url));
+      const KNOWN_IMPORTED_TOKENS = {
+        NIGHTLY_MAX_TOKENS: nightlyMod.NIGHTLY_MAX_TOKENS,
+        VISION_MIN_MAX_TOKENS: imageMod.VISION_MIN_MAX_TOKENS,
+      };
       const unknown = [];
       for (const idm of args.matchAll(/maxTokens\s*:\s*([A-Za-z_$][\w$]*)\b/g)) {
         const decl = src.match(new RegExp(`const\\s+${idm[1]}\\s*=\\s*(\\d+)`));
@@ -3724,11 +3791,12 @@ const LIB_SRC_ALLOW = [
     }
   }
 
-  // 自证：**现状恰好 2 个**小额度调用点（memory.js 的自动记忆判断 + index.js 的主动发言）。
-  // ⚠️ 外包变异证实"`≥1` 这种下限挡不住'调用点从判据视野里消失'"—— 计数从 2 掉到 1 它照样绿。
-  // 数字写死是刻意的：新增合法小额度调用点必须来这里改数（有意摩擦），消失更不许。
-  if (lowCalls !== 2) {
-    problems.push(`扫到 ${lowCalls} 个小额度（≤${LOW_TOKEN}）旁路调用点（应 2）—— 要么有一条被摘走了，要么新增了一条没来改这个数`);
+  // 自证：**现状恰好 0 个**小额度调用点（2026-10-22：memory.js 的自动记忆判断
+  // 160→2000、index.js 的主动发言 80→800，都是因为 DeepSeek 关不掉思考、额度被
+  // reasoning 吃满；两条都已抬到 > LOW_TOKEN）。新增合法小额度调用点仍必须来这里改数
+  // （有意摩擦）；`offenders` 仍会拦下任何没声明 thinking 的小额度调用。
+  if (lowCalls !== 0) {
+    problems.push(`扫到 ${lowCalls} 个小额度（≤${LOW_TOKEN}）旁路调用点（应 0）—— 要么新增了一条没来改这个数，要么旧调用点被降回去了`);
   }
   for (const o of offenders) {
     problems.push(`${o} 没有声明 thinking —— 那个额度会被思考吃光、content 恒为空（真机实测：自动记忆判断 100% 失败）`);
@@ -4492,9 +4560,10 @@ const LIB_SRC_ALLOW = [
       bad++; n++;
       console.log('✗ 缺少 .github/workflows/ci.yml —— 四层门禁没有机器在跑（S-11）');
     } else {
-      // 三个 job 一个都不能少：契约 / 行为 / 真值闸门
+      // 三个 job 与变异清单步骤一个都不能少：契约 / 变异 / 行为 / 真值闸门
       for (const [needle, what] of [
         ['check-wb.mjs', '契约层'],
+        ['mutate-lint.mjs', '变异锚点清单'],
         ['smoke.js', '行为回归'],
         ['publish-audit.mjs', '真值闸门'],
       ]) {
@@ -9536,7 +9605,12 @@ const LIB_SRC_ALLOW = [
   const problems = [];
   const EXEMPT56 = [];
   const srcDir = path.join(REPO, 'src');
-  const srcFiles56 = fs.readdirSync(srcDir).filter((f) => f.endsWith('.js')).sort();
+  // ⚠️ 2026-10-22（G7-6）：L3 把三个模块搬进 `src/backend/` 后，这里如果只 readdir
+  //    顶层，新子目录的导出面就**永远不被检查**。改用全文件唯一的 `walkInto`，
+  //    扫描面 = `src/**/*.js`（不再另写一份遍历循环 —— M-05 会当场抓）。
+  const srcFiles56 = walkInto(srcDir, [], { keep: (n) => n.endsWith('.js') })
+    .map((p) => path.relative(srcDir, p).split(path.sep).join('/'))
+    .sort();
 
   // 自证：文件集合太小 = 在真空里判
   if (srcFiles56.length < 40) {
@@ -10786,7 +10860,7 @@ const LIB_SRC_ALLOW = [
     }
     // ⑦d 顶栏切换入口必须真的在：容器 + radiogroup 语义 + 引擎脚本被加载。
     if (!/id="bgPickList"/.test(htmlN)) {
-      problems.push('顶栏找不到 #bgPickList —— 背景切换没有入口（用户换不了背景，'
+      problems.push('设置层找不到 #bgPickList —— 背景切换没有入口（用户换不了背景，'
         + '而引擎与画布都在，谁都不会报错）');
     }
     if (!/role="radiogroup"/.test(htmlN)) {
@@ -10977,93 +11051,83 @@ const LIB_SRC_ALLOW = [
       subHit('新版背景');
     }
 
-    // N8 吸顶导航行 `.navrow` —— **B40 重写**（判 5 件事，缺一件都退化，且多数**不报红**）。
-    //    起因是用户实机的一句「你把二级栏给遮住了呀，不能遮住它」。根因**不是数值**，
-    //    是**结构**：B39 让两个**块级兄弟**用负 margin 叠到同一行，而块级盒子各自
-    //    占满整行宽度 ⇒ 负 margin 只能让它们垂直错位、**完全无法分配水平空间**。
-    //    ⇒ 现在判的是"两层是否真的在同一个 flex 容器里、各自的伸缩是否正确"。
-    //      ① `.navrow` 是 `display: flex` + `height: var(--h-nav2)` + sticky 且 top 引用令牌
-    //      ② `.nav2wrap` **不许**再有 `position: sticky`（各自吸顶会与父容器打架）
-    //      ③ 二级栏**必须可压缩**（`min-width: 0`）—— flex item 默认 `min-width: auto`
-    //         （= 内容宽）压不动，那正是"它把岛挤出/压住"的根因
-    //      ④ `.nav1` **不许**再有 `position: sticky`
-    //      ⑤ `@media (max-width: 1280px)` 里必须 `flex-wrap: wrap` —— 空间不够并排时的退路。
-    //         删掉它的表现是**窄屏下二级栏被压到 ~90px、五个 tab 一个都看不见**（实测），
-    //         而**宽屏下完全看不出来**（本机窗口宽，一眼扫过去是好的）。
+    // N8 吸顶导航（2026-10-22 改版）：一条 dock，一级在上、二级在下。
+    //    ① `.navrow` 仍是唯一吸顶层：sticky + top 引用 `--h-topbar` + 高度 =
+    //       一级行 + 二级行（`calc(var(--h-nav1) + var(--h-nav2))`）；
+    //    ② `.nav1` / `.nav2wrap` 不许各自 sticky、不许自建 z-index（N7 判后者）；
+    //    ③ 一条玻璃必须有连续肩线：`--nav-shoulder` / `--nav-rise` 令牌 +
+    //       `.nav-dock` 的 clip-path + `paintNavDock()` 的三次贝塞尔路径；
+    //    ④ 二级宽度必须按内容收缩：`layoutNavDock()` 的 `target = Math.min(contentW, maxW)`，
+    //       **不许 300px 下限**（「系统」只有 3 个页签时会留一大片空）；
+    //    ⑤ 一级/二级都要能横向滚动，窄屏不裁字。
     {
       const ruleOf = (sel) => {
         const esc = sel.replace(/[.]/g, '\\.');
         const m = new RegExp(`${esc}\\s*\\{([^}]*)\\}`).exec(cssN);
         return m ? m[1] : null;
       };
-      /* ⚠️ `bodiesOf` 而不是 `ruleOf`：**同名选择器在文件里出现多次**
-         （`.navrow > .nav2wrap` 与 `.nav2wrap`、`.nav1` 与 `body.eg-on .nav1`、媒体查询里再来一遍），
-         只取第一条会**漏判本体规则** —— V18 那条变异就是这么溜过去的：
-         它把 `position: sticky` 加进 `.nav2wrap` 本体，而 `ruleOf` 取到的是
-         `.navrow > .nav2wrap` 那条（里面当然没有 sticky）⇒ 判据整块空转。 */
       const bodiesOf = (sel) => {
         const esc = sel.replace(/[.]/g, '\\.');
         return [...cssN.matchAll(new RegExp(`${esc}[^{}]*\\{([^}]*)\\}`, 'g'))].map((m) => m[1]);
       };
       if (!/--h-nav2\s*:/.test(rootN)) {
-        problems.push(':root 里没有 `--h-nav2`（二级 tab 栏的高度令牌）—— '
-          + 'B29 把它定高了，三处媒体查询要靠它同步，缺了就会漂');
+        problems.push(':root 里没有 `--h-nav2`（二级可见行的高度令牌）—— 二级行会漂，吸顶高度也跟着漂');
+      }
+      for (const tok of ['--nav-shoulder', '--nav-rise', '--nav-r2']) {
+        if (!new RegExp(`${tok}\\s*:`).test(rootN)) {
+          problems.push(`:root 里没有 ${tok} —— 连续肩线的横向/纵向/底圆角缺一个，二级就会退回硬台阶`);
+        }
       }
       const row = ruleOf('.navrow');
       if (row === null) {
-        problems.push('样式表里没有 `.navrow` —— 二级栏与灵动岛**必须**在同一个容器里。'
-          + '两个块级兄弟用负 margin 叠行是**必然互相遮挡**（用户实机：二级栏被整个盖住，'
-          + '而契约全绿、页面零报错）');
+        problems.push('样式表里没有 `.navrow` —— 一级/二级必须在同一个吸顶容器里');
       } else {
-        /* ⚠️⚠️ **B42：判据形状从 flex 换成 grid。**
-           用户要的是「中间 = **整个屏幕的中间**」，而 flex 只要二级栏还占着水平位置，
-           岛就只能"居中于剩余空间"（实测 1440 宽时落在 x=510，视口居中应是 x=317，差 190px）。
-           ⇒ `grid-template-columns: 1fr auto 1fr`：中间列 = 岛（精确居中于视口）、
-             左列 = 二级栏（列宽 = (视口−岛宽)/2，**自动限住**二级栏 ⇒ 永不重叠）。
-           ⚠️ 判**三列**而不是"有没有 auto"：`2fr auto` 也能让岛居中，但左列更宽，
-             二级栏与岛之间的空档不对称 —— 岛居中而二级栏贴左，视觉上仍是偏的。 */
-        if (!/display:\s*grid/.test(row)) {
-          problems.push('`.navrow` 不是 `display: grid` —— 用 flex 的话二级栏占着水平位置，'
-            + '岛只能"居中于剩余空间"而不是**视口居中**（实测差 190px，用户标红的就是这条）');
+        if (!/display:\s*flex/.test(row)) {
+          problems.push('`.navrow` 不是 `display: flex` —— 新导航是一条居中 dock，不是旧的左右并排 grid');
         }
-        const cols = /grid-template-columns:\s*([^;]+);/.exec(row);
-        if (!cols || !/1fr\s+auto\s+1fr/.test(cols[1].replace(/\s+/g, ' '))) {
-          problems.push(`.navrow 的 grid-template-columns 是 \`${cols ? cols[1].trim() : '(取不到)'}\`，`
-            + '应为 **`1fr auto 1fr`** —— 岛在中间列（视口居中）、二级栏在左列，'
-            + '左列宽 = (视口−岛宽)/2 因而**自动限住**二级栏；写成别的组合两者可能重叠');
-        }
-        if (!/height:\s*var\(--h-nav2\)/.test(row)) {
-          problems.push('`.navrow` 没有 `height: var(--h-nav2)` —— '
-            + '两层不齐平就只是"并排"；差几像素时**两级导航看起来都正常**');
+        if (!/height:\s*calc\(var\(--h-nav1\)\s*\+\s*var\(--h-nav2\)\)/.test(row)) {
+          problems.push('`.navrow` 的高度不是 `calc(var(--h-nav1) + var(--h-nav2))` —— 一级行 48 + 二级行 30 必须由令牌推导，写死就会漂');
         }
         const top = /top:\s*([^;]+);/.exec(row);
         if (!top) {
           problems.push('取不到 `.navrow` 的 top —— N8① 落空');
         } else if (!/var\(--h-topbar\)/.test(top[1])) {
-          problems.push(`.navrow 的 top 是 \`${top[1].trim()}\`（没有引用 \`--h-topbar\`）—— `
-            + '写死像素的话触摸设备下会错位，而**两级导航看起来都正常**');
+          problems.push(`.navrow 的 top 是 \`${top[1].trim()}\`（没有引用 \`--h-topbar\`）—— 顶栏高度一变就错位`);
         }
       }
-      for (const [sel, name] of [['.nav2wrap', '二级栏'], ['.nav1', '灵动岛带']]) {
+      for (const [sel, name] of [['.nav2wrap', '二级行'], ['.nav1', '一级行']]) {
         for (const body of bodiesOf(sel)) {
           if (/position:\s*sticky/.test(body)) {
-            problems.push(`${sel}（${name}）又写了 \`position: sticky\` —— `
-              + 'B40 起吸顶由父容器 `.navrow` 一处负责；子层各自吸顶会与父容器打架，'
-              + '**症状是滚动几像素后两层错开，而静止时完全正常**');
+            problems.push(`${sel}（${name}）又写了 \`position: sticky\` —— 吸顶只由 `.navrow` 一处负责，子层各自吸顶会与父容器打架`);
             break;
           }
         }
       }
-      const row2 = ruleOf('.navrow > .nav2wrap');
-      if (row2 === null || !/min-width:\s*0/.test(row2)) {
-        problems.push('`.navrow > .nav2wrap` 没有 `min-width: 0` —— flex item 默认 '
-          + '`min-width: auto`（= 内容宽）**压不动**：空间不够时二级栏会把灵动岛挤出/压住，'
-          + '正是用户报的「你把二级栏给遮住了」那个根因');
+      if (!/\.nav-dock\s*\{/.test(cssN) || !/\.nav-dock\s*\{[^}]*clip-path:\s*path\(/.test(cssN)) {
+        problems.push('`.nav-dock` 缺少 clip-path —— 三角翼/连续肩线不会出现，页面会退回一块矩形玻璃');
       }
-      if (!/@media\s*\(max-width:\s*1280px\)[^{]*\{[^}]*grid-template-columns:\s*1fr\s*;/s.test(cssN)) {
-        problems.push('`@media (max-width: 1280px)` 里没有 `grid-template-columns: 1fr`（单列）—— '
-          + '空间不够并排时**没有退路**：实测二级栏被压到 ~90px、五个 tab 一个都看不见，'
-          + '而这一档在**宽屏下完全看不出来**');
+      const appN8 = stripComments(fs.readFileSync(path.join(REPO, 'panel', 'next', 'app.js'), 'utf8'));
+      if (!/function\s+layoutNavDock\s*\(/.test(appN8) || !/function\s+paintNavDock\s*\(/.test(appN8)) {
+        problems.push('app.js 缺少 layoutNavDock / paintNavDock —— 二级宽度和肩线路径没有接线');
+      }
+      if (!/const target = Math\.min\(contentW, maxW\);/.test(appN8)) {
+        problems.push('layoutNavDock 的 target 不是 `Math.min(contentW, maxW)` —— 二级宽度没有按内容收缩');
+      }
+      if (/Math\.max\(300,\s*Math\.min\(contentW/.test(appN8)) {
+        problems.push('layoutNavDock 又出现了 300px 下限 —— 「系统」只有 3 个页签时会重新留出一大片空');
+      }
+      if (!/dock\.style\.clipPath = `path\("\$\{d\}"\)`;/.test(appN8)) {
+        problems.push('paintNavDock 没有把肩线路径写进 dock.style.clipPath —— 轮廓不生效');
+      }
+      if (!/function renderNav2\(\)[\s\S]{0,900}?layoutNavDock\(true\)/.test(appN8)) {
+        problems.push('renderNav2() 之后没有 layoutNavDock(true) —— 切换功能域时二级宽度不会跟随');
+      }
+      if (!/\.nav-inner\s*\{[^}]*overflow-x:\s*auto/.test(cssN)
+          || !/\.nav2\s*\{[^}]*overflow-x:\s*auto/.test(cssN)) {
+        problems.push('一级/二级行缺少 `overflow-x: auto` —— 窄屏会裁字而不是横向滚动');
+      }
+      if (!/body\.eg-on \.nav-dock\s*\{/.test(cssN)) {
+        problems.push('缺少 `body.eg-on .nav-dock` —— 新导航没有接上液态玻璃（noise / backdrop-filter / inset）');
       }
       subHit('新版背景');
     }
@@ -11169,16 +11233,14 @@ const LIB_SRC_ALLOW = [
     //     （`b25.mjs` M8 踩过"锚点写死注释 ⇒ 命中 0"）。
     {
       const at = (cls) => htmlN.indexOf(`class="${cls}"`);
-      const t = at('topbar'); const n2 = at('nav2wrap'); const n1 = at('nav1');
+      const t = at('topbar'); const n1 = at('nav1'); const n2 = at('nav2wrap');
       if (t < 0 || n2 < 0 || n1 < 0) {
-        problems.push('入口页里取不到 .topbar / .nav2wrap / .nav1 之一 —— N14 落空'
-          + '（B29 动过它们的先后，顺序正是本判据的对象）');
-      } else if (!(t < n2 && n2 < n1)) {
-        problems.push(`三层的 DOM 顺序是 topbar(${t}) · nav2wrap(${n2}) · nav1(${n1})，`
-          + '应为 **topbar → nav2wrap → nav1** —— 用户 B29 要求二级 tab 栏'
-          + '「上移与顶部玻璃融为一体」、灵动岛「相应下移」，而这三层都是 '
-          + 'position:sticky 且都在正常文档流：**文档顺序决定谁在上**，'
-          + '只改样式里的 top/z-index 不会改变实际层序');
+        problems.push('入口页里取不到 .topbar / .nav1 / .nav2wrap 之一 —— N14 落空'
+          + '（导航改版后 DOM 顺序仍是本判据的对象）');
+      } else if (!(t < n1 && n1 < n2)) {
+        problems.push(`三层的 DOM 顺序是 topbar(${t}) · nav1(${n1}) · nav2wrap(${n2})，`
+          + '应为 **topbar → nav1 → nav2wrap** —— 一级在上、二级在下是这次导航改版的'
+          + '层级本身；只改样式里的 top/z-index 不会改变实际层序');
       }
       subHit('新版背景');
     }
@@ -13092,8 +13154,9 @@ const LIB_SRC_ALLOW = [
   if (fmtUsers.join('|') !== 'src/holidays.js') {
     problems.push(`「本地日期/月份键」的格式化散落在 [${fmtUsers.join(', ')}]（应只在 src/holidays.js）—— 又有人就地拼了一遍（H-11①）`);
   }
-  // ①-d 消费方真的**从它取**（不是"名字还在"）：四个老调用点必须 import 自 holidays.js。
-  for (const [rel, sym] of [['src/trace-stats.js', 'dayKeyOf'], ['src/usage.js', 'monthKeyOf'], ['src/index.js', 'dayKeyOf'], ['panel/server.js', 'dayKeyOf']]) {
+  // ①-d 消费方真的**从它取**（不是"名字还在"）：四个调用点必须 import 自 holidays.js。
+  // ⚠️ H-10 后 index 的日期键消费随落盘口搬进 `bridge-io.js`，契约跟着实现走。
+  for (const [rel, sym] of [['src/trace-stats.js', 'dayKeyOf'], ['src/usage.js', 'monthKeyOf'], ['src/bridge-io.js', 'dayKeyOf'], ['panel/server.js', 'dayKeyOf']]) {
     const s = codeOf.get(rel) || '';
     if (!new RegExp(`\\b${sym}\\b`).test(s)) {
       problems.push(`${rel} 里不再出现 ${sym} —— 它本该是那个键的消费方（H-11①）`);
@@ -13336,10 +13399,12 @@ const LIB_SRC_ALLOW = [
     //         它花一次模型调用并记用量，归 WRITE_ROUTES，结果只预览不落盘）。
     // 62 / 43（2026-10-21 · Win-v0.1.2 假 QQ：新增 state 一条 **GET** 与
     //         start/send/stop 三条 **POST**；三条 POST 都在 WRITE_ROUTES）。
+    // 63 / 44（2026-10-22 · 协议端进程守护：新增 /api/protocol/start 一条 **POST**；
+    //         它会拉起进程，归 WRITE_ROUTES）。
     // ⚠️ 改这两个数字的同时**必须**也在 `WRITE_ROUTES` 里登记（§3e 会核对分类）——
     //    只改这里等于把"新路由绕过鉴权"这件事盖章通过。GET 只读路由不进 WRITE_ROUTES。
-    if (entries81.length !== 62 || nPost81 !== 43) {
-      problems.push(`路由表项数变了（现 ${entries81.length} 项 / POST ${nPost81}，应恰 62 / 43）—— ` +
+    if (entries81.length !== 63 || nPost81 !== 44) {
+      problems.push(`路由表项数变了（现 ${entries81.length} 项 / POST ${nPost81}，应恰 63 / 44）—— ` +
         '加删路由是**明示动作**：请连 §3e 的分类与本节的精确值一起改，不许只动一头');
     }
     if (new Set(keys81).size !== keys81.length) {
@@ -14402,8 +14467,8 @@ const LIB_SRC_ALLOW = [
         problems.push('napcat-native.js 里又出现了 `killTree({ port: 3000/3001/6099 })` 字面量 —— '
           + '写死端口的部署上按端口那条路永远找不到进程，"重启"会变成"又拉一个"；'
           + '端口必须来自 onebotProbePorts().wsPort');
-      } else if (!/killTree\(\{\s*port:\s*wsPort\s*\}\)/.test(stop96)) {
-        problems.push('stopNativeNapcat 没有按传入的 wsPort 杀进程（应为 `killTree({ port: wsPort })`）—— '
+      } else if (!/portPids\(\s*wsPort\s*\)/.test(stop96) || !/forceKillTree\(pids\)/.test(stop96)) {
+        problems.push('stopNativeNapcat 没有按传入的 wsPort 查监听 PID 并强杀（应为 `portPids(wsPort)` + `forceKillTree(pids)`）—— '
           + '写死端口的部署上按端口那条路永远找不到进程，"重启"会变成"又拉一个"');
       }
       if (!/stopNativeNapcat\(killTree,\s*\{\s*wsPort\s*\}/.test(restart96)) {
@@ -15049,14 +15114,17 @@ const LIB_SRC_ALLOW = [
     problems.push('state-collector.js 没有用 launchOfConfig —— 面板显示的值与启动器执行的值会分家');
   }
 
-  // ④ 页面上那两格控件都在（缺一 = 用户少一个能改的入口，只能手改 config.json）
+  // ④ 页面上的控件都在（2026-10-23 起从 schema 的维护页搬到左下角设置层）。
+  //    改的是落点，不是判据：打开方式 / 启动后自动打开 仍必须各有一格。
   const sch = rd104('panel/next/schema.js');
-  if (!/'launch', 'mode'/.test(sch) || !/'launch', 'openOnStart'/.test(sch)) {
-    problems.push("schema.js 的「启动方式」少了控件（mode 或 openOnStart 有一格没接）—— 用户只能手改 config.json");
+  const setHtml = rd104('panel/next/index.html');
+  if (!/data-mode-opt="browser"/.test(setHtml) || !/data-mode-opt="window"/.test(setHtml)
+    || !/data-set="openOnStart"/.test(setHtml)) {
+    problems.push('设置层的「启动」少了控件（打开方式或 openOnStart 有一格没接）—— 用户只能手改 config.json');
   }
   // P11（维护者点名）：「独立窗口」还在内测 —— 提示必须留在选项旁边。
   // 首跑灰窗是已知缺陷（见 bootstrap.mjs 的 launch.mode 注释），提示被删就会被当成"装坏了"。
-  if (!/内测版先不要点/.test(sch)) problems.push('schema.js 的「独立窗口」少了内测提示（维护者点名要加）');
+  if (!/内测版先不要点/.test(setHtml)) problems.push('设置层的「独立窗口」少了内测提示（维护者点名要加）');
   // P11：Windows 原生形态下那格就是协议端本身 —— 没装时必须能说"未安装"，不能一片绿。
   if (!/'napcat', 'present'/.test(sch) || !/'napcat', 'dir'/.test(sch)) {
     problems.push('schema.js 的运行状态不再读 napcat.present/dir —— 协议端没装时那格又会显示成正常');
@@ -15372,6 +15440,7 @@ const LIB_SRC_ALLOW = [
   const manifest = read('../panel/lib/update-manifest.js');
   const signature = read('../panel/lib/update-signature.js');
   const download = read('../panel/lib/update-download.js');
+  const offline = read('../panel/lib/update-offline.js');
   const upd = read('../panel/lib/update.js');
   const routes = read('../panel/lib/update-routes.js');
   const server = read('../panel/server.js');
@@ -15423,6 +15492,38 @@ const LIB_SRC_ALLOW = [
   ]) {
     if (!manifest.includes(needle)) problems.push(`update-manifest.js 缺校验：${why}`);
   }
+  /* GitHub 现在把 release 资产 302 到 release-assets.githubusercontent.com；
+     `fetchCapped` / `downloadWithProgress` 校验最终 URL，缺这个 host 会让
+     「清单能下载、却被白名单拒绝」和「EXE 下载同样失败」同时发生。
+     用字面量钉住，避免下次整理白名单时把它顺手删掉。 */
+  if (!/'release-assets\.githubusercontent\.com'/.test(manifest)) {
+    problems.push('update-manifest.js 的 ALLOWED_HOSTS 没有放行 release-assets.githubusercontent.com —— GitHub release 资产会重定向到该 host，清单与 EXE 都会被拒');
+  }
+  /* 白名单是安全面：不仅要“有这个 host”，还不能有通配或额外项。
+     变异 U2 会往 ALLOWED_HOSTS 里塞 '*' —— 必须红。 */
+  const hostsBlock = (/ALLOWED_HOSTS\s*=\s*Object\.freeze\(\[([\s\S]*?)\]\)/.exec(manifest) || [])[1] || '';
+  const hostList = [...hostsBlock.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const expectedHosts = [
+    'github.com',
+    'objects.githubusercontent.com',
+    'release-assets.githubusercontent.com',
+    'gh-proxy.com',
+    'ghproxy.net',
+  ];
+  if (hostList.length !== expectedHosts.length
+    || expectedHosts.some((h) => !hostList.includes(h))
+    || hostList.some((h) => !expectedHosts.includes(h) || h.includes('*'))) {
+    problems.push(`ALLOWED_HOSTS 不是精确的 5 项白名单（现 ${JSON.stringify(hostList)}）—— 通配/额外域名会让清单被换地址就能装`);
+  }
+  /* Electron 载荷会到 150 MiB 量级；64 MiB 上限会让离线安装包在传输层就被拒。
+     只钉下限，P1-7 实测后可以往上校准，但不许回落。 */
+  const limitMatch = /OFFLINE_INSTALLER_MAX_BYTES\s*=\s*(\d+)\s*\*\s*1024\s*\*\s*1024/.exec(manifest);
+  if (!limitMatch || Number(limitMatch[1]) < 256) {
+    problems.push(`OFFLINE_INSTALLER_MAX_BYTES 至少 256 MiB（现 ${limitMatch ? limitMatch[1] : '缺失'}）—— Electron 载荷装不进 64 MiB`);
+  }
+  if (!/readBodyToFile\(req, \{ file: target, maxBytes: OFFLINE_INSTALLER_MAX_BYTES \}\)/.test(offline)) {
+    problems.push('update-offline.js 没有用 OFFLINE_INSTALLER_MAX_BYTES 流式读取上传体');
+  }
   if (!/testMode/.test(manifest) || !/127\.0\.0\.1/.test(manifest)) {
     problems.push('update-manifest.js 没有把测试旁路限制在 testMode/回环地址');
   }
@@ -15438,6 +15539,13 @@ const LIB_SRC_ALLOW = [
     ['if (expectedSha256 && sha256 !== expectedSha256.toLowerCase())', 'SHA-256 不匹配拒绝'],
   ]) {
     if (!download.includes(needle)) problems.push(`update-download.js 缺：${why}`);
+  }
+
+  /* GitHub 会把资产 302 到 release-assets；校验必须看 res.url（最终 URL），
+     两处（fetchCapped / downloadWithProgress）缺一不可。变异 U4 会把它改回 url。 */
+  const finalUrlChecks = (download.match(/validateUrl\(res\.url \|\| url\)/g) || []).length;
+  if (finalUrlChecks !== 2) {
+    problems.push(`update-download.js 对重定向后最终 URL 的校验不是 2 处（现 ${finalUrlChecks}）—— 改回校验初始 URL 会让 GitHub 302 再次失败`);
   }
 
   // ⑤ 只从 ready 安装；spawn 只出现一次；没有自动安装
@@ -15456,7 +15564,7 @@ const LIB_SRC_ALLOW = [
   if (/\bawait install\(/.test(upd)) {
     problems.push('update.js 内部出现自动 install 调用（只允许路由显式触发）');
   }
-  if (!/if \(signal\?\.aborted \|\| e\?\.code === 'ABORTED'\)[\s\S]{0,200}fs\.rmSync\(part, \{ force: true \}\)/.test(download)) {
+  if (!/if \(signal\?\.aborted \|\| e\?\.code === 'ABORTED'\)[\s\S]{0,200}(?:fs\.rmSync\(part|dropPart\()/.test(download)) {
     problems.push('取消下载没有删除 .part');
   }
 
@@ -16058,7 +16166,7 @@ const LIB_SRC_ALLOW = [
     // P11：安装状态必须随 /api/state 每次现算（页面 3 秒轮询）——
     // 只在启动时 pushLog 一句，用户装好后不重启面板就看不到状态翻转。
     if (!/napcat: \{ present: nativePresent\(\), dir: NAPCAT_DIR, win32: IS_WIN \}/.test(srvTxt)) problems.push('/api/state 不再下发 napcat.present/dir/win32 —— 状态卡无法实时显示"协议端未安装 + 该放哪儿"');
-    if (!/async function autoStartNapcatIfInstalled\(\)[\s\S]{0,700}startNativeNapcat\(\{\}\)/.test(srvTxt)) problems.push('autoStartNapcatIfInstalled 不再调 startNativeNapcat —— 自起钩子成了空壳');
+    if (!/async function autoStartNapcatIfInstalled\(\)[\s\S]{0,1200}startNativeNapcat\(\{\s*qq:/.test(srvTxt)) problems.push('autoStartNapcatIfInstalled 不再调 startNativeNapcat（且必须带已登录 QQ）—— 自起钩子成了空壳');
     const restartAt = srvTxt.indexOf('async function apiNapcatRestart');
     const dockerAt = srvTxt.indexOf('重启 NapCat 容器', restartAt);
     const guardSlice = restartAt >= 0 && dockerAt > restartAt ? srvTxt.slice(restartAt, dockerAt) : '';
@@ -16784,7 +16892,7 @@ const LIB_SRC_ALLOW = [
     problems.push('面板状态下发没有算 personaCards');
   }
   const schema = read('panel/next/schema.js');
-  if (!schema.includes("id: 'cardgrade'") || !schema.includes("t: 'cardGrade'")) problems.push('面板没有角色卡分级页/控件');
+  if (!schema.includes("id: 'cg'") || !schema.includes("t: 'cardGrade'")) problems.push('面板没有角色卡分级控件');
   const app = read('panel/next/app.js');
   for (const [name, re] of [['cardGrade', /cardGrade: \(x\) =>/], ['skill.snap', /'skill\.snap':/], ['cg.adopt', /'cg\.adopt':/], ['applyAdopt', /function applyAdopt\(/]]) {
     if (!re.test(app)) problems.push(`面板缺少 ${name} 接线`);
@@ -16798,7 +16906,7 @@ const LIB_SRC_ALLOW = [
   if (!/ensureUserDirs\(\)/.test(read('src/index.js'))) problems.push('入口没有 ensureUserDirs()（完整包首启缺 data/）');
 
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
-  else console.log('✓ 人格/记忆（§126）：选卡优先级 · 卡不进技能段 · 记忆按卡+旧键回退+相关度 · 24项/场景合并 · 切卡清历史 · 十维页/AI认领/写路由');
+  else console.log('✓ 人格/记忆（§126）：选卡优先级 · 卡不进技能段 · 记忆按卡+旧键回退+相关度 · 24项/场景合并 · 切卡清历史 · 十维卡/AI认领/写路由');
 }
 
 // 127) Win-v0.1.2 移植 · 峰谷 / 反模板 / 等待 / 图片（2026-10-21）。
@@ -16829,14 +16937,15 @@ const LIB_SRC_ALLOW = [
   if (iv !== 5 || to !== 6) problems.push(`index 计时器计数变了（setInterval ${iv} / setTimeout ${to}，应 5/6）`);
   const schema = read('panel/next/schema.js');
   for (const [name, re] of [
-    ['峰谷页', /id: 'peak', label: '峰谷/],
+    ['峰谷控件', /bind: 'peak\.enabled'/],
+    ['峰谷免打扰', /bind: 'peak\.muteUnmentioned'/],
     ['等待页', /label: '聊天等待与图片'/],
     ['wait bind', /bind: 'wait\.enabled'/],
     ['image bind', /bind: 'image\.send'/],
     ['image root 控件', /bind: 'image\.root'/],
   ]) if (!re.test(schema)) problems.push(`面板缺少 ${name}`);
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
-  else console.log('✓ 表达节奏（§127）：峰谷门禁/主动同闸 · 反模板削形+留痕 · 群聊连发合并 · 停顿/垫话/输入态 · 图片目录限制+默认关 · 面板两页');
+  else console.log('✓ 表达节奏（§127）：峰谷门禁/主动同闸 · 反模板削形+留痕 · 群聊连发合并 · 停顿/垫话/输入态 · 图片目录限制+默认关 · 面板控件');
 }
 
 // 128) Win-v0.1.2 移植 · 好友私聊 / 夜间产出 / 巡逻与热度（2026-10-21）。
@@ -16858,7 +16967,7 @@ const LIB_SRC_ALLOW = [
     ['夜间私聊', /if \(toOwner\) await sayToOwner\(body\);/],
     ['夜间不记群账', /if \(!toOwner\) brain\.markReplied\(sessionOfGroup\(item\.group\)\);/],
     ['热度记账', /noteHeatTurn\(heatEntryOf\(/],
-    ['热度权重', /const heatWeight = session \? heatWeightOf\(heatEntryOf\(/],
+    ['热度权重', /const heatEntry = session \? heatEntryOf\(session\.key, evt\.user_id\) : null;[\s\S]{0,160}?const heatWeight = heatWeightOf\(heatEntry\);/],
     ['巡逻计划', /const plan = patrolPlanOf\(\{/],
     ['巡逻挂 tick', /if \(runPatrolTick\(now\.getTime\(\)\) > 0\) return;/],
     ['巡逻记账', /if \(decision\.kind === 'patrol' && session\) \{[\s\S]{0,120}heatState\.patrol\[session\.key\]/],
@@ -17210,17 +17319,674 @@ const LIB_SRC_ALLOW = [
       problems.push('§131③：两个滑块的写样式回调没有挡非有限值 —— 数值一旦坏了，CSS 会静默忽略 transform、'
         + '或让 width 变成 0（横线"消失但不报错"）；sync 里的 bad 分支也接不住 NaN');
     }
-    if (!/\.nav2-ind \{[\s\S]{0,160}?bottom: 6px;[\s\S]{0,80}?height: 3px;/.test(css131)) {
-      problems.push('§131④：`.nav2-ind` 的位置/粗细不是 2026-10-21 用户要求的值（bottom:6px / height:3px）'
-        + '—— 改回 3px/2px 会重新贴住玻璃下缘且变细');
+    if (!/\.nav2-ind \{[\s\S]{0,160}?top: 3px;[\s\S]{0,80}?height: 24px;/.test(css131)) {
+      problems.push('§131④：`.nav2-ind` 不是导航改版后的淡色胶囊（top:3px / height:24px）'
+        + '—— 退回 3px 下划线会与二级窄条/玻璃层级脱节');
     }
-    console.log('✓ 二级滑块（§131）：目标未变早退 ×2 · 日志/审计无变化不重画 · 非有限值拦截 · 横线 6px/3px');
+    console.log('✓ 二级滑块（§131）：目标未变早退 ×2 · 日志/审计无变化不重画 · 非有限值拦截 · 胶囊 24px');
   }
 
-  // ① 契约块数下限。`ran + 1` 里那个 +1 就是**本段自己**（本段也走 console.log、也被计入），
-  //    于是这里比的是"算上本段一共多少段"，与 `process.on('exit')` 的口径完全一致。
-  if (ran + 1 < MIN_CONTRACTS) {
-    problems.push(`只跑了 ${ran + 1} 段契约（下限 ${MIN_CONTRACTS}）—— 有人删了断言，或某一段被提前 return 掉了`);
+  // ══ §132 · 协议端生命周期（停止分派 / 进程守护 / 快速登录）（2026-10-22 新增）══
+  //     背景：Windows 便携/安装版的协议端是原生 NapCat，Docker 为假不代表无事可做。
+  //     以前两个停止接口只走 Docker ⇒ 点「结束本次运行」协议端一个进程都不动，
+  //     界面却报「已回到干净状态」；进程整个死掉时又没有进程级守护（连接看门狗只会重连）。
+  //     判据分三组：停止分派 / 守护阶梯与接线 / 快速登录单源。
+  {
+    const guardSrc132 = read('../panel/lib/protocol-guard.js');
+    const serverSrc132 = read('../panel/server.js');
+    const loginSrc132 = read('../src/napcat-login.js');
+    const commonSrc132 = read('../packaging/windows/tools/lib/common.mjs');
+    const schemaSrc132 = read('../panel/next/schema.js');
+    const appSrc132 = read('../panel/next/app.js');
+    const pathsSrc132 = read('../panel/lib/paths.js');
+
+    if (!/export function guardDecision\(/.test(guardSrc132)
+      || !/export function createProtocolGuard\(/.test(guardSrc132)) {
+      problems.push('§132①：protocol-guard.js 缺少 guardDecision / createProtocolGuard 导出 —— 守护没有判据层');
+    }
+    const off132 = guardSrc132.indexOf("onebotState === 'offline'");
+    const alive132 = guardSrc132.indexOf('alive === true');
+    if (off132 < 0 || alive132 < 0 || off132 > alive132) {
+      problems.push('§132②：守护判据没有把「QQ 账号掉线」放在「端口活着」之前 —— 掉线时重启只会多一次风控');
+    }
+    if (!/!guard\.seenAlive && !force/.test(guardSrc132)
+      || !/attempts >= guard\.maxAttempts/.test(guardSrc132)
+      || !/cooldownsMs: \[60000, 180000, 540000\]/.test(guardSrc132)) {
+      problems.push('§132③：守护缺 seenAlive / maxAttempts / 三级冷却之一 —— 首次安装会被替用户开窗口，或失败后无限撞');
+    }
+    if (!/stopNativeNapcat/.test(serverSrc132)
+      || !/createProtocolGuard/.test(serverSrc132)
+      || !/resolveLoginQqIn/.test(serverSrc132)) {
+      problems.push('§132④：server.js 没有接上 stopNativeNapcat / createProtocolGuard / resolveLoginQqIn 三者之一');
+    }
+    const nDocker132 = (serverSrc132.match(/IS_WIN \? false : await cachedDockerUp\(\)/g) || []).length;
+    const nStop132 = (serverSrc132.match(/stopNativeNapcat\(killTree, \{ wsPort \}\)/g) || []).length;
+    if (nDocker132 < 2 || nStop132 < 2) {
+      problems.push('§132⑤：两个停止接口没有都按平台分派到 stopNativeNapcat —— Windows 上协议端不会被停');
+    }
+    if (!/napcatLeft/.test(serverSrc132) || !/exitPanel = body\.exitPanel !== false && !napcatLeft/.test(serverSrc132)) {
+      problems.push('§132⑥：协议端没停掉时仍会退出面板 —— 用户失去唯一的重试界面');
+    }
+    if ((serverSrc132.match(/protocolGuard\.stop\(\)/g) || []).length < 3) {
+      problems.push('§132⑦：守护 stop 没有覆盖「结束本次运行 / 一键全停 / shutdown」三处 —— 停掉的协议端会被下一拍拉回来');
+    }
+    // 2026-10-23：启动条件多了 autoProtocol 偏好（关掉时连守护一起跳过），
+    // 但平台闸门必须仍在：IS_WIN && nativePresent()，macOS / Docker 链不许被碰。
+    if (!/if \(IS_WIN && nativePresent\(\)(?: && LAUNCH_PREFS\.autoProtocol !== false)?\) protocolGuard\.start\(\)/.test(serverSrc132)) {
+      problems.push('§132⑧：守护没有只在 Windows 原生协议端上启动 —— macOS / Docker 链会被误碰');
+    }
+    if (!/'\/api\/protocol\/start'/.test(serverSrc132)
+      || !/'\/api\/stop-all', '\/api\/protocol\/start'/.test(serverSrc132)) {
+      problems.push('§132⑨：/api/protocol/start 没有同时进路由表与 WRITE_ROUTES —— 新入口会绕过鉴权/审计');
+    }
+    if (!/startNativeNapcat\(\{ qq: login\.qq \}\)/.test(serverSrc132)) {
+      problems.push('§132⑩：自启没有把已登录 QQ 传给协议端 —— 安装版每次启动仍要扫码');
+    }
+    if (!/export function resolveLoginQqIn\(/.test(loginSrc132)
+      || !/knownAccountsByMtimeIn/.test(commonSrc132)
+      || /out\.sort\(\(a, b\) => b\.mtime - a\.mtime\)/.test(commonSrc132)) {
+      problems.push('§132⑪：快速登录判据不是单源 —— 工具侧又写回了第二份 mtime 排序，或共享叶子缺函数');
+    }
+    if (!/protocolGuard/.test(schemaSrc132) || !/'protocol\.start'/.test(schemaSrc132)
+      || !/'protocol\.start'/.test(appSrc132)) {
+      problems.push('§132⑫：面板没有守护状态格或手动拉起入口 —— 用户看不到守护在不在、也没法手动拉一次');
+    }
+    if (!/panel\/lib\/protocol-guard\.js/.test(pathsSrc132)) {
+      problems.push('§132⑬：protocol-guard.js 没进 BACKEND_SOURCES —— stale 自检与静态契约都会看不见它');
+    }
+    console.log('✓ 协议端生命周期（§132）：停止分派 · 守护七条阶梯/冷却/上限 · 停止顺序 · 单源快速登录 · 面板入口');
+  }
+
+  // ══ §133 · 模型与消息可靠性（群图 / 引用 / length / token / 工具类型）（2026-10-22）══
+  //     背景：群友补丁实测——群图在 Windows 上只给本地 file（旧实现只认 http(s)）；
+  //     引用只取到 id、正文从没取过；思考型模型把 400/160/80 token 吃满后正文为空；
+  //     扩展包把参数写成 `type: ['integer','string']`，OpenAI 兼容端会静默忽略整条 tools。
+  {
+    const onebotSrc133 = read('../src/onebot.js');
+    const indexSrc133 = read('../src/index.js');
+    const llmSrc133 = read('../src/llm.js');
+    const memorySrc133 = read('../src/memory.js');
+    const configSrc133 = read('../src/config.js');
+    const exampleSrc133 = read('../config.example.json');
+    const toolSrc133 = read('../src/tool-registry.js');
+    const schemaSrc133 = read('../panel/next/schema.js');
+    const pkgSrc133 = read('../package.json');
+
+    if (!/INBOUND_IMAGE_MAX_BYTES/.test(onebotSrc133)
+      || !/localImageToDataUrl\(rawFile \|\| rawUrl\)/.test(onebotSrc133)
+      || !/data:\$\{mime\};base64/.test(onebotSrc133)) {
+      problems.push('§133①：入站群图没有本地文件兜底（允许根 / 大小上限 / data URL 三件缺一）—— Windows 群图仍会丢');
+    }
+    if (!/parsed\.replyTo[\s\S]{0,600}?bot\.call\('get_msg'/.test(indexSrc133)
+      || !/\[引用/.test(indexSrc133)) {
+      problems.push('§133②：引用消息没有补取正文 —— 引用图/引用文字仍然看不见');
+    }
+    if (!/finishReason === 'length'/.test(llmSrc133)
+      || !/lengthRetry: true/.test(llmSrc133)
+      || !/THINK\.OFFABLE \? \{ mode: 'off' \}/.test(llmSrc133)) {
+      problems.push('§133③：空回复没有按 finish_reason=length 抬额度重试 —— 思考型模型仍会"花了钱没回复"');
+    }
+    if (!/maxTokens: 2000/.test(memorySrc133) || !/maxTokens: 800/.test(indexSrc133)) {
+      problems.push('§133④：记忆判断 / 主动搭话的小额额度没有抬高 —— 关不掉思考的模型会把额度吃空');
+    }
+    if (!/asInt\(raw\.llm\?\.maxTokens, 1200\)/.test(configSrc133) || /"maxTokens": 400/.test(exampleSrc133)) {
+      problems.push('§133⑤：新装默认 maxTokens 没有回到 1200（或模板里还留着 400）—— 新用户仍会踩空回复');
+    }
+    if (!/function normalizeSchemaNode\(/.test(toolSrc133)
+      || !/out\.items = Array\.isArray/.test(toolSrc133)
+      || !/anyOf/.test(toolSrc133)) {
+      problems.push('§133⑥：工具参数 type 没有递归归一化 —— 扩展包的数组类型仍会让整条 tools 失效');
+    }
+    if (!/bindSys: 'maxTokens'/.test(schemaSrc133)) {
+      problems.push('§133⑦：面板没有「最大回复长度」控件 —— 用户只能手改 config.json');
+    }
+    if (!/check-message-reliability\.mjs/.test(pkgSrc133)) {
+      problems.push('§133⑧：B 批自检没有进 check:features —— 判据会像旧 verify-panel 一样烂掉');
+    }
+    console.log('✓ 模型与消息可靠性（§133）：群图允许根 · 引用取数 · length 重试 · 小额额度 · 类型归一 · 面板上限');
+  }
+
+  // ══ §134 · 人味机制与面板可观测性（2026-10-22 · P2）══════════════════════
+  //     关系温度进提示词、群级反馈热、困倦分级、日流水、状态卡点击直达与用量分账。
+  {
+    const heatSrc134 = read('../src/heat.js');
+    const indexSrc134 = read('../src/index.js');
+    const brainSrc134 = read('../src/brain.js');
+    const replySrc134 = read('../src/reply-text.js');
+    const daySrc134 = read('../src/day-log.js');
+    const schemaSrc134 = read('../panel/next/schema.js');
+    const appSrc134 = read('../panel/next/app.js');
+    const usageSrc134 = read('../panel/lib/usage-report.js');
+    const pkgSrc134 = read('../package.json');
+
+    if (!/export function heatLine\(/.test(heatSrc134)
+      || !/opts\.heatLine/.test(brainSrc134)
+      || !/heatLineText = heatEntry \? heatLine\(heatEntry\)/.test(indexSrc134)) {
+      problems.push('§134①：关系温度没有进提示词（heatLine / brain 入参 / index 接线三件缺一）');
+    }
+    if (!/export function feedbackHeatOf\(/.test(heatSrc134)
+      || !/export function noteFeedbackHeat\(/.test(heatSrc134)
+      || !/feedbackHeatFor\(chat\.key\)/.test(indexSrc134)
+      || !/noteFeedbackTurn\(session\.key, false\)/.test(indexSrc134)
+      || !/noteFeedbackTurn\(session\.key, true\)/.test(indexSrc134)) {
+      problems.push('§134②：群级反馈热没有接线（沉默降 / 回话满 / 巡逻概率乘它，三件缺一）');
+    }
+    if (!/REST_LINE_SLEEPY/.test(replySrc134) || !/REST_LINE_VERY_TIRED/.test(replySrc134)
+      || !/DROWSY_CRITICAL_MS/.test(replySrc134)) {
+      problems.push('§134③：困倦分级没有三档（两小时内 / 半小时内 / 已过入睡点）');
+    }
+    if (!/export function appendDayLog\(/.test(daySrc134)
+      || !/export function dayLogTextOf\(/.test(daySrc134)
+      || !/appendDayLog\(DATA_DIR, session\.key/.test(indexSrc134)
+      || !/dayLogTextRecent\(DATA_DIR, key\)/.test(indexSrc134)) {
+      problems.push('§134④：日流水没有落盘或夜间产出没有优先读它');
+    }
+    if (!/data-go=/.test(appSrc134) || !/closest\('\[data-go\]'\)/.test(appSrc134)
+      || !/usageByChat:/.test(appSrc134) || !/usageByChat/.test(schemaSrc134)) {
+      problems.push('§134⑤：状态卡点击直达或用量按群/按天没有接线');
+    }
+    if (!/byChat/.test(usageSrc134) || !/byDay/.test(usageSrc134) || !/cacheHitRate/.test(usageSrc134)) {
+      problems.push('§134⑥：用量报表没有按会话/按天/缓存命中率');
+    }
+    if (!/check-day-log\.mjs/.test(pkgSrc134)) {
+      problems.push('§134⑦：日流水自检没有进 check:features');
+    }
+    console.log('✓ 人味与可观测性（§134）：温度行 · 反馈热 · 困倦三档 · 日流水 · 状态卡直达 · 用量分账');
+  }
+
+  // ══ §135 · API 文档 ↔ 路由表（2026-10-22 新增）══════════════════════════
+  //     2026-10-22 之前，`API_CONTRACT.md` 没有任何门禁读它：§41 补了 19 条路由索引，
+  //     但字段细节仍以 handler 为准；另有 5 条路由连独立小节都没有。文档腐烂时
+  //     四层全绿，因为**没有人读文档**。这一节把文档变成可机读的契约：
+  //       ① 63 条路由总表（api-inventory 标记）与 API_ROUTES 双向集合相等；
+  //       ② 24 条此前没有字段级章节的路由（api-fields 标记）各恰好四行；
+  //       ③ 编号章节 ∪ 字段标记 = 63，且两类不重叠；
+  //       ④ 标记/字段缺失时 fail-closed（读不到 docs 就直接红，不在真空里变绿）。
+  //     ⚠️ 必须读**原始 Markdown**：`stripComments` 会把 HTML 注释标记整段剥掉。
+  {
+    const problems135 = [];
+    const doc135 = fs.readFileSync(new URL('../docs/API_CONTRACT.md', import.meta.url), 'utf8');
+    const srv135 = fs.readFileSync(new URL('../panel/server.js', import.meta.url), 'utf8');
+    const tStart135 = srv135.indexOf('const API_ROUTES = [');
+    const tEnd135 = tStart135 >= 0 ? srv135.indexOf('\n];', tStart135) : -1;
+    const tbl135 = tStart135 >= 0 && tEnd135 > tStart135 ? srv135.slice(tStart135, tEnd135) : '';
+    const apiKeys135 = tbl135
+      ? [...tbl135.matchAll(/\{ path: '(\/api\/[^']+)', (method: 'POST', )?handler: (\w+) \}/g)]
+        .map((m) => `${m[2] ? 'POST' : 'GET'} ${m[1]}`)
+      : [];
+    const apiSet135 = new Set(apiKeys135);
+
+    const begin135 = (doc135.match(/<!-- api-inventory:begin -->/g) || []).length;
+    const end135 = (doc135.match(/<!-- api-inventory:end -->/g) || []).length;
+    const i135 = doc135.indexOf('<!-- api-inventory:begin -->');
+    const j135 = i135 >= 0 ? doc135.indexOf('<!-- api-inventory:end -->', i135) : -1;
+    const invBlock135 = i135 >= 0 && j135 > i135 ? doc135.slice(i135, j135) : '';
+    const inv135 = [...invBlock135.matchAll(/^\|\s*(GET|POST)\s*\|\s*`(\/api\/[^`]+)`\s*\|\s*$/gm)]
+      .map((m) => `${m[1]} ${m[2]}`);
+    const invSet135 = new Set(inv135);
+    const nGet135 = inv135.filter((k) => k.startsWith('GET ')).length;
+    const nPost135 = inv135.filter((k) => k.startsWith('POST ')).length;
+    if (begin135 !== 1 || end135 !== 1 || !invBlock135) {
+      problems135.push('§135①：路由总表标记缺失/重复（api-inventory:begin/end 必须各恰好一次）');
+    }
+    if (apiKeys135.length !== 63 || inv135.length !== 63 || nGet135 !== 19 || nPost135 !== 44) {
+      problems135.push(`§135①：路由总表数量不对（文档 ${inv135.length} = GET ${nGet135}/POST ${nPost135}；`
+        + `代码 ${apiKeys135.length}；应 63 = 19/44）`);
+    }
+    if (invSet135.size !== inv135.length) problems135.push('§135①：路由总表有重复 path+method');
+    const missing135 = [...apiSet135].filter((k) => !invSet135.has(k));
+    const extra135 = [...invSet135].filter((k) => !apiSet135.has(k));
+    if (apiSet135.size === 0 || missing135.length || extra135.length) {
+      problems135.push(`§135②：文档总表与 API_ROUTES 不一致（缺 ${missing135.slice(0, 4).join('、') || '—'}；`
+        + `多 ${extra135.slice(0, 4).join('、') || '—'}）`);
+    }
+    subHit('ApiContractDoc');
+
+    const fMatches135 = [...doc135.matchAll(/<!-- api-fields: (GET|POST) (\/api\/[^ ]+) -->/g)];
+    const fieldKeys135 = fMatches135.map((m) => `${m[1]} ${m[2]}`);
+    const fieldSet135 = new Set(fieldKeys135);
+    if (fieldKeys135.length !== 24 || fieldSet135.size !== 24) {
+      problems135.push(`§135③：字段标记应恰好 24 条且不重复（现 ${fieldKeys135.length} / 唯一 ${fieldSet135.size}）`);
+    }
+    for (const k of fieldKeys135) {
+      if (!invSet135.has(k)) problems135.push(`§135③：字段标记 ${k} 不在路由总表里`);
+    }
+    const labelProblems135 = [];
+    fMatches135.forEach((m, idx) => {
+      const start = (m.index || 0) + m[0].length;
+      const end = idx + 1 < fMatches135.length
+        ? (fMatches135[idx + 1].index || doc135.length)
+        : doc135.length;
+      const body = doc135.slice(start, end);
+      for (const label of ['入参', '出参', '副作用', '幂等']) {
+        const n = (body.match(new RegExp(`^- \\*\\*${label}\\*\\*：`, 'gm')) || []).length;
+        if (n !== 1) labelProblems135.push(`${fieldKeys135[idx]} ${label}=${n}`);
+      }
+    });
+    if (labelProblems135.length) {
+      problems135.push('§135③：每条字段契约必须恰有 入参/出参/副作用/幂等 四行（'
+        + `${labelProblems135.slice(0, 4).join('；')}）`);
+    }
+    subHit('ApiContractDoc');
+
+    const headKeys135 = new Set();
+    for (const h of doc135.matchAll(/^##\s+\d+\..*$/gm)) {
+      const line = h[0];
+      const paths = [...line.matchAll(/`(\/api\/[^`?]+)(?:\?[^`]*)?`/g)].map((x) => x[1]);
+      if (!paths.length) continue;
+      const methods = [...line.matchAll(/\b(GET|POST)\b/g)].map((x) => x[1]);
+      const method = methods[0] || 'GET';
+      for (const p of paths) headKeys135.add(`${method} ${p}`);
+    }
+    const overlap135 = [...headKeys135].filter((k) => fieldSet135.has(k));
+    const union135 = new Set([...headKeys135, ...fieldSet135]);
+    if (overlap135.length) {
+      problems135.push(`§135④：编号章节与字段章节重复覆盖（${overlap135.slice(0, 4).join('、')}）`);
+    }
+    if (union135.size !== 63 || [...union135].some((k) => !invSet135.has(k))) {
+      problems135.push(`§135④：编号章节 ∪ 字段章节应恰好覆盖 63 条且都在总表内（现 ${union135.size}）`);
+    }
+    subHit('ApiContractDoc');
+    subHit('ApiContractDoc');
+
+    if (problems135.length) { bad++; for (const p of problems135) console.log(`✗ ${p}`); }
+    else {
+      console.log('✓ API 契约文档（§135）：63 路由总表 · 24 条字段契约 · '
+        + '编号章节 ∪ 字段标记 = 63 · 双向集合相等');
+    }
+  }
+
+  // 136) 液态玻璃制作站 + 渐进模糊弹层（2026-10-22）。
+  // 盯的 6 处：引擎默认仍 ramp / 单一 initGlass / 制作站资产登记与不挂产品导航 /
+  // 遮罩相邻与三层 / modal 接线且仍无 backdrop-filter / 回退与导航精修令牌。
+  {
+    const problems136 = [];
+    const { readNextAsset: read136 } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
+    const gj = stripComments(read136('glass.js').raw, 'js');
+    const sj = stripComments(read136('glass-station.js').raw, 'js');
+    const scss = stripComments(read136('glass-scrim.css').raw, 'css');
+    const stcss = stripComments(read136('glass-station.css').raw, 'css');
+    const css136 = stripComments(read136('style.css').raw, 'css');
+    const app136 = stripComments(read136('app.js').raw, 'js');
+    const entry136 = read136('index.html').raw;
+
+    const defaults = (gj.match(/const G_DEFAULTS = \{([\s\S]*?)\n\};/) || [])[1] || '';
+    if (!/window\.EstrellaGlass\s*=\s*Object\.freeze/.test(gj)) problems136.push('§136①：glass.js 没有暴露 window.EstrellaGlass');
+    if (!/map:\s*'ramp'/.test(defaults)) problems136.push('§136①：G_DEFAULTS.map 不再是 ramp（产品光学被改动）');
+    for (const [k, v] of [['scale', '-85'], ['chroma', '5'], ['border', '0.06'], ['mapBlur', '18'], ['core', '0.38'], ['blur', '8'], ['saturate', '140'], ['brightness', '1.02']]) {
+      if (!new RegExp(k + ':\\s*' + v.replace('.', '\\.')).test(defaults)) problems136.push(`§136①：G_DEFAULTS.${k} 不是 ${v}`);
+    }
+    if ((gj.match(/^initGlass\(\);$/gm) || []).length !== 1) problems136.push('§136①：glass.js 的 initGlass(); 不是恰一处（尾部单入口）');
+    subHit('玻璃制作站');
+
+    const assets136 = await import(new URL('../panel/lib/next-page.js', import.meta.url));
+    for (const name of ['lab-liquid-glass.html', 'glass-station.css', 'glass-station.js', 'glass-scrim.css']) {
+      if (!(name in assets136.NEXT_ASSETS)) problems136.push(`§136②：${name} 未登记 NEXT_ASSETS`);
+    }
+    if (/lab-liquid-glass/.test(entry136)) problems136.push('§136②：入口页不应链接制作站');
+    if (/--c-[a-z0-9-]+\s*:/.test(stcss)) problems136.push('§136②：glass-station.css 定义了 --c-* 令牌（应从 style.css 取）');
+    if (/\binitGlass\s*\(/.test(sj)) problems136.push('§136②：制作站又调了一次 initGlass（应只用 EstrellaGlass.make）');
+    subHit('玻璃制作站');
+
+    const links136 = ['./style.css', './glass-scrim.css', './glass-station.css'];
+    const station136 = read136('lab-liquid-glass.html').raw;
+    let last = -1;
+    for (const href of links136) {
+      const at = station136.indexOf(`href="${href}"`);
+      if (at < 0) problems136.push(`§136③：制作站入口缺 ${href}`);
+      if (at >= 0 && at < last) problems136.push(`§136③：${href} 的顺序不对`);
+      last = at;
+    }
+    if ((station136.match(/src="\.\/glass\.js"/g) || []).length !== 1) problems136.push('§136③：制作站应只引一次 glass.js');
+    if (!/data-gs="openModal"/.test(station136) || !/__glassLab/.test(sj)) problems136.push('§136③：制作站缺少弹层演示或测试钩子');
+    subHit('玻璃制作站');
+
+    const scrimAt = entry136.indexOf('<div class="glass-scrim" id="glassScrim"');
+    const modalAt = entry136.indexOf('<div class="modal" id="modal"');
+    if (scrimAt < 0 || modalAt < 0 || scrimAt > modalAt) problems136.push('§136④：#glassScrim 必须紧挨在 #modal 之前');
+    if (!/id="glassScrim" hidden aria-hidden="true"/.test(entry136)) problems136.push('§136④：#glassScrim 默认必须 hidden');
+    const scrimHtml136 = scrimAt >= 0 && modalAt > scrimAt ? entry136.slice(scrimAt, modalAt) : '';
+    if ((scrimHtml136.match(/class="gsc-blur gsc-blur-[123]"/g) || []).length !== 3) problems136.push('§136④：遮罩必须恰好 3 个 .gsc-blur');
+    if ((scrimHtml136.match(/class="gsc-tint"/g) || []).length !== 1) problems136.push('§136④：遮罩必须恰好 1 个 .gsc-tint');
+    if (!/\.glass-scrim\s*\{[^}]*z-index:\s*55/.test(scss)) problems136.push('§136④：.glass-scrim 的 z-index 不是 55');
+    if (!/\.glass-scrim:not\(\[hidden\]\)\s*\+\s*\.modal\s*\{\s*background-color:\s*transparent/.test(scss)) {
+      problems136.push('§136④：缺少 .glass-scrim:not([hidden]) + .modal 的透明接管规则');
+    }
+    subHit('玻璃制作站');
+
+    if (!/glassScrimShow\(\);/.test(app136)) problems136.push('§136⑤：modal() 没有调用 glassScrimShow');
+    if (!/glassScrimHide\(\);/.test(app136)) problems136.push('§136⑤：closeModal 没有调用 glassScrimHide');
+    if (!/\.modal\s*\{[^}]*z-index:\s*80/.test(css136)) problems136.push('§136⑤：.modal 的 z-index 不是 80');
+    if (/\.modal\s*\{[^}]*backdrop-filter/.test(css136)) problems136.push('§136⑤：.modal 又加了 backdrop-filter（§60 G11 反面）');
+    subHit('玻璃制作站');
+
+    if (!/@supports not/.test(scss) || !/@media \(prefers-reduced-transparency: reduce\)/.test(scss)) problems136.push('§136⑥：遮罩缺少 @supports / 减少透明度回退');
+    if (/transition:[^;]*backdrop-filter/.test(scss)) problems136.push('§136⑥：遮罩过渡写了 backdrop-filter（不可插值）');
+    if (!/drop-shadow\(0 22px 48px -26px var\(--c-nav-shadow\)\)/.test(css136)) problems136.push('§136⑥：导航缺少第二层环境投影');
+    if (!/inset 0 1px 0 var\(--c-eg-rim-soft\)/.test(css136)) problems136.push('§136⑥：导航缺少内侧顶缘高光');
+    subHit('玻璃制作站');
+
+    /* ⑦ 2026-10-23 光影三件套（吸收自外部做法，独立实现）：
+       制作站必须有 壁/渐变描边/高光形状 三条参数与融合演示；
+       产品侧三对新令牌必须深浅成对，且被**两档** --c-eg-shade 同时消费（不是定义了没人用）；
+       融合演示不许混进入口页 —— 祖先 filter 会建立 backdrop root，直接废掉真折射。 */
+    const absorbSt = /--gs-wall:\s*\.\d+/.test(stcss)
+      && /--gs-bevel-top:/.test(stcss) && /--gs-bevel-bottom:/.test(stcss)
+      && /data-spec="corners"/.test(stcss)
+      && /wall:\s*0\.25/.test(sj) && /bevel:\s*'raised'/.test(sj) && /bindGooey\(\);/.test(sj)
+      && /id="gsGooeyStage"/.test(station136) && /data-gs="gooey"/.test(station136);
+    if (!absorbSt) problems136.push('§136⑦：光影三件套或融合演示缺件（参数 / 控件 / 演示任一不在）');
+    const wallN = (css136.match(/--c-eg-wall:/g) || []).length;
+    const bevelTN = (css136.match(/--c-eg-bevel-top:/g) || []).length;
+    const bevelBN = (css136.match(/--c-eg-bevel-bottom:/g) || []).length;
+    const wallUse = (css136.match(/inset 0 -8px 18px -8px var\(--c-eg-wall\)/g) || []).length;
+    if (wallN !== 2 || bevelTN !== 2 || bevelBN !== 2 || wallUse !== 2) {
+      problems136.push('§136⑦：--c-eg-wall/bevel-* 没有深浅成对，或没被两档 --c-eg-shade 同时消费');
+    }
+    if (/gs-gooey|gsGooeyStage|gs-wall/.test(entry136)) {
+      problems136.push('§136⑦：融合 / 制作站图层混进了入口页（祖先 filter 会废掉真折射）');
+    }
+    subHit('玻璃制作站');
+
+    if (problems136.length) { bad++; for (const p of problems136) console.log(`✗ ${p}`); }
+    else console.log('✓ 液态玻璃制作站与渐进模糊（§136）：引擎默认 ramp 未漂 · 隐藏站已登记且不挂导航 · 三层遮罩相邻透明 · 弹窗接线仍守 G11 · 回退与导航精修在位 · 光影三件套与融合演示在位');
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // §137–§142 · 2026-10-23 插件上限 / 五处补丁 / 识图额度 / 面板可观测
+  // ══════════════════════════════════════════════════════════════════════════
+  // 这一批防的全是**静默失效**：上限退回 20、钩子点没接线、载荷少字段、
+  // 设置存不上、带图请求额度掉回 400 —— 每一条都不会报错，只会"看起来好好的"。
+  {
+    const rd142 = (rel) => {
+      try { return stripComments(fs.readFileSync(path.join(REPO, rel), 'utf8'), 'js'); } catch { return ''; }
+    };
+    const raw142 = (rel) => {
+      try { return fs.readFileSync(path.join(REPO, rel), 'utf8'); } catch { return ''; }
+    };
+
+    // §137 钩子扩展点
+    {
+      const p = [];
+      const bus = rd142('src/hook-bus.js');
+      const idx = rd142('src/index.js');
+      const pl = rd142('src/hook-payload.js');
+      if (!/'after-incoming-message'/.test(bus)) p.push('§137①：HOOK_POINTS 里没有 after-incoming-message —— 入站钩子点会退回"未知点被丢弃"');
+      const nu = idx.indexOf('noteUnread(session');
+      const em = idx.indexOf("emit('after-incoming-message'");
+      const tr = idx.indexOf('const traceId = newTraceId()');
+      if (nu < 0 || em < 0 || tr < 0 || !(nu < em && em < tr)) {
+        p.push('§137②：index.js 的 after-incoming-message 不在 noteUnread 之后、traceId 之前 —— 位置错了就看不到"未被回复的消息"');
+      }
+      if (!/if \(allowed && !evt\.isPoke\) \{\s*await hookBus\.emit\('after-incoming-message'/.test(idx)) {
+        p.push('§137③：after-incoming-message 不在「白名单放行 + 非拍一拍」守卫内 —— 拍到/未放行的消息也会进插件账本');
+      }
+      for (const k of ['chatKey', 'scene', 'senderId', 'senderName', 'text', 'messageId', 'mentionedSelf', 'media', 'timestamp', 'self']) {
+        if (!new RegExp(`\\b${k}\\s*:`).test(pl)) p.push(`§137④：hook-payload 的入站载荷缺 ${k}`);
+      }
+      if (!/self:\s*false/.test(pl)) p.push('§137④：入站载荷 self 必须恒 false');
+      if (!/'T422 /.test(raw142('test/smoke.js'))) p.push('§137⑤：smoke 里没有 T422（载荷行为判据）');
+      subHit('钩子扩展点');
+      if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+      else console.log('✓ 钩子扩展点（§137）：第 6 点已登记 · 位置正确 · 守卫在位 · 10 个字段齐 · T422 在');
+    }
+
+    // §138 钩子载荷
+    {
+      const p = [];
+      const pl = rd142('src/hook-payload.js');
+      const idx = rd142('src/index.js');
+      if (!/export function contextPayload/.test(pl) || !/chatKey:/.test(pl)) p.push('§138①：contextPayload 缺 chatKey');
+      for (const k of ['senderId', 'senderName', 'messageId', 'mentionedSelf', 'media', 'timestamp', 'self']) {
+        if (!new RegExp(`\\b${k}\\s*:`).test(pl)) p.push(`§138①：contextPayload 的 triggerEntries 缺 ${k}`);
+      }
+      if (!/llmMessagesPayload\(\{ messages, chatKey: session\.key \}\)/.test(idx)) {
+        p.push('§138②：before-llm-messages 没有同时带 messages 与 chatKey');
+      }
+      if (!/'T423 /.test(raw142('test/smoke.js'))) p.push('§138③：smoke 里没有 T423（载荷行为判据）');
+      subHit('钩子载荷');
+      if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+      else console.log('✓ 钩子载荷（§138）：chatKey + 发送者七字段 · before-llm 带 chatKey · T423 在');
+    }
+
+    // §139 插件上限
+    {
+      const p = [];
+      const man = rd142('src/plugin-manifest.js');
+      const cc = rd142('src/custom-config.js');
+      const host = rd142('src/plugin-host.js');
+      if (!/PLUGIN_MAX\s*=\s*256\b/.test(man) || !/PLUGIN_MAX_LIMIT\s*=\s*1024\b/.test(man)) {
+        p.push('§139①：PLUGIN_MAX / PLUGIN_MAX_LIMIT 不是 256 / 1024 —— 上限又被写回去了');
+      }
+      const idsBody = (cc.match(/function pluginIds\(v\)[\s\S]*?\n\}/) || [''])[0];
+      if (/break;/.test(idsBody)) p.push('§139②：pluginIds 里还有 break —— 白名单又会被静默截断');
+      // 2026-10-23：返回形状新增 `hookTimeoutMs`（钩子超时，§145）。这里只要求
+      // `max` 仍是返回字段之一，不锁死整个对象字面量 —— 否则每加一个同级配置
+      // 都要改这条判据，而它真正要防的是"max 没带出去"。
+      if (!/return \{ enabled, settings: pluginSettings\(v\?\.settings, enabled\), max[,\s}]/.test(cc)) {
+        p.push('§139③：pluginFields 没有把 max 带出去 —— 配置里的上限到不了加载器');
+      }
+      if (!/p\.action = 'over'/.test(man) || !/p\.reason = 'over-limit'/.test(man)) {
+        p.push('§139④：planLoad 没有 over-limit 分支 —— 超限项会被算成 load 或 reject');
+      }
+      if (!/max: maxPluginsUsed/.test(host) || !/HOST_STATE\.OVER/.test(host)) {
+        p.push('§139⑤：宿主没把 max 传下去 / 没记录 OVER 状态');
+      }
+      const fm = await import(new URL('../src/field-schema.js', import.meta.url));
+      const b = fm.fieldMeta().bounds;
+      if (JSON.stringify(b.pluginMax) !== JSON.stringify([1, 1024])) {
+        p.push(`§139⑥：fieldMeta.bounds.pluginMax=${JSON.stringify(b.pluginMax)}，与插件上限常量不一致`);
+      }
+      subHit('插件上限');
+      if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+      else console.log('✓ 插件上限（§139）：256/1024 · 白名单不截断 · over-limit 可见 · 宿主接线 · 面板区间同源');
+    }
+
+    // §140 工具上限
+    {
+      const p = [];
+      const tr = rd142('src/tool-registry.js');
+      const idx = rd142('src/index.js');
+      const host = rd142('src/plugin-host.js');
+      if (!/TOOL_MAX\s*=\s*64\b/.test(tr) || !/TOOL_MAX_LIMIT\s*=\s*256\b/.test(tr)) {
+        p.push('§140①：TOOL_MAX / TOOL_MAX_LIMIT 不是 64 / 256 —— 上限又被写回去了');
+      }
+      if (!/createToolRegistry\(\{ max = TOOL_MAX \} = \{\}\)/.test(tr) || !/items\.size >= cap/.test(tr)) {
+        p.push('§140②：createToolRegistry 没接受 max，或 register 没用 cap');
+      }
+      if (!/createToolRegistry\(\{ max: cfg\.custom\?\.tools\?\.max \}\)/.test(idx)) {
+        p.push('§140③：index.js 没把 custom.tools.max 注入注册表 —— 配置改了也不生效');
+      }
+      if (!/limits:\s*\{[\s\S]*?toolsUsed:/.test(host)) p.push('§140④：运行期快照没有 limits.toolsUsed —— 面板看不到"工具 T / 上限 M"');
+      const fm = await import(new URL('../src/field-schema.js', import.meta.url));
+      const b = fm.fieldMeta().bounds;
+      if (JSON.stringify(b.toolMax) !== JSON.stringify([1, 256])) {
+        p.push(`§140⑤：fieldMeta.bounds.toolMax=${JSON.stringify(b.toolMax)}，与工具上限常量不一致`);
+      }
+      subHit('工具上限');
+      if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+      else console.log('✓ 工具上限（§140）：64/256 · max 注入 · cap 生效 · limits 下发 · 面板区间同源');
+    }
+
+    // §141 识图额度
+    {
+      const p = [];
+      const img = rd142('src/images.js');
+      const llm = rd142('src/llm.js');
+      const idx = rd142('src/index.js');
+      const cw = raw142('scripts/check-wb.mjs');
+      if (!/VISION_MIN_MAX_TOKENS\s*=\s*700\b/.test(img)) p.push('§141①：VISION_MIN_MAX_TOKENS 不是 700');
+      if (!/hasImageParts\(sentMsgs\) \? VISION_MIN_MAX_TOKENS : 0/.test(llm)) {
+        p.push('§141②：llm.js 没有对带图请求抬到下限 —— 150/400 的空正文洞又回来了');
+      }
+      if (!/maxTokens: VISION_MIN_MAX_TOKENS/.test(idx)) p.push('§141③：view_image 没有引用同一常量');
+      if (!/maxTokens: VISION_MIN_MAX_TOKENS[^)]*thinking:/.test(idx)) p.push('§141③：view_image 抬额度后丢了 thinking:off（思考会把额度吃光）');
+      if (!/VISION_MIN_MAX_TOKENS: imageMod\.VISION_MIN_MAX_TOKENS/.test(cw)) {
+        p.push('§141④：§16 的 KNOWN_IMPORTED_TOKENS 没登记 VISION_MIN_MAX_TOKENS —— 会红在"变量认不出"');
+      }
+      subHit('识图额度');
+      if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+      else console.log('✓ 识图额度（§141）：700 常量 · 带图请求兜底 · view_image 同源 · 已登记额度闸');
+    }
+
+    // §142 面板可观测
+    {
+      const p = [];
+      const app = rd142('panel/next/app.js');
+      const sc = rd142('panel/next/schema.js');
+      const st = rd142('panel/lib/state-collector.js');
+      if (!/sum\.over/.test(app) || !/limits\?\.toolsUsed/.test(app) || !/plugins\?\.max/.test(app)) {
+        p.push('§142①：pluginSummary 没有显示超限 / 已启用数 / 上限 / 工具数');
+      }
+      for (const k of ['run?.hooks', 'run?.tools', 'toolErrors', 'hookErrors', 'empty']) {
+        if (!app.includes(k)) p.push(`§142②：pluginList 没有读 ${k}（运行期可观测缺一块）`);
+      }
+      if (!/if \(a === 'plugin\.set'\) \{ commitPluginSetting\(el, el\.dataset\.p\); return; \}/.test(app)) {
+        p.push("§142③：change 分支没有 plugin.set —— 输入框又存不上");
+      }
+      if (!/'holidays\.ren', 'plugin\.set'/.test(app)) p.push('§142③：click 延迟列表没有 plugin.set —— 聚焦输入框会写旧值');
+      if (!/el\.checked === true/.test(app)) p.push('§142④：bool 没有写布尔（写字符串会让复选框回弹）');
+      if (!/fromState !== undefined \? fromState : f\.value/.test(app)) p.push('§142④：设置控件没有回填 state.custom —— 刷新后显示清单默认值');
+      if (!/userSettings: custom\.plugins\.settings/.test(st) || !/maxPlugins: custom\.plugins\.max/.test(st)) {
+        p.push('§142⑤：state-collector 没把 userSettings / maxPlugins 传给 extensionsOf');
+      }
+      if (!/bounds: 'pluginMax'/.test(sc) || !/bounds: 'toolMax'/.test(sc)) p.push('§142⑥：插件页缺少两个上限控件');
+      subHit('插件可观测');
+      if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+      else console.log('✓ 插件可观测（§142）：总览超限/上限 · 卡片钩子/工具/空载/告警 · 设置 change 提交并可回填');
+    }
+
+    // §143 发布模板不带维护者的大脑预设
+    {
+      const p = [];
+      let ex = null;
+      try { ex = JSON.parse(raw142('config.example.json')); } catch { p.push('§143①：config.example.json 读不出/不是合法 JSON'); }
+      const llm = ex?.llm || {};
+      if (ex && Object.keys(llm.customBrains || {}).length) p.push('§143②：发布模板里仍有维护者的 customBrains —— 会随安装包/公开仓发给别人');
+      if (ex && String(llm.activeCustomId || '')) p.push('§143②：activeCustomId 仍指向维护者的大脑');
+      if (ex && Object.keys(llm.presets || {}).length) p.push('§143③：presets 仍带维护者的模型/地址 —— 新用户会看到我们的预设');
+      if (ex && String(llm.apiKey || '')) p.push('§143④：发布模板的 apiKey 非空');
+      if (ex && Object.entries(llm.keys || {}).some(([, v]) => String(v || ''))) p.push('§143④：发布模板的 keys 里有非空值');
+      if (ex && (llm.model !== 'deepseek-flash' || llm.baseUrl !== 'https://api.deepseek.com/v1')) {
+        p.push('§143⑤：活动模型不是中性默认（deepseek-flash / api.deepseek.com）—— 模板不该带维护者的模型');
+      }
+      subHit('发布模板');
+      if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+      else console.log('✓ 发布模板（§143）：customBrains/presets/activeCustomId/keys 全清空 · 活动模型中性默认');
+    }
+
+    // §144 技能/记忆：不按条数截断，注入预算可配且真的接线
+    // 2026-10-23：以前 MEMORY_MAX=60 / SKILL_MAX=20 在归一化里 break，保存一次就丢
+    // 用户条目；本条盯"存储不再截断"和"预算从配置送到调用点"两件事。
+    {
+      const p = [];
+      const cc = rd142('src/custom-config.js');
+      const sk = rd142('src/skills.js');
+      const br = rd142('src/brain.js');
+      const sc = rd142('panel/next/schema.js');
+      const st = rd142('panel/lib/state-collector.js');
+      let ex = null;
+      try { ex = JSON.parse(raw142('config.example.json')); } catch { /* §143 已报 */ }
+      if (/const MEMORY_MAX|const SKILL_MAX/.test(cc)) {
+        p.push('§144①：MEMORY_MAX / SKILL_MAX 又回来了 —— 条目会再次被静默截断');
+      }
+      const memBody = (cc.match(/function memoryItems\(v\)[\s\S]*?\n\}/) || [''])[0];
+      const skBody = (cc.match(/function skillItems\(v\)[\s\S]*?\n\}/) || [''])[0];
+      if (/out\.length\s*>=\s*[^)]+\)\s*break/.test(memBody) || /out\.length\s*>=\s*[^)]+\)\s*break/.test(skBody)) {
+        p.push('§144②：memoryItems / skillItems 里还有按条数 break —— 保存时会丢条目');
+      }
+      if (!/skillPrompt:\s*\{[\s\S]*?max:\s*numOr\('skillPromptMax'/.test(cc)
+        || !/chars:\s*numOr\('skillPromptChars'/.test(cc)) {
+        p.push('§144③：readCustom 没把 skillPrompt 的 max/chars 带出来');
+      }
+      if (!/promptMax:\s*numOr\('memoryPromptMax'/.test(cc)) {
+        p.push('§144③：readCustom 没把 memory.promptMax 带出来');
+      }
+      if (!/opts\.max|maxSkills/.test(sk) || !/opts\.chars|maxChars/.test(sk)) {
+        p.push('§144④：pickSkillsForPrompt 没接受注入的 max/chars');
+      }
+      // 光"声明了 maxSkills"不够：循环必须真的用它，否则配置改了也不生效。
+      if (!/if \(out\.length >= maxSkills\) break;/.test(sk)) {
+        p.push('§144④：技能循环没用注入的 maxSkills —— 配置里的条数预算到不了实际注入');
+      }
+      if (!/custom\.skillPrompt\?\.max/.test(br) || !/custom\.skillPrompt\?\.chars/.test(br)) {
+        p.push('§144④：brain 没把 custom.skillPrompt 送进 pickSkillsForPrompt');
+      }
+      if (!/activeManualMemory[\s\S]*?memoryPromptMax/.test(cc)) {
+        p.push('§144⑤：activeManualMemory 没按 memory.promptMax 封顶');
+      }
+      for (const b of ['memoryPromptMax', 'skillPromptMax', 'skillPromptChars']) {
+        if (!new RegExp(`bounds: '${b}'`).test(sc)) p.push(`§144⑥：面板缺少 ${b} 的控件`);
+      }
+      if (!/custom\.skillPrompt\?\.max/.test(st) || !/custom\.memory\?\.promptMax/.test(st)) {
+        p.push('§144⑦：state-collector 没报告生效预算');
+      }
+      try {
+        const fm = await import(new URL('../src/field-schema.js', import.meta.url));
+        const CC = await import(new URL('../src/custom-config.js', import.meta.url));
+        const n = fm.fieldMeta().numbers;
+        if (CC.SKILL_IN_PROMPT !== n.skillPromptMax || CC.SKILL_CHARS_IN_PROMPT !== n.skillPromptChars
+          || CC.MANUAL_MEMORY_IN_PROMPT !== n.memoryPromptMax) {
+          p.push('§144⑧：导出常量与 field-schema 的默认值不一致 —— 预算有两个真相');
+        }
+      } catch (e) {
+        p.push(`§144⑧：读不到默认值（${e.message}）`);
+      }
+      if (ex && (ex.custom?.skillPrompt?.max !== 3 || ex.custom?.skillPrompt?.chars !== 2000)) {
+        p.push('§144⑨：config.example.json 缺 skillPrompt.max=3 / chars=2000');
+      }
+      if (ex && ex.custom?.memory?.promptMax !== 12) {
+        p.push('§144⑨：config.example.json 缺 memory.promptMax=12');
+      }
+      subHit('技能记忆预算');
+      if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+      else console.log('✓ 技能/记忆预算（§144）：条目不截断 · 三项预算可配 · brain/面板/模板全接线');
+    }
+
+    // §145 钩子超时：默认值、钳制、注入、fail-open、快照与面板
+    {
+      const p = [];
+      const hb = rd142('src/hook-bus.js');
+      const idx = rd142('src/index.js');
+      const host = rd142('src/plugin-host.js');
+      const sc = rd142('panel/next/schema.js');
+      let ex = null;
+      try { ex = JSON.parse(raw142('config.example.json')); } catch { /* §143 已报 */ }
+      if (!/export const HOOK_TIMEOUT_MS = 5000;/.test(hb) || !/export const HOOK_TIMEOUT_LIMIT = 120000;/.test(hb)) {
+        p.push('§145①：HOOK_TIMEOUT_MS / HOOK_TIMEOUT_LIMIT 不是 5000 / 120000');
+      }
+      if (!/createHookBus\(\{ log, timeoutMs = HOOK_TIMEOUT_MS \}/.test(hb)) {
+        p.push('§145②：createHookBus 不接受 timeoutMs');
+      }
+      if (!/Promise\.race\(\[run, timeout\]\)/.test(hb)
+        || !/setTimeout\(\(\) => resolve\(TIMED_OUT\), cap\)/.test(hb)) {
+        p.push('§145②：emit 没有 Promise.race + 超时哨兵 —— 慢钩子会挂死整轮');
+      }
+      if (!/timeoutMs: cap/.test(hb)) p.push('§145②：总线没有把生效超时暴露出来');
+      if (!/createHookBus\(\{ log, timeoutMs: cfg\.custom\?\.plugins\?\.hookTimeoutMs \}\)/.test(idx)) {
+        p.push('§145③：index.js 没把 custom.plugins.hookTimeoutMs 注入总线');
+      }
+      if (!/hookTimeoutMs: typeof bus\?\.timeoutMs/.test(host)) {
+        p.push('§145③：宿主快照的 limits 没有 hookTimeoutMs');
+      }
+      try {
+        const fm = await import(new URL('../src/field-schema.js', import.meta.url));
+        const b = fm.fieldMeta().bounds.hookTimeoutMs;
+        if (JSON.stringify(b) !== JSON.stringify([100, 120000])) {
+          p.push(`§145④：fieldMeta.bounds.hookTimeoutMs=${JSON.stringify(b)}，与总线常量不一致`);
+        }
+      } catch (e) {
+        p.push(`§145④：读不到钩子超时区间（${e.message}）`);
+      }
+      if (ex && ex.custom?.plugins?.hookTimeoutMs !== 5000) {
+        p.push('§145⑤：config.example.json 缺 plugins.hookTimeoutMs=5000');
+      }
+      if (!/bounds: 'hookTimeoutMs'/.test(sc)) p.push('§145⑤：插件页缺少钩子超时控件');
+      if (!/T432/.test(rd142('test/smoke.js'))) p.push('§145⑥：smoke 没有 T432 超时用例');
+      subHit('钩子超时');
+      if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+      else console.log('✓ 钩子超时（§145）：5000/120000 · race 放行 · 注入/快照/面板/模板全接线');
+    }
   }
 
   // ② **现役控制台入口页**必须真的是**一整张页面**（读成空文件 / 读错文件都在这里现形）。
@@ -17339,7 +18105,1057 @@ const LIB_SRC_ALLOW = [
 //       ⚠️ 如实登记的弱点：1 条 subHit 只能说"这一段的入口执行过了"，
 //          它**拦不住"段内某一条判据被删"**（那要靠 `problems` 里的判据本身）。
 //          留 1 而不是不留，是因为不留它就完全不在表里 —— 而"整段消失"是本项目反复踩的那一类。
-const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1]];
+// 146) 桌面壳进程与退出链（B1a · 2026-10-23）
+{
+  const p = [];
+  const main = read('../electron/main.js');
+  const dev = read('../scripts/dev-shell.mjs');
+  const launcher = read('../packaging/windows/tools/launcher.mjs');
+  const pkg = JSON.parse(read('../package.json'));
+  if (!/requestSingleInstanceLock\(\)/.test(main)) p.push('§146①：main.js 没有 requestSingleInstanceLock');
+  if (!/second-instance/.test(main)) p.push('§146①：main.js 没有 second-instance 唤起');
+  for (const needle of ['/api/bridge/stop', '/api/panel/quit', 'stop.mjs']) {
+    if (!main.includes(needle)) p.push(`§146②：退出链缺 ${needle}`);
+  }
+  const runAsNodeAssigned = /process\.env\.ELECTRON_RUN_AS_NODE\s*=\s*['"]1['"]/.test(main)
+    || /[^.\w]ELECTRON_RUN_AS_NODE\s*:\s*['"]1['"]/.test(main);
+  if (runAsNodeAssigned) {
+    p.push('§146③：main.js 把 ELECTRON_RUN_AS_NODE 设成 1（壳会以 Node 跑而不是开窗）');
+  }
+  if (!/delete env\.ELECTRON_RUN_AS_NODE/.test(dev)) p.push('§146③：dev-shell.mjs 没有清 ELECTRON_RUN_AS_NODE');
+  if (!/delete env\.ELECTRON_RUN_AS_NODE/.test(launcher)) p.push('§146③：launcher 没有清 ELECTRON_RUN_AS_NODE');
+  if (!/openShell/.test(launcher) || !/QQBOT_DESKTOP_DIR/.test(launcher) || !/--hidden/.test(launcher)) {
+    p.push('§146④：launcher 没有壳分支 / QQBOT_DESKTOP_DIR / --hidden');
+  }
+  if (!pkg.devDependencies || pkg.devDependencies.electron !== '44.9.3') {
+    p.push(`§146⑤：electron devDependency 必须精确 44.9.3（现 ${pkg.devDependencies && pkg.devDependencies.electron}）`);
+  }
+  if (!/check-desktop\.mjs/.test((pkg.scripts && pkg.scripts.verify) || '')) {
+    p.push('§146⑤：verify 没有接 check-desktop');
+  }
+  subHit('桌面壳进程退出');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 桌面壳进程与退出（§146）：单实例 · 二次唤起 · bridge/stop→panel/quit→stop.mjs · 清 ELECTRON_RUN_AS_NODE · launcher 壳分支 · electron 44.9.3');
+}
+
+// 147) 桌面壳安全基线（B1a · 2026-10-23）
+{
+  const p = [];
+  const main = read('../electron/main.js');
+  const preload = read('../electron/preload.js');
+  const pkg = JSON.parse(read('../package.json'));
+  for (const [needle, why] of [
+    ['contextIsolation: true', 'contextIsolation'],
+    ['sandbox: true', 'sandbox'],
+    ['nodeIntegration: false', 'nodeIntegration'],
+    ['webviewTag: false', 'webviewTag'],
+    ['webSecurity: true', 'webSecurity'],
+    ['setWindowOpenHandler', '新窗拦截'],
+    ["on('will-navigate'", '导航拦截'],
+    ['setPermissionRequestHandler', '权限请求'],
+    ['devTools: !INSTALL_ROOT', '生产 DevTools 关'],
+  ]) {
+    if (!main.includes(needle)) p.push(`§147①：main.js 缺 ${why}`);
+  }
+  if (!/contextBridge\.exposeInMainWorld\('estrellaShell'/.test(preload)) {
+    p.push('§147②：preload 没有只暴露 estrellaShell');
+  }
+  for (const ch of ['shell:notify', 'shell:retry', 'shell:quit', 'shell:visible']) {
+    if (!preload.includes(ch)) p.push(`§147②：preload 缺通道 ${ch}`);
+  }
+  if (/require\(['"]node:fs/.test(preload) || /ipcRenderer\.on\b/.test(preload)) {
+    p.push('§147②：preload 暴露了 fs 或任意 ipc 监听');
+  }
+  for (const forbidden of ['electron-updater', 'dsh-app://']) {
+    if ((pkg.dependencies && forbidden in pkg.dependencies)
+      || (pkg.devDependencies && forbidden in pkg.devDependencies)
+      || main.includes(forbidden)) {
+      p.push(`§147③：出现禁止的 ${forbidden}`);
+    }
+  }
+  const runAsNodeAssigned147 = /process\.env\.ELECTRON_RUN_AS_NODE\s*=\s*['"]1['"]/.test(main)
+    || /[^.\w]ELECTRON_RUN_AS_NODE\s*:\s*['"]1['"]/.test(main);
+  if (runAsNodeAssigned147) p.push('§147③：main.js 设置 ELECTRON_RUN_AS_NODE');
+  subHit('桌面壳安全');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 桌面壳安全（§147）：contextIsolation/sandbox/nodeIntegration false · 新窗与导航拦截 · 权限拒绝 · DevTools 生产关 · preload 白名单 · 禁 electron-updater/dsh-app/ELECTRON_RUN_AS_NODE');
+}
+
+// 148) 桌面壳窗口 / 托盘 / 自启（B1a · 2026-10-23）
+{
+  const p = [];
+  const main = read('../electron/main.js');
+  const bounds = read('../src/desktop/window-bounds.js');
+  const state = read('../src/desktop/shell-state.js');
+  const auto = read('../src/desktop/autostart.js');
+  const css = read('../panel/next/style.css');
+  const panelSettings = read('../panel/next/settings.js');
+  const panelHtml = read('../panel/next/index.html');
+  const panelApp = read('../panel/next/app.js');
+  for (const [needle, why] of [
+    ["titleBarStyle: 'hidden'", 'Windows titleBarStyle hidden'],
+    ['titleBarOverlay', 'titleBarOverlay'],
+    ['height: 40', '40 DIP'],
+    ['desktop-window-state.json', '窗口状态文件'],
+    ['tray.getBounds()', '托盘 bounds'],
+    ['QQBOT_TRAY_FORCE_UNAVAILABLE', '托盘不可用测试开关'],
+    ['background-close-confirmed', '首次关闭说明'],
+    ['trayDegraded', '图标缺失降级标记'],
+    ['trayFailed', '托盘构造失败兜底'],
+    ['NoTrayItemsDisplay', '通知区域策略检测'],
+    ['startTrayHealthGuard', '隐藏态托盘守护'],
+    ['explorerRunning', '资源管理器存活判据'],
+    ['tasklist', 'explorer 探测命令'],
+    ['QQBOT_TRAY_THROW', '托盘构造失败测试开关'],
+    ['readClosePreference', '关闭偏好读取'],
+    ['close action=', '关闭决策日志'],
+    ['normalizeWindowState', '窗口状态归一'],
+    ['reflowForDisplays', '显示器变化回收'],
+    ['getPrimaryDisplay', '主屏优先'],
+    ['scaleFactor', 'DPI 日志'],
+  ]) {
+    if (!main.includes(needle)) p.push(`§148①：main.js 缺 ${why}`);
+  }
+  // 名字必须整词命中：`includes('trayHidden')` 会被 `trayHiddenBroken` 骗过。
+  if (!/\btrayHidden\b/.test(main)) {
+    p.push('§148①：main.js 缺 trayHidden（最小化会被隐藏态守护误当成隐藏）');
+  }
+  if (!/export function clampBounds/.test(bounds) || !/workArea/.test(bounds)) {
+    p.push('§148②：window-bounds 缺 clampBounds / workArea');
+  }
+  if (!/export function normalizeWindowState\(/.test(bounds) || !/export function reflowForDisplays\(/.test(bounds)) {
+    p.push('§148②：window-bounds 缺窗口状态归一 / 显示器变化回收');
+  }
+  if (!/export function trayUsable/.test(state) || !/decideCloseAction/.test(state) || !/decideStartVisibility/.test(state)) {
+    p.push('§148②：shell-state 缺托盘/关闭/启动可见性三判据');
+  }
+  if (!/degraded|createFailed|notificationAreaDisabled/.test(state) || !/preference/.test(state)) {
+    p.push('§148②：shell-state 缺托盘降级/偏好分支');
+  }
+  if (!/StartupApproved/.test(auto) || !/export function readAutostartState/.test(auto) || !/export function setAutostart/.test(auto)) {
+    p.push('§148③：autostart 缺 StartupApproved 三态或读写口');
+  }
+  if (!/data-shell="electron"/.test(css) || !/-webkit-app-region/.test(css)) {
+    p.push('§148④：style.css 缺壳拖拽区 / 原生按钮预留');
+  }
+  if (!/data-set="autoStart"/.test(panelHtml) || !/autoStartState/.test(panelSettings)) {
+    p.push('§148⑤：设置层缺开机自启控件 / 系统状态读取');
+  }
+  if (!/function shellNotify\(/.test(panelApp) || !/estrellaShell/.test(panelApp)) {
+    p.push('§148⑤：面板缺壳通知接线');
+  }
+  subHit('桌面壳窗口托盘');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 桌面壳窗口/托盘/自启（§148）：40 DIP overlay · 窗口越界回收 · 托盘 bounds 兜底 · 首次关闭说明 · 自启三态 · 壳拖拽区 · 面板自启/通知接线');
+}
+
+// 149) 桌面壳载荷与路径（P1-7 · 2026-10-23）
+{
+  const p = [];
+  const payload = read('../packaging/windows/installer/make-installer-payload.mjs');
+  const fetchEl = read('../packaging/windows/installer/fetch-electron-runtime.mjs');
+  const launcher = read('../packaging/windows/tools/launcher.mjs');
+  const main = read('../electron/main.js');
+  const nsiCheck = read('../packaging/windows/installer/check-nsi.mjs');
+  const pkg = JSON.parse(read('../package.json'));
+  const toolchain = JSON.parse(read('../packaging/windows/installer/toolchain.json'));
+  if (!/electronOut/.test(payload) || !/electron\.exe/.test(payload)
+    || !/electronRuntime\s*:/.test(payload) || !/fetch-electron-runtime\.mjs/.test(payload)
+    || !/for \(const name of \['main\.js', 'preload\.js', 'error\.html', 'package\.json'\]\)/.test(payload)) {
+    p.push('§149①：payload 没有把 Electron 代码/运行时收进 app/electron，或 BUILD-INFO 缺 electronRuntime');
+  }
+  if (!toolchain.electron || toolchain.electron.version !== pkg.devDependencies.electron) {
+    p.push(`§149②：toolchain.electron.version 必须等于 devDependencies.electron（${toolchain.electron && toolchain.electron.version} ≠ ${pkg.devDependencies && pkg.devDependencies.electron}）`);
+  }
+  if (!toolchain.electron || !/^[0-9a-f]{64}$/.test(String(toolchain.electron.sha256 || ''))) {
+    p.push('§149②：toolchain.electron.sha256 必须是 64 位小写 hex');
+  }
+  if (!/electron\.exe/.test(fetchEl) || !/sha256FileSync/.test(fetchEl)) {
+    p.push('§149②：fetch-electron-runtime 没有校验 electron.exe 或 zip SHA-256');
+  }
+  if (!/(?:shellPaths|desktopDirFor)/.test(launcher) || !/programRoot/.test(launcher)) {
+    p.push('§149③：launcher 没有从 programRoot 解析壳目录');
+  }
+  if (/path\.join\(\s*installRoot\s*,\s*['"]electron['"]\s*\)/.test(launcher)) {
+    p.push("§149③：launcher 仍从 installRoot/electron 找壳（回滚会变成旧 app + 新壳）");
+  }
+  if (!/USER_ROOT\s*,\s*['"]electron['"]/.test(main)) {
+    p.push('§149④：Electron userData 没有落在 USER_ROOT/electron（/DELETEUSERDATA 会漏删）');
+  }
+  if (!/devTools:\s*!INSTALL_ROOT/.test(main)) {
+    p.push('§149④：安装版没有关 DevTools（app.isPackaged 在目录式安装里恒为 false）');
+  }
+  if (!/electron\.exe/.test(nsiCheck)) {
+    p.push('§149⑤：check-nsi 没有断言 app/electron/electron.exe');
+  }
+  subHit('桌面壳载荷');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 桌面壳载荷（§149）：Electron 44.9.3 进 versions/<ver>/app/electron · SHA 钉死 · launcher 从 programRoot 找壳 · userData 在 USER_ROOT · 安装版关 DevTools · check-nsi 断言 electron.exe');
+}
+
+// 150) 桌面壳停止链（P1-9 · 2026-10-23）
+{
+  const p = [];
+  const layout = read('../packaging/windows/tools/lib/install-layout.mjs');
+  const stop = read('../packaging/windows/tools/stop.mjs');
+  const commit = read('../packaging/windows/tools/install-commit.mjs');
+  const nsi = read('../packaging/windows/installer/Estrella-Bot.nsi');
+  const uninstall = read('../packaging/windows/installer/uninstall-stop.ps1');
+  const launcher = read('../packaging/windows/tools/launcher.mjs');
+  if (!/\^electron\(\?:\\\.exe\)\?\$/i.test(layout) || !/kind:\s*'shell'/.test(layout)) {
+    p.push('§150①：classifyProcess 没有精确的 Electron 壳身份');
+  }
+  if (!/pathEq\(bin,\s*wantExe/.test(layout)) {
+    p.push('§150①：壳身份没有精确比对 electron.exe 路径（会误杀同机其它 Electron）');
+  }
+  for (const needle of ['includeShell', 'excludePid', '--include-shell', '--exclude-pid', '.restart.json', '.shell.json', '.quit-intent.json']) {
+    if (!stop.includes(needle)) p.push(`§150②：stop.mjs 缺 ${needle}`);
+  }
+  if (!/\|\|\s*includeShell/.test(stop)) p.push('§150②：needSlowScan 没有把 includeShell 纳入');
+  if (!/kind === 'shell'/.test(stop)) p.push('§150②：stop.mjs 没有把壳放到最后杀');
+  if (!/includeShell:\s*true/.test(commit)) p.push('§150③：install-commit 停止应用时没有 includeShell');
+  const nsiHits = (nsi.match(/--include-shell/g) || []).length;
+  if (nsiHits < 2) p.push(`§150③：NSIS 安装/卸载停止链应各有 --include-shell（实测 ${nsiHits} 处）`);
+  if (!/electron\.exe/.test(uninstall) || !/ExecutablePath/.test(uninstall)) {
+    p.push('§150④：uninstall-stop.ps1 没有按精确 ExecutablePath 收壳');
+  }
+  if (!/stopStaleShell/.test(launcher) || !/\.shell\.json/.test(launcher)) {
+    p.push('§150⑤：launcher 没有旧壳接管（跨版本 single-instance 锁）');
+  }
+  subHit('桌面壳停止链');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 桌面壳停止链（§150）：精确壳身份 · stop.mjs include-shell/exclude-pid · 壳最后杀 · watchdog · NSIS/卸载/旧壳接管');
+}
+
+// 151) 退壳时序：不留孤儿（P1-9 · 2026-10-23）
+{
+  const p = [];
+  const main = read('../electron/main.js');
+  const panel = read('../panel/server.js');
+  for (const needle of ["app.on('before-quit'", "on('will-quit'", "on('session-end'", '--exclude-pid', 'quitResidual', '.quit-intent.json', 'QQBOT_CLOSE_ACTION']) {
+    if (!main.includes(needle)) p.push(`§151①：main.js 缺 ${needle}`);
+  }
+  if (!/event\.preventDefault\(\)[\s\S]{0,200}quitChain\(\)/.test(main)) {
+    p.push('§151①：before-quit 没有 preventDefault 后走 quitChain');
+  }
+  if (/if \(!closed\)\s*await runStopFallback/.test(main)) {
+    p.push('§151②：stop.mjs 仍只在端口未关时执行（机器人先死/面板先死时会留孤儿）');
+  }
+  if (!/host:\s*'127\.0\.0\.1'/.test(main)) {
+    p.push('§151②：waitPortClosed 没固定 127.0.0.1（localhost→::1 会假关闭）');
+  }
+  if (!/const showFallback = setTimeout\(/.test(main) || !/fallback show \(ready-to-show timeout\)/.test(main)) {
+    p.push('§151①：缺少 ready-to-show 超时兜底 show（隐藏窗口可能永远不首绘）');
+  }
+  if (!/\.restart\.json/.test(panel)) {
+    p.push('§151③：面板重启看门狗没有落盘 intent，退出时收不掉');
+  }
+  subHit('桌面壳退出时序');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 退壳时序（§151）：before-quit/will-quit/session-end · 无条件 stop.mjs · 四件残留核对 · 127.0.0.1 · 重启看门狗 intent');
+}
+
+// 152) 大包更新与回滚不变量（P1-8/P1-6 · 2026-10-23）
+{
+  const p = [];
+  const commit = read('../packaging/windows/tools/install-commit.mjs');
+  const retention = read('../packaging/windows/tools/lib/retention.mjs');
+  const rollback = read('../packaging/windows/tools/lib/rollback.mjs');
+  const launcher = read('../packaging/windows/tools/launcher.mjs');
+  const ps1 = read('../packaging/windows/tools/rollback-restore.ps1');
+  const manifest = read('../panel/lib/update-manifest.js');
+  const download = read('../panel/lib/update-download.js');
+  const update = read('../panel/lib/update.js');
+  const httpIo = read('../panel/lib/http-io.js');
+  const offline = read('../panel/lib/update-offline.js');
+  const main = read('../electron/main.js');
+  const appJs = read('../panel/next/app.js');
+  if (!/node\.previous\.old-/.test(commit) || !/const entry = \{ target: nodePrev, backup: nodePrevOld/.test(commit)) {
+    p.push('§152①：install-commit 没有把旧 node.previous 改名并写进 journal（复制窗口内断电会丢备份）');
+  }
+  if (!/node\\\.\(\?:previous\|failed\|new\|old\)\(\?:\$\|\[-\.\]\)/.test(retention)) {
+    p.push('§152①：retention 不认 node.previous.old-* 残留');
+  }
+  if (!/replace\(\/\^\\uFEFF\//.test(rollback)) {
+    p.push('§152②：readSwapMarker 不剥 BOM（helper 半途被杀会读不到 marker）');
+  }
+  if (!/if \(!sw\.swapped\) \{[\s\S]{0,400}result: 'blocked'/.test(launcher)) {
+    p.push('§152②：没有 node.previous 时仍会翻指针（旧 app + 新 runtime）');
+  }
+  if (!/UTF8Encoding\(\$false\)/.test(ps1) || !/\.tmp-/.test(ps1)) {
+    p.push('§152②：rollback-restore.ps1 仍用带 BOM 的 Set-Content（指针可能半写）');
+  }
+  if (!/INSTALLER_MAX_BYTES/.test(manifest) || !/installer\.size > INSTALLER_MAX_BYTES/.test(manifest)) {
+    p.push('§152③：清单没有绝对安装包上限');
+  }
+  if (!/partMeta/.test(download) || !/expectedVersion/.test(download) || !/diskBudgetOk/.test(download)) {
+    p.push('§152③：下载没有 .part 归属 sidecar / 版本绑定 / 磁盘预算');
+  }
+  for (const needle of ['sweepUpdateCache', 'offlineUploadPath', 'manifestObj.installer.sha256', 'diskBudgetOk']) {
+    if (!update.includes(needle)) p.push(`§152③：update.js 缺 ${needle}`);
+  }
+  if (!/readBodyToFile/.test(httpIo) || !/readBodyToFile/.test(offline) || !/completeOffline\(\{ exePath: target \}\)/.test(offline)) {
+    p.push('§152③：离线安装包仍全量读内存（大包会 OOM）');
+  }
+  if (!/ensureToastShortcut\(\);/.test(main) || !/appUserModelId/.test(main) || !/readShortcutLink/.test(main)) {
+    p.push('§152④：Windows Toast 没有补 AUMID 开始菜单快捷方式');
+  }
+  if (!/window\.estrellaShell\?\.quit\?\.\(\)/.test(appJs)) {
+    p.push('§152⑤：安装成功后没有让壳先退出（Electron 会锁住版本目录）');
+  }
+  subHit('桌面壳更新不变量');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 大包更新不变量（§152）：node.previous 事务化 · 无备份不翻指针 · BOM/原子写 · 清单 size 上限 · .part 归属 sidecar · 磁盘预算 · 离线流式 · AUMID · 安装前退壳');
+}
+
+// 153) 崩溃落盘与诊断包（P1-10 · 2026-10-23）
+{
+  const p = [];
+  const main = read('../electron/main.js');
+  const server = read('../panel/server.js');
+  const diag = read('../panel/lib/diagnostics.js');
+  const lastExit = read('../panel/lib/last-exit.js');
+  const paths = read('../panel/lib/paths.js');
+  const schema = read('../panel/next/schema.js');
+  const app = read('../panel/next/app.js');
+  const redact = read('../src/redact-identifiers.js');
+  const crash = read('../src/desktop/crash-record.js');
+  for (const needle of ['crashReporter.start', 'recordShellEvent', 'render-process-gone', 'child-process-gone', 'shell-events.jsonl', 'shell-exit.json', 'app.exit(1)']) {
+    if (!main.includes(needle)) p.push(`§153①：electron/main.js 缺 ${needle}`);
+  }
+  if (!/function shutdown\(reason = 'quit'\)[\s\S]{0,200}if \(!lastExitWritten\) \{[\s\S]{0,200}writeLastExit\(/.test(server)) {
+    p.push('§153②：面板 shutdown 没有先写 .last-exit.json');
+  }
+  for (const needle of ['addr-in-use', 'appendPanelEvent', 'lastExitText', 'buildDiagnosticsBundle', 'buildDiagnosticsZip', "what === 'diag'"]) {
+    if (!server.includes(needle)) p.push(`§153②：server.js 缺 ${needle}`);
+  }
+  for (const needle of ['shell.log', 'shell-events.jsonl', 'panel-events.jsonl', 'bridge-journal.log', 'rollback.json']) {
+    if (!diag.includes(needle)) p.push(`§153③：diagnostics 缺 ${needle}`);
+  }
+  if (!/add\(files, 'shell-events\.jsonl'/.test(diag)) {
+    p.push('§153③：diagnostics 的壳崩溃事件条目被改名/删除');
+  }
+  if (/readText\([^)]*['"](?:config\.json|bridge\.log|\.token)['"]/.test(diag)) {
+    p.push('§153③：diagnostics 把 config/token/聊天正文读进了包');
+  }
+  if (!/redactLines\(/.test(diag) || !/scanResidualSecrets|redactLines/.test(redact)) {
+    p.push('§153③：诊断包没有逐行脱敏/fail-closed 扫描');
+  }
+  if (!/maskIdentifiers/.test(redact) || !/\\d\{5,12\}/.test(redact)) {
+    p.push('§153③：缺少 QQ/群号上下文与裸数字兜底');
+  }
+  if (!/out\.replace\(\/\(\?<!\[\\d\.\]\)\\d\{5,12\}/.test(redact)) {
+    p.push('§153③：缺少裸 5–12 位数字兜底');
+  }
+  if (!/serializeShellEvent/.test(crash) || !/serializePanelEvent/.test(crash)) {
+    p.push('§153①：崩溃记录没有统一的序列化入口');
+  }
+  if (!/writeLastExit/.test(lastExit) || !/lastExitText/.test(lastExit) || !/appendPanelEvent/.test(lastExit)) {
+    p.push('§153②：last-exit 模块缺写/读/文案/事件追加');
+  }
+  if (!/panel\/lib\/last-exit\.js/.test(paths) || !/panel\/lib\/diagnostics\.js/.test(paths)
+    || !/src\/desktop\/crash-record\.js/.test(paths) || !/src\/redact-identifiers\.js/.test(paths)) {
+    p.push('§153④：新模块没有登记进 BACKEND_SOURCES（stale 自检与契约都会看不见）');
+  }
+  if (!/export\.diag/.test(schema) || !/panel', 'lastExitText/.test(schema)) {
+    p.push('§153⑤：面板没有诊断包按钮或上次退出展示');
+  }
+  if (!/doExport\('diag', 'zip'\)/.test(app)) p.push('§153⑤：app.js 没有把 export.diag 接到 ZIP');
+  subHit('桌面壳崩溃诊断');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 崩溃诊断（§153）：crashReporter/三类事件 · 面板 last-exit · 固定清单诊断 ZIP · 凭据/QQ/用户名脱敏 · fail-closed · 面板按钮');
+}
+
+// 154) 设置层（外观 / 启动 / 关于 / 数据）与关闭行为（P2 · 2026-10-23）。
+//
+// 这一段的取向与 §148 相同：判**接线**，不判视觉。设置层最容易出现的失效是
+// "后端有键、面板有控件、但两边没接上"——页面看起来正常，点了不生效，且不报错。
+{
+  const p = [];
+  const html = read('../panel/next/index.html');
+  const setJs = read('../panel/next/settings.js');
+  const setCss = read('../panel/next/settings.css');
+  const style = read('../panel/next/style.css');
+  const app = read('../panel/next/app.js');
+  const splash = read('../panel/next/splash.js');
+  const schema = read('../panel/next/schema.js');
+  const lm = read('../src/launch-mode.js');
+  const main = read('../electron/main.js');
+  const server = read('../panel/server.js');
+  const paths = read('../panel/lib/paths.js');
+  const nextPage = read('../panel/lib/next-page.js');
+  const dom = read('../test/panel-dom.mjs');
+  const verify = read('../panel/next/verify.mjs');
+
+  // ① 入口与四分区：齿轮 / 浮层 / 四个 section / 静态资产登记 / app 接线。
+  if (!/id="setGear"/.test(html) || !/id="settingsLayer"/.test(html) || !/id="settingsPanel"/.test(html)) {
+    p.push('§154①：设置层缺齿轮或浮层容器');
+  }
+  if (!/id="sec-appearance"/.test(html) || !/id="sec-startup"/.test(html)
+    || !/id="sec-about"/.test(html) || !/id="sec-data"/.test(html)) {
+    p.push('§154①：设置层缺外观/启动/关于/数据四个分区之一');
+  }
+  if (!/role="dialog"/.test(html) || !/aria-modal="true"/.test(html)) {
+    p.push('§154①：设置浮层缺 dialog / aria-modal —— 读屏与焦点会漏到背景页');
+  }
+  if (!/settings\.css/.test(html) || !/'settings\.js': 'text\/javascript/.test(nextPage)
+    || !/'settings\.css': 'text\/css/.test(nextPage)) {
+    p.push('§154①：settings.js/settings.css 没有进入口页或 NEXT_ASSETS（浏览器会 404）');
+  }
+  if (!/from '\.\/settings\.js'/.test(app) || !/initSettings\(/.test(app)) {
+    p.push('§154①：app.js 没有 import/调用 initSettings —— 齿轮点了不会开');
+  }
+  subHit('设置层');
+
+  // ② 外观：四件套 + 首屏启动层 + 主题色闭集合 + 顶栏旧控件迁走。
+  if (!/__themeBoot/.test(splash) || !/__accentBoot/.test(splash) || !/__fontBoot/.test(splash)
+    || !/next-theme/.test(splash) || !/next-accent/.test(splash)) {
+    p.push('§154②：splash.js 缺主题/主题色/字体的首屏观察孔或键名');
+  }
+  if (!/html\[data-accent="lagoon"\]/.test(style) || !/\.set-acc\[data-accent-opt="lagoon"\]/.test(style)
+    || !/html\[data-theme="dark"\]\[data-accent="lagoon"\]/.test(style)) {
+    p.push('§154②：style.css 缺主题色令牌（浅/深或色板预览）');
+  }
+  if (!/__accentBoot\.apply/.test(app) || !/setAccent\(/.test(app) || !/applyTheme\(/.test(app)) {
+    p.push('§154②：app.js 没接主题色/主题切换入口');
+  }
+  if (!/data-theme-opt="dark"/.test(html) || !/data-font-opt="serif"/.test(html)
+    || !/data-accent-opt/.test(setJs)) {
+    p.push('§154②：设置层缺主题/字体/主题色控件');
+  }
+  if (!/ShaderBG/.test(setJs) || !/setSpeed/.test(setJs)) {
+    p.push('§154②：设置层背景/流速没有接回 shader-bg.js 的唯一数据源');
+  }
+  if (/\bid="themeBtn"/.test(html) || /\bid="fontBtn"/.test(html) || /\bid="spdAnchor"/.test(html)) {
+    p.push('§154②：顶栏旧控件（themeBtn/fontBtn/spdAnchor）还在 —— 同一设置会有两套控件');
+  }
+  if (!/id="bgPickList"/.test(html) || !/role="radiogroup"/.test(html)) {
+    p.push('§154②：设置层背景选择器缺 #bgPickList / radiogroup');
+  }
+  if (!/#settingsPanel \.bg-sw/.test(setCss) || !/\.set-fab/.test(setCss)
+    || /#[0-9a-f]{6}\b/i.test(setCss)) {
+    p.push('§154②：settings.css 缺背景/齿轮样式，或写了就地色值（应只用令牌）');
+  }
+  subHit('设置层');
+
+  // ③ 启动 / 关闭：配置值域 + 面板控件 + 壳读同一份 + autoProtocol 两道闸。
+  if (!/closeAction/.test(lm) || !/autoProtocol/.test(lm)) {
+    p.push('§154③：launch-mode.js 缺 closeAction / autoProtocol 的值域或归一化');
+  }
+  if (!/data-close-opt="tray"/.test(html) || !/data-close-opt="quit"/.test(html)
+    || !/closeAction/.test(setJs) || !/autoProtocol/.test(setJs)) {
+    p.push('§154③：设置层缺关闭两态或 autoProtocol 控件/提交');
+  }
+  if (!/readClosePreference/.test(main) || !/closeAction/.test(main) || !/preference/.test(main)) {
+    p.push('§154③：Electron 壳没有读 closeAction 偏好（面板开关不会生效）');
+  }
+  if ((server.match(/LAUNCH_PREFS\.autoProtocol (?:!==|===) false/g) || []).length < 2) {
+    p.push('§154③：autoProtocol 没有同时闸住启动自起与守护（关掉后还会被拉回来）');
+  }
+  if (/'l\.mode'|'l\.open'|'l\.autostart'/.test(schema)) {
+    p.push('§154③：schema.js 还留着重复的启动控件（与设置层会分家）');
+  }
+  if (!/'launch', 'last'/.test(schema)) {
+    p.push('§154③：维护页丢了「上次启动」记录（排障信息被一起搬走）');
+  }
+  if (!/autoStartState/.test(setJs) || !/data-set="autoStart"/.test(html)) {
+    p.push('§154③：设置层缺开机自启控件或系统状态回读');
+  }
+  subHit('设置层');
+
+  // ④ 关于 / 数据：版本与仓库有来源、检查更新不复制、无上传表单。
+  if (!/appMeta/.test(server) || !/APP_HOMEPAGE/.test(paths)) {
+    p.push('§154④：/api/state 缺 appMeta 或 package.json homepage 的唯一来源');
+  }
+  if (!/aboutRepoPath/.test(html) || !/aboutRuntime/.test(html) || !/appMeta/.test(setJs)) {
+    p.push('§154④：关于卡缺仓库/运行时字段');
+  }
+  if (/Node 24/.test(setJs) || /Node 24/.test(html)) {
+    p.push('§154④：关于卡写死了 Node 24 —— 实际运行时由 /api/state 下发');
+  }
+  if (!/data-a="update\.check"/.test(html) || !/data-a="export\.all"/.test(html)
+    || !/data-a="export\.diag"/.test(html)) {
+    p.push('§154④：关于/数据缺检查更新或导出入口');
+  }
+  if (/<form|feedbackForm/.test(html)) {
+    p.push('§154④：设置层出现了意见箱表单 —— 本轮只允许 GitHub Issues 外链，不上传');
+  }
+  if (!/issues\/new/.test(setJs) || !/repoIssues/.test(setJs)) {
+    p.push('§154④：关于卡没有 GitHub Issues 外链');
+  }
+  if (!/setGear/.test(dom) || !/data-accent-opt/.test(dom) || !/设置层/.test(dom)) {
+    p.push('§154④：panel-dom 没有覆盖设置层（P2-3 的"面板没控件"会复发）');
+  }
+  if (!/setGear/.test(verify)) {
+    p.push('§154④：panel/verify.mjs 没有改到设置层主题入口');
+  }
+  if (!/EXPORT_SCOPES/.test(server) || !/what === 'selected'/.test(server) || !/get\('dry'\)\s*===\s*'1'/.test(server)) {
+    p.push('§154④：按范围导出的后端入口不完整（EXPORT_SCOPES / selected / dry=1 缺一）');
+  }
+  if (!/exportScopes/.test(html) || !/exportSelected/.test(html) || !/data-scope/.test(setJs)
+    || !/dry=1/.test(setJs)) {
+    p.push('§154④：设置层没有接上按范围导出（范围容器 / 导出所选 / dry 大小）');
+  }
+  const gapDoc = readDoc('docs/desktop/P2-QQAGENT-GAP.md');
+  if (gapDoc !== null && (!/P2-5/.test(gapDoc) || !/统一设置页/.test(gapDoc) || !/file:line/.test(gapDoc))) {
+    p.push('§154④：P2-5 对照表缺失或没有 file:line 证据列');
+  }
+  const vmDoc = readDoc('docs/desktop/P2-VM-ACCEPTANCE.md');
+  if (vmDoc !== null && (!/P2-1/.test(vmDoc) || !/C1/.test(vmDoc) || !/C2/.test(vmDoc)
+    || !/W4/.test(vmDoc) || !/环境不具备/.test(vmDoc))) {
+    p.push('§154④：P2-6 真机回执缺失（P2-1/关闭两态/W4/环境限制至少缺一项）');
+  }
+
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 设置层（§154）：四分区 · 7 主题色/8 背景/字体 · 顶栏旧控件迁走 · 关闭两态与 autoProtocol · 关于/数据/范围导出 · P2-5 对照表 · 测试迁移');
+}
+
+// 155) 系统分配端口与发现文件（P3-1 · 2026-10-24）。
+//
+// 这一段盯的是「产品不再假设 8788 空闲」的四条线：发现文件是唯一端口来源、
+// 启动/停止/壳/诊断都读它、Host/Origin 比实际端口、重启沿用端口。
+// 取向与 §150/§151 相同：判**接线**，不判某个具体端口值。
+{
+  const p = [];
+  const disc = read('../src/panel-discovery.cjs');
+  const paths = read('../panel/lib/paths.js');
+  const server = read('../panel/server.js');
+  const launcher = read('../packaging/windows/tools/launcher.mjs');
+  const consoleMjs = read('../packaging/windows/tools/lib/console.mjs');
+  const start = read('../packaging/windows/tools/start.mjs');
+  const onekey = read('../packaging/windows/tools/onekey.mjs');
+  const stop = read('../packaging/windows/tools/stop.mjs');
+  const main = read('../electron/main.js');
+  const diag = read('../packaging/windows/tools/diag.mjs');
+  const checkEnv = read('../packaging/windows/tools/check-env.mjs');
+  const portTest = read('../test/panel-port.mjs');
+  const doc = readDoc('docs/desktop/P3-PORT.md');
+  let pkg = { scripts: {} };
+  try { pkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')); } catch { /* 下面会报 */ }
+
+  // ① 发现文件契约：唯一写入/读取实现，schema 与 legacy 常量都只在这里。
+  if (!/DISCOVERY_SCHEMA\s*=\s*1/.test(disc) || !/LEGACY_PANEL_PORT\s*=\s*8788/.test(disc)) {
+    p.push('§155①：发现文件缺 schema=1 或 legacy 8788 常量（旧版识别没有唯一来源）');
+  }
+  for (const fn of ['writeDiscovery', 'readDiscovery', 'clearDiscovery', 'isLive', 'normalizeInfo']) {
+    if (!new RegExp(`function ${fn}\\(`).test(disc)) p.push(`§155①：panel-discovery.cjs 缺 ${fn}()`);
+  }
+  if (!/module\.exports\s*=\s*\{/.test(disc) || !/\breadDiscovery\b/.test(disc) || !/\bwriteDiscovery\b/.test(disc)) {
+    p.push('§155①：发现文件模块没有同时导出读写实现');
+  }
+  if (/token/i.test(disc) && /writeDiscovery[\s\S]*token/i.test(disc)) {
+    p.push('§155①：发现文件里出现了 token —— 它只能留在 panel/.token（0600）');
+  }
+  subHit('端口发现');
+
+  // ② 面板：产品形态默认 0；listen 后写实际端口；Host/Origin 比实际端口；重启保端口；退出清文件。
+  if (!/return MODE === 'dev' \? 8788 : 0;/.test(paths)
+    || !/Number\.isInteger\(raw\) && raw >= 0 && raw <= 65535/.test(paths)) {
+    p.push('§155②：paths.js 的端口选择没有「产品 0 / dev 8788 / 显式值域校验」三分支');
+  }
+  if (!/const addr = server\.address\(\)/.test(server) || !/ACTUAL_PORT = addr/.test(server)) {
+    p.push('§155②：server.js 没有从 server.address() 取实际端口');
+  }
+  if (!/panelDiscovery\.writeDiscovery\(USER_ROOT, \{/.test(server)) {
+    p.push('§155②：server.js listen 后没有写发现文件 —— 启动器永远找不到端口');
+  }
+  if (!/QQBOT_PANEL_PORT: String\(ACTUAL_PORT \|\| PORT \|\| 0\)/.test(server)) {
+    p.push('§155②：重启看门狗没有继承实际端口 —— 重启会换 origin，页面连不上');
+  }
+  if ((server.match(/panelDiscovery\.clearDiscovery\(USER_ROOT, process\.pid\)/g) || []).length < 2) {
+    p.push('§155②：shutdown 与 process exit 没有都清自己的发现文件（强杀会留陈旧发现）');
+  }
+  if (!/isLoopbackHost/.test(server) || !/Number\(u\.port\) === ACTUAL_PORT/.test(server)) {
+    p.push('§155②：Host/Origin 没有按实际端口判等（任意回环端口会放行）');
+  }
+  subHit('端口发现');
+
+  // ③ 启动器 / 便携包：传 0、等发现文件、用返回的 url 开窗；不再有固定 PANEL_URL 常量。
+  if (!/const PORT_OVERRIDE = normalizePort\(process\.env\.QQBOT_PANEL_PORT\);/m.test(launcher)
+    || /const PORT_OVERRIDE[^\n]*\|\|\s*8788/.test(launcher)
+    || !/QQBOT_PANEL_PORT: String\(PORT_OVERRIDE\)/.test(launcher)) {
+    p.push('§155③：Windows 启动器没有把 0（或显式值）传给面板，或又加了 8788 回落');
+  }
+  if (!/path\.join\(eff\.programRoot, 'src', 'panel-discovery\.cjs'\)/.test(launcher)) {
+    p.push('§155③：启动器没有从当前程序根动态加载发现模块 —— 顶层 tools/ 与 versions/<ver>/app 的相对层级在安装包里不成立');
+  }
+  if (!/panelDiscovery\.readDiscovery\(userRoot\)/.test(launcher) || !/panelUrl: started\.url/.test(launcher)
+    || !/panelUrl: running\.url/.test(launcher)) {
+    p.push('§155③：Windows 启动器没有从发现文件取端口/把 dynamic url 交给壳');
+  }
+  if (!/if \(legacyPanelBelongsToInstall\(legacyCmd, installRoot, legacyVersions\)\) \{/.test(launcher)
+    || !/processCommandLine\(legacyPid\)/.test(launcher)) {
+    p.push('§155③：启动器把 8788 上的任何面板都当成本安装根的旧版（同机开发树面板会挡住启动）');
+  }
+  if (/const PANEL_URL = `http:\/\/127\.0\.0\.1:/.test(launcher)) {
+    p.push('§155③：启动器又出现固定 PANEL_URL 常量 —— 8788 又变成了启动假设');
+  }
+  if (!/readDiscovery\(USER_ROOT\)/.test(consoleMjs) || /export const PANEL_URL/.test(consoleMjs)
+    || /export const PANEL_PORT/.test(consoleMjs) || !/function panelDiscovery\(\)/.test(consoleMjs)) {
+    p.push('§155③：便携包 console.mjs 仍导出固定 PANEL_URL/PANEL_PORT，或没读发现文件');
+  }
+  if (/PANEL_URL/.test(start) || /PANEL_URL/.test(onekey)) {
+    p.push('§155③：start/onekey 还在打印固定 PANEL_URL（应打印 ensureConsole 返回的 url）');
+  }
+  subHit('端口发现');
+
+  // ④ 停止链 / 壳 / 诊断：全部认发现文件；8788 只作 legacy 识别。
+  if (!/async function resolvePanelPort/.test(stop) || !/readDiscovery\(userRoot\)/.test(stop)
+    || !/discoveryOrNull\(\)/.test(stop)
+    || !/return await panelBelongsToInstall\(installRoot, versions, pid\) \? legacyPort : 0;/.test(stop)
+    || !/const needSlowScan = !port \|\| portStill/.test(stop)) {
+    p.push('§155④：stop.mjs 没有发现文件解析/legacy 身份确认，或端口未知时不扫进程（会误杀或漏停）');
+  }
+  if (!/let PANEL_URL = normalizePanelUrl/.test(main) || !/function refreshPanelUrl/.test(main)
+    || !/QQBOT_PANEL_URL: panelUrl/.test(launcher)) {
+    p.push('§155④：Electron 壳没有动态 PANEL_URL / 发现文件刷新，或启动器没传 url');
+  }
+  if (/const PANEL_URL = normalizePanelUrl\(process\.env\.QQBOT_PANEL_URL \|\| 'http:\/\/127\.0\.0\.1:8788/.test(main)) {
+    p.push('§155④：壳的 PANEL_URL 又写死 8788 —— 没有环境变量/发现文件时会去敲旧端口');
+  }
+  if (!/readDiscovery\(USER_ROOT\)/.test(diag) || !/readDiscovery\(USER_ROOT\)/.test(checkEnv)) {
+    p.push('§155④：diag/check-env 没有读发现文件（诊断仍会把 8788 当成控制台判据）');
+  }
+  // 工具层在安装包里的布局是 <InstallRoot>/tools/*.mjs + <InstallRoot>/versions/<ver>/app/src/...，
+  // 与开发树 <repo>/packaging/windows/tools/*.mjs + <repo>/src/... 不同。
+  // 发现模块必须从**当前程序根**懒加载；静态相对路径在真机上会直接 ENOENT。
+  for (const [name, src] of [['console', consoleMjs], ['stop', stop], ['diag', diag], ['check-env', checkEnv]]) {
+    if (!/createRequire/.test(src) || !/path\.join\(APP, 'src', 'panel-discovery\.cjs'\)/.test(src)) {
+      p.push(`§155④：${name} 没有从当前程序根懒加载发现模块 —— 安装包顶层 tools/ 与 app/ 的相对层级不成立`);
+    }
+  }
+  subHit('端口发现');
+
+  // ⑤ 端到端门 + 文档：8788 占用场景真的被测；读取点表在文档里。
+  if (!/LEGACY/.test(portTest) || !/assert\.notEqual\(port, LEGACY/.test(portTest)
+    || !/Host/.test(portTest) || !/restart/i.test(portTest)) {
+    p.push('§155⑤：test/panel-port.mjs 缺 8788 占用 / Host 实际端口 / 重启保端口之一');
+  }
+  if (!/test\/panel-port\.mjs/.test(String(pkg.scripts && pkg.scripts.verify || ''))) {
+    p.push('§155⑤：panel-port.mjs 没有进 npm run verify —— 新判据不会被日常门禁跑到');
+  }
+  if (doc !== null && (!/P3-1/.test(doc) || !/\.panel\.json/.test(doc) || !/读取点枚举/.test(doc)
+    || !/Mac/.test(doc))) {
+    p.push('§155⑤：docs/desktop/P3-PORT.md 缺 P3-1 / 发现文件 / 读取点枚举 / Mac 例外之一');
+  }
+
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 系统分配端口（§155）：发现文件唯一来源 · 产品默认 0/dev 8788 · 启动/停止/壳/诊断全读发现 · Host/Origin 比实际端口 · 重启保端口 · 8788 占用门与读取点表');
+}
+
+// 156) P3-2：只把「重启面板」「退出」收进 IPC（2026-10-24）。
+//
+// 这一段盯的是范围控制：页面只多出两个敏感动作的 IPC 入口，其余写路由仍是 HTTP；
+// 同时「半死」（后端没起/已退，窗口还在）必须有明确界面表达，浏览器入口不能退化。
+{
+  const p = [];
+  const preload = read('../electron/preload.js');
+  const main = read('../electron/main.js');
+  const control = read('../src/desktop/panel-control.js');
+  const app = read('../panel/next/app.js');
+  const err = read('../electron/error.html');
+  const server = read('../panel/server.js');
+  const pureTest = read('../test/check-desktop.mjs');
+  const e2e = read('../test/desktop-ipc.mjs');
+  const doc = readDoc('docs/desktop/P3-IPC.md');
+  let pkg = { scripts: {} };
+  try { pkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')); } catch { /* 下面会报 */ }
+
+  // ① 暴露面：恰好七个动作，只有 invoke；没有通用 invoke / 事件监听。
+  const channels = [...preload.matchAll(/ipcRenderer\.invoke\('([^']+)'[^)]*\)/g)].map((m) => m[1]);
+  const wantChannels = [
+    'shell:notify', 'shell:retry', 'shell:quit', 'shell:visible',
+    'shell:restart-panel', 'shell:quit-console', 'shell:panel-state',
+  ];
+  if (channels.length !== wantChannels.length || wantChannels.some((c, i) => channels[i] !== c)) {
+    p.push(`§156①：preload 通道不是恰好这七个（实得 ${JSON.stringify(channels)}）`);
+  }
+  if (!/contextBridge\.exposeInMainWorld\('estrellaShell'/.test(preload)) {
+    p.push('§156①：preload 没有只暴露 estrellaShell');
+  }
+  if (/ipcRenderer\.(?:on|send|sendSync)\(/.test(preload) || /\binvoke:\s*\(/.test(preload)) {
+    p.push('§156①：preload 出现通用 invoke / send / 监听 —— IPC 面被重新打开');
+  }
+  const handlers = [...main.matchAll(/ipcMain\.handle\('([^']+)'/g)].map((m) => m[1]);
+  if (handlers.length !== wantChannels.length || wantChannels.some((c) => !handlers.includes(c))) {
+    p.push(`§156①：main 的 ipcMain.handle 不是恰好这七个（实得 ${JSON.stringify(handlers)}）`);
+  }
+  if ((main.match(/if \(!trustedIpc\(event\)\)/g) || []).length < 7) {
+    p.push('§156①：还有 IPC handler 没做来源校验（任意页面都能调重启/退出）');
+  }
+  for (const fn of ['isTrustedRendererUrl', 'buildPanelSpawnSpec', 'panelCmdlineBelongsToProgram', 'parseRestartResponse', 'decideRestartMode', 'healthMatches']) {
+    if (!new RegExp(`export function ${fn}\\(`).test(control)) p.push(`§156①：panel-control.js 缺 ${fn}()`);
+  }
+  subHit('IPC收敛');
+
+  // ② 重启：健康走面板自己的路由；半死/不应答才按程序根直接拉起；起完重载窗口。
+  const restartFn = fnSlice(main, 'async function restartPanelIpc(', 200);
+  if (!restartFn) p.push('§156②：main.js 缺 restartPanelIpc()');
+  for (const needle of [
+    "postPanel('/api/panel/restart'", 'decideRestartMode', 'spawnPanelDirect',
+    'waitForNewPanel', 'reloadPanelWindow', 'PANEL_URL !== beforeUrl',
+  ]) {
+    if (!restartFn.includes(needle)) p.push(`§156②：restartPanelIpc 缺 ${needle}`);
+  }
+  if (!/if \(outcome\.terminal\)/.test(restartFn)) {
+    p.push('§156②：restartPanelIpc 没有区分终局/可恢复回执（400/0 不会半死直拉）');
+  }
+  const spawnFn = fnSlice(main, 'async function spawnPanelDirect(', 200);
+  if (!spawnFn) p.push('§156②：main.js 缺 spawnPanelDirect()');
+  for (const needle of ['panelCmdlineBelongsToProgram', 'buildPanelSpawnSpec', 'clearDiscovery', 'waitForNewPanel']) {
+    if (!spawnFn.includes(needle)) p.push(`§156②：半死恢复缺 ${needle}（会误杀或盲起）`);
+  }
+  if (!/function buildPanelSpawnSpec\(/.test(control) || !/delete childEnv\.ELECTRON_RUN_AS_NODE/.test(control)
+    || !/runtime', 'node'/.test(control)) {
+    p.push('§156②：buildPanelSpawnSpec 没有清 ELECTRON_RUN_AS_NODE 或用共享 runtime');
+  }
+  if (!/ipcMain\.handle\('shell:restart-panel', async \(event\)/.test(main)) {
+    p.push('§156②：main.js 没有挂 shell:restart-panel');
+  }
+  subHit('IPC收敛');
+
+  // ③ 退出：页面按钮只退控制台（不动机器人）；整程序退出仍走 quitChain。
+  const quitConsoleFn = fnSlice(main, 'async function quitConsoleOnly(', 200);
+  if (!quitConsoleFn) p.push('§156③：main.js 缺 quitConsoleOnly()');
+  for (const forbidden of ['/api/bridge/stop', 'runStopFallback', 'stop.mjs', 'quitChain(']) {
+    if (quitConsoleFn.includes(forbidden)) {
+      p.push(`§156③：quitConsoleOnly 调了 ${forbidden} —— 「退出控制台」会顺手停掉机器人`);
+    }
+  }
+  for (const needle of ['/api/panel/quit', 'stopPanelOnly', 'app.exit(0)']) {
+    if (!quitConsoleFn.includes(needle)) p.push(`§156③：quitConsoleOnly 缺 ${needle}`);
+  }
+  const stopPanelFn = fnSlice(main, 'async function stopPanelOnly(', 200);
+  for (const needle of ['panelDiscovery.readDiscovery(USER_ROOT)', 'panelCmdlineBelongsToProgram', 'stopProcessTree', '.restart.json']) {
+    if (!stopPanelFn.includes(needle)) p.push(`§156③：stopPanelOnly 缺 ${needle}（会留看门狗/误杀）`);
+  }
+  if (!/const ours = Boolean\(pc && cmd && pc\.panelCmdlineBelongsToProgram\(cmd, programRoot\(\)\)\);/.test(stopPanelFn)) {
+    p.push('§156③：stopPanelOnly 没有核对重启看门狗身份');
+  }
+  if (!/if \(pc && cmd && pc\.panelCmdlineBelongsToProgram\(cmd, programRoot\(\)\)\) \{/.test(stopPanelFn)) {
+    p.push('§156③：stopPanelOnly 没有核对面板命令行身份');
+  }
+  if (!/ipcMain\.handle\('shell:quit-console'/.test(main) || !/ipcMain\.handle\('shell:quit'/.test(main)) {
+    p.push('§156③：main.js 缺 shell:quit-console 或 shell:quit');
+  }
+  subHit('IPC收敛');
+
+  // ④ 页面 / 错误页：壳内走 IPC，浏览器回落 HTTP；半死有明确横幅与出口。
+  for (const needle of [
+    "typeof api.quitConsole === 'function'", "post('/api/panel/quit')",
+    "typeof api.restartPanel === 'function'", "post('/api/panel/restart')",
+  ]) {
+    if (!app.includes(needle)) p.push(`§156④：app.js 缺 ${needle}（壳内/浏览器至少一侧会退化）`);
+  }
+  if (!/function shellApi\(\)/.test(app) || !/控制台后端没有响应/.test(app)
+    || !/data-a="panel\.restart"/.test(app) || !/data-a="panel\.quit"/.test(app)
+    || !/后端未连接 —— 窗口还在/.test(app)) {
+    p.push('§156④：app.js 缺壳内离线横幅/重启/退出/副标题');
+  }
+  const offlineAt = app.indexOf('if (!S.online) {');
+  const offlineBranch = offlineAt >= 0 ? app.slice(offlineAt, offlineAt + 1200) : '';
+  if (!/if \(shellApi\(\)\)/.test(offlineBranch) || !/控制台后端没有响应/.test(offlineBranch)) {
+    p.push('§156④：离线分支没有按「有没有壳」分流 —— 壳内会退回演示模式文案');
+  }
+  const demoBlock = app.slice(app.indexOf('const DEMO_BLOCK'), app.indexOf('const DEMO_BLOCK') + 400);
+  if (!/shellApi\(\)/.test(demoBlock)) p.push('§156④：DEMO_BLOCK 在壳内仍说「演示模式」');
+  for (const needle of ['id="restart"', 'id="quit"', 'api.restartPanel(', 'api.quit(', '窗口还在']) {
+    if (!err.includes(needle)) p.push(`§156④：electron/error.html 缺 ${needle}`);
+  }
+  subHit('IPC收敛');
+
+  // ⑤ HTTP 不退化：两条服务端路由与浏览器测试仍在。
+  for (const needle of ["{ path: '/api/panel/restart', method: 'POST'", "{ path: '/api/panel/quit', method: 'POST'"]) {
+    if (!server.includes(needle)) p.push(`§156⑤：panel/server.js 删了 HTTP 路由 ${needle}`);
+  }
+  if (!/path: '\/api\/panel\/restart'/.test(read('../test/panel-port.mjs'))
+    || !/path: '\/api\/panel\/quit'/.test(read('../test/panel-port.mjs'))) {
+    p.push('§156⑤：test/panel-port.mjs 不再走 HTTP 重启/退出 —— 浏览器入口没有回归');
+  }
+  subHit('IPC收敛');
+
+  // ⑥ 测试与文档：纯判据 + 真机 E2E + 运行脚本 + 契约文档。
+  if (!/panel-control\.js/.test(pureTest) || !/isTrustedRendererUrl/.test(pureTest)
+    || !/buildPanelSpawnSpec/.test(pureTest) || !/preload 暴露面/.test(pureTest)) {
+    p.push('§156⑥：check-desktop.mjs 没有覆盖 IPC 来源/拉起参数/preload 暴露面');
+  }
+  for (const needle of ['控制台后端没有响应', 'restartPanel', 'quitConsole', 'ERR_CONNECTION_REFUSED']) {
+    if (!e2e.includes(needle)) p.push(`§156⑥：desktop-ipc.mjs 缺 ${needle} 场景`);
+  }
+  if (!pkg.scripts || !pkg.scripts['desktop:ipc'] || !/test\/desktop-ipc\.mjs/.test(pkg.scripts['desktop:ipc'])) {
+    p.push('§156⑥：package.json 缺 desktop:ipc 运行入口');
+  }
+  if (doc !== null) {
+    for (const needle of ['P3-2', 'IPC', '半死', '浏览器', '读取点']) {
+      if (!doc.includes(needle)) p.push(`§156⑥：docs/desktop/P3-IPC.md 缺 ${needle}`);
+    }
+  }
+  subHit('IPC收敛');
+
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ IPC 收敛（§156）：恰好七个动作 · 重启半死直拉/健康走 HTTP · 退出控制台不动机器人 · 壳内离线横幅 · 浏览器 HTTP 不退化 · 纯判据+真机 E2E');
+}
+
+// 157) 桌面启动静默（openOnStart 对 Electron 壳生效 · 2026-10-24）。
+//
+// P2 遗留：launcher 的 openWindow() 先无条件 openShell()，而 openOnStart 只在
+// 「没有 Electron 壳、回落浏览器」那一步被消费 ⇒ 设了 false 照样弹窗。
+// 这一段把「--hidden 或 openOnStart=false 任一成立都隐藏」钉在判据与启动链上。
+{
+  const p = [];
+  const lm = read('../src/launch-mode.js');
+  const launcher = read('../packaging/windows/tools/launcher.mjs');
+  const smoke = read('../test/smoke.js');
+  const doc = readDoc('docs/desktop/OPEN-ON-START.md');
+  if (!/export function shouldStartHidden\(/.test(lm)
+    || !/Boolean\(wantHidden\) \|\| openOnStart === false/.test(lm)) {
+    p.push('§157①：launch-mode.js 缺 shouldStartHidden（或把 openOnStart=false 当成显示）');
+  }
+  const shellFn = fnSlice(launcher, 'async function openShell(', 200);
+  const winFn = fnSlice(launcher, 'async function openWindow(', 200);
+  if (!launcher.includes('async function openShell({ installRoot, programRoot, userRoot, configFile, panelUrl, hidden = WANT_HIDDEN })')) {
+    p.push('§157②：openShell 没有接收 hidden（只能看 CLI --hidden，配置永远进不来）');
+  }
+  if (!/hidden \? \{ QQBOT_START_HIDDEN: '1' \}/.test(shellFn) || !/if \(hidden\) args\.push\('--hidden'\)/.test(shellFn)) {
+    p.push('§157②：openShell 没有把 hidden 传成 QQBOT_START_HIDDEN / --hidden');
+  }
+  if (!/opened: !hidden/.test(shellFn) || !/skipped: true, hidden: true/.test(shellFn)) {
+    p.push('§157②：壳隐藏启动时启动跟踪仍记 opened:true（面板会显示“已打开”，与事实不符）');
+  }
+  if (!/readLaunchFile\(configFile\)/.test(winFn)
+    || !/shouldStartHidden\(\{ wantHidden: WANT_HIDDEN, openOnStart:/.test(winFn)) {
+    p.push('§157③：openWindow 没有先读 launch.openOnStart 再决定是否隐藏');
+  }
+  if (!/openShell\(\{ installRoot, programRoot, userRoot, configFile, panelUrl, hidden \}\)/.test(winFn)) {
+    p.push('§157③：openWindow 没有把 hidden 交给 openShell（配置仍会被绕过）');
+  }
+  if (!/if \(hidden\) return \{ ok: true, skipped: true, reason: 'hidden-without-shell' \}/.test(winFn)
+    || /if \(WANT_HIDDEN\) return \{ ok: true, skipped: true, reason: 'hidden-without-shell' \}/.test(winFn)) {
+    p.push('§157③：无壳回落只看 WANT_HIDDEN —— openOnStart=false 时仍会开浏览器');
+  }
+  subHit('启动静默');
+
+  // ② fail-open + 测试：老 app 没有 shouldStartHidden 时只认 --hidden；两种情况都要有断言。
+  if (!/shouldStartHidden\(\{ wantHidden: WANT_HIDDEN, openOnStart: launch \? launch\.openOnStart : true \}\)\s*\n\s*: WANT_HIDDEN;/.test(winFn)) {
+    p.push('§157④：老版本 app（无 shouldStartHidden）没有 fail-open 到 --hidden');
+  }
+  if (!/T436/.test(smoke) || !/shouldStartHidden/.test(smoke)
+    || !/openOnStart: false/.test(smoke)) {
+    p.push('§157④：smoke 没有钉 shouldStartHidden 的四组组合/坏值 fail-open');
+  }
+  if (doc !== null) {
+    for (const needle of ['P2 遗留', 'openOnStart=false', 'Electron', 'VM', 'hidden']) {
+      if (!doc.includes(needle)) p.push(`§157④：docs/desktop/OPEN-ON-START.md 缺 ${needle}`);
+    }
+  }
+  subHit('启动静默');
+  subHit('启动静默');
+  subHit('启动静默');
+
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 启动静默（§157）：--hidden/openOnStart=false 任一隐藏 · 配置先于开壳读取 · 无壳不回落浏览器 · 跟踪记 skipped · 老 app fail-open · smoke T436');
+}
+
+// 158) 差分更新评估（先量再判 · 2026-10-24）。
+//
+// 评估本身不改生产更新链；§158 只证明证据自洽、决策符合预登记，且 no-go 时生产代码没有
+// 偷偷长出 delta 字段。没有实测数据/没有 V5 数据却判 go 会被这里挡住。
+{
+  const p = [];
+  const validator = path.join(REPO, 'scripts', 'p3-differential', 'evidence-validate.mjs');
+  const report = path.join(REPO, 'docs', 'desktop', 'P3-DIFFERENTIAL.md');
+  const summaryFile = path.join(REPO, 'docs', 'desktop', 'evidence', 'p3-differential', 'summary.json');
+  const runsFile = path.join(REPO, 'docs', 'desktop', 'evidence', 'p3-differential', 'runs.json');
+  if (!fs.existsSync(validator)) p.push(`§158：缺 ${path.relative(REPO, validator)}`);
+  if (IS_PUBLISH_COPY) {
+    // 发布拷贝按设计没有评估报告与证据；有反而是泄漏。反向断言，不静默跳过。
+    for (const f of [report, summaryFile, runsFile]) {
+      if (fs.existsSync(f)) p.push(`§158：发布拷贝里出现了内部评估件 ${path.relative(REPO, f)}`);
+    }
+  } else {
+    for (const f of [report, summaryFile, runsFile]) {
+      if (!fs.existsSync(f)) p.push(`§158：缺 ${path.relative(REPO, f)}`);
+    }
+  }
+  subHit('差分评估');
+  let result = null;
+  if (!IS_PUBLISH_COPY) {
+    try {
+      const r = spawnSync(process.execPath, [validator, '--repo', REPO, '--json'], {
+        encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: '' },
+        timeout: 120_000,
+      });
+      result = r.stdout ? JSON.parse(r.stdout) : null;
+      if (r.status !== 0 || !result || !result.ok) {
+        const errs = (result && result.errors) || [r.stderr || r.stdout || `validator exit ${r.status}`];
+        for (const e of errs) p.push(`§158：${e}`);
+      }
+    } catch (e) {
+      p.push(`§158：证据校验器跑不起来：${e && e.message ? e.message : e}`);
+    }
+  }
+  subHit('差分评估');
+  if (!IS_PUBLISH_COPY) {
+    if (result && result.summary) {
+      if (!['go', 'no-go'].includes(result.summary.decision)) p.push('§158：decision 不是 go/no-go');
+      if (result.summary.decision === 'no-go' && result.summary.goNoGoGates && result.summary.goNoGoGates.gB === true) {
+        p.push('§158：G-B 明明通过却判 no-go（决策与数据不一致）');
+      }
+    } else {
+      p.push('§158：校验器没有返回 summary');
+    }
+  }
+  subHit('差分评估');
+  const pkg = JSON.parse(read('../package.json'));
+  if (!pkg.scripts || !pkg.scripts.verify || !/test\/p3-differential-eval\.mjs/.test(pkg.scripts.verify)) {
+    p.push('§158：npm run verify 没有纳入 test/p3-differential-eval.mjs');
+  }
+  subHit('差分评估');
+  if (!fs.existsSync(path.join(REPO, 'test', 'mutations', 'p3-diff-1024.mjs'))) {
+    p.push('§158：缺定向变异 test/mutations/p3-diff-1024.mjs');
+  }
+  subHit('差分评估');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 差分更新评估（§158）：预登记先于测量 · 场景/重复齐全 · 验签与 target SHA 一致 · 决策符合预登记 · no-go 时生产无 delta · 定向变异在位');
+}
+
+// 159) 公开拷贝门禁兼容（P3-5 · 2026-10-24）。
+//
+// `docs/desktop/**`、`scripts/publish-audit.mjs` 按设计不随公开拷贝发布；而 §154–§158
+// 与变异清单要读它们。这一段把「发布拷贝上只跳过确实不发布的文档内容 / 变异目标」
+// 钉成判据，防止下一次再用「整段静默跳过」把门关掉。
+{
+  const p = [];
+  const leaf = read('../scripts/lib/publish-copy.mjs');
+  for (const fn of ['isPublishCopy', 'isHeldBackForGates', 'isMaintainerCheckout']) {
+    if (!new RegExp(`export function ${fn}\\(`).test(leaf)) p.push(`§159：publish-copy.mjs 缺 ${fn}()`);
+  }
+  if (!/PUBLISH_COPY_MARKER\s*=\s*'对外拷贝里的\*\*桩\*\*'/.test(leaf)) {
+    p.push('§159：发布拷贝桩标记不在唯一叶子里');
+  }
+  const checker = read('../scripts/check-wb.mjs');
+  if (!/const IS_PUBLISH_COPY = isPublishCopy\(REPO\);/.test(checker)) {
+    p.push('§159：check-wb 没有复用 publish-copy 的 isPublishCopy（又长了一份内联桩判定）');
+  }
+  if (!/const readDoc = \(rel\) =>/.test(checker)
+    || !/if \(IS_PUBLISH_COPY && isHeldBackForGates\(norm\)\) \{/.test(checker)
+    || !/skippedDocs\.push\(norm\);\s*return null;/.test(checker)) {
+    p.push('§159：readDoc 没有「发布拷贝 + held-back 才返回 null」的 fail-closed 守卫');
+  }
+  if (/read\('\.\.\/docs\/desktop\//.test(checker)) {
+    p.push('§159：check-wb §154–§158 又出现裸文档读取（公开拷贝会 ENOENT）');
+  }
+  const lint = read('../scripts/mutate-lint.mjs');
+  for (const needle of ['publishCopy', 'isHeldBack', 'skipped', 'maintainerOnly']) {
+    if (!lint.includes(needle)) p.push(`§159：mutate-lint 缺 ${needle} 支持`);
+  }
+  if (!/if \(publishCopy && m\.file && isHeldBack\(m\.file\)\) \{/.test(lint)
+    || !/return \{ files: plans\.length, total, bad, noop, skipped, plans \};/.test(lint)) {
+    p.push('§159：mutate-lint 的 held-back 跳过或 skipped 回传不完整');
+  }
+  if (!/发布模式·held-back 目标缺失/.test(lint)) {
+    p.push('§159：mutate-lint --selftest 没有发布模式样本');
+  }
+  const mut = read('../scripts/mutate.mjs');
+  if (!/isHeldBackForGates/.test(mut) || !/maintainerOnly/.test(mut)) {
+    p.push('§159：mutate.mjs 没有与 lint 同口径的发布/维护者过滤');
+  }
+  const ci = read('../scripts/ci-verify.mjs');
+  if (!/pkg\.scripts\.verify/.test(ci) || !/onlyHeldBack/.test(ci)
+    || !/if \(publishCopy && onlyHeldBack\) \{/.test(ci)) {
+    p.push('§159：ci-verify 没有从 verify 派生、或允许跳过非 held-back 步骤');
+  }
+  let fixture = null;
+  try { fixture = JSON.parse(fs.readFileSync(path.join(REPO, 'test', 'fixtures', 'ci-config.json'), 'utf8')); } catch { /* 下面报 */ }
+  if (!fixture || !fixture.llm || !String(fixture.llm.apiKey || '').startsWith('SANDBOX-FAKE-')
+    || !fixture.llm.keys || Object.values(fixture.llm.keys).some((v) => !String(v).startsWith('SANDBOX-FAKE-'))) {
+    p.push('§159：test/fixtures/ci-config.json 缺失或含非假凭据（CI 夹具必须可公开）');
+  }
+  subHit('公开拷贝');
+  subHit('公开拷贝');
+  subHit('公开拷贝');
+  subHit('公开拷贝');
+  subHit('公开拷贝');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 公开拷贝门禁（§159）：桩标记唯一叶子 · readDoc fail-closed · 变异只跳 held-back · ci-verify 只跳 publish-audit · 假凭据夹具');
+}
+
+// 160) Windows 桌面构建纳入 CI（P3-5 · 2026-10-24）。
+//
+// 这一段只钉「出包前四层全绿 / 只手动触发 / 不发布 / 未签名 / 产物可对账」，
+// 不钉具体 runner 镜像版本。CI 的 YAML 一旦被改坏，这里是唯一会红的地方。
+{
+  const p = [];
+  const ci = read('../.github/workflows/ci.yml');
+  if (!/workflow_dispatch:/.test(ci) || !/build_windows:/.test(ci)) {
+    p.push('§160：ci.yml 缺 workflow_dispatch / build_windows 输入');
+  }
+  if (!/permissions:\s*\n\s*contents:\s*read/.test(ci)) {
+    p.push('§160：ci.yml 没有把权限收到 contents: read');
+  }
+  if (/contents:\s*write/.test(ci)) p.push('§160：ci.yml 出现了 contents: write（构建 job 不需要写权限）');
+  if (!/needs:\s*\[contracts, smoke, windows-contracts, publish-audit, regression\]/.test(ci)) {
+    p.push('§160：desktop-build 的 needs 没有覆盖全部四层门禁');
+  }
+  if (!/github\.event_name == 'workflow_dispatch' && inputs\.build_windows/.test(ci)) {
+    p.push('§160：desktop-build 没有限定手动 dispatch + build_windows');
+  }
+  if (!/runs-on:\s*windows-latest/.test(ci) || !/choco install nsis --version=3\.13\.0/.test(ci)) {
+    p.push('§160：桌面构建没有用 windows-latest 或没有钉 NSIS 3.13.0');
+  }
+  if (!/build-installer\.mjs/.test(ci) || !/--require-provenance/.test(ci)) {
+    p.push('§160：CI 没有走 build-installer.mjs --require-provenance');
+  }
+  if (!/actions\/upload-artifact@v4/.test(ci) || !/retention-days:\s*14/.test(ci)
+    || !/if-no-files-found:\s*error/.test(ci) || !/compression-level:\s*0/.test(ci)) {
+    p.push('§160：artifact 上传缺 retention/if-no-files/compression 判据');
+  }
+  if (/release:|upload-release|git push|--tag/.test(ci)) {
+    p.push('§160：CI 构建 workflow 出现了 release/tag/push —— 越过 G4/G6');
+  }
+  if (!/node scripts\/ci-verify\.mjs/.test(ci)) {
+    p.push('§160：没有用 ci-verify.mjs 做四层回归入口');
+  }
+  for (const t of ['panel-dom', 'installer-p1', 'installer-p6', 'p3-ci-eval']) {
+    if (!ci.includes(t)) p.push(`§160：Windows 门禁缺 ${t}`);
+  }
+  for (const [file, needles] of [
+    ['../packaging/windows/tools/lib/build-info.mjs', ['export function parseBuildInfo', 'export function writeBuildInfo']],
+    ['../packaging/windows/installer/build-map.mjs', ['export function stageTarget', 'export function portableKind']],
+    ['../packaging/windows/installer/compare-builds.mjs', ['sourceCommit', 'sourceWorktree', 'SHA256SUMS']],
+    ['../packaging/windows/installer/build-installer.mjs', ['makensis', 'ARTIFACT-SHA256SUMS.txt', 'build-receipt.json']],
+    ['../packaging/windows/make-portable-build-info.mjs', ['writeBuildInfo']],
+  ]) {
+    const src = read(file);
+    for (const needle of needles) if (!src.includes(needle)) p.push(`§160：${file} 缺 ${needle}`);
+  }
+  if (!read('../scripts/make-publish-copy.mjs').includes('PUBLISH-PROVENANCE.json')
+    || !read('../packaging/windows/make-app.mjs').includes('PUBLISH-PROVENANCE.json')
+    || !read('../packaging/windows/installer/make-installer-payload.mjs').includes('PUBLISH-PROVENANCE.json')) {
+    p.push('§160：跨血缘 provenance 没有贯穿 发布拷贝 → ④ 包根 → 安装器 BUILD-INFO');
+  }
+  const pkg = JSON.parse(read('../package.json'));
+  if (!/test\/p3-ci-eval\.mjs/.test(String(pkg.scripts && pkg.scripts.verify || ''))) {
+    p.push('§160：npm run verify 没有纳入 test/p3-ci-eval.mjs');
+  }
+  subHit('CI 构建');
+  subHit('CI 构建');
+  subHit('CI 构建');
+  subHit('CI 构建');
+  subHit('CI 构建');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ Windows 桌面 CI（§160）：手动 dispatch · 四层 needs · Windows 构建 · NSIS 3.13 · 0 warning/假件下限 · 未签名 artifact · 跨血缘对账 · 无 release/tag');
+}
+
+  // ① 契约块数下限。`ran + 1` 里那个 +1 就是**本段自己**（本段也走 console.log、也被计入），
+  //    于是这里比的是"算上本段一共多少段"，与 `process.on('exit')` 的口径完全一致。
+  //    ⚠️ 放在 §148 之后：桌面壳三段与其它契约块一样必须先计入，再比下限。
+  if (ran + 1 < MIN_CONTRACTS) {
+    problems.push(`只跑了 ${ran + 1} 段契约（下限 ${MIN_CONTRACTS}）—— 有人删了断言，或某一段被提前 return 掉了`);
+  }
+
+const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5]];
   for (const [bucket, min] of HEAVY_SUB_MIN) {
     const c = subCountOf(bucket);
     if (c < min) {
@@ -17422,5 +19238,8 @@ const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出�
   }
 }
 
+if (skippedDocs.length) {
+  console.log(`ℹ️ 发布拷贝：跳过 ${skippedDocs.length} 处按设计不发布的文档内容断言（${[...new Set(skippedDocs)].join('、')}）`);
+}
 console.log(bad === 0 ? '── 全部通过 ──' : `── ${bad} 处问题 ──`);
 process.exit(bad === 0 ? 0 : 1);

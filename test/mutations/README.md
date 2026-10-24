@@ -361,3 +361,37 @@ NODE_OPTIONS= node scripts/mutate.mjs --restore     # 万一进程被杀，用�
 | Q5 | 主链路不传 decision.kind | check-wb | §124⑤ | BLOCKED |
 | Q6 | 面板删掉小时上限控件 | check-wb | §124⑥ | BLOCKED |
 | Q7 | /api/config 不夹取小时上限 | check-wb | §124⑦ | BLOCKED |
+
+## B6 · 插件上限 / 五处补丁 / 识图额度 / 面板可观测（`plugin-limits-1023.mjs` · 2026-10-23）
+
+| 变异 | 打的是什么 | 层 | 该由谁拦 | 期望 |
+|---|---|---|---|---|
+| P1 | 白名单又按 20 截断 | check-wb | §139② | BLOCKED |
+| P2 | 超限项又算成 load | check-wb | §139④ | BLOCKED |
+| P3 | 工具上限退回 24 | check-wb | §140① | BLOCKED |
+| P4 | 不注入 custom.tools.max | check-wb | §140③ | BLOCKED |
+| P5 | 入站钩子点改名 | check-wb | §137② | BLOCKED |
+| P6 | 载荷删 senderId ×2 | check-wb | §137④/§138① | BLOCKED |
+| P7 | 锚定粒度退回 1 | smoke | T424 | BLOCKED |
+| P8 | remember 不批量回收 | smoke | T425 | BLOCKED |
+| P9 | plugin.set 的 change 分支失效 | check-wb | §142③ | BLOCKED |
+| P10 | 不传 userSettings | check-wb | §142⑤ | BLOCKED |
+| P11 | 带图额度下限被删 | check-wb | §141② | BLOCKED |
+| P12 | view_image 退回 400 | check-wb | §141③ | BLOCKED |
+| P13 | 空载标记恒假 | smoke | T431 | BLOCKED |
+| P14 | 总览不显示超限数 | check-wb | §142① | BLOCKED |
+
+| P15 | 发布模板塞回自定义大脑 | check-wb | §143② | BLOCKED |
+
+## B7 · 技能/记忆预算 + 钩子超时（`limits-timeout-1023.mjs` · 2026-10-23）
+
+| 变异 | 打的是什么 | 层 | 该由谁拦 | 期望 |
+|---|---|---|---|---|
+| L1 | 技能又按 20 条截断 | check-wb | §144② | BLOCKED |
+| L2 | 记忆又按 60 条截断 | check-wb | §144② | BLOCKED |
+| L3 | 技能预算忽略 opts.max | check-wb | §144④ | BLOCKED |
+| L4 | 记忆预算忽略 promptMax | check-wb | §144⑤ | BLOCKED |
+| L5 | 超时哨兵不被识别 | check-wb | §145② | BLOCKED |
+| L6 | 不注入 hookTimeoutMs | check-wb | §145③ | BLOCKED |
+| L7 | 模板缺 hookTimeoutMs | check-wb | §145⑤ | BLOCKED |
+| L8 | readCustom 不返回 skillPrompt | check-wb | §144③ | BLOCKED |

@@ -13,20 +13,39 @@
  *
  * @returns {object} 可直接 JSON.stringify 的导出包
  */
-// ⚠️ `path` / `fs` 是**本模块自己**要用的：下面 :38 拼人格文件的绝对路径、:216 读运行日志。
-//    第 19 轮把它从 `server.js` 搬出来时漏带了这两行（`server.js` 顶层本来有），于是
+// ⚠️ `fs` 是**本模块自己**要用的：下面读人格文件与运行日志。
+//    第 19 轮把它从 `server.js` 搬出来时漏带了 `fs` / `path` 两行（`server.js` 顶层本来有），于是
 //    **每个** `/api/custom/export` 都在第一处 `path.join` 抛 `ReferenceError: path is not defined`
 //    ⇒ HTTP 500、导出 100% 不可用。而 `check-wb` 是静态扫描器，"该 import 的有没有 import"
 //    它查不到 ⇒ 只有运行期那一层（`sandbox --run`）能抓到。第 57 轮 B1 补回。
+//    P1 人格路径修复（2026-10-22）后，人格文件解析搬进 `src/user-root.js` 的
+//    `resolvePersonaFile()`，本模块不再需要 `path`。
 import fs from 'node:fs';
-import path from 'node:path';
 import {
   SCENES, REPLY_LENGTHS, ENHANCE, ENHANCE_KEYS, PLAY_RULES, SKILL_IN_PROMPT, readCustom,
 } from '../../src/custom-config.js';
 import { listAutoMemory, readRecords } from '../../src/memory-store.js';
 import { isSafeRelPath } from '../../src/plugin-manifest.js';
+import { resolvePersonaFile } from '../../src/user-root.js';
 import { USER_ROOT, PERSONA_DIR, BRIDGE_LOG } from './paths.js';
 import { readTrace } from './trace-io.js';
+
+/**
+ * 按范围导出的闭集合（2026-10-23 · P2）。
+ *
+ * 这里只登记**现有 buildExport 真的会产出的文件**；没有数据源的「群友档案」
+ * 不登记，面板也就不会显示一个点了没用的勾选项。文件名是服务端常量，
+ * 用户传进来的只有 id，不存在路径拼接。
+ */
+export const EXPORT_SCOPES = Object.freeze([
+  { id: 'config', label: '配置与偏好', files: ['config-已脱敏.json'] },
+  { id: 'persona', label: '人格', files: ['人格.md'] },
+  { id: 'prompt', label: '提示词', files: ['提示词-最近一次真实调用.txt', '提示词-素材.md'] },
+  { id: 'rules', label: '规则与场景', files: ['规则与触发.md'] },
+  { id: 'memory', label: '记忆', files: ['记忆.md'] },
+  { id: 'skills', label: '技能与角色卡', files: ['技能.md'] },
+  { id: 'log', label: '运行日志（末尾 400 行）', files: ['运行日志-末尾400行.txt'] },
+]);
 
 export function makeExportBundle() {
   return function buildExport(cfg, what, mask = true) {
@@ -44,8 +63,11 @@ export function makeExportBundle() {
     // ⚠️ 不可利用 ≠ 不用防：`/api/config` 目前写不了 `persona.file`，但那属于"输入面恰好很窄"，
     //    不是"这条路径是安全的" —— 判据要按路径本身写，不按"今天谁能改它"写。
     const personaSafe = !!personaFile && isSafeRelPath(personaFile);
-    const personaAbs = personaSafe ? path.join(PERSONA_DIR, personaFile) : '';
-    const personaText = personaAbs && fs.existsSync(personaAbs)
+    // P1 路径回归修复（2026-10-22）：与 `src/config.js` 共用同一个 resolver。
+    // 旧实现是 `path.join(PERSONA_DIR, personaFile)`，而配置里写的是
+    // `persona/qq-chat.md` ⇒ 会拼成 persona/persona/qq-chat.md，导出包永远显示“不存在”。
+    const personaAbs = personaSafe ? resolvePersonaFile(personaFile, { personaDir: PERSONA_DIR }) : '';
+    const personaText = personaAbs
       ? fs.readFileSync(personaAbs, 'utf8')
       : '（人格文件不存在或未设置）';
 
@@ -119,7 +141,7 @@ export function makeExportBundle() {
       `- 回复时 @ 人：${custom.replyStyle.mentionAt ? '是' : '否'}`,
       `- 连续回复最小间隔：${custom.replyStyle.cooldownSec} 秒`,
       ``,
-      `## 技能（共 ${custom.skills.length} 条，注入时最多同时上 ${SKILL_IN_PROMPT} 条）`,
+      `## 技能（共 ${custom.skills.length} 条，注入时最多同时上 ${custom.skillPrompt?.max ?? SKILL_IN_PROMPT} 条）`,
       ...(custom.skills.length
         ? custom.skills.map((s) => `- [${s.enabled ? '启用' : '停用'}] ${s.name}（${s.kind === 'persona' ? '角色卡' : '知识包'} · ${s.scope.type === 'global' ? '全局' : `${s.scope.type}:${s.scope.id}`}）`)
         : ['(还没有技能)']),
@@ -191,7 +213,7 @@ export function makeExportBundle() {
         ? '全局（所有群 / 私聊）'
         : s.type === 'group' ? `只在群 ${s.id || '(没填)'}` : `只对 ${s.id || '(没填)'} 生效`);
       files['技能.md'] = [
-        `# 技能（共 ${list.length} 条，注入时最多同时上 ${SKILL_IN_PROMPT} 条）`,
+        `# 技能（共 ${list.length} 条，注入时最多同时上 ${custom.skillPrompt?.max ?? SKILL_IN_PROMPT} 条）`,
         ``,
         ...(list.length
           ? list.flatMap((s) => [

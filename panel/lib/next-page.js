@@ -64,9 +64,16 @@ import { NEXT_DIR } from './paths.js';
 export const NEXT_ASSETS = {
   'index.html': 'text/html; charset=utf-8',
   'style.css': 'text/css; charset=utf-8',
+  /* 左下角设置层（2026-10-23 · P2）：外观 / 启动 / 关于 / 数据。 */
+  'settings.css': 'text/css; charset=utf-8',
+  'settings.js': 'text/javascript; charset=utf-8',
   'app.js': 'text/javascript; charset=utf-8',
   'schema.js': 'text/javascript; charset=utf-8',
   'demo-state.js': 'text/javascript; charset=utf-8',
+  /* `splash.js`（2026-10-22）：`<head>` 里的同步启动层，先把本地字体偏好写到
+     `<html>` 上再让样式表生效。必须登记 —— 否则 §58① 的双向比对会把它判成
+     "永远取不到的孤儿文件"。 */
+  'splash.js': 'text/javascript; charset=utf-8',
 
   /* ── 动效三件套 + 实验室（2026-10-02 · UI 升级轮）────────────────────────
      `motion.js` / `liquid-toggle.js` / `liquid-toggle.css` 是**动效能力层**。
@@ -86,6 +93,10 @@ export const NEXT_ASSETS = {
         后者启动时要读 window.Motion，反了就是静默空组件。 */
   'motion.js': 'text/javascript; charset=utf-8',
   'icons.js': 'text/javascript; charset=utf-8',
+  /* HUD 信息岛（2026-10-23）：顶栏状态岛 + 它的样式。玻璃材质跟随主题，
+     不含 HUD 核；设置存浏览器 localStorage，由「维护 → HUD调整」页读写。 */
+  'island.js': 'text/javascript; charset=utf-8',
+  'island.css': 'text/css; charset=utf-8',
   'morph.js': 'text/javascript; charset=utf-8',
   'liquid-toggle.js': 'text/javascript; charset=utf-8',
   'liquid-toggle.css': 'text/css; charset=utf-8',
@@ -111,6 +122,15 @@ export const NEXT_ASSETS = {
      不接产品页。登记它的理由是 §58① 的**磁盘↔名单双向比对**：
      没登记的 .html 会被判成"永远取不到的孤儿文件"（而页面看起来只是少了个东西）。 */
   'lab-motion-spec.html': 'text/html; charset=utf-8',
+  /* `lab-liquid-glass.html`（2026-10-22）：液态玻璃制作站。隐藏实验页，
+     不挂产品导航；与另三个 lab 同类，双击/file:// 可开。
+     ⚠️ 它加载真实的 `style.css` 取产品令牌，不复制一套颜色。 */
+  'lab-liquid-glass.html': 'text/html; charset=utf-8',
+  'glass-station.css': 'text/css; charset=utf-8',
+  'glass-station.js': 'text/javascript; charset=utf-8',
+  /* `glass-scrim.css`（2026-10-22）：弹窗的渐进模糊遮罩，产品页与制作站共用。
+     它只消费 style.css 的令牌，不定义 --c-*。 */
+  'glass-scrim.css': 'text/css; charset=utf-8',
   /* `glass.js`（2026-10-03 01:28 出现）：液态玻璃光学引擎，从旧控制台移植进 v2。
      ⚠️ 登记它的理由是 §58① 的**双向比对**：`.html/.css/.js` 只要落在磁盘上就必须登记，
         否则被判成"永远取不到的孤儿文件"（而页面看起来只是少了个东西）。

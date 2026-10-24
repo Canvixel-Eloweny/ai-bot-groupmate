@@ -29,8 +29,14 @@ If Not fso.FileExists(scriptFile) Then
   WScript.Quit 2
 End If
 
+Dim extra
+extra = ""
+If WScript.Arguments.Count > 0 Then
+  If LCase(WScript.Arguments(0)) = "--hidden" Then extra = " --hidden"
+End If
+
 cmd = "cmd /c " & Chr(34) & Chr(34) & nodeExe & Chr(34) & " " & Chr(34) & scriptFile & Chr(34) & _
-      " --install-root " & Chr(34) & root & Chr(34) & _
+      " --install-root " & Chr(34) & root & Chr(34) & extra & _
       " >> " & Chr(34) & logFile & Chr(34) & " 2>&1" & Chr(34)
 
 ws.CurrentDirectory = root

@@ -434,7 +434,7 @@ Section "Install"
   File /r "stage\*.*"
 
   ; Stop the running panel AND bot before replacing the shared runtime.
-  nsExec::ExecToLog '"$INSTDIR\.stage-${APP_VERSION}\runtime\node\node.exe" "$INSTDIR\.stage-${APP_VERSION}\tools\stop.mjs" --install-root "$INSTDIR" --user-root "$UserRoot"'
+  nsExec::ExecToLog '"$INSTDIR\.stage-${APP_VERSION}\runtime\node\node.exe" "$INSTDIR\.stage-${APP_VERSION}\tools\stop.mjs" --install-root "$INSTDIR" --user-root "$UserRoot" --include-shell'
   Pop $0
   ${If} $0 != "0"
     IfSilent +2
@@ -594,7 +594,7 @@ Section "Uninstall"
   ; Prefer the JS stop chain when the runtime is intact; the PowerShell fallback
   ; below still works if the program folder is damaged.
   IfFileExists "$INSTDIR\runtime\node\node.exe" 0 +4
-    nsExec::ExecToLog '"$INSTDIR\runtime\node\node.exe" "$INSTDIR\tools\stop.mjs" --install-root "$INSTDIR" --user-root "$UserRoot" --stop-napcat'
+    nsExec::ExecToLog '"$INSTDIR\runtime\node\node.exe" "$INSTDIR\tools\stop.mjs" --install-root "$INSTDIR" --user-root "$UserRoot" --stop-napcat --include-shell'
     Pop $0
 
   SetOutPath "$TEMP"

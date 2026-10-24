@@ -39,13 +39,10 @@
  *      node scripts/cache-probe.mjs --json
  */
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.js';
 import { capabilitiesOf } from '../src/model-caps.js';
 import { LlmClient } from '../src/llm.js';
 import { buildSampleSystem } from './prompt-diff.mjs';
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * 对照用的对话。刻意做成**短句、贴近真实群聊**——

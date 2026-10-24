@@ -791,7 +791,10 @@ export class MemoryKeeper {
       //    真机实测（2026-09-23）：5 次调用 5 次失败，表现是结构化记忆
       //    **在真机上一条都没落过盘**，而四层回归全绿（mock 不模拟"思考吃额度"）。
       //    判断只是"这段群聊里有没有值得记的"，用不着思维链。
-      { temperature: 0, maxTokens: 160, thinking: { mode: 'off' } }
+      // 2026-10-22（群友补丁实测）：DeepSeek 等模型**关不掉思考**时，`mode:'off'`
+      // 会被 resolveThinking 折回 on，160 个 token 全被 reasoning 吃满、content 恒空
+      // ⇒ 结构化记忆一条都落不了盘。抬到 2000 给那行 JSON 留足余量（上限不按上限计费）。
+      { temperature: 0, maxTokens: 2000, thinking: { mode: 'off' } }
     );
     // 补上这笔"看不见的固定支出"。
     // 它在旧实现里从来没进过 usage.jsonl：recordUsage(llm.lastUsage) 在主链路上

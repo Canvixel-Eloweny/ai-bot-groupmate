@@ -69,7 +69,7 @@ function walk(dir, depth, out, maxDepth) {
 }
 
 /** 解压后可能多套一层目录（官方包通常是 `NapCat.xxxx.Shell/`），所以要动态求"家"。 */
-export function findNativeHome() {
+function findNativeHome() {
   if (!fs.existsSync(NAPCAT_NATIVE_DIR)) return null;
   const files = walk(NAPCAT_NATIVE_DIR, 0, [], 3)
     .filter((p) => /\.(bat|exe|cmd)$/i.test(p))
@@ -142,7 +142,7 @@ export function readNativeWebuiPort() {
  *    就会发出一张裂图 —— 而裂图在页面上与"取不到"长得一样（都是破图标），
  *    用户没法区分，我们也没法从截图判断。所以宁可判"不完整"、退回落的那份。
  */
-export function looksLikeCompletePng(buf) {
+function looksLikeCompletePng(buf) {
   if (!buf || buf.length < 16) return false;
   const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
   for (let i = 0; i < sig.length; i += 1) if (buf[i] !== sig[i]) return false;
@@ -276,18 +276,57 @@ export function startNativeNapcat({ qq = '' } = {}) {
  *    ⚠️ 只按端口杀是杀不掉的：没登录时 WS 端口根本没开，按端口找不到进程，
  *       于是"重启协议端"变成"又拉了一个 NapCat"，二维码永远不会重新生成。
  *
- * @param {(pid:number)=>Promise<boolean>} killTree 面板的杀树函数（按 pid，仅用于①）
+ * @param {(pid:number)=>Promise<boolean>} killTree 保留形参（调用方仍传；端口分支现在
+ *   自己查监听 PID 后强杀，因为那个函数只接受 pid，不接受 `{ port }`）
  * @param {{wsPort?:number}} [opts] 协议端 WS 端口 —— 由 `panel/server.js` 的
  *   `onebotProbePorts()` 传入（配置里机器人真正连的那个）。默认 3001 只是 NapCat
  *   的出厂值，**不是判据来源**：用户改过端口的部署上，写死 3001 会让①永远找不到进程。
  */
+/**
+ * 查出监听某个端口的 PID（Windows）。
+ *
+ * ⚠️ `panel/lib/proc.js` 的 `killTree` 是**按 pid** 的；`stopNativeNapcat` 早先把
+ * `{ port }` 传给它，那条路一直静默失效（`Number.isFinite({})` 为假 ⇒ 直接 false）。
+ * 这里用 PowerShell 的 `Get-NetTCPConnection` 查 PID，查不到再回退 `netstat -ano`。
+ */
+function portPids(port) {
+  if (!IS_WIN) return [];
+  const n = Number(port);
+  if (!Number.isFinite(n) || n <= 0) return [];
+  const uniq = (list) => [...new Set(list.filter((x) => Number.isFinite(x) && x > 0))];
+  try {
+    const ps = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      `(Get-NetTCPConnection -LocalPort ${n} -State Listen -ErrorAction SilentlyContinue).OwningProcess`],
+      { encoding: 'utf8', timeout: 8000, windowsHide: true });
+    const pids = uniq(ps.split(/\s+/).map((s) => Number(s.trim())));
+    if (pids.length) return pids;
+  } catch { /* 老系统没有 Get-NetTCPConnection —— 回退 netstat */ }
+  try {
+    const out = execFileSync('netstat', ['-ano', '-p', 'tcp'], { encoding: 'utf8', timeout: 8000, windowsHide: true });
+    const pids = [];
+    for (const line of out.split('\n')) {
+      if (!new RegExp(`:${n}\\s+\\S+\\s+LISTENING\\s+(\\d+)`, 'i').test(line)) continue;
+      const m = line.match(/LISTENING\s+(\d+)/i);
+      if (m) pids.push(Number(m[1]));
+    }
+    return uniq(pids);
+  } catch {
+    return [];
+  }
+}
+
 export async function stopNativeNapcat(killTree, { wsPort = 3001 } = {}) {
   if (!IS_WIN) return { ok: false, msg: '仅 Windows' };
 
-  // ① 按端口（登录态在时）
+  // ① 按端口（登录态在时）。⚠️ 本仓的 `killTree` 是**按 pid** 的，不能传 `{ port }`
+  //    —— 先查出监听该端口的 PID，再走同一套强杀。
   try {
-    const r = await killTree({ port: wsPort });
-    if (r && r.ok) return { ok: true, msg: '已停止协议端' };
+    const pids = portPids(wsPort);
+    if (pids.length) {
+      forceKillTree(pids);
+      await new Promise((s) => setTimeout(s, 800));
+      if (!portPids(wsPort).length) return { ok: true, msg: '已停止协议端' };
+    }
   } catch { /* 端口那条路本来就可能找不到，继续按映像名 */ }
 
   // ② 按映像名 + 进程树，**强杀**
@@ -343,7 +382,7 @@ function orphanQqPids() {
 }
 
 /** 当前在跑的 NapCat 主进程 PID 列表（tasklist /fi csv，解析第二列）。 */
-export function napcatProcessPids() {
+function napcatProcessPids() {
   if (!IS_WIN) return [];
   try {
     const out = execFileSync(

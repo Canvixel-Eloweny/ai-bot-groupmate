@@ -62,7 +62,7 @@ export default [
   {
     id: 'M42',
     note: '删掉「独立窗口」的内测提示 —— 首跑灰色空窗又会回来，用户当成装坏了',
-    file: 'panel/next/schema.js',
+    file: 'panel/next/index.html',
     anchor: /注意：内测版先不要点「独立窗口 · 无地址栏」，还有部分 BUG（首跑可能出一个灰色空窗，要再双击一次）。/g,
     count: 1,
     apply: (s) => s.replace('注意：内测版先不要点「独立窗口 · 无地址栏」，还有部分 BUG（首跑可能出一个灰色空窗，要再双击一次）。', ''),

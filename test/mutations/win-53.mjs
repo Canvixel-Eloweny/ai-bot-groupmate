@@ -240,9 +240,9 @@ export default [
     note: 'stopNativeNapcat 的按端口杀改回写死 3001 —— 改过 WS 端口的部署上①永远找不到进程，'
       + '"重启协议端"于是变成"又拉一个 NapCat"，二维码永远不会重新生成。预期 BLOCKED（§96⑧c）',
     file: 'panel/lib/napcat-native.js',
-    anchor: /const r = await killTree\(\{ port: wsPort \}\);/,
-    count: 1,
-    apply: (s) => s.replace('const r = await killTree({ port: wsPort });', 'const r = await killTree({ port: 3001 });'),
+    anchor: /portPids\(wsPort\)/g,
+    count: 2,
+    apply: (s) => s.replaceAll('portPids(wsPort)', 'portPids(3001)'),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

@@ -229,6 +229,11 @@ node packaging/windows/scan-package.mjs <pkg目录>      # 退出码 0 = 0 命�
 
 **8. `BUILD-INFO.txt` ← 构建溯源（每份包一份）**
 
+> 订正（2026-10-24 · P3-5）：④ 的 BUILD-INFO 不再手写，统一由
+> `node packaging/windows/make-portable-build-info.mjs --pkg <④目录>` 生成
+> （`--check` 只核对）。字段与安装器 payload 同源 `tools/lib/build-info.mjs`，
+> 含 `sourceCommit` / `sourceWorktree` / `buildCommit`；`builtAt` 每次不同，对账时忽略。
+
 2026-10-11（"总项目与外部线路"轮）起，包根多一份 `BUILD-INFO.txt`，记：
 **源提交**（短哈希 + 提交标题）、`package.json` 版本、**是否含未发布改动**、构建时间、
 内嵌运行时版本与它的官方哈希比对结果、npm / `ws` 版本、清单项数、真值复扫结论。
@@ -246,10 +251,17 @@ node packaging/windows/scan-package.mjs <pkg目录>      # 退出码 0 = 0 命�
 `makensis` 执行，macOS 负责 staging、校验、清单。规格见 `INSTALLER-SPEC.md` §6/§11/§16。
 
 ```bash
+# 0) macOS：取 Windows x64 Electron 44.9.3（可选；payload 构建时也会自动取）
+#    SHA-256 钉在 installer/toolchain.json；镜像优先、官方兜底
+node packaging/windows/installer/fetch-electron-runtime.mjs \
+  --out ~/.cache/estrella-bot/electron/44.9.3/win32-x64
+
 # 1) macOS：生成 payload（显式白名单 + manifest + 自校验 + 真值复扫）
+#    app/electron/ 会带完整 Electron 运行时；也可显式传 --electron-dir <已解压 dist>
 node packaging/windows/installer/make-installer-payload.mjs \
   --out ~/Desktop/estrella-dist/installer-p2/build-0.1.3/stage \
-  --runtime-node ~/Desktop/estrella-dist/Estrella-Bot-napcat/runtime/node
+  --runtime-node ~/Desktop/estrella-dist/Estrella-Bot-napcat/runtime/node \
+  --electron-dir ~/.cache/estrella-bot/electron/44.9.3/win32-x64
 
 # 2) macOS：NSIS 静态体检（per-user / 版本单源 / stop→commit / 卸载默认保数据）
 node packaging/windows/installer/check-nsi.mjs \
@@ -261,8 +273,21 @@ makensis Estrella-Bot.nsi
 # 产物：Estrella-Bot-Setup-0.1.3.exe
 ```
 
+P3-5 起，CI 与本地预演统一走单入口（clean-tree / check-nsi / 0 warning / 假件下限 / 回执）：
+
+```bash
+node packaging/windows/installer/build-installer.mjs \
+  --build-dir <不存在目录> --artifact-dir <目录> \
+  --makensis <makensis> --require-provenance
+```
+
+`--stage-only` 可在 macOS 上只产 stage；CI 的 `desktop-build` 见 `.github/workflows/ci.yml`。
+
 - `version.nsh` 由 `package.json` 生成；`.nsi` 里不写死版本/appId。
 - `payload-manifest.json` 逐文件 SHA-256；`install-commit.mjs` 安装前再校验一次。
+- **Electron 载荷（P1-7）**：`app/electron/` 里是壳代码 + `electron-v44.9.3-win32-x64` 完整 dist
+  （`electron.exe` / DLL / `resources/default_app.asar`）；版本、size 与 SHA-256 在
+  `installer/toolchain.json.electron`。实测 stage 约 473 MB / 2322 文件，所以安装前先留足磁盘。
 - 公开 payload **不含 NapCat/user data**；安装器组件页可选下载 NapCat。
 - `uninstall.exe` 由 NSIS 生成，**不在 payload 里**。
 - 运行时钉在 `installer/toolchain.json`（Node 22.23.3 + 官方 SHA-256）。

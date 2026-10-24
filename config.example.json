@@ -12,183 +12,35 @@
     ]
   },
   "llm": {
-    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "baseUrl": "https://api.deepseek.com/v1",
     "apiKeyEnv": "QQBOT_API_KEY",
     "apiKey": "",
-    "model": "qwen3.8-max",
+    "model": "deepseek-flash",
     "thinking": {
       "mode": "off",
       "level": "medium"
     },
     "temperature": 1,
-    "maxTokens": 400,
+    "maxTokens": 1200,
     "timeoutMs": 60000,
     "localSize": "4b",
     "keys": {
+      "local": "",
       "deepseek": "",
       "zhipu": "",
       "qwen": ""
     },
     "fallbackModel": "",
-    "fallbackModels": [
-      "qwen3.7-flash",
-      "qwen3.8-flash",
-      "qwen3.7-plus",
-      "qwen3.5-plus",
-      "qwen3-max",
-      "qwen-turbo",
-      "qwen-long"
-    ],
+    "fallbackModels": [],
     "features": {
       "webSearch": false,
-      "vision": true
+      "vision": false
     },
     "localChannel": "qwenchat",
-    "presets": {
-      "local": {
-        "size": "4b",
-        "channel": "qwenchat",
-        "maxTokens": 160,
-        "temperature": 0.7,
-        "context": {
-          "recentTurns": 8,
-          "ambientMessages": 8
-        },
-        "thinking": {
-          "mode": "on",
-          "level": "low"
-        },
-        "features": {
-          "webSearch": false,
-          "vision": false,
-          "stickers": false
-        }
-      },
-      "deepseek": {
-        "baseUrl": "https://api.deepseek.com/v1",
-        "model": "deepseek-flash",
-        "fallbackModels": [],
-        "maxTokens": 400,
-        "temperature": 1,
-        "context": {
-          "recentTurns": 12,
-          "ambientMessages": 20
-        },
-        "thinking": {
-          "mode": "off",
-          "level": "medium"
-        },
-        "features": {
-          "webSearch": false,
-          "vision": false,
-          "stickers": false
-        }
-      },
-      "zhipu": {
-        "baseUrl": "https://open.bigmodel.cn/api/paas/v4/",
-        "model": "glm-4.5-air",
-        "fallbackModels": [
-          "glm-4.6v",
-          "glm-4.7",
-          "glm-5.2",
-          "glm-5",
-          "glm-4-flash",
-          "glm-4.7-flash",
-          "glm-4.6v-flash"
-        ],
-        "maxTokens": 400,
-        "temperature": 1,
-        "context": {
-          "recentTurns": 12,
-          "ambientMessages": 20
-        },
-        "thinking": {
-          "mode": "off",
-          "level": "high"
-        },
-        "features": {
-          "webSearch": false,
-          "vision": false,
-          "stickers": false
-        }
-      },
-      "qwen": {
-        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "model": "qwen3.7-flash",
-        "fallbackModels": [
-          "qwen3.8-flash",
-          "qwen3.7-plus",
-          "qwen3.5-plus",
-          "qwen3-max",
-          "qwen3.8-max",
-          "qwen-turbo",
-          "qwen-long"
-        ],
-        "maxTokens": 400,
-        "temperature": 1,
-        "context": {
-          "recentTurns": 12,
-          "ambientMessages": 20
-        },
-        "thinking": {
-          "mode": "off",
-          "level": "medium"
-        },
-        "features": {
-          "webSearch": false,
-          "vision": false,
-          "stickers": false
-        }
-      }
-    },
-    "customBrains": {
-      "custom-1792063967945": {
-        "id": "custom-1792063967945",
-        "name": "1",
-        "baseUrl": "https://api.deepseek.com/v1",
-        "model": "deepseek-flash",
-        "apiKey": "",
-        "fallbackModels": [],
-        "features": {
-          "vision": false,
-          "thinking": false,
-          "webSearch": false
-        },
-        "maxTokens": 400,
-        "temperature": 1,
-        "catalogVersion": "V4.1-Flash-1017"
-      },
-      "custom-1792221129332": {
-        "id": "custom-1792221129332",
-        "name": "12",
-        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "model": "qwen3.8-max",
-        "apiKey": "",
-        "fallbackModels": [
-          "qwen3.7-flash",
-          "qwen3.8-flash",
-          "qwen3.7-plus",
-          "qwen3.5-plus",
-          "qwen3-max",
-          "qwen-turbo",
-          "qwen-long"
-        ],
-        "features": {
-          "vision": true,
-          "thinking": true,
-          "webSearch": false
-        },
-        "maxTokens": 400,
-        "temperature": 1
-      }
-    },
-    "activeCustomId": "custom-1792221129332",
-    "declaredFeatures": {
-      "vision": true,
-      "webSearch": false,
-      "thinking": true,
-      "functions": false
-    }
+    "presets": {},
+    "customBrains": {},
+    "activeCustomId": "",
+    "declaredFeatures": {}
   },
   "allow": {
     "private": [],
@@ -296,7 +148,12 @@
     "skills": [],
     "plugins": {
       "enabled": [],
-      "settings": {}
+      "settings": {},
+      "max": 256,
+      "hookTimeoutMs": 5000
+    },
+    "tools": {
+      "max": 64
     },
     "replyStyle": {
       "length": "short",
@@ -370,7 +227,8 @@
     "holidays": {},
     "memory": {
       "auto": true,
-      "manual": []
+      "manual": [],
+      "promptMax": 12
     },
     "safety": {
       "banned": [],
@@ -396,10 +254,16 @@
       "send": false,
       "view": false,
       "root": "images-out"
+    },
+    "skillPrompt": {
+      "max": 3,
+      "chars": 2000
     }
   },
   "launch": {
     "mode": "browser",
-    "openOnStart": true
+    "openOnStart": true,
+    "closeAction": "tray",
+    "autoProtocol": true
   }
 }

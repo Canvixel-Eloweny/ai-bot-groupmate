@@ -940,3 +940,338 @@
 //  ② 段数：130 → **131**。
 //  ③ 变异：test/mutations/nav2-idem-1021.mjs Q1–Q5。
 //  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §132 · 协议端生命周期「停止分派 / 进程守护 / 快速登录」（2026-10-22）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：Windows 原生 NapCat 不走 Docker；两个停止接口只按 Docker 判，协议端
+//  一个进程都不动却报「已回到干净状态」。进程整个死掉时连接看门狗只会重连，
+//  没人把它拉回来。安装版自启又没带已登录 QQ，每次都要扫码。
+//  ① 盯的十三处：守护判据/七条阶梯 · seenAlive/maxAttempts/三级冷却 · 停止分派 ·
+//     协议端没停不退出面板 · 三处 stop · 仅 Windows 启动 · 路由/写路由 ·
+//     自启带 QQ · 快速登录单源 · 面板状态格/手动拉起 · BACKEND_SOURCES 登记。
+//  ② 段数：131 → **132**。
+//  ③ 变异：test/mutations/protocol-lifecycle-1022.mjs P1–P5。
+//  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §133 · 模型与消息可靠性（群图 / 引用 / length / token / 工具类型）（2026-10-22）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：群里发图看不见（Windows NapCat 只给本地 file）；引用只取 id 不取正文；
+//  思考型模型把 400/160/80 token 吃满后正文为空；扩展包的数组 type 让整条 tools 静默失效。
+//  ① 盯的八处：群图允许根/data URL · 引用 get_msg · length 抬额度重试 · 记忆/主动额度 ·
+//     新装 1200 · 工具类型递归归一 · 面板最大回复长度 · 自检进 check:features。
+//  ② 段数：132 → **133**。
+//  ③ 变异：test/mutations/message-reliability-1022.mjs R1–R5。
+//  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §134 · 人味机制与面板可观测性（2026-10-22 · P2）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：关系温度只算不进提示词、沉默后没有群级降温、困倦只有单档、
+//  夜间产出没有日流水素材、状态卡不能点、用量看不到按群/按天/缓存命中。
+//  ① 盯的七处：温度行 · 反馈热三条接线 · 困倦三档 · 日流水落/读 · 状态卡 data-go ·
+//     用量 byChat/byDay/cacheHitRate · 自检进 check:features。
+//  ② 段数：133 → **134**。
+//  ③ 变异：test/mutations/human-tone-1022.mjs H1–H4。
+//  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §135 · API 文档 ↔ 路由表集合核对（2026-10-22）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：API_CONTRACT.md 此前没有任何门禁读它。§41 的 19 条只是路由索引，
+//  字段细节仍以 handler 为准；另有 5 条路由连独立小节都没有。文档腐烂时四层全绿。
+//  ① 盯的四处：63 路由总表（api-inventory）双向集合相等 · 24 条字段标记各四行 ·
+//     编号章节 ∪ 字段标记 = 63 且不重叠 · 标记缺失 fail-closed（读原始 Markdown）。
+//  ② 段数：134 → **135**。
+//  ③ 变异：test/mutations/api-contract-1022.mjs A1–A4。
+//  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §136 · 液态玻璃制作站 + 渐进模糊弹层（2026-10-22）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：玻璃只能靠改 style.css 看结果，模板无法成套复制；弹窗打开时背景
+//  仍是清晰的（.modal 故意没有 backdrop-filter，否则 .modal-box 采样到平色 scrim）。
+//  ① 盯的六处：引擎默认仍 ramp / 单一 initGlass / 隐藏站登记且不挂导航 /
+//     三层遮罩相邻且默认 hidden / modal 接线仍守 G11 / 减少透明度回退与导航精修。
+//  ② 段数：135 → **136**。
+//  ③ 变异：test/mutations/glass-station-1022.mjs G1–G8。
+//  ④ 计数见 §125。
+//  ⑤ 2026-10-23 追补第 ⑦ 组（光影三件套 + gooey 融合演示）：
+//     来源是 Gitee `greyd097/yzrt` 的纯 CSS 演示（GPL-2.0，**只吸收做法、独立实现、不抄代码**）。
+//     盯三件事：制作站侧 壁/渐变描边/高光形状 三条参数与控件、融合演示真接线；
+//     产品侧 --c-eg-wall / --c-eg-bevel-top / --c-eg-bevel-bottom 深浅**成对**，
+//     且被两档 --c-eg-shade 同时消费（防"定义了没人用"）；入口页不许出现融合/制作站图层
+//     （祖先 filter 会建立 backdrop root、废掉真折射）。产品值实测见 §9 的玻璃段落。
+//     变异 G7（删暗壁层）/ G8（断融合接线）各打一条。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §137–§142 · 插件上限 / 五处补丁 / 识图额度 / 面板可观测（2026-10-23）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：20/24 两条上限写死且静默截断（第 21 个白名单项直接 break）；
+//  维护者在 Windows 0.1.4 上手动打的 5 处补丁仓库里一处都没有（下次打包就会丢）；
+//  面板插件设置输入框存不上（change 分支缺失 + extensionsOf 传参错位 + bool 写成字符串）；
+//  带图请求的 view_image 旁路只有 400 token（群友的绕过办法是手动调到 700）；
+//  "loaded 但 0 钩子 0 工具"在面板上完全看不出来。
+//  ① 盯的六段：§137 钩子扩展点 · §138 钩子载荷 · §139 插件上限 · §140 工具上限 ·
+//     §141 识图额度 · §142 面板可观测（change 提交 / 回填 / 运行期计数 / 超限标签）。
+//  ② 段数：136 → **142**。
+//  ③ 变异：test/mutations/plugin-limits-1023.mjs P1–P14。
+//  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §143 · 发布模板不带维护者的大脑预设（2026-10-23）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：维护者明确要求「以后我们发布一个新的版本给别人用的时候把我们的大脑
+//  预设全部清空」。`make-config-example.mjs` 是「从真机 config.json 抄」的，
+//  不显式清就会把 customBrains / activeCustomId / presets / keys / 活动模型带进
+//  模板，而模板会随安装包与公开仓发出去。
+//  ① 盯的五处：customBrains 空 · activeCustomId 空 · presets 空 · apiKey/keys 空 ·
+//     活动模型回落中性默认（deepseek-flash / api.deepseek.com）。
+//  ② 段数：142 → **143**。
+//  ③ 变异：test/mutations/plugin-limits-1023.mjs P15。
+//  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §144–§145 · 技能/记忆预算 + 钩子超时（2026-10-23）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：技能/记忆的 20 / 60 条上限与插件 20 个是同一形状 —— 归一化里
+//  `break`，面板保存一次就把多余条目从 config.json 永久丢掉。真正影响提示词的
+//  是“注入多少条”，不是“存多少条”；那三项预算改成可配并只封顶提示词。
+//  另外钩子总线此前明写“没有超时”，一个 await new Promise(()=>{}) 会让整轮回复
+//  永久挂住；现在单条默认 5000 ms、超时 fail-open 并记 errors。
+//  ① 盯的两段：§144 条目不截断 + memory.promptMax/skillPrompt.max|chars 的
+//     默认值、钳制、brain/面板/模板接线；§145 HOOK_TIMEOUT_MS/LIMIT、
+//     createHookBus(timeoutMs)、emit 的 Promise.race 哨兵、index 注入、
+//     宿主 limits、field-schema 区间、面板控件、smoke T432。
+//  ② 段数：143 → **145**。
+//  ③ 变异：test/mutations/limits-timeout-1023.mjs L1–L8（先 mutate-lint，再串行跑）。
+//  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §109 扩写 · 更新白名单形状与离线安装包上限（2026-10-23 · P0）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：GitHub release 资产 302 到 release-assets.githubusercontent.com；
+//  P0-1 已在 5ec2155 修掉，但白名单形状与离线上限还缺反证：
+//  通配 '*' 会静默放宽安全面，64 MiB 上限会让 Electron 载荷在传输层被拒。
+//  ① 盯的四处（都挂在既有 §109 内，不新增段）：精确 5 host 集合 · 上限 ≥256 MiB ·
+//     update-offline 用 OFFLINE_INSTALLER_MAX_BYTES 读上传体 · 两处 res.url 最终 URL 校验。
+//  ② 段数：**145 不变**（扩写既有段，不新增段）。
+//  ③ 变异：test/mutations/update-offline-1023.mjs U1–U4。
+//  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §146–§148 · Electron 桌面壳（B1a · 2026-10-23）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：Edge `--app` 套壳没有主进程，托盘/单实例/自启/标题栏都没有正规落点。
+//  B1a 先把宿主立起来（窗口、托盘、通知、自启、退出链），并把“不抄”做成硬判据：
+//  禁止 electron-updater / dsh-app:// / ELECTRON_RUN_AS_NODE。
+//  ① 盯的三段：§146 进程与退出（单实例 / 二次唤起 / bridge/stop→panel/quit→stop.mjs /
+//     清 ELECTRON_RUN_AS_NODE / launcher 壳分支 / electron 精确 44.9.3）；
+//     §147 安全基线（contextIsolation/sandbox/nodeIntegration false · 新窗/导航拦截 ·
+//     权限拒绝 · DevTools 生产关 · preload 白名单 · 三条禁抄）；
+//     §148 窗口/托盘/自启（40 DIP overlay · 窗口越界回收 · 托盘 getBounds 兜底 ·
+//     首次关闭说明 · 自启三态 · 壳拖拽区）。
+//     §148 还钉面板自启控件（l.autostart/autoStartState）与壳通知接线
+//     （shellNotify/estrellaShell）—— 后端有键、面板没控件是本项目已知盲区。
+//  ② 段数：145 → **148**。
+//  ③ 变异：test/mutations/desktop-shell-1023.mjs D1–D17。
+//  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §149 · Electron 进安装载荷（P1-7 · 2026-10-23）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：B1a 的壳只存在于开发树，安装器 payload 里没有它；launcher 却仍去
+//  <InstallRoot>/electron 找壳。装出来的包要么没有壳，要么回滚时旧 app 配新壳。
+//  ① 盯的五处：payload 收 app/electron（壳代码 + 完整 win32-x64 dist，BUILD-INFO 有
+//     electronRuntime）· toolchain.electron 版本与 devDependency 一致且 SHA 为 64 hex ·
+//     launcher 从 programRoot 解析壳（禁止 installRoot/electron）· userData 在
+//     USER_ROOT/electron 且安装版 devTools 关 · check-nsi 断言 electron.exe。
+//  ② 段数：148 → **149**。
+//  ③ 变异：test/mutations/desktop-p1-1023.mjs E1–E5。
+//  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §150–§151 · 壳停止链与退壳时序（P1-9 · 2026-10-23）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：B1a 的停止链只认 node.exe；Electron 壳常驻托盘，会在升级/卸载时锁住
+//  versions/<ver>/app/electron 目录。退出链也只有 5 秒 HTTP + “端口没关才跑 stop.mjs”，
+//  面板先退、机器人还活时会留孤儿。
+//  ① 盯的两段：§150 精确壳身份（versions/<ver>/app/electron/electron.exe + 精确 app 目录
+//     + 排除 --type=）· stop.mjs include-shell/exclude-pid/看门狗 · 壳最后杀 ·
+//     install-commit/NSIS/卸载器同源 · launcher 旧壳接管；
+//     §151 before-quit/will-quit/session-end · 无条件 stop.mjs --exclude-pid ·
+//     端口/panel/bridge/lock 四证 · waitPortClosed 固定 127.0.0.1 · 重启看门狗 intent。
+//  ② 段数：149 → **151**。
+//  ③ 变异：test/mutations/desktop-p1-1023.mjs E6–E10；D4 的 stop.mjs 锚点计数 2→6。
+//  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §152 · 大包更新与回滚不变量（P1-8/P1-6 · 2026-10-23）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：Electron 载荷把安装包从 25 MB 抬到 150–250 MB，原有更新链在四个地方
+//  变成新形状：node.previous 在复制新 runtime 前就被删；无 previous 时仍翻指针；
+//  PowerShell 5.1 写 BOM/半份指针；离线包全量读内存 + .part 只按版本名续传。
+//  ① 盯的五段：install-commit 的 node.previous 改名入 journal · retention 认
+//     node.previous.old-* · readSwapMarker 剥 BOM · 无 previous 不翻指针 ·
+//     ps1 无 BOM 原子写；清单绝对上限 / .part sidecar / 磁盘预算 / cache 清理 /
+//     离线流式 / 安装前退壳 / AUMID 快捷方式。
+//  ② 段数：151 → **152**；§109 的离线读取判据同步改为 readBodyToFile。
+//  ③ 变异：test/mutations/desktop-p1-1023.mjs E11–E15；既有 install-p3 M9 与
+//     install-p4 M15 随实现搬动更新锚点。
+//  ④ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §153 · 崩溃落盘与诊断包（P1-10 · 2026-10-23）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：壳是常驻进程，主进程/渲染进程/后端任何一类退出都可能只留下一句
+//  “控制台没了”；用户能给的线索越少，排障就越靠猜。诊断包还面对一条硬边界：
+//  日志里有 QQ/群号，配置里有 Key，聊天正文本身在 bridge.log —— 不能整目录打包。
+//  ① 盯的五段：crashReporter + 三类事件 + shell-exit · 面板 shutdown 先写 last-exit ·
+//     固定清单（shell/panel/bridge-journal/update/rollback）· 逐行 maskSecrets +
+//     maskIdentifiers + fail-closed 残留扫描 · 面板 export.diag 按钮与上次退出展示。
+//  ② 段数：152 → **153**。
+//  ③ 变异：test/mutations/desktop-p1-1023.mjs E16–E20。
+//  ④ 计数见 §125。
+
+// 追加（B4 真机 · 2026-10-23）：stop.mjs 在 include-shell 时同时清
+// `.shell.json` / `.quit-intent.json` / `.restart.json`（强杀壳不会自己清状态）；
+// 首启 ready-to-show 后补一次 show（安装器拉起的窗口站会晚一拍映射）；
+// 退出在 stop.mjs 后等 600ms 再核对四证（面板有 1s 兜底退出）。
+// §150 的 `.restart.json` 锚点计数 1→2（E8 同步）。
+
+// 追加（B4 真机第二轮 · 2026-10-23）：安装版首次双击时隐藏窗口可能不首绘，
+// `ready-to-show` 永不触发 ⇒ 补 4 秒兜底 show（隐藏启动仍不弹）；E21 钉住。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §154 · 设置层与关闭行为（P2-3 / P2-5 · 2026-10-23）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：QQ Agent 的产品页把模型/聊天/记忆/白名单/桌面项收在一个设置页里；
+//  我方的等价设置分散在顶栏（主题/字体/背景）、维护页（启动方式/自启）与更新卡里。
+//  同时发现两条真实缺口：`setTheme` 读 `window.__themeBoot`，而 splash.js 从未建立
+//  这个观察孔（主题刷新必丢）；关闭行为只有 env `QQBOT_CLOSE_ACTION`，面板没有控件。
+//  ① 盯的四段：入口与四分区（齿轮/浮层/dialog/NEXT_ASSETS/initSettings）· 外观
+//     （splash 三观察孔 · 7 主题色浅深令牌 · 背景复用 ShaderBG · 顶栏旧控件迁走）·
+//     启动/关闭（launch.closeAction/autoProtocol 值域 · 面板控件 · 壳读同一份 ·
+//     autoProtocol 同时闸启动自起与守护）· 关于/数据（appMeta/APP_HOMEPAGE ·
+//     检查更新与导出复用 · 只留 GitHub Issues 外链、无上传表单）。
+//  ② 段数：153 → **154**；HEAVY_SUB_MIN 新增 ['设置层', 3]。
+//  ③ 变异：test/mutations/desktop-p2-1023.mjs M6–M10；§104④/§148⑤ 的扫描目标
+//     从 schema.js 改到 index.html + settings.js（D16/M42 同步改锚点）；
+//     §132⑧ 接受 autoProtocol 闸门但仍要求 IS_WIN && nativePresent()。
+//  ④ 计数见 §125。
+
+// 追加（B8 VM · 2026-10-24）：P2-1 真机发现两处边界，已同批修：
+// ① 最小化窗口的 Electron isVisible() 也是 false，隐藏态守护会把它当“藏到托盘”
+//    并在 10 秒内 show() 回来 ⇒ 新增 trayHidden（只由 hideToTray/隐藏启动置真）；
+// ② Explorer 被杀后 tray.getBounds() 仍可能非零 ⇒ 新增 explorerRunning(tasklist)，
+//    查不到 Explorer 时判托盘不可用（tasklist 失败 fail-open）。
+// §148① 同步新增 trayHidden / explorerRunning / tasklist 锚点；
+// desktop-p2-1023.mjs 增加 M13（trayHidden）与 M14（explorerRunning）；
+// §154④ 增加 P2-VM-ACCEPTANCE.md 的回执结构判据。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §155 · 系统分配端口与发现文件（P3-1 · 2026-10-24）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：Windows 产品（installed/portable）一直假设 127.0.0.1:8788 空闲。
+//  8788 被别的进程占着时面板起不来；而"换个端口"不只是改常量 —— 启动器、Electron 壳、
+//  停止链、诊断、安装器 health 轮询、Host/Origin 闸、重启看门狗全都在读它。
+//  ① 契约：src/panel-discovery.cjs 是发现文件（USER_ROOT/panel/.panel.json）唯一实现；
+//     产品形态默认 listen(0)，dev 才 8788；写不出发现文件即退出；
+//     Host/Origin 只认**实际端口**（不是任意回环端口）；重启看门狗显式继承实际端口；
+//     停止链端口未知时必须按进程身份兜底；8788 仅作 legacy 识别（health 确认）。
+//  ② 段数：154 → **155**；HEAVY_SUB_MIN 新增 ['端口发现', 4]。
+//  ③ 变异：test/mutations/desktop-p3-port-1024.mjs P1–P15（15/15 BLOCKED）。
+//     同批改锚：desktop-p1-1023.mjs E7（needSlowScan 现在含 !port）；
+//     sec-1005.mjs S1（Host 块改为 isLoopbackHost）/ S2（原常量放宽改为"任意端口"放宽）。
+//  ④ 端到端：test/panel-port.mjs 进 npm run verify；覆盖 8788 占用、发现文件/health
+//     一致、Host/Origin 实际端口、自重启保端口、退出清发现。
+//  ⑤ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §156 · 只把「重启面板」「退出」收进 IPC（P3-2 · 2026-10-24）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：Electron 壳里页面与主进程已经有一条 IPC（通知/重试/可见性），
+//  但「重启面板」「退出控制台」仍只走 HTTP。后端已死、窗口还在时，HTTP 路由帮不上忙，
+//  用户只能看着页面轮询失败。P3-2 只把这两条敏感动作收进 IPC，其余写路由保持 HTTP。
+//  ① 契约：preload 恰好七个动作（notify/retry/quit/visible/restart-panel/quit-console/
+//     panel-state），没有通用 invoke / ipcRenderer.on；主进程同名七个 handler 全部
+//     校验来源（当前面板同源或 error.html）；重启健康时走面板自己的路由、半死/不应答
+//     才按程序根直接拉起；「退出控制台」只停面板+退壳，函数体内不出现 /api/bridge/stop、
+//     runStopFallback、stop.mjs、quitChain；半死错误页与壳内离线横幅都有明确出口。
+//  ② 段数：155 → **156**；HEAVY_SUB_MIN 新增 ['IPC收敛', 6]。
+//  ③ 变异：test/mutations/desktop-p3-ipc-1024.mjs IPC1–IPC23（24/24 BLOCKED，
+//     含 IPC9a/IPC9b 两条身份校验拆分）。
+//  ④ 测试：test/check-desktop.mjs 补 IPC 纯判据与 preload 暴露面；
+//     test/panel-dom.mjs 补「浏览器回落 HTTP + 壳内离线横幅」；
+//     test/desktop-ipc.mjs（npm run desktop:ipc）在真 Electron 里跑
+//     错误页 → 半死拉起 → 运行时离线 → IPC 重启 → 浏览器 HTTP → IPC 退出。
+//  ⑤ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §157 · 桌面启动静默（openOnStart 对 Electron 壳生效 · 2026-10-24）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：P2 遗留 —— launcher 的 openWindow() 先无条件 openShell()，而
+//  launch.openOnStart 只在「没有 Electron 壳、回落浏览器」那一步被消费 ⇒
+//  设了 false 手动启动照样弹窗。VM 复现：launch-log opened:true + shell.log
+//  start decision=show visible=true + MainWindowHandle 984244。
+//  ① 判据：src/launch-mode.js 新增 shouldStartHidden({wantHidden,openOnStart})：
+//     --hidden 与 openOnStart=false 任一成立即隐藏；其余 fail-open 显示。
+//  ② 接线：openWindow 先按当前程序根读 launch 段，把 hidden 传给 openShell；
+//     openShell 用 hidden 写 QQBOT_START_HIDDEN / --hidden；隐藏启动的启动跟踪
+//     记 opened:false/skipped:true/hidden:true；无壳回落也按 hidden 跳过浏览器。
+//     老版本 app 没有 shouldStartHidden 时退回只认 --hidden（回滚不吞窗口）。
+//  ③ 段数：156 → **157**；HEAVY_SUB_MIN 新增 ['启动静默', 4]。
+//  ④ 测试：smoke T436（四组组合 + 缺省 + 坏值 fail-open）；
+//     test/mutations/desktop-open-on-start-1024.mjs SL1–SL10（10/10 BLOCKED）。
+//  ⑤ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §158 · 差分更新评估（先量再判 · 2026-10-24）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：P3-3 是评估项，不是实现项；清单要求“没有实测数据不许开这条工”，
+//  结论是 no-go 也要留数据。§158 防止评估空转、决策手写、以及 no-go 时生产代码
+//  偷偷长出 delta 字段。
+//  ① 证据：docs/desktop/evidence/p3-differential/ 的 summary.json / runs.json /
+//     manifest.json / manifest.sig / test-update-pubkey.pem；
+//     scripts/p3-differential/evidence-validate.mjs 重算场景与重复次数、target SHA、
+//     清单验签、预登记时间、决策规则、生产代码无 delta；报告 target SHA/decision/
+//     O1 比例必须与数据一致。
+//  ② 段数：157 → 158；HEAVY_SUB_MIN 新增 ['差分评估', 5]。
+//  ③ 变异：test/mutations/p3-diff-1024.mjs DF1–DF7（7/7 BLOCKED）。
+//  ④ 结论：O1 安装器级补丁 99.90% > 30%，O1/O2 都接近全量；V5 按预登记跳过；
+//     decision=no-go；生产更新链未改。
+//  ⑤ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §159 · 公开拷贝门禁兼容（P3-5 前置 · 2026-10-24）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：docs/desktop/** 与 scripts/publish-audit.mjs 按设计不随公开拷贝发布，
+//  而 §154–§158 与变异清单要读它们。只加一个 build job 会把公开 CI 直接弄红。
+//  ① 判据：scripts/lib/publish-copy.mjs 是桩标记/held-back 的唯一叶子；check-wb 的
+//     readDoc 只在「发布拷贝 + held-back」返回 null（开发仓缺文档仍抛错）；
+//     mutate-lint 只跳过 held-back 目标并回传 skipped；maintainerOnly 只在开发仓跑；
+//     ci-verify 从 package.json.verify 派生，只允许跳过 publish-audit；
+//     test/fixtures/ci-config.json 提供假凭据夹具（SANDBOX-FAKE-*）。
+//  ② 段数：158 → **159**；HEAVY_SUB_MIN 新增 ['公开拷贝', 5]。
+//  ③ 变异：test/mutations/publish-copy-1025.mjs PC1–PC6（6/6 BLOCKED）。
+//  ④ 实测：make-publish-copy 产物上 check-wb 0 红（只跳 5 处内部文档）、
+//     mutate-lint 0 失效/0 惰性/19 条 held-back 跳过、ci-verify 18 步通过 + 1 步跳过。
+//  ⑤ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §160 · Windows 桌面构建纳入 CI（P3-5 · 2026-10-24）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：Windows 发布此前是手工链（VM makensis），「装机包和代码对得上」只能靠人。
+//  这一段把「四层全绿才出包 / 只手动 dispatch / 未签名 / 不 Release / 产物可对账」钉住。
+//  ① 判据：ci.yml 必须有 workflow_dispatch.build_windows、contents: read、
+//     desktop-build.needs 覆盖 contracts/smoke/windows-contracts/publish-audit/regression；
+//     windows-latest + NSIS 3.13.0 + build-installer.mjs --require-provenance；
+//     artifact 保留 14 天、缺失即失败；无 release/tag/push；Windows 门禁含 panel-dom
+//     与 installer-p1..p6；npm run verify 纳入 test/p3-ci-eval.mjs。
+//  ② 跨血缘：make-publish-copy 写 PUBLISH-PROVENANCE.json；payload BUILD-INFO 记
+//     sourceCommit/sourceWorktree/buildCommit；④ 便携包用同一 build-info 叶子；
+//     compare-builds.mjs 逐文件对账 + ④ SHA256SUMS 复核。
+//  ③ 段数：159 → **160**；HEAVY_SUB_MIN 新增 ['CI 构建', 5]。
+//  ④ 变异：test/mutations/ci-build-1025.mjs CI1–CI8（8/8 BLOCKED）。
+//  ⑤ 计数见 §125。

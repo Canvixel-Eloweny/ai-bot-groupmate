@@ -15,7 +15,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { USER_ROOT, PROGRAM_ROOT, isMain } from './lib/common.mjs';
 
 const PANEL_FILES = [

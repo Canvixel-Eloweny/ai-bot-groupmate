@@ -65,10 +65,18 @@ function packHit(skill, text) {
  * @param {Array} skills 归一化过的技能列表（custom.skills）
  * @param {{groupId?:string,userId?:string}} ctx 当前会话
  * @param {string} text 这一轮群友说的话（用来判触发词）
+ * @param {{max?:number,chars?:number}} [opts] 注入预算（2026-10-23 可配）。
+ *        `custom.skillPrompt.{max,chars}` 由调用方送入；缺省回落常量。
  * @returns {Array} 命中且在上限内的技能（原样返回条目，调用方决定怎么拼）
  */
-export function pickSkillsForPrompt(skills, ctx, text) {
+export function pickSkillsForPrompt(skills, ctx, text, opts = {}) {
   const live = (skills || []).filter((s) => s && s.enabled && scopeMatches(s.scope, ctx));
+  const maxSkills = Number.isFinite(Number(opts.max))
+    ? Math.max(1, Math.trunc(Number(opts.max)))
+    : SKILL_IN_PROMPT;
+  const maxChars = Number.isFinite(Number(opts.chars))
+    ? Math.max(0, Math.trunc(Number(opts.chars)))
+    : SKILL_CHARS_IN_PROMPT;
 
   // 角色卡**不在这里**：它进的是人格段（见 `pickPersonaCard`），不是技能段。
   // 早期两张卡都往这里塞，结果是卡既改不了人设、又占掉知识包的字数预算。
@@ -77,9 +85,9 @@ export function pickSkillsForPrompt(skills, ctx, text) {
   // 条数 + 总字数双闸。字数不够时**跳过这一条**而不是直接截断整份列表 ——
   // 后面可能还有一条很短的能进，一刀切会把机会也砍掉。
   const out = [];
-  let budget = SKILL_CHARS_IN_PROMPT;
+  let budget = maxChars;
   for (const s of picked) {
-    if (out.length >= SKILL_IN_PROMPT) break;
+    if (out.length >= maxSkills) break;
     const cost = String(s.background || '').length + (s.examples || []).join('').length;
     if (cost > budget) continue;
     budget -= cost;

@@ -19,20 +19,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { writeJsonAtomic } from '../../src/atomic-write.js';
 import {
   APP_ID, APP_VERSION, INSTALL_ROOT, MODE, PROGRAM_ROOT, SANDBOX, UPDATE_DIR,
 } from './paths.js';
 import {
   MANIFEST_URL, MANIFEST_MAX_BYTES, SIGNATURE_MAX_BYTES, OFFLINE_PENDING_MAX_AGE_MS,
-  validateManifest, isAllowedUrl,
+  INSTALLER_MAX_BYTES, validateManifest, isAllowedUrl,
 } from './update-manifest.js';
 
 export { OFFLINE_INSTALLER_MAX_BYTES, OFFLINE_PENDING_MAX_AGE_MS } from './update-manifest.js';
 import { loadPublicKeyFile, verifyRawSignature } from './update-signature.js';
 import { compareVersions } from './update-version.js';
-import { fetchCapped, downloadWithProgress } from './update-download.js';
+import { fetchCapped, downloadWithProgress, sha256File, diskBudgetOk } from './update-download.js';
 
 export const PHASES = Object.freeze([
   'disabled', 'idle', 'checking', 'up_to_date', 'available',
@@ -56,14 +55,43 @@ export function canTransition(from, to) {
   return ALLOWED_TRANSITIONS[from].includes(to);
 }
 
-function sha256File(file) {
-  return new Promise((resolve, reject) => {
-    const hash = createHash('sha256');
-    const stream = fs.createReadStream(file);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('error', reject);
-    stream.on('end', () => resolve(hash.digest('hex')));
+/**
+ * 只保留最近 `keep` 份 cache/<version>.exe（及其 .json/.sig）。
+ * 大包时代每个版本都会永久多一份 150–250 MB 安装包；不清理会慢慢吃满盘。
+ */
+export function sweepUpdateCache({ cacheDir, keep = 2, now = Date.now, fsApi = fs } = {}) {
+  const removed = [];
+  const kept = [];
+  let names = [];
+  try {
+    names = fsApi.readdirSync(cacheDir).filter((n) => n.endsWith('.exe'));
+  } catch {
+    return { removed, kept };
+  }
+  const rows = names.map((name) => {
+    const full = path.join(cacheDir, name);
+    let mtime = 0;
+    try { mtime = fsApi.statSync(full).mtimeMs; } catch { /* 读不到按最旧 */ }
+    return { name, full, mtime };
+  }).sort((a, b) => b.mtime - a.mtime);
+  rows.forEach((row, i) => {
+    if (i < keep) { kept.push(row.name); return; }
+    const base = row.name.replace(/\.exe$/, '');
+    for (const rel of [row.name, `${base}.json`, `${base}.sig`]) {
+      try { fsApi.rmSync(path.join(cacheDir, rel), { force: true }); removed.push(rel); } catch { /* 尽力 */ }
+    }
   });
+  const cutoff = now() - 7 * 24 * 60 * 60 * 1000;
+  try {
+    for (const name of fsApi.readdirSync(cacheDir)) {
+      if (!name.endsWith('.part') && !name.endsWith('.part.json')) continue;
+      const full = path.join(cacheDir, name);
+      try {
+        if (fsApi.statSync(full).mtimeMs < cutoff) { fsApi.rmSync(full, { force: true }); removed.push(name); }
+      } catch { /* 文件刚好被删 */ }
+    }
+  } catch { /* 目录读不到 */ }
+  return { removed, kept };
 }
 
 function defaultSpawnInstaller(exe, { silent }) {
@@ -257,6 +285,10 @@ export function createUpdater(deps = {}) {
     };
   }
 
+  function offlineUploadPath() {
+    return offlinePaths().installerPart;
+  }
+
   function readPending() {
     const p = offlinePaths();
     try {
@@ -416,6 +448,10 @@ export function createUpdater(deps = {}) {
   async function restore() {
     if (!enabled) return;
     try {
+      const swept = sweepUpdateCache({ cacheDir, keep: 2, now });
+      if (swept.removed.length) logger(`清理旧更新缓存：${swept.removed.length} 个文件`);
+    } catch { /* 清理失败不影响恢复 */ }
+    try {
       const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
       if (!saved || typeof saved !== 'object') return;
       state.checkedAt = Number(saved.checkedAt) || 0;
@@ -563,6 +599,21 @@ export function createUpdater(deps = {}) {
     });
     downloadPromise = (async () => {
       try {
+        if (state.latest.size > INSTALLER_MAX_BYTES) {
+          throw new Error(`安装包超过上限 ${Math.round(INSTALLER_MAX_BYTES / 1024 / 1024)} MB`);
+        }
+        fs.mkdirSync(cacheDir, { recursive: true });
+        // 大包下载前先看磁盘：下载 .part + 安装时 stage/新版本目录同时存在，
+        // 预留 2× size + 64 MB，避免下到一半把盘写满。
+        const free = (() => {
+          try {
+            const st = fs.statfsSync(cacheDir);
+            return Number(st.bavail) * Number(st.bsize);
+          } catch { return null; }
+        })();
+        if (free != null && !diskBudgetOk({ freeBytes: free, size: state.latest.size })) {
+          throw new Error(`磁盘空间不足：需要约 ${Math.ceil((state.latest.size * 2) / 1048576) + 64} MB，可用 ${Math.floor(free / 1048576)} MB`);
+        }
         const dest = path.join(cacheDir, `${state.latest.version}.exe`);
         const urls = [state.latest.url, ...(state.latest.mirrors || [])].filter(Boolean);
         const result = await download({
@@ -570,6 +621,7 @@ export function createUpdater(deps = {}) {
           dest,
           expectedSha256: state.latest.sha256,
           expectedSize: state.latest.size,
+          expectedVersion: state.latest.version,
           signal: ctl.signal,
           validateUrl: (u) => isAllowedUrl(u, { testMode }),
           onProgress: (p) => {
@@ -617,9 +669,33 @@ export function createUpdater(deps = {}) {
     const raw = fs.readFileSync(p.manifest);
     const sig = fs.readFileSync(p.sig, 'utf8');
     if (!verifyRawSignature(raw, sig, publicKey)) throw new Error('签名复验失败，拒绝安装');
+    // 安装前以**刚验签的清单**为准，而不是 state.json 里那份：同版本重传/手工改 state
+    // 会表现为“签名有效但 SHA-256 不符”，排障时极难看出是哪一份在说话。
+    let manifestObj;
+    try { manifestObj = JSON.parse(raw.toString('utf8')); } catch { throw new Error('缓存清单不是有效 JSON'); }
+    const checked = validateManifest(manifestObj, {
+      currentVersion: appVersion,
+      appId,
+      windowsVersion: process.platform === 'win32' ? os.release() : '',
+      testMode,
+    });
+    if (!checked.ok) throw new Error(`缓存清单校验失败：${checked.errors.join('；')}`);
+    if (manifestObj.version !== state.latest.version) throw new Error('缓存清单版本与待安装版本不一致，拒绝安装');
+    const wantSize = manifestObj.installer.size;
+    const wantSha = manifestObj.installer.sha256;
+    if (state.latest.size !== wantSize || state.latest.sha256 !== wantSha) {
+      logger('安装前发现 state.latest 与已验签清单不一致，以清单为准');
+      state.latest = {
+        ...state.latest,
+        size: wantSize,
+        sha256: wantSha,
+        url: manifestObj.installer.url,
+        mirrors: Array.isArray(manifestObj.installer.mirrors) ? manifestObj.installer.mirrors.slice(0, 5) : [],
+      };
+    }
     const st = fs.statSync(downloadedFile);
-    if (st.size !== state.latest.size) throw new Error('安装包大小不符，拒绝安装');
-    if ((await sha256File(downloadedFile)) !== state.latest.sha256) {
+    if (st.size !== wantSize) throw new Error('安装包大小不符，拒绝安装');
+    if ((await sha256File(downloadedFile)) !== wantSha) {
       throw new Error('安装包 SHA-256 不符，拒绝安装');
     }
 
@@ -677,6 +753,6 @@ export function createUpdater(deps = {}) {
 
   return {
     snapshot, check, startDownload, cancel, install, start, stop, restore,
-    prepareOffline, completeOffline, clearOffline,
+    prepareOffline, completeOffline, clearOffline, offlineUploadPath,
   };
 }

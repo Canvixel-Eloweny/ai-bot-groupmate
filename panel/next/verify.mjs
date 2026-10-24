@@ -207,7 +207,15 @@ const nav = await evalJs(`return {
   staleAttrs: document.querySelectorAll('[data-act]').length,
 }`);
 const groupCount = (nav?.groups || []).length;
-check('一级域数量 = 8', groupCount === 8, `实测 ${groupCount}`);
+check('一级域数量 = 6', groupCount === 6, `实测 ${groupCount}`);
+const maintNav = await evalJs(`return {
+  visible: [...document.querySelectorAll('#nav1 .grp')].filter((x) => !x.hidden && getComputedStyle(x).display !== 'none').length,
+  hidden: document.querySelectorAll('#nav1 .grp[hidden]').length,
+  btn: !!document.querySelector('[data-a="nav.maint"]'),
+}`);
+check('维护域回到岛内一级（6 个域，无顶栏入口）',
+  maintNav?.visible === 6 && maintNav?.hidden === 0 && maintNav?.btn === false,
+  `岛内可见 ${maintNav?.visible} · hidden ${maintNav?.hidden} · 顶栏按钮 ${maintNav?.btn}`);
 check('拿到真实后端数据（非演示模式）', !!nav?.online,
   `__next=${nav?.hasHook ? '有' : '无'} provider=${nav?.provider ?? '?'} model=${nav?.model ?? '?'} 演示条=${nav?.demoBanner}`);
 check('静态标记里没有失效的 data-act 属性', nav?.staleAttrs === 0, `data-act=${nav?.staleAttrs}`);
@@ -289,7 +297,7 @@ const islandContrast = () => evalJs(`
   const ratio = (a, b) => { const l1 = lum(a), l2 = lum(b); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); };
   const over = (fg, bg) => fg.slice(0, 3).map((v, i) => v * fg[3] + bg[i] * (1 - fg[3]));
 
-  const isle= getComputedStyle(document.getElementById('navInner'));
+  const isle= getComputedStyle(document.getElementById('navDock'));
   /*⚠️ **默认项与选中项必须分别取，且默认项要排除选中项** ——
      首次渲染时 \`S.gi = 0\`，所以 \`querySelector('.grp')\` 取到的**就是选中项**
      （实测：三个值会全都是同一个，判据变成"自己和自己比"）。
@@ -350,7 +358,8 @@ await sleep(360);
    逐帧取 max 与帧率无关，这个判据才不会随机器快慢飘。 */
 await evalJs(`document.querySelectorAll('#nav1 .grp')[0].click(); return 1;`);
 await sleep(700);
-await evalJs(`document.querySelectorAll('#nav1 .grp')[7].click(); return 1;`);
+/* 维护域已回到岛内（一级 6 个域），这里点最后一颗可见域量形变。 */
+await evalJs(`document.querySelectorAll('#nav1 .grp')[5].click(); return 1;`);
 const flight = await evalJs(`
   const ind = document.getElementById('navInd');
   return (async () => {
@@ -373,19 +382,22 @@ check('切换途中有速度驱动的形变（横向拉伸 · 纵向压缩 · �
    ⚠️ 判据取「帧间不同值的个数」，不取某一时刻的形变：弹簧收敛时间随机器快慢漂。 */
 await evalJs(`document.querySelectorAll('#nav2 .sub')[0].click(); return 1;`);
 await sleep(500);
-await evalJs(`const s=document.querySelectorAll('#nav2 .sub'); s[s.length-1].click(); return 1;`);
 const nav2flight = await evalJs(`
   const ind = document.getElementById('nav2Ind');
   return (async () => {
+    const nav = document.getElementById('nav2');
+    const subs = [...nav.querySelectorAll('.sub')];
+    /* 点击与采样必须同一次求值：分两次会多一个 CDP 往返，
+       弹簧可能已经收敛，只剩首尾两帧（实测踩过）。 */
+    subs[subs.length - 1].click();
     const seen = new Set(); let last = null;
-    for (let i = 0; i < 20; i += 1) {
+    for (let i = 0; i < 24; i += 1) {
       const t = getComputedStyle(ind).transform; seen.add(t); last = t;
       await new Promise((r) => requestAnimationFrame(r));
     }
-    const nav = document.getElementById('nav2');
     const sel = nav.querySelector('.sub[aria-selected="true"]');
     const m = new DOMMatrixReadOnly(last);
-    return { distinct: seen.size, dx: m.e, want: sel.offsetLeft + 8 - nav.scrollLeft };
+    return { distinct: seen.size, dx: m.e, want: sel.offsetLeft - nav.scrollLeft };
   })();
 `);
 check('二级导航切换时滑块**在途**（≥3 个不同帧位）+ 终点对齐选中页签',
@@ -415,7 +427,7 @@ const nav2Loop = await evalJs(`
   const ind = document.getElementById('nav2Ind');
   const wrap = document.getElementById('nav2wrap');
   const subs = [...nav.querySelectorAll('.sub')];
-  const logTab = subs.find((b) => /日志与审计/.test(b.textContent)) || subs[4] || subs[subs.length - 1];
+  const logTab = subs.find((b) => /日志与审计/.test(b.title || '')) || subs[4] || subs[subs.length - 1];
   logTab.click();
   await new Promise((r) => setTimeout(r, 1200));
   let paints = 0;
@@ -438,7 +450,7 @@ const nav2Loop = await evalJs(`
     minW: Math.min(...seen.map((s) => s.w)),
     maxW: Math.max(...seen.map((s) => s.w)),
     dx: m.e,
-    want: sel ? sel.offsetLeft + 8 - nav.scrollLeft : null,
+    want: sel ? sel.offsetLeft - nav.scrollLeft : null,
   };
 `);
 check('数据刷新期间二级滑块不发散/不消失，且日志页不再自循环重画（§131）',
@@ -495,7 +507,7 @@ check('背景引擎已接线：window.ShaderBG 在、预设 ≥6 且两个重点
   backplate && !backplate.missing
     ? 'variants=' + backplate.variants + ' · ' + backplate.ids.join(',')
     : '取不到');
-check('顶栏背景选择器已挂载：swatch 数 == 预设数，且恰有一个选中',
+check('设置层背景选择器已挂载：swatch 数 == 预设数，且恰有一个选中',
   !!backplate && !backplate.missing && backplate.swatches === backplate.variants
     && backplate.variants >= 6 && backplate.checked === 1,
   backplate && !backplate.missing
@@ -553,7 +565,7 @@ check('深底档挂上 html.bg-dark（最后一档 grain-dawn 是深底 —— �
 await evalJs(`
   (function () {
     try { localStorage.removeItem('qqbot-bgfx'); } catch (e) {}
-    if (window.ShaderBG) window.ShaderBG.set(window.ShaderBG.VARIANTS[0].id);
+    if (window.ShaderBG) window.ShaderBG.set(window.ShaderBG.DEFAULT || window.ShaderBG.VARIANTS[0].id);
     const list = document.getElementById('bgPickList');
     if (list) { const b = list.querySelector('[data-id="' + window.ShaderBG.current + '"]'); if (b) b.click(); }
   })();
@@ -694,6 +706,19 @@ check('玻璃：弹窗没被背景根掐断（.modal 不许有 backdrop-filter�
   !!glass && glass.modalBackdrop === 'none',
   glass ? `.modal 的 backdrop-filter=${glass.modalBackdrop}（必须 none，否则 .modal-box 只采样到 scrim）` : '取不到');
 
+const scrimProbe = await evalJs(`const s = document.getElementById('glassScrim'); return s ? {
+  hidden: s.hidden,
+  layers: document.querySelectorAll('#glassScrim .gsc-blur').length,
+  z: getComputedStyle(s).zIndex,
+  tint: !!document.querySelector('#glassScrim .gsc-tint'),
+} : null;`);
+check('渐进模糊遮罩：默认 hidden · 三层 · z 低于 modal',
+  !!scrimProbe && scrimProbe.hidden && scrimProbe.layers === 3
+    && Number(scrimProbe.z) === 55 && scrimProbe.tint,
+  scrimProbe
+    ? `hidden=${scrimProbe.hidden} 层=${scrimProbe.layers} z=${scrimProbe.z} tint=${scrimProbe.tint}`
+    : '取不到 #glassScrim');
+
 /* 帧率：本轮只加纹理与阴影（不新增图层），帧时间应与上轮持平。
  * ⚠️ 阈值 90ms 是**软件光栅化**下定的（上轮实测 46ms），真机 GPU 远低于此。 */
 const fps = await evalJs(`
@@ -762,7 +787,9 @@ async function shot(name, group, sub, full = false) {
    「断言存在」≠「断言接线」）。找不到时下面每条都带 `err` 报红。
    ⚠️ 沙箱里当前大脑恒为智谱，所以 `when` 放宽**不会**影响这组断言的触发条件；
       放宽的收益是：哪天有人把沙箱默认大脑改成千问，这里**照样找得到**。 */
-await evalJs(`document.querySelectorAll('#nav1 .grp')[1].click(); return 1;`);
+// 2026-10-22 B2：一级合并为 6 域（运行 / 发言 / 人格 / 模型 / 记忆 / 维护）。
+// 大脑 → 模型；按完整名（title/aria-label 里的 label）找，不写死序号。
+await evalJs(`const g=[...document.querySelectorAll('#nav1 .grp')].find((x)=>/模型/.test(x.title||'')); if(g) g.click(); return 1;`);
 await sleep(200);
 for (let s = 0; s < 6; s += 1) {
   await evalJs(`const x=document.querySelectorAll('#nav2 .sub')[${s}]; if(x) x.click(); return 1;`);
@@ -824,7 +851,9 @@ const rbDrag = await evalJs(`
     return realFetch.apply(this,arguments);
   };
 
-  const grip=items()[2].querySelector('.srt-grip');
+  /* 拖第一项向下（≥2 项即可）。原来写死 items()[2]：线路板只有 2 项时
+     undefined.querySelector 会把整个自检打崩，而"换序"这件事 2 项也能验。 */
+  const grip=items()[0].querySelector('.srt-grip');
   const r=grip.getBoundingClientRect();
   const y0=r.top+r.height/2;
   const fire=(type,y)=>{
@@ -1192,10 +1221,12 @@ const maybeShot = (name, g, s, full = false) =>
   (WITH_SHOT ? shot(name, g, s, full) : Promise.resolve(`（未截图 · 加 --shot 打开）`));
 
 const shot1 = await maybeShot('01-run-overview', 0, 0);
-const shotEmotion = await maybeShot('04-emotion', 4, 0);
+const shotEmotion = await maybeShot('04-emotion', 2, 0);   // 情绪卡已并入人格/人格设定
 // 2026-10-21：speak 组在 scheduled 与 proactive 之间插入了 peak/patrol/waiting，
 // 睡眠页从第 3 个子页移到第 6 个。
-const shotSleep = await maybeShot('05-sleep', 5, 6);
+// 2026-10-22 B2：speak 为第 2 个域（0-based 1）；峰谷/巡逻/作息已并入触发/主动，
+// 作息卡现在在「主动与免打扰」（0-based 3）。
+const shotSleep = await maybeShot('05-sleep', 1, 3);
 
 /* ── ④ 真实交互：草稿机制 ─────────────────────────────────────────────── */
 await evalJs(`document.querySelectorAll('#nav1 .grp')[2].click(); return 1;`); // 人格
@@ -1220,16 +1251,23 @@ const draft = await evalJs(`
 check('草稿页改动 → 底部保存条出现（按计算样式判定）', draft?.before === false && draft?.after === true, draft?.n || draft?.err || '');
 check('丢弃改动 → 保存条真正消失', draft?.cleared === true, `hidden 属性=${draft?.attr}`);
 
-/* ── ⑤ 主题切换 ────────────────────────────────────────────────────────
-   2026-10-04 换成圆形按钮（beui circle-blur 移植，原 #themeSel 下拉退役）：
-   点一下 → 深浅翻转 + html 上短暂挂 data-vt（VT 揭开动画的接线证据）。
-   ⚠️ toggleTheme 是 async：主题写在 startViewTransition 的 update 回调里，
+/* ── ⑤ 主题切换（2026-10-23 起在左下角设置层）──────────────────────────
+   两态分段按钮调用 applyTheme：点一下 → 深浅翻转 + html 上短暂挂 data-vt
+   （VT 揭开动画的接线证据）。
+   ⚠️ applyTheme 是 async：主题写在 startViewTransition 的 update 回调里，
       要**轮询等它落地**再读 —— 读早了会拿到旧值，看起来像"点了没反应"。 */
 const theme = await evalJs(`
-  const btn = document.getElementById('themeBtn');
-  if (!btn) return { err: '找不到 #themeBtn —— 主题没有切换入口' };
+  const gear = document.getElementById('setGear');
+  const layer = document.getElementById('settingsLayer');
+  if (!gear || !layer) return { err: '找不到设置层入口' };
+  if (layer.dataset.open !== 'true') gear.click();
+  await new Promise((r) => setTimeout(r, 420));
+  const darkBtn = document.querySelector('[data-theme-opt="dark"]');
+  const lightBtn = document.querySelector('[data-theme-opt="light"]');
+  if (!darkBtn || !lightBtn) return { err: '设置层没有主题按钮' };
   const before = document.documentElement.dataset.theme;
   const want = before === 'dark' ? 'light' : 'dark';
+  const btn = want === 'dark' ? darkBtn : lightBtn;
   btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   const vtMark = document.documentElement.dataset.vt;   /* 点击瞬间同步置上 */
   for (let i = 0; i < 40 && document.documentElement.dataset.theme !== want; i++) {
@@ -1241,10 +1279,11 @@ const theme = await evalJs(`
     await new Promise((r) => setTimeout(r, 50));
   }
   const vtCleared = !document.documentElement.dataset.vt;
-  btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  (before === 'dark' ? darkBtn : lightBtn).dispatchEvent(new MouseEvent('click', { bubbles: true }));
   for (let i = 0; i < 40 && document.documentElement.dataset.theme !== before; i++) {
     await new Promise((r) => setTimeout(r, 50));
   }
+  gear.click();
   return { before, want, vtMark, vtCleared, mid, bg, after: document.documentElement.dataset.theme };
 `);
 check('主题切换生效（点一下翻面、再点翻回）',
@@ -1262,7 +1301,7 @@ check('VT 揭开动画真的接线（data-vt 挂上且动画后摘掉）',
    它不是"接口能通"，而是"这次写请求真的被服务端受理了"。 */
 await evalJs(`document.querySelectorAll('#nav1 .grp')[0].click(); return 1;`);
 await sleep(150);
-await evalJs(`document.querySelectorAll('#nav2 .sub')[4].click(); return 1;`);
+await evalJs(`const s=[...document.querySelectorAll('#nav2 .sub')].find((x)=>/日志与审计/.test(x.title||'')); if(s) s.click(); return 1;`);
 await sleep(400);
 const write = await evalJs(`
   const n = window.__next;
@@ -1301,28 +1340,28 @@ async function goto(group, sub) {
   await sleep(320);
 }
 const newPages = {};
-// 情绪世界（第 5 个域 · 第 1 页）：应当有 mood 的真数字，而不是骨架说明
-await goto(4, 0);
+// 情绪状态（人格 · 第 1 页）：应当有 mood 的真数字，而不是骨架说明
+await goto(2, 0);
 newPages.emotion = await evalJs(`return {
   title: (document.querySelector('#page h1')||{}).textContent || '',
   nums: [...document.querySelectorAll('#page .metric .n')].map(e=>e.textContent.trim()).filter(Boolean),
   skeleton: /读不到|还没下发/.test(document.getElementById('page').textContent),
 }`);
 // 群友档案（记忆与知识 · 第 3 页）：目录为空时应当给"还没被用到过"的人话，而不是报错
-await goto(3, 2);
+await goto(4, 2);
 newPages.people = await evalJs(`return {
   title: (document.querySelector('#page h1')||{}).textContent || '',
   text: (document.getElementById('page').textContent||'').slice(0,200),
 }`);
-// 免费额度情报（大脑 · 第 4 页）：新页，应当有条目
-await goto(1, 3);
+// 用量与花费（模型 · 第 3 页）：额度情报并到这一页，应当有条目
+await goto(3, 2);
 newPages.deals = await evalJs(`return {
   title: (document.querySelector('#page h1')||{}).textContent || '',
   rows: document.querySelectorAll('#page .row').length,
   tag: (document.querySelector('#page .tag.accent')||{}).textContent || '',
 }`);
-// 世界日历 → 节假日表：那一格**必须可编辑**了（此前是 disabled）
-await goto(4, 1);
+// 定时消息 → 节假日表：那一格**必须可编辑**了（此前是 disabled）
+await goto(1, 1);
 newPages.holidays = await evalJs(`
   const btn = [...document.querySelectorAll('#page button')].find(b=>b.textContent.trim()==='添加');
   const dateInp = document.getElementById('holiDate');
@@ -1357,7 +1396,7 @@ const LIST_CAP_EXPECTED = 15;   // 与 `app.js` 的 `LIST_CAP` 同源 —— 改
 // 2026-10-21：注入夹具与断言之间**不许**被 3 秒轮询插进来（它会用服务端数据覆盖
 // S.state.apiDeals，症状就是"展开到 40 条后突然变回 2 条"）。暂停到 keepA 结束。
 await evalJs('window.__nextPauseRefresh?.(true); return 1;');
-await goto(1, 3);
+await goto(3, 2);
 const cap = await evalJs(`
   const S = window.__next, repaint = window.__nextRepaint;
   if (!S || !repaint) return { err: '拿不到页面状态或重绘钩子' };
@@ -1437,7 +1476,7 @@ check('容器滚动位置真的守得住（不是"滚一半被拉回去"）',
   keepA?.err || `可滚余量 ${keepA?.scrollable}px · 滚到 ${keepA?.scrolled} → 重绘后 ${keepA?.scAfter}`);
 await evalJs('window.__nextPauseRefresh?.(false); return 1;');
 
-await goto(2, 4);   // 人格 → 扮演规则（用户截图那张卡）
+await goto(2, 1);   // 人格 → 底层规则（用户截图那张卡）
 const keepD = await evalJs(`
   const repaint = window.__nextRepaint;
   if (!repaint) return { err: '没有重绘钩子' };
@@ -1482,10 +1521,10 @@ check('折叠块的内容容器真的被限高（选择器没落空）',
  *   ③ **材质与全站卡片同源** —— 玻璃靠 `.pcard` 挂 `card` 类继承。若有人把材质
  *      抄一份写在 `.pcard` 上，这条会红：那时两份语义早晚会漂（玻璃每改一次，
  *      插件板就少跟一次，而没有任何测试会发现）。
- * ⚠️ 组号 6 = 「插件」域（GROUPS 里的第 7 个，0-based），子页 0 = 「插件」页。 */
-await evalJs(`document.querySelectorAll('#nav1 .grp')[6].click(); return 1;`);
+ * ⚠️ 组号 5 = 「维护」域（GROUPS 里的第 6 个，0-based），子页 3 = 「插件」页。 */
+await evalJs(`document.querySelectorAll('#nav1 .grp')[5].click(); return 1;`);
 await sleep(200);
-await evalJs(`document.querySelectorAll('#nav2 .sub')[0].click(); return 1;`);
+await evalJs(`document.querySelectorAll('#nav2 .sub')[3].click(); return 1;`);
 await sleep(300);
 const plug = await evalJs(`return (() => {
   const s = (window.__next && window.__next.state) ? window.__next.state : null;
@@ -1809,17 +1848,18 @@ const clean = await evalJs(`return {
   savebar: !document.getElementById('savebar').hidden,
   dirty: window.__next ? [...window.__next.dirty] : [],
   modal: !document.getElementById('modal').hidden,
+  scrim: !document.getElementById('glassScrim').hidden,
 }`);
 check('交互后没有残留遮罩 / 脏草稿 / 弹窗',
-  !clean.busy && !clean.savebar && clean.dirty.length === 0 && !clean.modal,
-  `busy=${clean.busy} savebar=${clean.savebar} modal=${clean.modal} dirty=[${clean.dirty.join(',')}]`);
+  !clean.busy && !clean.savebar && clean.dirty.length === 0 && !clean.modal && !clean.scrim,
+  `busy=${clean.busy} savebar=${clean.savebar} modal=${clean.modal} scrim=${clean.scrim} dirty=[${clean.dirty.join(',')}]`);
 
 /* ── ⑦ 页面运行时报错 ───────────────────────────────────────────────── */
 const realErrors = errors.filter((e) => !/Not implemented|favicon|net::ERR/i.test(e));
 check('页面无运行时异常', realErrors.length === 0, realErrors.slice(0, 3).join(' | '));
 
 const shot2 = await maybeShot('02-persona-enhance', 2, 1);
-const shot3 = await maybeShot('03-plugins', 6, 0);
+const shot3 = await maybeShot('03-plugins', 5, 3);
 
 /* ── 汇总 ───────────────────────────────────────────────────────────── */
 const pass = results.filter((r) => r.ok && !r.skipped).length;

@@ -28,7 +28,7 @@ OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建�
 
 <p>
   <a href="./README.zh-CN.md#3-四套大脑预设与切换"><img alt="AI" src="https://img.shields.io/badge/AI-OpenAI--compatible-6f42c1?style=for-the-badge"></a>
-  <a href="./CHANGELOG.md"><img alt="版本" src="https://img.shields.io/badge/release-v0.1.2-e05d44?style=for-the-badge"></a>
+  <a href="./CHANGELOG.md"><img alt="版本" src="https://img.shields.io/badge/release-v0.1.4-e05d44?style=for-the-badge"></a>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="最后提交" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -48,7 +48,8 @@ The English README is what the repository shows by default; this Chinese edition
 
 ## 三步跑起来
 
-两条路线，终点都是同一个控制台（`127.0.0.1:8788`）。
+两条路线，终点都是同一个控制台。Windows 桌面版由系统分配本机端口：启动器会打印地址，
+面板把它写进 `USER_ROOT/panel/.panel.json`；开发形态仍默认 `127.0.0.1:8788`。
 
 **macOS / Linux —— Docker**（macOS 上推荐）。NapCat 跑在容器里，**你自己的 QQ 客户端完全不动**：
 
@@ -78,7 +79,7 @@ QQ 小号 ──► NapCat(Docker, OneBot v11) ──► 桥接进程 src/index.
                                                 ├─ 云端  : 智谱 GLM（唯一支持联网+识图）
                                                 └─ 云端  : 千问 Qwen（额度按模型发 · 90 天有效）
                          ┌──────────────────────┴──────────────────────┐
-                         │  控制台 panel/server.js(:8788, 只听 127.0.0.1) │
+                         │ 控制台 panel/server.js(127.0.0.1, 系统分配端口) │
                          │  ├─ 前端 panel/next/（零构建静态资产，每 3s 轮询 /api/state）
                          │  └─ 管理桥接进程启停、四套大脑预设、自定义工作台
                          └───────────────────────────────────────────────┘
@@ -364,7 +365,7 @@ estrella-bot/
                                #   ⚠️ 这两个目录里**你自己新增**的包不入库（逐条点名，见 .gitignore）——
                                #     本仓自带的那 13 个是入库的，第三方代码请别直接塞进来。
   panel/                       # 控制台（浏览器面板 + 本地服务）
-    server.js                  #   :8788，状态/配置/启停/换二维码等全部接口 + 路由分发
+    server.js                  #   127.0.0.1，系统分配端口，状态/配置/启停/换二维码等全部接口 + 路由分发
     next/                      #   现役前端：零构建静态资产（HTML/CSS/JS ＋ schema.js 控件表），每 3s 轮询
     lib/                       #   后端按 ESM 分层（L0 路径与状态 → L1 配置/页面/进度/插件 → L2 模型/进程）
     *.log / effective.json / local-trace.jsonl / usage-*.jsonl   # 运行时产物（gitignore）

@@ -221,3 +221,15 @@ ffmpeg 一类的可选工具按"可缺失、可标记"处理，缺失时相关�
 ⚠️ **apt 依赖没有钉版本**（Dockerfile 里写的是包名，不是 `包=版本`）：同一份 Dockerfile
 在两台机器、两个时间点可能装到不同的小版本。这是**已知的、有意接受**的可复现性缺口，
 理由与"底座为什么只记录 digest 而不强制钉"一起写在 `docker/napcat/Dockerfile` 的文件头。
+
+## 顶栏 HUD 信息岛的交互参考（MIT，未复制代码）
+
+顶栏状态岛的「从中心展开 / 切换时灰圈 / 标题态」时序参考了以下 MIT 项目的公开交互：
+
+| 项目 | 许可 |
+|---|---|
+| `QinAnze/zmd-charge` | MIT |
+| `GlacierGlimmer/zmd-charge-plus` | MIT（含完整 LICENSE，Copyright (c) 2026 GlacierGlimmer_冰川雪貓） |
+
+本项目只用原生 CSS / WAAPI 重新实现时序与布局思路；未复制其 C# 代码、图片、字体或游戏素材，
+也未使用 HarmonyOS Sans。

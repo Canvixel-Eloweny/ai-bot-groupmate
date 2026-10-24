@@ -79,6 +79,7 @@ export default [
     ),
     layer: 'check-wb',
     expect: 'BLOCKED',
+    maintainerOnly: true,
     note: 'M-08b：本机身份被换成第三方的 noreply ⇒ 之后的提交会被记到那个账号名下（上次事故的原形）',
   },
 ];

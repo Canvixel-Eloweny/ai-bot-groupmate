@@ -206,6 +206,8 @@
   --c-nav-cnt-bg:    rgba(49, 68, 108, .12);    /* 计数胶囊底：合成底 rgb(195,199,209)→(230,233,237) */
   --c-nav-cnt-fg:    #263a63;      /* 计数胶囊**自己的**墨色 —— 见下方 `.cnt` 那条注释 */
   --c-nav-shadow:    rgba(49, 68, 108, .22);    /* 岛的投影**颜色**（形状留给组件，同 --c-shadow-* 的分工） */
+  --c-nav-seam-line: rgba(31, 58, 100, .09);
+  --c-nav-seam:      rgba(31, 58, 100, .055);
 
 
   /* 背景流光的 --c-aurora-* / --aurora-* 令牌已随六团流体整组移除（2026-10-04）。
@@ -241,6 +243,16 @@
   --c-eg-edge:         rgba(255, 255, 255, .28);
   --c-eg-vol-top:      rgba(255, 255, 255, .50);   /* 内缘顶部辉光（漫反射） */
   --c-eg-vol-bottom:   rgba(0, 0, 0, .07);         /* 内缘底部暗角（"厚度"） */
+  /* 内侧暗壁 + 渐变描边（2026-10-23 吸收自外部做法，独立实现，不抄代码）：
+       壁 = 下沿一圈柔暗，读的是"这块玻璃有厚度"；
+       描边 = 上亮 / 下暗两条 1px，读的是斜面的受光边与背光边。
+     ⚠️ **只进第 2 档 `--c-eg-shade`（卡片 / 弹窗），不进 `--c-eg-inset*`**：
+        三层吸顶玻璃上下相邻，四边暗壁会在相邻处叠成两道脏缝（同 B29 的接缝教训），
+        而 `--c-eg-inset` 本体另有契约与变异钉着"一字不改"。
+     ⚠️ 暗壁用**负 y** ⇒ 只压下方；正 y 会把暗角推到顶边，读成"上面脏了一条"。 */
+  --c-eg-wall:         rgba(49, 68, 108, .10);
+  --c-eg-bevel-top:    rgba(255, 255, 255, .62);
+  --c-eg-bevel-bottom: rgba(49, 68, 108, .12);
   /* 织纹三令牌（`--c-eg-weave` / `-weave-2` / `-weave-size`）与网格令牌
      （`--c-eg-grid`）已于 B28 批次4 **全部删除** —— 用户「斜杠杠什么的都不要」
      +「背景有一个小方块网格的，那个我也不要」。**四个令牌已零消费者**，所以整组删掉
@@ -343,6 +355,9 @@
     inset 10px -10px 2.4px -6px var(--c-eg-rim-soft),
     inset -10px 10px 2.4px -6px var(--c-eg-rim-soft),
     inset 0 20px 30px -28px var(--c-eg-vol-top),
+    inset 0 -8px 18px -8px var(--c-eg-wall),
+    inset 0 1px 0 var(--c-eg-bevel-top),
+    inset 0 -1px 0 var(--c-eg-bevel-bottom),
     inset 0 0 1.5px var(--c-eg-vol-bottom);
 
   /* 间距阶梯 */
@@ -375,34 +390,28 @@
         派生令牌算在 `:root` 上，而这些值会被媒体查询 / `.touch` 在别的元素上改写，
         那时派生值就是上一套数字（正是本文件开头第 ② 条缺陷的那个形状）。 */
   --h-topbar: 58px;
-  --h-nav1: 56px;
-  --h-nav-item: 40px;
-  /* ⚠️⚠️ B29 新增 `--h-nav2`（二级 tab 栏整条高）。**它与上面那条"派生值不另存令牌"
-     的纪律看起来相反，其实是那条纪律的例外** —— 原因写在这里，免得下次有人"顺手优化"掉：
-       · 上面禁的是**纯派生**值（`calc(三个令牌)` 那类），它会随媒体查询漂；
-       · 但 B29 把二级栏**定高**了（`height: var(--h-nav2)`，垂直 padding 移进高度），
-         它变成一个**可被媒体查询改写的一等值**，与 `--h-nav1` 同级。
-     ⚠️ **三处媒体查询必须同步改它**（契约 N9 钉着）：
-       `pointer:coarse` 下 `.sub` 被 `min-height:44px` 顶起 ⇒ 二级栏实际变高
-       ⇒ 若令牌不跟着改，`.nav1` 那一行的 `height`/`margin-top` 就对不上
-       ⇒ **灵动岛与二级栏不再齐平，而两级导航看起来都正常**
-       （这个"看起来正常"正是本文件开头第 ② 条缺陷的形状）。
-     ⚠️⚠️ **B39：它现在必须与 `--h-nav1` 相等**（:root 56px / 720px 48px /
-       coarse 60px / .touch 60px）—— 齐平靠的就是这个"相等"，
-       两者不等时灵动岛会比二级栏高（或矮）一截，而**没有任何东西会报红**。
-       下面是判它的地方（契约 N8 判"两处写法都在且都引用令牌"，
-       关系相等那一条目前靠人工，改任何一个值都要同时改另一个）。 */
-  --h-nav2: 56px;
-  /* B30 新增：二级栏右侧**斜角切割**的水平进深（clip-path 用）。
-     ⚠️ 右内边距 = 原值 + 本令牌（见 `.nav2wrap`），两处必须一起改，
-     否则最后一个 tab 会被斜边吃掉一截。 */
-  --nav2-cut: 22px;
+  /* 一级行 / 一级选项 / 二级可见行。吸顶高度与 JS 肩线都从这三个数推导。 */
+  --h-nav1: 48px;
+  --h-nav-item: 38px;
+  --h-nav2: 30px;
+  /* 连续肩线：横向 42、纵向 11.5、底部 11.5（11.5 / 30 = 38.2%，接近 φ 的短线）。 */
+  --nav-shoulder: 42px;
+  --nav-rise: 11.5px;
+  --nav-r2: 11.5px;
 
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /* 字体风格「衬线」档（2026-10-22）：参照 Qoder 衬线档的回退顺序（去掉本机
+     未安装的 Crimson Pro）。中文按 macOS 宋体-简 → Windows 系统宋体 落字。 */
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   --dur: .16s;
   --ease: cubic-bezier(.4, 0, .2, 1);
+}
+
+/* 顶栏「文」按钮切换的本地偏好；默认不命中，保持无衬线。 */
+html[data-font-style="serif"] {
+  --font: var(--font-serif);
 }
 
 /* ── 令牌：深色 ───────────────────────────────────────────────────────── */
@@ -490,6 +499,8 @@ html[data-theme="dark"] {
   --c-nav-cnt-bg:    rgba(255, 255, 255, .12);
   --c-nav-cnt-fg:    #c3c8d2;
   --c-nav-shadow:    rgba(0, 0, 0, .52);
+  --c-nav-seam-line: rgba(0, 0, 0, .26);
+  --c-nav-seam:      rgba(0, 0, 0, .15);
 
   /* 背景流光令牌：已随六团流体移除（与 :root 侧同批）。
      背景预设色两主题共用（canvas 自带底色），无令牌可对齐。 */
@@ -509,6 +520,15 @@ html[data-theme="dark"] {
   --c-eg-edge:         rgba(255, 255, 255, .16);
   --c-eg-vol-top:      rgba(255, 255, 255, .10);
   --c-eg-vol-bottom:   rgba(0, 0, 0, .28);
+  /* 名字与 :root 逐个相同（契约 G1 判的就是这个集合相等）。
+     ⚠️ 深色侧**必须比浅色弱**（.16 vs .10 的表观差来自暗底吃光，但 .30 实测会在
+        卡片下沿糊成一条脏影，读成"没擦干净"而不是"有厚度"）。
+        实测（同一夹具、同一取点，距下沿 10–14px 的亮度变化）：
+          浅色 −4.2% / −4.0% · 深色 .30 档 −9.6% / −12.7%（过）· 深色 .16 档见下。
+        描边同理：暗色主题的"上亮"必须是薄薄一层，否则就是一条白边。 */
+  --c-eg-wall:         rgba(0, 0, 0, .16);
+  --c-eg-bevel-top:    rgba(255, 255, 255, .10);
+  --c-eg-bevel-bottom: rgba(0, 0, 0, .20);
   /* 织纹（名字与 :root 逐个相同 · 契约 G1 判的就是这个）。
      ⚠️ 深底用级5 浅天蓝（与 --c-eg-bg-e 同色相），alpha 比浅色高 —— 暗底吃光；
         第二向反过来用**深**线：亮底用暗线、暗底用亮线，两向都靠"与底反相"被看见。 */
@@ -554,8 +574,93 @@ html[data-theme="dark"] {
     inset 10px -10px 2.4px -6px var(--c-eg-rim-soft),
     inset -10px 10px 2.4px -6px var(--c-eg-rim-soft),
     inset 0 20px 30px -28px var(--c-eg-vol-top),
+    inset 0 -8px 18px -8px var(--c-eg-wall),
+    inset 0 1px 0 var(--c-eg-bevel-top),
+    inset 0 -1px 0 var(--c-eg-bevel-bottom),
     inset 0 0 1.5px var(--c-eg-vol-bottom);
 }
+
+/* ── 主题色（2026-10-23 · 设置层外观）────────────────────────────────────
+   海蓝是 :root / 深色块的默认值，所以这里只列另外六套；切回 ocean 时
+   属性仍在，但没有覆盖块 ⇒ 自动回到上面两套默认令牌。
+   亮/暗两档取设计稿的 --acc-l/--acc-d；weak/line/sub-on 从 accent 派生，
+   不手抄第二份色阶。 */
+html[data-accent="lagoon"], .set-acc[data-accent-opt="lagoon"] {
+  --c-accent: #116b74; --c-accent-hover: #1b8a94;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #0b1226);
+}
+html[data-accent="pine"], .set-acc[data-accent-opt="pine"] {
+  --c-accent: #2f6b45; --c-accent-hover: #418a5b;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #0b1226);
+}
+html[data-accent="amber"], .set-acc[data-accent-opt="amber"] {
+  --c-accent: #8a5a12; --c-accent-hover: #a8751d;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #0b1226);
+}
+html[data-accent="coral"], .set-acc[data-accent-opt="coral"] {
+  --c-accent: #a4413a; --c-accent-hover: #bf5a52;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #0b1226);
+}
+html[data-accent="berry"], .set-acc[data-accent-opt="berry"] {
+  --c-accent: #8f2f5f; --c-accent-hover: #ac3d74;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #0b1226);
+}
+html[data-accent="violet"], .set-acc[data-accent-opt="violet"] {
+  --c-accent: #5b4a9e; --c-accent-hover: #7461bd;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #0b1226);
+}
+/* 海蓝是默认令牌；色板里的海蓝按钮单独钉一次，否则它会跟着当前 accent 变。 */
+.set-acc[data-accent-opt="ocean"] { --c-accent: #2f509b; --c-accent-hover: #4574c2; }
+
+html[data-theme="dark"][data-accent="lagoon"], html[data-theme="dark"] .set-acc[data-accent-opt="lagoon"] {
+  --c-accent: #7fd4d6; --c-accent-hover: #a3e4e5;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 40%, transparent);
+  --c-sub-on: var(--c-accent);
+}
+html[data-theme="dark"][data-accent="pine"], html[data-theme="dark"] .set-acc[data-accent-opt="pine"] {
+  --c-accent: #8ed8ad; --c-accent-hover: #b0e6c6;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 40%, transparent);
+  --c-sub-on: var(--c-accent);
+}
+html[data-theme="dark"][data-accent="amber"], html[data-theme="dark"] .set-acc[data-accent-opt="amber"] {
+  --c-accent: #f0c27d; --c-accent-hover: #f6d49d;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 40%, transparent);
+  --c-sub-on: var(--c-accent);
+}
+html[data-theme="dark"][data-accent="coral"], html[data-theme="dark"] .set-acc[data-accent-opt="coral"] {
+  --c-accent: #f2a29a; --c-accent-hover: #f7bfb9;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 40%, transparent);
+  --c-sub-on: var(--c-accent);
+}
+html[data-theme="dark"][data-accent="berry"], html[data-theme="dark"] .set-acc[data-accent-opt="berry"] {
+  --c-accent: #efa4c8; --c-accent-hover: #f5c2da;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 40%, transparent);
+  --c-sub-on: var(--c-accent);
+}
+html[data-theme="dark"][data-accent="violet"], html[data-theme="dark"] .set-acc[data-accent-opt="violet"] {
+  --c-accent: #bdb0f2; --c-accent-hover: #d2c8f7;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 40%, transparent);
+  --c-sub-on: var(--c-accent);
+}
+html[data-theme="dark"] .set-acc[data-accent-opt="ocean"] { --c-accent: #9dbfeb; --c-accent-hover: #b8d3f2; }
 
 /* ⚠️ `color-scheme` **单独一条**，不放进上面那个令牌块：令牌块里只有 `--c-*`。
    混进非令牌声明，这个块就从"另一套令牌"变成"第二张样式表"，
@@ -693,211 +798,103 @@ a:hover { text-decoration: underline; }
 .banner .spacer { flex: 1; }
 .banner .btn { flex: none; }
 
-/* ══ 一级导航 · 纯黑「灵动岛」Hero Navbar（2026-10-02 · 本轮）═══════════════
-   三层结构，都在这一个区块里：
-
-     .nav1         吸顶带（**透明**）—— 只负责"贴住顶栏 + 给岛留上下留白"
-       .nav-inner    ① 岛本体（纯黑 · 胶囊圆角 · 投影）
-                     ② **横向滚动容器**（窄屏靠它不换行）
-                     ③ 指示器的定位基准（position:relative）
-         .grp × 8    选项：默认 / 悬停 / 选中 三态
-         .nav-ind    **唯一**的白色描边滑块
-
-   ── 为什么高亮是"一个滑块"而不是"每项自己一段样式" ──────────────────────
-   RareUI 的 GooeyNav（开源公开实现）内核就是这个，**不是**它的 SVG 滤镜：
-   一个浮层承载高亮，位置与宽度由选中项算出来，切换时**过渡**过去。
-   逐项各画一份边框做不到这件事 —— 那只是"旧的消失、新的出现"，
-   中间那段位移（也就"从哪滑到哪"）整个丢了，观感立刻从"连着的"变成"跳的"。
-
-   ── 为什么不把它的 gooey 滤镜一起搬过来 ─────────────────────────────────
-   ① 我们的高亮是**描边**不是实心 blob：`feGaussianBlur + feColorMatrix`
-      先把 alpha 模糊再拉满对比，1.5px 的描边会先被模糊吃掉、再被还原成一坨；
-   ② 要让文字不被一起糊掉，得把每个选项**复制一层 DOM**（8 项 × 2 层），
-      换来的只是一个"粘连"观感 —— 而这是一页本地控制台，主线是"安静的仪表盘"。
-   所以只取它的**过渡**（弹簧位移 + 速度形变），不取它的**滤镜**。
-
-   ── 三态（对应用户要求 1 / 2 / 3）───────────────────────────────────────
-     默认：`--c-nav-fg` 灰白文字，**无边框、无填充**
-     悬停：`--c-nav-fill` 灰底胶囊
-     选中：`.nav-ind` 白色胶囊描边 + `--c-nav-fg-on` 白色实心字 + 字重 600
-
-   ⚠️ 指示器有**两个硬约束**，破了都以"看着像坏了"的形式退化（不报错）：
-     ① **不许被重建**：`renderNav1()` 每次只换按钮，指示器是 index.html 里的静态元素。
-        重建它 = 每次点击都变成"新元素从 0 位置长出来"，滑动感直接没了。
-     ② **必须在滚动容器内部**：窄屏 `.nav-inner` 横向滚动，指示器若挂在外层 `.nav1` 上，
-        它会相对视口静止 —— 一滑就与选中项错位（滑得越远错得越多）。
-   ══════════════════════════════════════════════════════════════════════════ */
-/* ══ 吸顶导航行 · B40 新增（二级栏 + 灵动岛 的共同父容器）═════════════════════
-   ⚠️⚠️ **B42：从 flex 改成 grid `1fr auto 1fr`**（用户原话：「我说的中间是
-      **整个屏幕的中间**，你就把它从蓝色的位置移到红色的位置就行了」）。
-      **flex 做不到这件事**：只要二级栏还占着水平位置，岛就只能"居中于剩余空间" ——
-      实测 1440 宽时岛落在 x=510，而视口居中应该是 x=317，差 190px（用户标了这条）。
-      grid 三列把它变成**结构保证**：
-        · 中间列 `auto` = 灵动岛的内容宽 ⇒ 岛**精确居中于整个视口**；
-        · 左右两列 `1fr` 等宽 ⇒ 二级栏在左列 `justify-self: start` 贴左；
-        · **左列宽 = (视口 − 岛宽) / 2** ⇒ 二级栏被**列宽自动限住**，
-          超出部分由 `.nav2` 横向滚动接住 ⇒ 两者**永远不会重叠**。
-      ⚠️ 这比"flex + `max-width: calc(50% - 403px)`"好在**没有任何经验值**：
-      403 是按实测岛宽 805 算的 —— 改字号或增删一个一级域名就得重算，
-      忘了就会让二级栏右端伸到岛底下（用户已报过一次遮挡）。
-   ⚠️ 吸顶**一处**负责：原先 nav2wrap / nav1 各自 `position: sticky`，
-      文档顺序决定谁在上（B29 记过的那条复杂度）——合并后直接消失。
-   ⚠️ `height: var(--h-nav2)`：二级栏玻璃壳与岛胶囊都取这个高度 ⇒ 上下边齐平（B39 的目标）。
-   ⚠️ 水平内边距仍在 `.nav2wrap` 自己身上（`padding-left: var(--s5)` 与右缘斜角的
-      `--nav2-cut` 都在那里，两处必须一起改）—— 岛居中后**不再需要**右边距。 */
+/* ══ 吸顶导航 · 连续肩线（2026-10-22）══════════════════════════════════
+   一条玻璃：一级 48px 胶囊在上，二级 30px 窄条在下；中间用 42 × 11.5 的三次
+   贝塞尔肩线（控制点 0.618）连接。二级宽度由 JS 按当前域内容收缩/展开。
+   为什么不再并排：B40 的 1fr auto 1fr 是为「二级在左、岛居中」服务的；
+   现在两级是上下层级，二级栏不再占用一级的左右空间。
+   液态玻璃仍走 `body.eg-on` 同一族：noise + saturate/brightness + inset；
+   一级/二级只靠垂直渐变和一条极轻的接缝阴影分主次。 */
 .navrow {
   position: sticky; top: var(--h-topbar); z-index: 40;
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: var(--s4);
-  height: var(--h-nav2);
+  display: flex; justify-content: center; align-items: flex-start;
+  height: calc(var(--h-nav1) + var(--h-nav2));
   background: none; border: 0;
 }
-.navrow > .nav2wrap {
-  grid-column: 1; justify-self: start;
-  /* ⚠️ `min-width: 0` 在 **grid** 里同样是必需的（不只 flex）：grid item 默认也是
-     `min-width: auto`（= 内容宽），不写这一条，二级栏会**撑破左列**伸到岛底下 ——
-     与 B40 那次遮挡同一个机制、只是发生在 grid 上。 */
-  min-width: 0;
+.nav-dock-wrap {
+  position: relative;
+  width: max-content; max-width: 100%;
+  /* 两层都是同一色相：近层给轮廓，远层给"浮起来"的环境投影（空白页也看得见） */
+  filter: drop-shadow(0 10px 26px -14px var(--c-nav-shadow))
+          drop-shadow(0 22px 48px -26px var(--c-nav-shadow));
 }
-.navrow > .nav1 { grid-column: 2; justify-self: center; }
-
-/* ⚠️⚠️ 2026-10-20 订正（只增不减，下面 1253px 的推导原样保留作历史）：
-   那个算式**漏了"岛居中"的代价** —— 三列的左右两列是 `1fr` 等宽，
-   二级栏只拿到 `(视口 − 岛宽) / 2`，不是"视口 − 岛宽 − 其他"。
-   实测二级栏自身 444px（运行）～548px（大脑，页签名更长），岛 805px ⇒
-   并排需要 `2 × 二级栏 + 岛 + 两个 gap` ≈ 1725～1925px，远高于 1280。
-   症状正是用户截图那一段：1815 → 1629 时末尾页签被 `.nav2` 的隐藏滚动条静默吃掉，
-   再窄到 1280 以下反而正常（已经换成上下两行）。
-   ⇒ 1280 这一档保留为**无 JS 兜底**；真正的换行判定在
-   `app.js: syncNavrowStack()` —— 按当前功能域的实测页签宽度决定，装不下就加 `.is-stacked`。
-   （只靠固定断点只有两个选择：要么「大脑」在 1815 下裁字，要么「运行」过早换行。） */
-.navrow.is-stacked { grid-template-columns: 1fr; height: auto; row-gap: 0; }
-.navrow.is-stacked > .nav2wrap { grid-column: 1; justify-self: stretch; }
-.navrow.is-stacked > .nav1 { grid-column: 1; justify-self: stretch; justify-content: center; }
-/* ⚠️ 上面这条 `justify-content: center` **只许挂在 .is-stacked 下**（2026-10-20）：
-   并排时 `.nav1` 的宽度就是岛的宽度，任何分布声明都是空转（B39/B41 踩过两次，见 `.nav1` 注释）；
-   换行后 `.nav1` 被拉满整行，此时父容器已经没有"用列宽居中"的办法了 —— 由它自己居中，
-   才与用户要的"岛在屏幕中间"一致。`.nav-inner` 仍可被压到视口内横滚（min-width 不会撑破）。 */
-
-@media (max-width: 1280px) {
-  /* ⚠️ 单列 = 上下两行。断点来历：二级栏实测最宽 ~392px + 岛 ~805px + gap 16
-     + 左右内边距 40 = **1253px**；低于它并排就一定挤（用户实机就在这个区间）。
-     ⚠️ `row-gap: 0`：换行后两行之间**不留缝** —— 那一格若空着，背后滚动的正文
-     会从缝里直接透出来（吸顶区中间裂开一条，与"融合"的要求相反）。
-     ⚠️ 2026-10-20 起它只是**兜底**：带 JS 时 `.is-stacked` 会更早接手（见上一条订正）。 */
-  .navrow { grid-template-columns: 1fr; height: auto; row-gap: 0; }
-  .navrow > .nav2wrap { grid-column: 1; justify-self: stretch; }
-  .navrow > .nav1 { grid-column: 1; justify-self: stretch; justify-content: center; }
+.nav-dock {
+  position: relative;
+  width: 480px;
+  height: calc(var(--h-nav1) + var(--h-nav2));
+  display: flex; flex-direction: column; align-items: center;
+  background-color: var(--c-nav-bg);
+  background-image: linear-gradient(180deg, var(--c-nav-bg) 0%, var(--c-nav-bg) 56%, var(--c-eg-surface-bar) 78%, var(--c-eg-surface-bar) 100%);
+  clip-path: path("M 0 0 Z");
 }
-
-
+body.eg-on .nav-dock {
+  background-color: var(--c-nav-bg);
+  background-image: var(--c-eg-noise), linear-gradient(180deg, var(--c-nav-bg) 0%, var(--c-nav-bg) 56%, var(--c-eg-surface-bar) 78%, var(--c-eg-surface-bar) 100%);
+  -webkit-backdrop-filter: saturate(var(--c-eg-sat-isle)) blur(8px) brightness(var(--c-eg-bright-isle));
+          backdrop-filter: saturate(var(--c-eg-sat-isle)) blur(8px) brightness(var(--c-eg-bright-isle));
+  box-shadow: var(--c-eg-inset-isle), inset 0 1px 0 var(--c-eg-rim-soft);
+}
+.nav-dock::before {
+  content: "";
+  position: absolute; left: 0; right: 0;
+  top: calc(var(--h-nav1) - 1px);
+  z-index: 0;
+  height: 16px;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--c-nav-seam-line) 0, var(--c-nav-seam) 3px, transparent 16px);
+}
+.nav-dock-edge {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  overflow: visible; pointer-events: none;
+}
+.nav-dock-edge path {
+  fill: none;
+  stroke: var(--c-nav-edge);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
 .nav1 {
-  /* ⚠️ B40/B42：`.nav1` **不再自己吸顶、不再管水平位置** —— 两件事都由 `.navrow` 负责
-     （吸顶一处；水平靠 grid 的中间列）。这里只剩"岛的容器"这个职责。
-     ⚠️⚠️ **不要在这里写任何水平/纵向分布的声明**（`justify-content` / `margin-auto` 都算）：
-     B39 写 `space-between` 是**空转**的（`.nav1` 里只有 `.nav-inner` 一个子元素，
-     space-between 对单元素等同 flex-start ⇒ 岛永远贴左，正好压在二级栏上）；
-     B41 写 `margin-inline: auto` 则是"居中于剩余空间"而不是用户要的**视口居中**。
-     ⇒ 两次都白改，根因都是**位置该由父容器决定**。 */
-  display: flex; align-items: center;
+  position: relative;
+  width: 100%; height: var(--h-nav1);
+  display: flex; align-items: center; justify-content: center;
   background: none; border: 0;
 }
 .nav-inner {
-  position: relative;                    /* ← 指示器的定位基准（约束 ②） */
+  position: relative;
   display: flex; align-items: center; gap: 2px;
   height: var(--h-nav1);
   padding: 0 var(--s2);
-  /* 岛宽 = 内容宽：它是"浮岛"，不是通栏色带。
-     内容比 max-width 宽时被夹住 → 由 overflow 接手横向滚动（这是**唯一**的溢出策略）。 */
-  width: fit-content; max-width: 1560px;   /* 与 .page 同宽，右边缘不越界 */
-  background: var(--c-nav-bg);
-  border: 1px solid var(--c-nav-edge);
-  border-radius: var(--r-pill);
-  box-shadow: 0 10px 26px -14px var(--c-nav-shadow);
-  overflow-x: auto; overflow-y: hidden;   /* 不换行、不溢出 */
+  width: fit-content; max-width: 100%;
+  overflow-x: auto; overflow-y: hidden;
+  background: none; border: 0; border-radius: 0; box-shadow: none;
   scrollbar-width: none;
 }
 .nav-inner::-webkit-scrollbar { display: none; }
 
-/* ── 灵动岛 · 液态玻璃（2026-10-03 B29 新增：岛从"纯黑实心"改为跟随主题）────────
-   ⚠️ 为什么放 `body.eg-on` 门控下：JS 没跑 / 抛错 / 被关掉 → 类不在 → 这一整条不生效，
-      岛退回成「无滤镜的纯色块」（页面照常工作）。这与顶栏/卡片那族是同一套机制。
-   ⚠️ 全部走 `var(--c-eg-*)` 令牌，**不得就地写 rgba** ——
-      契约 G5（玻璃区块零就地色值）会当场报红，而就地色值不跟主题走
-      （深色下就原样留在浅色的权重）。
-   ⚠️ 模糊 6px（不是顶栏的 8px）：胶囊是 `fit-content` 的小面积盒子，
-      8px 会把它背后那点流体糊成一块死板；6px 已足够柔化边缘且省 1/4 采样成本。
-   ⚠️ **不进真折射**：`glass.js` 的 `G_LENS_CANDIDATES = ['.topbar','.savebar']`
-      与 `G_MAX_LENS = 2` 都不动 —— 岛的宽度随选中项/内容变（fit-content），
-      折射贴图要按元素尺寸重建，收益不抵成本。 */
-body.eg-on .nav-inner {
-  background-color: var(--c-nav-bg);
-  background-image: var(--c-eg-noise);
-  /* ⚠️ 通透轮：饱和/抬亮换成**岛自己的**两个令牌（不再是全局 --c-eg-sat）——
-     顶栏与卡片仍走 140%，岛走 185%/1.14，这是"三层各差一档"在色彩上的那一半。
-     ⚠️ 模糊 6px **不动**（见下条注释）：改它等于改"岛离背景多远"的知觉，
-     而本轮要动的是**透光度**，两件事分开调才不会互相掩护。 */
-  -webkit-backdrop-filter: saturate(var(--c-eg-sat-isle)) blur(6px) brightness(var(--c-eg-bright-isle));
-          backdrop-filter: saturate(var(--c-eg-sat-isle)) blur(6px) brightness(var(--c-eg-bright-isle));
-  border-color: var(--c-nav-edge);
-  box-shadow: 0 10px 26px -14px var(--c-nav-shadow), var(--c-eg-inset-isle);
-}
-
 .grp {
-  position: relative; flex: none; z-index: 1;   /* 文字压在指示器之上（指示器是 z-index:2 的框） */
+  position: relative; flex: none; z-index: 1;
   display: inline-flex; align-items: center;
   height: var(--h-nav-item); padding: 0 var(--s4);
   border: 0; background: none; cursor: pointer;
   color: var(--c-nav-fg); font-size: var(--t-md); font-family: inherit; letter-spacing: 0;
   border-radius: var(--r-pill);
-  /* ⚠️ 只过渡 background，**不过渡 color**（2026-10-03 B29）。
-     实测：切主题时若color 跟着过渡，文字从浅 `#455c85` 走到深 `#8e96a3`、
-     底从 `rgb(255,255,255)` 走到 `rgb(16,32,55)`，**中途对比度塌到 1.39:1** ——
-     也就是"切主题时闪一下看不清"。
-     而 `backdrop-filter` 本就**不可过渡**（规范明确不可插值），模糊半径在切主题
-     那一帧必须瞬变 ⇒ 底色也瞬变才配得上，两者同帧切换反而最干净。
-     玻璃底的 background 过渡保留：它在两个**都过 AA**的终态之间插值，肉眼读作柔和。 */
   transition: background var(--dur) var(--ease);
 }
 .grp:hover { background: var(--c-nav-fill); color: var(--c-nav-fg-hover); }
-/* ⚠️ 选中项**不吃**悬停填充：它已经有白色描边，再叠一层灰底就与悬停态分不清了
-   —— 用户要求 3 的原话是"与悬停态清晰区分"。这条必须写在 `:hover` 之后。 */
 .grp[aria-selected="true"] { color: var(--c-nav-fg-on); font-weight: 600; background: none; }
 .grp[aria-selected="true"]:hover { background: none; }
-/* 焦点环：黑底上唯一看得见的一圈。与描边同色是有意的 ——
-   键盘走到哪一项，看起来就该像"那一项被选中了"。 */
 .grp:focus-visible { outline: 2px solid var(--c-nav-ring); outline-offset: 2px; }
-
 .grp .cnt {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 17px; padding: 0 5px; margin-left: 6px;
   border-radius: var(--r-pill); background: var(--c-nav-cnt-bg);
-  /* ⚠️⚠️ 2026-10-03 B29：**从 `color: inherit` 改成自己的墨色**。
-     原来的注释说"对比度由项那一档保证，不另算一次"—— 那在**纯黑**岛上成立
-     （白 fill 提亮底色，对白字是增益）；但岛底改成浅玻璃后**这条推理反了**：
-     继承来的 `--c-nav-fg` #455c85 压在 chip 底（合成后 rgb(230,233,237)）上
-     实测只有 **3.98:1 ✗**。
-     ⚠️ 解法**不是**把 chip 的 alpha 调淡（要扫到 .04 才勉强 4.5，那样胶囊几乎不可见），
-     而是给胶囊自己的墨色 `--c-nav-cnt-fg`（实测 11.04:1）。契约 N12 钉住这条消费关系——
-     只加令牌不给 `.cnt` 用，是本项目反复在清的「写了没人读」。 */
   color: var(--c-nav-cnt-fg);
   font-size: var(--t-xs); font-weight: 500;
   font-variant-numeric: tabular-nums;
   transition: background var(--dur) var(--ease);
 }
 .grp[aria-selected="true"] .cnt { background: var(--c-nav-fill); }
-
-/* ── 指示器：全岛唯一的滑块 ──────────────────────────────────────────────
-   `width` 与 `transform` 由 JS 每帧写（`app.js` 的 `applyNavIndicator`），
-   这里只声明**形态**：1.5px 白描边、胶囊圆角、与选项同高。
-   ⚠️ `pointer-events: none` **必须有**：它是盖在按钮上的一层，
-      少了这条就把点击整个吃掉了 —— 表现是"导航点不动"，而看不出为什么。
-   ⚠️ `transform-origin: 50% 50%`：形变（拉伸）以自身中心为轴，
-      否则滑动时它会从左边"甩"出去，而不是"被抻长"。
-   ⚠️ 初始 `opacity: 0` + `.ready` 才显形：首帧它还在 left:0 / width:0 上，
-      不做这一下，每次进页面都能看到左上角闪一下白框。 */
 .nav-ind {
   position: absolute; left: 0; top: 50%; z-index: 2;
   height: var(--h-nav-item); width: 0;
@@ -912,135 +909,68 @@ body.eg-on .nav-inner {
 }
 .nav-ind.ready { opacity: 1; }
 
-/* ── 二级导航（页） · Ant Design Segmented 式分段 ──────────────────────── */
+/* 二级：内容宽度由 JS 写；这里只负责行高、滚动与滑块基准。 */
 .nav2wrap {
-  /* ⚠️⚠️ B29 **整条上移**到顶栏正下方（原先在灵动岛之下）。
-     偏移从 `calc(--h-topbar + --h-nav1 + --h-nav-pad*2)` 变成 `--h-topbar`；
-     z-index 34 → 40。**相对次序必须反转**：改造后二级栏在灵动岛**上方**，
-     而原来是 `.nav1(35) > .nav2wrap(34)` —— 不改就会出现"二级栏的玻璃被岛的投影盖住"。
-     契约 N7 钉的是**相对次序**（topbar > nav1 > nav2wrap），不是绝对值：
-     绝对值会随别的层调整而漂，相对次序才是需求本身。
-     ⚠️ **定高**（`--h-nav2`）：原来靠 padding 撑高，而 `.sub` 在 `pointer:coarse` 下
-     被 `min-height:44px` 顶起 ⇒ 高度会漂 ⇒ `.nav1` 的 `top` 就会错位。
-     垂直 padding 移进 `height`，三处媒体查询同步改 `--h-nav2`（契约 N9）。
-     ⚠️⚠️ **B40：这里不再是吸顶层**（吸顶交给父容器 `.navrow`），
-        高度也由 `.navrow` 给（`align-items: center` + 满高）——
-        自己再写一遍 `height: var(--h-nav2)` 就是**两份定义**，改一处会漂。 */
-  display: flex; align-items: center; gap: var(--s3);
-  height: 100%;
-  /* ⚠️ §103（2026-10-20）：二级滑块的坐标基准。JS 按 `.sub.offsetLeft` 定位，
-     而 `offsetLeft` 是相对**最近的定位祖先** —— 少了这行它会一路锚到 `.navrow`（视觉错位且不报错）。
-     写在这里而不是另起一条 `.nav2wrap{position:relative}`：同选择器两条规则会让既有变异锚点
-     `^\.nav2wrap \{` 命中 2 处（mutate-lint 当场判 INVALID）。 */
   position: relative;
-  /* ⚠️⚠️ B30：**不再通栏** —— 玻璃只包住二级选项本身（用户原话：
-     "横条不要太长，只需要模糊玻璃包含二级选项即可…右边那些都不要"）。
-     宽度随内容收缩（fit-content），右缘用 clip-path 切出**斜角**：
-     上边长、下边短（与用户标注的红色斜线同向）。⚠️ clip-path 会连 box-shadow
-     一起裁掉 —— 外阴影本来就近乎不可见，这是可接受的代价，不另找补偿。
-     ⚠️ 右内边距 = 原值 + `--nav2-cut`：给斜边留出空间，最后一个 tab 不被切到。
-     ⚠️ 通栏时代的 `border-bottom` 一体化语义随之弱化：现在它是这条玻璃带自己的
-     下缘描边（只描到斜边为止），顶栏的分界不受影响。
-     ⚠️⚠️ **B40 新增 `min-width: 0`**（写在下面 `.navrow > .nav2wrap` 那条里）：
-        作为 flex item，它默认 `min-width: auto`（= 内容宽），那样**压缩不了** ——
-        空间不够时它会把兄弟（岛）挤出/压住，正是 B39 那个"二级栏被盖住"的根因。
-        `min-width: 0` 才允许它真的被压缩，溢出交给内部的 `.nav2` 横向滚动。 */
-  width: fit-content; max-width: 100%;
-  /* 水平内边距（B30 起）：左侧 s5，右侧多留 `--nav2-cut` 给斜边。 */
-  padding: 0 calc(var(--s5) + var(--nav2-cut)) 0 var(--s5);
-  clip-path: polygon(0 0, 100% 0, calc(100% - var(--nav2-cut)) 100%, 0 100%);
-  /*玻璃材质在 `body.eg-on .nav2wrap` 那边（跟顶栏/卡片同族），
-     这里只给"JS 没跑/ 被关掉"时的普通底色。 */
-  background: color-mix(in srgb, var(--c-bg) 90%, transparent);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--c-line);
+  width: 300px; height: var(--h-nav2);
+  display: flex; align-items: center; justify-content: flex-start;
+  background: none; border: 0; padding: 0;
 }
-/* ⚠️ B29 改横向滚动（原先 `flex-wrap: wrap`）：
-   ① 换行会在玻璃中间横一道断线（B30 起玻璃条随内容收缩，断线会更显眼）；
-   ② 720px 断点下换行会让 `--h-nav2` 漂，而 `.nav1` 的 `top` 正引用它；
-   ③ 灵动岛已经用横向滚动解决同类问题（`style.css` 区块注释里记录了
-      "不用换行"的决策）—— **同一页两套溢出策略是本项目反复在清的东西**。
-   ⚠️ `padding: 3px 6px`（横向比原来多 6px）：给 `.sub:focus-visible` 的
-      `outline-offset: 2px` 留呼吸位，否则焦点环会被这层裁掉。 */
+/* 二级的薄玻璃：只在下方窄条里生效，顶部用 mask 渐隐，避免重新变成"两块玻璃"。
+   它消费 bar 三个令牌，也让二级在共用轮廓里有自己的材质深度；主要层级仍由
+   `.nav-dock::before` 的接缝阴影和一级/二级的尺寸差表达。 */
+.nav2wrap::before {
+  content: "";
+  position: absolute; inset: 0; z-index: 0;
+  pointer-events: none;
+  border-radius: 0 0 var(--nav-r2) var(--nav-r2);
+  background-color: var(--c-eg-surface-bar);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14px);
+          mask-image: linear-gradient(180deg, transparent 0, #000 14px);
+}
+body.eg-on .nav2wrap::before {
+  background-image: var(--c-eg-noise);
+  -webkit-backdrop-filter: saturate(var(--c-eg-sat-bar)) blur(8px) brightness(var(--c-eg-bright-bar));
+          backdrop-filter: saturate(var(--c-eg-sat-bar)) blur(8px) brightness(var(--c-eg-bright-bar));
+  box-shadow: var(--c-eg-inset-bar);
+}
 .nav2 {
+  position: relative; z-index: 1;
   display: flex; gap: 2px; flex-wrap: nowrap;
-  padding: 3px 6px; background: none; border-radius: 0;
-  max-width: 100%; overflow-x: auto; overflow-y: hidden;
+  height: var(--h-nav2);
+  padding: 3px 6px;
+  width: fit-content; max-width: calc(100% - 8px);
+  margin-left: 4px;
+  background: none; border-radius: 0;
+  overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none;
 }
 .nav2::-webkit-scrollbar { display: none; }
 .sub {
-  /* ⚠️⚠️ B29 选中态从「白底色块 + 阴影」改成**下划线**。
-     为什么不用短胶囊：胶囊需要 JS 维护宽度（灵动岛那个 `.nav-ind` 是每帧写
-     `style.width` + `transform` 的），下划线是纯 CSS、可对准、无逐帧成本。
-     ⚠️ 灵动岛那个**不许动** —— `app.js:466` 明确它的坐标基准是 `.nav-inner` 的
-     `offsetLeft`，改结构会让指示器错位。
-     两者**风格同源、实现不同**：同用 `--r-pill` 胶囊端点、同 2px 粗细；
-     那边是描边框（JS 写宽），这里是填充条（CSS `scaleX`）。 */
-  position: relative;                /* ← 下划线的定位基准 */
-  height: 26px; padding: 0 12px;
+  position: relative;
+  height: 24px; padding: 0 var(--s2);
   border: 0; background: transparent;
-  color: var(--c-text-2); font-size: var(--t-md); font-family: inherit; letter-spacing: 0;
+  color: var(--c-text-2); font-size: var(--t-sm); font-family: inherit; letter-spacing: 0;
   border-radius: var(--r-sm); cursor: pointer;
-  /* ⚠️⚠️ B43：`white-space: nowrap` —— **二级页签不许折行**（2026-10-04 用户实机截图）。
-     症状：标签显示成两行、第二行只露上半截（"模型与线" + 半个"路"）。
-     根因**不是"字太大"**，是**零余量**：`padding: 0 12px` + 5 个汉字 × `--t-md` 13px
-     = 89px，而按钮实测**正好 89px**（`offsetWidth`）—— 一个像素的余量都没有。
-     于是任何亚像素舍入 / 浏览器缩放 / 字体回退都能把最后一个字挤到第二行，
-     而上面 `height: 26px` 是**定高** ⇒ 第二行被裁掉一半。
-     ⚠️ 为什么不用"缩小字号"来治：13px 与一级导航 `.grp` 同级，
-     压到 12px 就变成"二级比一级小"，层级读反了；而真正该让位的是**布局**，不是字号。
-     ⚠️ `flex: none` 是**同一条根因的另一半**（少了它症状会换一种形态出现）：
-        `.sub` 默认 `flex: 0 1 auto`，在 `.navrow` 三列布局里左列被限宽时（实测 1440 宽时
-        左列仅 302px、1300 宽时仅 232px）按钮被压到 **13~42px**、文字挤成多行
-        （`scrollHeight` 最高 90px vs 定高 26px）。
-        写 `flex: none` 之后按钮**保持自身宽度**，装不下的一段交给 `.nav2` 的横向滚动
-        —— 那正是 B40 在 `.nav2wrap` 注释里写明的溢出策略（"超出部分由 `.nav2` 横向滚动
-        接住"），不是新加的机制。⚠️ 两条必须**同时**在：只写 nowrap 不写 flex:none，
-        文字仍会被压成多行；只写 flex:none 不写 nowrap，标签照样在临界宽度折行。 */
   white-space: nowrap; flex: none;
-  /* ⚠️ 只过渡 color，不过渡 background（同`.grp` 的理由）：
-     切主题时 background 过渡在两个都过 AA 的终态间插值没问题，
-     但下划线的 `::after` 走 transform，不能让它的出现被拖成一长串。 */
   transition: color var(--dur) var(--ease);
 }
 .sub:hover { background: transparent; color: var(--c-text-1); }
-/* 焦点环（B29 补齐）：`.sub` 原先**没有** focus-visible 样式，而文件开头
-   `:focus:not(:focus-visible){outline:none}` 把它清掉了 ⇒ 键盘用户看不到焦点在哪。
-   `outline-offset: 2px` 画在元素**外**，`.nav2` 的 `overflow` 只裁子元素，不裁它。 */
 .sub:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
 .sub[aria-selected="true"] { background: transparent; color: var(--c-sub-on); font-weight: 600; }
-/* ⚠️⚠️ **2026-10-20 裁决（只增不减，上面三条理由原样保留）**：
-   上面那段"下划线更省"的推理在**静态观感**上成立，但它漏了一件事 ——
-   **位移本身承载语义**（§6.4 第 3 条）：下划线是"淡入淡出"，滑块是"从哪滑到哪"。
-   按 `MOTION-METHODOLOGY §6.4` 的三条准入（有序状态 / 用户反复拨 / 位移承载语义），
-   导航**三条全中**，一级已经按 S2 做了，二级却停在 S1 —— 这就是"教规与实物不一致"。
-   本轮把二级也升到 S2：滑块由 `.nav2-ind` 承载（静态元素 + `Motion` 驱动），
-   `::after` 退役。**代价照旧存在**（每帧写 `style.width/transform`），
-   所以参数取得比一级更软、且只在"选中项变化"时跑，不是常驻帧循环。
-   ⚠️ 旧的三条理由仍然有效：**别把它当成"当年写错了"** —— 它是当时的正确取舍，
-      变的是需求（导航要"切换发生了"这件事可见）。 */
-
-/* ── 二级导航滑块（2026-10-20 · §103）──────────────────────────────────
-   与 `.nav-ind` 同构：**静态元素**、位置/宽度由 JS 写、`Motion` 弹簧驱动。
-   为什么不用 `::after` 的 `scaleX`：下划线只能"出现/消失"，无法表达位移方向；
-   而且它的宽度由 `left/right` 内缩自动得出，改不了"从上一项滑过来"。
-   ⚠️ 坐标基准是 `.nav2wrap`（所以给它 `position: relative`），
-      并**减去 `#nav2` 的 `scrollLeft`** —— 窄屏 `.nav2` 横向滚动时，
-      子元素的 `offsetLeft` 不随滚动变化，不减就会与按钮错位。 */
-/* 2026-10-21：用户要求「位置稍微往上移 + 加粗」⇒ bottom 3→6px、height 2→3px。
-   旧 `::after` 的 bottom:-3px 换算已是历史，现位置不再由它推导。 */
+/* 二级选中：淡色胶囊（S2 滑块在它后面，由 app.js 写位置/宽度）。
+   ⚠️ 它必须是**静态元素**、在 `.nav2wrap` 里；renderNav2 只重建 `.sub`。 */
 .nav2-ind {
-  position: absolute; left: 0; bottom: 6px;
-  height: 3px; width: 0;
-  border-radius: var(--r-pill); background: var(--c-accent);
+  position: absolute; left: 0; top: 3px; z-index: 0;
+  height: 24px; width: 0;
+  border-radius: var(--r-pill);
+  background: var(--c-accent-weak);
+  box-shadow: inset 0 0 0 1px var(--c-accent-line);
   transform: translateX(0);
   opacity: 0; pointer-events: none;
   transition: opacity var(--dur) var(--ease);
 }
 .nav2-ind.ready { opacity: 1; }
-/* B30：`.page-meta`（「即时页 / 点一下立刻生效」）整条删除 —— 节点与填充代码
-   （index.html / app.js renderNav2）同步移除，别让样式留成一个"看不见但还在"的孤儿。 */
 
 /* ── 页面网格与卡片 ───────────────────────────────────────────────────── */
 .page {
@@ -1319,20 +1249,30 @@ input[type="date"], input[type="time"] { font-variant-numeric: tabular-nums; }
 /* ── 开关 ─────────────────────────────────────────────────────────────── */
 .sw { display: inline-flex; align-items: center; gap: var(--s2); cursor: pointer; user-select: none; min-height: var(--h-ctl); min-width: 0; }
 .sw input { position: absolute; opacity: 0; width: 0; height: 0; }
+/* 开关：uiverse.io/gharsh11032000/sour-vampirebat-66 的弹性滑块（2026-10-23）。
+   原件是 3.5em×2em、关态浅紫/开态深紫、白色滑块 1.4em→2em 并向右滑，
+   滑块用 cubic-bezier(.175,.885,.32,1.275) 回弹，轨道用 cubic-bezier(.23,1,.32,1)。
+   这里按控制台的 40×22 等比缩：关 16×16（内缩 3）、开 22×22（贴满高度）、
+   右移 15px；颜色走 accent 令牌，深浅主题自动跟随。
+   ⚠️ 开态滑块必须留在轨道内（3 + 15 + 22 = 40）：原件在 3.5em 轨道上会有
+      0.4em 外探，控制台的行高/相邻文字更密，照搬会压到旁边的字。 */
 .sw .track {
   position: relative; flex: none; width: 40px; height: 22px;
-  background: var(--c-line-strong); border-radius: var(--r-pill);
-  transition: background var(--dur) var(--ease);
+  background: var(--c-accent-line); border-radius: var(--r-pill);
+  transition: background 400ms cubic-bezier(.23, 1, .32, 1);
 }
 .sw .track::after {
-  content: ""; position: absolute; top: 2px; left: 2px;
-  width: 18px; height: 18px; border-radius: 50%; background: var(--c-knob);
-  box-shadow: 0 1px 2px var(--c-shadow-3);
-  transition: transform var(--dur) var(--ease);
+  content: ""; position: absolute; top: 3px; left: 3px;
+  width: 16px; height: 16px; border-radius: 50%; background: var(--c-knob);
+  box-shadow: 0 1px 4px var(--c-shadow-3), 0 0 10px var(--c-shadow-2);
+  transition: transform 400ms cubic-bezier(.175, .885, .32, 1.275),
+              width 400ms cubic-bezier(.175, .885, .32, 1.275),
+              height 400ms cubic-bezier(.175, .885, .32, 1.275),
+              top 400ms cubic-bezier(.175, .885, .32, 1.275);
 }
 .sw input:checked + .track { background: var(--c-accent); }
-/* 滑块走到 40 - 2 - 18 - 2 = 18px */
-.sw input:checked + .track::after { transform: translateX(18px); }
+/* 滑块走到 40 - 3 - 22 = 15px，并长到轨道整高 */
+.sw input:checked + .track::after { top: 0; width: 22px; height: 22px; transform: translateX(15px); }
 .sw input:focus-visible + .track { box-shadow: 0 0 0 3px var(--c-accent-weak); }
 .sw input:disabled + .track { opacity: .45; cursor: not-allowed; }
 .sw input:disabled ~ .txt { color: var(--c-text-3); }
@@ -1434,6 +1374,47 @@ input[type="date"], input[type="time"] { font-variant-numeric: tabular-nums; }
 .btn-primary:active:not(:disabled) { background: var(--c-accent-hover); box-shadow: none; }
 .btn-danger { background: var(--c-danger-bg); border-color: var(--c-danger-line); color: var(--c-danger); }
 .btn-danger:hover:not(:disabled) { border-color: var(--c-danger); background: var(--c-danger-bg); }
+/* 顶栏起停两颗按钮的悬停填充（2026-10-23）。
+   动效移植自 uiverse.io/adamgiebl/popular-termite-0：原件用 ::before 的
+   left/right 50%→0 在 0.5s 内铺满、文字转白、:active 缩到 0.9。
+   这里只取动效：颜色走令牌（深浅主题自动换），几何用 transform: scaleX()
+   而不是改 left/right（后者每帧都要重新布局并重绘，前者走合成层）。
+   两个变体只差三个变量：.btn-fill 默认危险红（结束），.btn-fill-accent 走强调蓝（启动，
+   静止态白底蓝字，悬停铺满后文字转反色）。
+   ⚠️ ::before 用 z-index:-1 是为了压在文字下面、又盖住按钮自己的底色；
+      负层必须留在按钮的层叠上下文里，所以 isolation:isolate 不是装饰 ——
+      少了它，填充会画到按钮背景后面，悬停时"看起来什么都没发生"。
+   ⚠️ 只在 hover / focus-visible / active 三种状态动；减少动态由全局媒体查询接管。 */
+.btn-fill {
+  --fill: var(--c-danger);
+  --fill-ink: var(--c-on-danger);
+  --fill-rest-bg: var(--c-danger-bg);
+  position: relative; isolation: isolate; overflow: hidden;
+  transition: background var(--dur) var(--ease), border-color 280ms var(--ease),
+              color 280ms var(--ease), box-shadow var(--dur) var(--ease),
+              opacity var(--dur) var(--ease), transform 180ms var(--ease);
+}
+.btn-fill::before {
+  content: ''; position: absolute; inset: 0; z-index: -1;
+  background: var(--fill);
+  opacity: 0; transform: scaleX(0); transform-origin: center;
+  transition: transform 460ms var(--ease), opacity 280ms var(--ease);
+}
+.btn-fill:hover:not(:disabled), .btn-fill:focus-visible {
+  background: var(--fill-rest-bg);
+  border-color: var(--fill); color: var(--fill-ink);
+}
+.btn-fill:hover:not(:disabled)::before, .btn-fill:focus-visible::before {
+  opacity: 1; transform: scaleX(1);
+}
+.btn-fill:active:not(:disabled) { background: var(--fill-rest-bg); transform: scale(.9); }
+.btn-fill-accent {
+  --fill: var(--c-accent);
+  --fill-ink: var(--c-on-accent);
+  --fill-rest-bg: var(--c-surface);
+  background: var(--c-surface); border-color: var(--c-accent-line);
+  color: var(--c-accent); font-weight: 500;
+}
 .btn-ghost { border-color: var(--c-line); color: var(--c-text-2); background: var(--c-surface); }
 .btn-ghost:hover:not(:disabled) { color: var(--c-text-1); }
 .btn.danger-solid { background: var(--c-danger); border-color: var(--c-danger); color: var(--c-on-danger); }
@@ -1505,6 +1486,8 @@ a.jump:hover { border-color: var(--c-accent); color: var(--c-accent); background
      整块染色在密集中文界面里会变成一片色块，反而更难读。 */
   border-left: 3px solid var(--c-line-strong);
 }
+.sg-cell[data-go] { cursor: pointer; }
+.sg-cell[data-go]:hover { border-color: var(--c-accent); }
 .sg-ico { flex: none; color: var(--c-text-3); margin-top: 1px; }
 .sg-body { min-width: 0; display: grid; gap: 1px; }
 .sg-label { font-size: var(--t-xs); color: var(--c-text-3); }
@@ -1954,12 +1937,22 @@ details.det pre { margin: 0; }
    360px 宽下换行必然分成两三行、且断点落在词中间 —— 那正是用户明确不要的
    "换行错位"。横向滚动是这里唯一能做到"不溢出也不错位"的策略，
    而选中项会被 `scrollNavTo` 带进可见区（见 app.js）。 */
+/* 字体风格按钮在 ≤770px 收起：实测顶栏 765px 起开始溢出（没有这个按钮时
+   760px 仍是 0），留 5px 余量。字体风格是可选本地偏好，窄屏优先保证右侧
+   「一键启动 / 结束本次运行」完整可见。 */
+@media (max-width: 770px) {
+  #fontBtn { display: none; }
+  /* 「背景」只是色板的文字标签，swatch 本身仍可点；衬线字更宽，
+     不腾这 ~30px，720px 一档右侧「结束本次运行」会被裁。 */
+  .bgpick-cap { display: none; }
+}
+
 @media (max-width: 720px) {
   /* ⚠️ B39：这一档 `--h-nav2` 改成 **48px = `--h-nav1`**（原 44px）。
      B39 起两层是**同一行**，"齐平"靠的就是这两个令牌相等 ——
      不等时灵动岛比二级栏高 4px，**而两级导航看起来都正常**。
      ⚠️ 少改这一处同样会退化，只是退化形态从"被压掉一截"变成"没齐平"。 */
-  :root { --h-nav1: 48px; --h-nav-item: 36px; --h-nav2: 48px; }
+  :root { --h-nav1: 48px; --h-nav-item: 36px; --h-nav2: 30px; }
   .grp { padding: 0 var(--s3); font-size: var(--t-sm); }
   .nav-inner { padding: 0 var(--s1); }
   .sub { height: 24px; padding: 0 var(--s3); }
@@ -1973,7 +1966,8 @@ details.det pre { margin: 0; }
       ⇒ `--h-nav2` 要给 58px（50 + 上下各 4 的呼吸）。这一处漏改的话
       二级栏在触摸设备上被**压掉 10px**。 */
 @media (pointer: coarse) {
-  :root { --h-nav1: 60px; --h-nav-item: 44px; --h-nav2: 60px; }
+  :root { --h-nav1: 60px; --h-nav-item: 44px; --h-nav2: 50px; }
+  .nav2-ind { height: 36px; top: 7px; }
   .btn, .btn-sm, .btn-xs, a.jump, .sel, select, .sub, .seg label, .chip .x, .sw { min-height: 44px; }
   .grp { min-height: 44px; }
   .chip .x, .btn-xs { min-width: 44px; }
@@ -1982,7 +1976,8 @@ details.det pre { margin: 0; }
    同样是**改令牌**而不是改 `.grp` 的高度 —— 理由同上。
    ⚠️ B29：`--h-nav2` 也要一起给（与 `@media (pointer:coarse)` 同一个值），
       漏了的话手动加 `.touch` 的页面二级栏会被压掉 10px。契约 N9 盯这一处。 */
-.touch { --h-nav1: 60px; --h-nav-item: 44px; --h-nav2: 60px; }
+.touch { --h-nav1: 60px; --h-nav-item: 44px; --h-nav2: 50px; }
+.touch .nav2-ind { height: 36px; top: 7px; }
 .touch, .touch .btn, .touch a.jump, .touch .grp, .touch .sub { min-height: 44px; }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -2229,7 +2224,7 @@ body.eg-on::before {
        "这台机器走没走真折射"就表现成"糊得不一样"，而不是"有没有弯折" —— 没法归因。 */
 body.eg-on .topbar {
   background-color: var(--c-eg-surface-hero);
-  background-image: var(--c-eg-noise);
+  background-image: linear-gradient(180deg, var(--c-eg-rim-soft), transparent 22%), var(--c-eg-noise);
   -webkit-backdrop-filter: saturate(var(--c-eg-sat)) blur(8px);
           backdrop-filter: saturate(var(--c-eg-sat)) blur(8px);
   /* 顶栏与保存条是"离背景最远"的一层 → 就该更糊。与第 2 档（6px）拉开到近 3 倍，
@@ -2250,36 +2245,11 @@ body.eg-on .topbar {
   box-shadow: 0 1px 2px var(--c-shadow-1), var(--c-eg-inset);
 }
 
-/* ── ② 第 1b 档 · 二级tab 栏（B29 新增：整条上移，与顶栏融为同一块玻璃）──────────
-   ⚠️ 白纱 **.66** 而不是顶栏的 .16 —— 这不是"不统一"，是**背板不同**：
-      顶栏背后滚过去的是浅色页面底，`.16` 就够；
-      而二级栏背后是**卡片网格**，含 `--c-accent` 深色按钮（L=0.087）——
-      实测 `.16` 时 tab 默认字压那个按钮只剩 **1.88:1**（按钮滚过时 tab 字消失），
-      `.58` 也只有 3.99 ✗，`.66` 才回到 4.84 ✓（契约 N5钉住 alpha ≥.62）。
-   ⚠️ `border-bottom` 用 `--c-eg-seam`（极淡，1.256:1）—— 用户要"一体化但保留
-      一条极淡分界"，这就是那道分界。上面那条边由顶栏自己的 border-bottom 提供。
-   ⚠️ 末层内缘光用 `--c-eg-inset-bar`（厚度层只压**下**沿）：若沿用 `--c-eg-inset`
-      的 `inset 0 0 2px`（四边暗角），两条相邻玻璃各留一道下沿暗角 = 两道脏缝。 */
-body.eg-on .nav2wrap {
-  background-color: var(--c-eg-surface-bar);
-  background-image: var(--c-eg-noise);
-  /* ⚠️ 通透轮：同岛那条，换用二级栏自己的饱和/抬亮档。
-     ⚠️ 模糊 **仍然是 8px** —— 与顶栏同档是 B29「两层融为一体」的知觉前提
-     （相同的模糊半径是"融合"最强的信号），本轮不该动它：要更透就薄白纱，
-     要区分就用白纱与饱和度的**层次差**，不是把模糊拆开。 */
-  -webkit-backdrop-filter: saturate(var(--c-eg-sat-bar)) blur(8px) brightness(var(--c-eg-bright-bar));
-          backdrop-filter: saturate(var(--c-eg-sat-bar)) blur(8px) brightness(var(--c-eg-bright-bar));
-  /* ⚠️ 融合轮：下边框同样去掉（同顶栏那条，理由见上）。原来是 `--c-eg-seam`
-     —— B29 当初**故意**留的"极淡分界"，现在被用户的新要求覆盖：三层要读成一片。
-     ⚠️ `--c-eg-seam` 令牌**保留**（`.spd-tab` 还在用它），别连带删。 */
-  border-bottom-color: transparent;
-  box-shadow: 0 1px 2px var(--c-shadow-1), var(--c-eg-inset-bar);
-}
 /* 保存条是**反相器件**（浅色主题下深条白字、深色主题下浅条深字），
    玻璃底跟着走反相那一档；它固定在底部、背后有滚动内容穿过 —— 是折射的好对象。 */
 body.eg-on .savebar {
   background-color: var(--c-eg-surface-inv);
-  background-image: var(--c-eg-noise);
+  background-image: linear-gradient(180deg, var(--c-eg-rim-soft), transparent 22%), var(--c-eg-noise);
   -webkit-backdrop-filter: saturate(var(--c-eg-sat)) blur(var(--c-eg-blur-1));
           backdrop-filter: saturate(var(--c-eg-sat)) blur(var(--c-eg-blur-1));
   border: 1px solid var(--c-eg-edge);   /* 胶囊原本没有边框：这条只压圆角毛刺，1px 不改尺寸 */
@@ -2300,7 +2270,8 @@ body.eg-on .savebar {
         高斯残余 = exp(−2π²σ²/p²)，64px 周期在 blur(6) 下残余 0.958，
         在 blur(16) 下只剩 0.735。"透亮"该加边缘层，不是加模糊。 */
   border-color: var(--c-eg-edge);
-  box-shadow: 0 1px 2px var(--c-shadow-1), 0 1px 3px -1px var(--c-shadow-2), var(--c-eg-shade);
+  box-shadow: 0 1px 2px var(--c-shadow-1), 0 1px 3px -1px var(--c-shadow-2),
+              0 20px 40px -32px var(--c-shadow-4), var(--c-eg-shade);
 }
 /* 弹窗（二维码 / 详情都从这里出）：它是浮在页面上的一层，背后有内容 → 玻璃成立。
    二维码展示区（用户点名的"图片类区块"本体）就靠这一条拿到玻璃底。 */
@@ -2311,7 +2282,8 @@ body.eg-on .savebar {
   -webkit-backdrop-filter: saturate(var(--c-eg-sat)) blur(var(--c-eg-blur-2));
           backdrop-filter: saturate(var(--c-eg-sat)) blur(var(--c-eg-blur-2));
   border-color: var(--c-eg-edge);
-  box-shadow: 0 24px 60px -20px var(--c-shadow-4), var(--c-eg-shade);
+  box-shadow: 0 24px 60px -20px var(--c-shadow-4),
+              0 56px 96px -48px var(--c-shadow-4), var(--c-eg-shade);
 }
 /* ── 可读性守门：卡片里的密集表格**给不透明底**，白纱与织纹都不参与 ───────────
    ⚠️ 理由与参考实现同款（那里是「花费明细 7 列密集数字 + 表头吸顶」）：
@@ -2550,3 +2522,20 @@ html[data-vt="circle-blur"]::view-transition-new(root) {
   gap: 6px 12px; margin-top: 8px;
 }
 .cg-dim { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+
+/* ── Electron 壳：原生标题栏按钮区 + 顶栏拖拽（B1a · 2026-10-23）──────────
+   preload 在 <html> 上打 data-shell="electron"。原生按钮占右侧 40 DIP；
+   顶栏用 env(titlebar-area-width) 预留，交互元素全部 no-drag。
+   ⚠️ 不设 frame:false —— Snap/双击/系统菜单由原生标题栏保留。 */
+html[data-shell="electron"] .topbar {
+  -webkit-app-region: drag;
+  padding-right: calc(100vw - env(titlebar-area-width, 100vw) + var(--s5));
+}
+html[data-shell="electron"] .tb-pills,
+html[data-shell="electron"] .tb-actions,
+html[data-shell="electron"] .topbar button,
+html[data-shell="electron"] .topbar input,
+html[data-shell="electron"] .topbar select,
+html[data-shell="electron"] #hudIsle {
+  -webkit-app-region: no-drag;
+}

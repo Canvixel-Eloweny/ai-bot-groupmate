@@ -4,6 +4,11 @@
 > 范围：**只做 Windows**。Mac 不打包；不使用 Electron；不随公开包分发 NapCat。
 > 本文件是 P1–P5 的规格正本。实现偏离必须在本文件追加“订正段”，写清原因、影响面与迁移方式，
 > 不允许在代码里悄悄改语义。路径审计证据见 `PATH-AUDIT.md`。
+>
+> ⚠️ **订正（2026-10-23 · P1-7）：上面“不使用 Electron”已过期，旧表述保留作历史。**
+> 自 B2a 起安装载荷包含 **Electron 44.9.3 win32-x64 完整运行时**，落在
+> `versions/<ver>/app/electron/`（不是共享的 `<InstallRoot>/electron`）；壳与 app 同版本回滚。
+> Edge `--app` 仍保留为壳缺失时的回退。详见 §6.3.1 与 `README.md` 的 P1 构建步骤。
 
 ---
 
@@ -324,6 +329,23 @@ QQBOT_DATA_DIR   >  <USER_ROOT>/data        （只覆盖 data 子树）
 `refuse_vm_bundle()` 同义）；`package.json` 版本与构建版本不一致 ⇒ 拒绝；
 `SHA256SUMS` 不匹配 ⇒ 拒绝。
 
+### 6.3.1 订正（P1-7 · 2026-10-23）：Electron 载荷
+
+- 壳的代码（`electron/main.js`、`preload.js`、`error.html`、`package.json`）与
+  **Electron 44.9.3 win32-x64 完整运行时**（`electron.exe`、DLL、`resources/`、`locales/` 等）
+  一起进 `versions/<ver>/app/electron/`。它不是共享 runtime：回滚到上一版时旧壳随旧 app 一起回去。
+- 运行时来源由 `installer/toolchain.json.electron` 钉死（版本 / zip / size / SHA-256）；
+  `fetch-electron-runtime.mjs` 优先镜像、官方兜底，哈希不符拒绝解压。
+- `make-installer-payload.mjs` 断言 `electron.exe`、`version`、`resources/default_app.asar`
+  在位，BUILD-INFO 写 `electronRuntime` / `electronFiles` / `electronBytes`；
+  `check-nsi.mjs` 对 stage 再做一次同样断言。
+- 安装根**不再有** `<InstallRoot>/electron`；`launcher.mjs` 从 `programRoot/electron` 找壳，
+  `QQBOT_DESKTOP_DIR` / `QQBOT_ELECTRON_EXE` 只作 dev/救急覆盖。
+- 体积基线（2026-10-23 实测）：win32-x64 dist **368.2 MiB / 77 文件**（`electron.exe` 235 MB），
+  stage **473 MB / 2327 文件**；NSIS 3.13 `makensis` **0 warning**，最终 EXE
+  **140,886,210 B（134.3 MiB）**，SHA-256 `b8d7fcb0f27768656a080b2f0a2d4b8cecf4bcc3209e4caed921f50c7681a440`。
+  P0-4 的 256 MiB 上限余量充足，维持不变。
+
 ### 6.4 构建宿主
 
 - 本机 macOS 没有 `makensis` / 7z / brew；**NSIS 必须在 Windows 上跑**。
@@ -366,8 +388,10 @@ QQBOT_DATA_DIR   >  <USER_ROOT>/data        （只覆盖 data 子树）
    `runtime\node\node.exe <PROGRAM_ROOT>\panel\server.js`，注入
    `QQBOT_MODE=installed`、`QQBOT_USER_ROOT=<USER_ROOT>`；
    stdout/stderr 写 `USER_ROOT/panel/panel.log`。
-4. 轮询 `http://127.0.0.1:8788/api/health`，30 秒超时；返回必须包含
-   `appId=com.estrellabot.windows` 且 `version=current`。
+4. 从 `USER_ROOT\panel\.panel.json` 读面板实际端口，轮询
+   `http://127.0.0.1:<port>/api/health`，30 秒超时；返回必须包含
+   `appId=com.estrellabot.windows` 且 `version=current`。启动器启动面板时传
+   `QQBOT_PANEL_PORT=0`（系统分配）；8788 只用于识别/停掉 P3-1 之前的旧面板。
 5. 健康：写 `current.json.health=ok`、`failures=0`；动态 import
    `<PROGRAM_ROOT>/src/launch-mode.js` 打开 Edge `--app`（失败回退 Chrome/默认浏览器）。
    动态 import 必须用 `pathToFileURL(...).href`，禁止裸绝对路径（Windows 上会被当 URL 协议）。
@@ -441,7 +465,9 @@ https://github.com/Canvixel-Eloweny/ai-bot-groupmate/releases/latest/download/la
    不做 JSON 规范化）；失败 ⇒ 拒绝，界面显示“更新清单签名无效”。
 3. 解析 JSON；校验 schema/appId/channel/版本/有效期/minVersion/minWindows。
 4. 解析 installer URL；只允许 HTTPS + host allowlist（`github.com`、
-   `objects.githubusercontent.com`、配置的镜像域名）。
+   `objects.githubusercontent.com`、`release-assets.githubusercontent.com`、配置的镜像域名）。
+   ⚠️ GitHub 现在会把 release 资产 302 到 `release-assets.githubusercontent.com`；
+   客户端校验的是**最终 URL**，这个 host 必须在白名单里，否则清单和 EXE 都会被拒。
 5. 下载到 `USER_ROOT/update/cache/<version>.exe.part`（Range 续传、镜像重试）；
    校验 `size` 与 `sha256`；成功后 rename 为 `.exe`，状态 `ready`。
 6. 只有 `ready` 才允许“立即安装”。安装前再校验一次哈希。
@@ -781,7 +807,10 @@ P3 已按 §8/§9/§11.5/§13 完成；最终产品版本仍为 **0.1.3**。
   `WRITE_ROUTES`（31 条写路由）；路由表 53/35。
 - 固定 GitHub HTTPS 清单 + `.sig`；64 KiB/8 KiB 上限；原始字节 Ed25519 验签后才
   JSON.parse；schema/appId/channel/version/minVersion/minWindows/expiresAt；
-  HTTPS+host 白名单（github.com / objects.githubusercontent.com / gh-proxy.com / ghproxy.net）。
+  HTTPS+host 白名单（github.com / objects.githubusercontent.com /
+  release-assets.githubusercontent.com / gh-proxy.com / ghproxy.net）。
+  ⚠️ 最后那个 `release-assets` 是 GitHub release 资产的最终 302 目标；漏了它，
+  清单与 EXE 下载都会在最终 URL 校验处失败。
 - 下载 `.part` Range 续传、镜像回退、size+sha256 校验后 rename；取消删除 `.part`；
   状态机 disabled/idle/checking/up_to_date/available/downloading/ready/installing/error；
   SSE `update` 复用 `/api/console/stream`。
@@ -850,7 +879,7 @@ P4 按 §7.2 / §8.8 / §9 / §13 完成；最终产品版本仍为 **0.1.3**。
   runtime 一律不动；健康成功后执行，删除失败只记日志。
 - 离线更新（§8.8）：`panel/lib/update-offline.js` 两条写路由：
   `POST /api/update/offline/prepare`（manifest/sig base64，先验签后解析）与
-  `POST /api/update/offline/installer`（原始 EXE，64 MiB 上限，先 size+sha256 再
+  `POST /api/update/offline/installer`（原始 EXE，256 MiB 上限，先 size+sha256 再
   落 cache）。离线路径**不 fetch**；仍然只有 `ready` 且用户点“立即安装”才会运行安装器。
 - 镜像：`installer.mirrors` 与 `installer.url` 都要求固定 tag，显式拒绝 `latest`。
 - `/api/health` 在面板退出中返回 503；启动器只把 `200 + appId/version 匹配` 当健康。

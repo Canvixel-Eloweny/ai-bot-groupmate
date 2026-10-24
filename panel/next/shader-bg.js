@@ -73,6 +73,9 @@
     },
   ];
   const STORE_KEY = 'qqbot-bgfx';
+  /* 设计稿（2026-10-23）的默认背景是「海雾」；没有本地偏好时用它。
+     这不是"第一个预设"的同义词 —— 顺序可以变，默认值不能靠下标。 */
+  const DEFAULT_VARIANT = 'grain-ocean';
   /* ── 动画速度（B33）：0~100 四档，滑条的唯一数据源 ───────────────────────
    * 用户原话：「范围为 0~100，也可以分为 4 个档：无、慢、中、快」，目前是中。
    * v = 滑条上的读数（吸附到这 4 个点）；mul = 引擎时间倍率 —— 两列分开存，
@@ -305,13 +308,21 @@
       b.type = 'button';
       b.className = 'bg-sw';
       b.dataset.id = v.id;
+      b.dataset.label = v.label;
       b.setAttribute('role', 'radio');
       b.setAttribute('aria-checked', String(v.id === currentId));
       b.setAttribute('aria-label', `背景样式：${v.label}`);
       b.title = v.label;
       b.tabIndex = v.id === currentId ? 0 : -1;
-      // swatch 的颜色是**数据驱动**的运行时样式（来源=VARIANTS），不进样式表
-      b.style.background = `linear-gradient(135deg, ${v.colors[0]}, ${v.colors[2]})`;
+      // 色块与文字分成两个 span：设置层是带名字的网格，顶栏那个 18px 圆点已退役。
+      // 颜色仍是**数据驱动**的运行时样式（来源=VARIANTS），不进样式表。
+      const color = document.createElement('span');
+      color.className = 'bg-sw-color';
+      color.style.background = `linear-gradient(135deg, ${v.colors[0]}, ${v.colors[2]})`;
+      const label = document.createElement('span');
+      label.className = 'bg-sw-label';
+      label.textContent = v.label;
+      b.append(color, label);
       b.addEventListener('click', () => setVariant(v.id, true));
       b.addEventListener('keydown', (e) => {
         if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
@@ -491,7 +502,7 @@
     canvas = document.getElementById('shaderBg');
     if (!canvas) return;                                 // 没有画布 = 页面不需要背景（静默退出）
     currentId = saved() && VARIANTS.some((v) => v.id === saved())
-      ? saved() : VARIANTS[0].id;
+      ? saved() : DEFAULT_VARIANT;
     curVariant = VARIANTS.find((x) => x.id === currentId) || VARIANTS[0];
     /* 速度档：先于 startLoop 恢复 —— 「无」存档时启动就不该进循环。
        ⚠️ 空档不能用裸 `Number(null)`：它**恰好等于 0 =「无」**，
@@ -544,6 +555,7 @@
   window.ShaderBG = {
     VARIANTS,
     SPEEDS,
+    DEFAULT: DEFAULT_VARIANT,
     get current() { return currentId; },
     /* ⚠️ `variantId` 是**给自检看的**：它读的是缓存 `curVariant` 而不是 currentId，
      *   所以"两者是否同步"这件事本身可被断言（契约 ②'''）。

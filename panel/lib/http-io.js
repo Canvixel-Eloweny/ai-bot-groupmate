@@ -13,6 +13,9 @@
  * ⚠️ 本模块零依赖（只用 Node 内置），属依赖图最底层。别给它加面板内的 import。
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 /**
  * 把 obj 当作 JSON 写回去。
  *
@@ -90,5 +93,58 @@ export function readBodyBuffer(req, { maxBytes = 4 * 1024 * 1024 } = {}) {
     req.on('end', () => finish(tooLarge ? { ok: false, error: 'too-large' } : { ok: true, buf: Buffer.concat(chunks) }));
     req.on('aborted', () => finish(tooLarge ? { ok: false, error: 'too-large' } : { ok: false, error: 'aborted' }));
     req.on('error', () => finish(tooLarge ? { ok: false, error: 'too-large' } : { ok: false, error: 'aborted' }));
+  });
+}
+
+/**
+ * 把请求体**流式写到文件**（P1-8 · 2026-10-23）。
+ *
+ * 为什么不能复用 `readBodyBuffer`：Electron 载荷实测 150–250 MB，`chunks` + `Buffer.concat`
+ * 的峰值约 2× 包体；离线更新会在面板进程里直接 OOM，而用户只看到“上传失败”。
+ * 这里边读边写，仍然按 maxBytes 封顶；超限/中断会把半份文件删掉，不留 200 MB 垃圾。
+ */
+export function readBodyToFile(req, { file, maxBytes = 4 * 1024 * 1024 } = {}) {
+  return new Promise((resolve) => {
+    let size = 0;
+    let tooLarge = false;
+    let done = false;
+    let out = null;
+    const cleanup = () => {
+      try { out?.destroy(); } catch { /* 已关 */ }
+      try { fs.rmSync(file, { force: true }); } catch { /* 已删 */ }
+    };
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      if (!v.ok) cleanup();
+      resolve(v);
+    };
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      out = fs.createWriteStream(file, { flags: 'w' });
+    } catch (e) {
+      finish({ ok: false, error: 'open', message: e && e.message ? e.message : String(e) });
+      return;
+    }
+    out.on('error', (e) => finish({ ok: false, error: 'write', message: e && e.message ? e.message : String(e) }));
+    req.on('data', (c) => {
+      if (tooLarge || done) return;
+      size += c.length;
+      if (size > maxBytes) {
+        tooLarge = true;
+        cleanup();
+        return;
+      }
+      if (!out.write(c)) {
+        req.pause();
+        out.once('drain', () => req.resume());
+      }
+    });
+    req.on('end', () => {
+      if (tooLarge) { finish({ ok: false, error: 'too-large' }); return; }
+      out.end(() => finish({ ok: true, size }));
+    });
+    req.on('aborted', () => finish({ ok: false, error: 'aborted' }));
+    req.on('error', () => finish({ ok: false, error: 'aborted' }));
   });
 }

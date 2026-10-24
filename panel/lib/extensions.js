@@ -79,10 +79,16 @@ function projectItem(p) {
   };
 }
 
-function scan(enabled) {
+function scan(enabled, maxPlugins = null) {
   let r;
   try {
-    r = loadExtensions({ root: USER_ROOT, enabled, log: {} });
+    r = loadExtensions({
+      root: USER_ROOT,
+      enabled,
+      log: {},
+      // 不传就由 `loadExtensions` 用 `PLUGIN_MAX` 兜底；传了就以配置为准。
+      ...(Number.isFinite(Number(maxPlugins)) ? { max: Number(maxPlugins) } : {}),
+    });
   } catch (e) {
     // 与 `/api/state` 那条纪律一致：这个模块**不许抛**。
     // 一个坏掉的扩展包目录让整页停止刷新，是比"扩展包列表空着"严重得多的错误。
@@ -110,12 +116,16 @@ function scan(enabled) {
  *        `now` 由入参给（测试要能控制时间，不在函数里直接读 Date.now()）；
  *        `force` 跳过缓存 —— 测试与"刚改完白名单"时用。
  */
-export function extensionsOf(enabled = [], { now = Date.now(), force = false, userSettings = {} } = {}) {
-  const key = Array.from(enabled || [], String).join(',');
+export function extensionsOf(enabled = [], {
+  now = Date.now(), force = false, userSettings = {}, maxPlugins = null,
+} = {}) {
+  // 上限进缓存键：改了 `plugins.max` 之后 3 秒内的下一次拉取必须重新扫，
+  // 否则"超上限"计数还是旧上限算出来的（表现为"我改大了上限，它还说超限"）。
+  const key = `${Array.from(enabled || [], String).join(',')}|${maxPlugins ?? ''}`;
   let value;
   if (!force && cache && cache.key === key && now - cache.at < TTL_MS) value = cache.value;
   else {
-    value = scan(enabled);
+    value = scan(enabled, maxPlugins);
     cache = { key, at: now, value };
   }
   // D7：把每个包的设置算成**控件描述**（类型 / 是否密码框 / 当前值）随状态下发。

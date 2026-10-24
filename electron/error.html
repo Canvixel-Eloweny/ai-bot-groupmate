@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estrella Bot · 控制台未连接</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid; place-items: center; background: #0b1226; color: #e8eefc;
+    font: 15px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  main { width: min(560px, calc(100vw - 48px)); text-align: center; }
+  h1 { margin: 0 0 12px; font-size: 22px; font-weight: 650; }
+  p { margin: 0 0 22px; color: #a9b6d4; }
+  code { color: #cfe0ff; word-break: break-all; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+  button {
+    appearance: none; border: 1px solid #3a4f7a; border-radius: 10px;
+    padding: 9px 22px; background: #1b2a4a; color: #e8eefc; font: inherit; cursor: pointer;
+  }
+  button:hover { background: #24365c; }
+  button:disabled { opacity: .55; cursor: wait; }
+  button.ghost { background: transparent; }
+  .state { min-height: 1.6em; margin: 16px 0 0; font-size: 13px; color: #8fa2c6; }
+  .note { margin: 4px 0 0; font-size: 12px; color: #6f7f9e; }
+</style>
+</head>
+<body>
+<main>
+  <h1>控制台没有连上</h1>
+  <p id="detail">窗口还在，但面板后端没有启动，或者已经退出。可以直接重新拉起后端，不需要关闭窗口。</p>
+  <div class="row">
+    <button id="restart" type="button">重启控制台后端</button>
+    <button id="retry" type="button" class="ghost">重试连接</button>
+    <button id="quit" type="button" class="ghost">退出程序</button>
+  </div>
+  <p class="note">「退出程序」会同时停止机器人；只想关控制台，请先重启后端，再用面板里的「退出控制台」。</p>
+  <p id="state" class="state"></p>
+</main>
+<script>
+  const q = new URLSearchParams(location.search);
+  const msg = q.get('message');
+  if (msg) document.getElementById('detail').textContent =
+    `窗口还在，但面板后端没有启动，或者已经退出。${msg}。可以直接重新拉起后端，不需要关闭窗口。`;
+
+  const restart = document.getElementById('restart');
+  const retry = document.getElementById('retry');
+  const quit = document.getElementById('quit');
+  const state = document.getElementById('state');
+
+  async function showState() {
+    const api = window.estrellaShell;
+    if (!api || typeof api.panelState !== 'function') return;
+    try {
+      const st = await api.panelState();
+      if (!st || st.ok === false) { state.textContent = '读不到后端状态（可以重试或退出）'; return; }
+      state.textContent = st.alive
+        ? `后端进程在（pid ${st.pid}，端口 ${st.port}），但没有通过健康检查`
+        : '后端进程未运行';
+    } catch { /* 状态读不到不阻断按钮 */ }
+  }
+
+  restart.addEventListener('click', async () => {
+    const api = window.estrellaShell;
+    if (!api || typeof api.restartPanel !== 'function') {
+      state.textContent = '这个页面不在桌面壳里，请从托盘重新打开控制台。';
+      return;
+    }
+    restart.disabled = true;
+    retry.disabled = true;
+    state.textContent = '正在重新拉起后端…';
+    try {
+      const r = await api.restartPanel();
+      if (r && r.ok) { state.textContent = '后端已起来，正在打开控制台…'; return; }
+      state.textContent = `重启失败：${(r && r.error) || '未知原因'}`;
+    } catch (e) {
+      state.textContent = `重启失败：${e && e.message ? e.message : e}`;
+    }
+    restart.disabled = false;
+    retry.disabled = false;
+  });
+  quit.addEventListener('click', () => {
+    const api = window.estrellaShell;
+    if (!api || typeof api.quit !== 'function') {
+      state.textContent = '这个页面不在桌面壳里，无法退出程序。';
+      return;
+    }
+    void api.quit();
+  });
+  retry.addEventListener('click', () => {
+    const api = window.estrellaShell;
+    if (api && typeof api.retry === 'function') api.retry();
+    else location.reload();
+  });
+  void showState();
+</script>
+</body>
+</html>

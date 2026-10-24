@@ -108,11 +108,11 @@ export default [
     id: 'M9',
     note: '取消下载不清 .part —— 残留残段可能被下一次续传拼进坏文件',
     file: 'panel/lib/update-download.js',
-    anchor: /if \(signal\?\.aborted \|\| e\?\.code === 'ABORTED'\) \{\n          try \{ fs\.rmSync\(part, \{ force: true \}\); \} catch \{ \/\* ignore \*\/ \}\n          throw abortError\(signal\?\.reason, '下载已取消'\);/g,
+    anchor: /if \(signal\?\.aborted \|\| e\?\.code === 'ABORTED'\) \{\n          dropPart\(\);/g,
     count: 1,
     apply: (s) => s.replace(
-      "        if (signal?.aborted || e?.code === 'ABORTED') {\n          try { fs.rmSync(part, { force: true }); } catch { /* ignore */ }\n          throw abortError(signal?.reason, '下载已取消');",
-      "        if (signal?.aborted || e?.code === 'ABORTED') {\n          /* mutation: no cleanup */\n          throw abortError(signal?.reason, '下载已取消');"
+      "        if (signal?.aborted || e?.code === 'ABORTED') {\n          dropPart();",
+      "        if (signal?.aborted || e?.code === 'ABORTED') {\n          /* mutation: no cleanup */"
     ),
     layer: 'check-wb',
     expect: 'BLOCKED',

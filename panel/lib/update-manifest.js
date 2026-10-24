@@ -9,18 +9,27 @@ import { compareVersions } from './update-version.js';
 
 export const MANIFEST_URL =
   'https://github.com/Canvixel-Eloweny/ai-bot-groupmate/releases/latest/download/latest.json';
-export const SIGNATURE_URL = `${MANIFEST_URL}.sig`;
 export const MANIFEST_MAX_BYTES = 64 * 1024;
 export const SIGNATURE_MAX_BYTES = 8 * 1024;
-/** 离线安装包上传上限（经验值：当前 EXE 25.6 MB，留一倍余量）。 */
-export const OFFLINE_INSTALLER_MAX_BYTES = 64 * 1024 * 1024;
+/** 离线安装包上传上限（Electron 44 win32-x64 zip 实测 151 MiB；256 MiB 留余量，
+ *  P1-7 实测载荷体积后再校准，不许回落到 64 MiB）。 */
+export const OFFLINE_INSTALLER_MAX_BYTES = 256 * 1024 * 1024;
+/** 在线/离线安装包的统一绝对上限。清单里的 installer.size 超过它就直接拒绝，
+ *  避免“能下到但永远装不上”的大包；P1-7 实测后与 OFFLINE_INSTALLER_MAX_BYTES 同源校准。 */
+export const INSTALLER_MAX_BYTES = OFFLINE_INSTALLER_MAX_BYTES;
 /** 离线暂存过期时间：超过 1 小时且未完成上传就清掉。 */
 export const OFFLINE_PENDING_MAX_AGE_MS = 60 * 60 * 1000;
 export const MIN_WINDOWS = '10.0.17763';
 export const CHANNEL = 'stable';
+/* GitHub release 资产现在会从 github.com 302 到 release-assets.githubusercontent.com。
+   `fetchCapped` / `downloadWithProgress` 校验的是**最终 URL**，所以这个 host 必须
+   在白名单里；否则清单能下载也会被拒，EXE 同理。
+   ⚠️ 只放行精确 host，不用 *.githubusercontent.com 通配；若 GitHub 再换 CDN，
+      需要在这里同步更新（check-wb 有字面量判据盯着）。 */
 export const ALLOWED_HOSTS = Object.freeze([
   'github.com',
   'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
   'gh-proxy.com',
   'ghproxy.net',
 ]);
@@ -124,6 +133,8 @@ export function validateManifest(obj, ctx = {}) {
     if (!url.ok) errors.push(`installer.url ${url.reason}`);
     if (!Number.isInteger(installer.size) || installer.size <= 0) {
       errors.push('installer.size 必须是正整数');
+    } else if (installer.size > INSTALLER_MAX_BYTES) {
+      errors.push(`installer.size 超过上限 ${INSTALLER_MAX_BYTES} 字节`);
     }
     if (!/^[a-f0-9]{64}$/.test(String(installer.sha256 || ''))) {
       errors.push('installer.sha256 必须是 64 位小写十六进制');

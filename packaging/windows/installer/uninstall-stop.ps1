@@ -23,6 +23,22 @@ foreach ($p in $procs) {
   }
 }
 
+# Electron shell: exact executable path under this install root only.
+# Main + renderer/GPU children all use the same electron.exe path; /T kills the tree.
+$electronRel = "\app\electron\electron.exe"
+$legacyExe = $InstallRoot + "\electron\electron.exe"
+foreach ($p in $procs) {
+  $exe = [string]$p.ExecutablePath
+  if (-not $exe) { continue }
+  $isShell = $exe.Equals($legacyExe, [StringComparison]::OrdinalIgnoreCase)
+  if (-not $isShell -and $exe.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and $exe.EndsWith($electronRel, [StringComparison]::OrdinalIgnoreCase)) {
+    $isShell = $true
+  }
+  if ($isShell) {
+    taskkill /PID $p.ProcessId /T /F 2>$null | Out-Null
+  }
+}
+
 if ($UserRoot) {
   # Close the dedicated Edge app window first: its console-profile lives under
   # USER_ROOT/panel/console-profile and would keep user data locked during delete.

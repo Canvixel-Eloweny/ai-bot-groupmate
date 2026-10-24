@@ -53,7 +53,12 @@ import { spawn, execFileSync } from 'node:child_process';
 export const LAUNCH_MODES = ['browser', 'window'];
 
 /** 缺省值 = 现行行为（老配置里没有 `launch` 段时走它 ⇒ 老用户零感知）。 */
-export const DEFAULT_LAUNCH = Object.freeze({ mode: 'browser', openOnStart: true });
+export const DEFAULT_LAUNCH = Object.freeze({
+  mode: 'browser',
+  openOnStart: true,
+  closeAction: 'tray',
+  autoProtocol: true,
+});
 
 /**
  * 独立窗口的**默认**尺寸（逻辑像素）—— 只在"没有记住的窗口状态"时用（第一次开）。
@@ -82,7 +87,24 @@ export function normalizeLaunch(raw) {
   const mode = r.mode === 'window' ? 'window' : 'browser';
   const unknownMode =
     typeof r.mode === 'string' && r.mode !== 'window' && r.mode !== 'browser' ? r.mode : null;
-  return { mode, openOnStart: r.openOnStart !== false, unknownMode };
+  return {
+    mode,
+    openOnStart: r.openOnStart !== false,
+    closeAction: r.closeAction === 'quit' ? 'quit' : 'tray',
+    autoProtocol: r.autoProtocol !== false,
+    unknownMode,
+  };
+}
+
+/**
+ * 启动时是否把界面留在后台（不弹窗）。
+ *
+ * `--hidden`（登录自启）与 `launch.openOnStart=false` **任一**成立都必须隐藏；
+ * 其余（含读不到配置/坏值）按显示处理（fail-open，与 normalizeLaunch 同一取向）。
+ * 壳在托盘不可用时仍会 fail-open 显示窗口（否则用户没有任何入口），这是壳层既有的兜底。
+ */
+export function shouldStartHidden({ wantHidden = false, openOnStart = true } = {}) {
+  return Boolean(wantHidden) || openOnStart === false;
 }
 
 /**
@@ -115,6 +137,25 @@ export function validateLaunch(patch) {
       };
     }
     out.openOnStart = patch.openOnStart;
+  }
+  if ('closeAction' in patch) {
+    if (patch.closeAction !== 'tray' && patch.closeAction !== 'quit') {
+      return {
+        ok: false,
+        error: `closeAction 只接受 tray / quit（收到的是 ${JSON.stringify(patch.closeAction)}）—— `
+          + '它决定关闭窗口是驻留托盘还是走完整退出链。',
+      };
+    }
+    out.closeAction = patch.closeAction;
+  }
+  if ('autoProtocol' in patch) {
+    if (typeof patch.autoProtocol !== 'boolean') {
+      return {
+        ok: false,
+        error: `autoProtocol 只接受 true / false（收到的是 ${JSON.stringify(patch.autoProtocol)}）。`,
+      };
+    }
+    out.autoProtocol = patch.autoProtocol;
   }
   return { ok: true, value: out };
 }
@@ -402,6 +443,8 @@ export function closeStaleConsole(profileDir, {
 export const LAUNCH_ENTRY_LABELS = {
   'win-pkg': 'Windows 便携包（桌面图标 / 2-START）',
   'win-dev': 'Windows 开发树启动器',
+  'win-installed': 'Windows 安装版启动器',
+  'win-shell': 'Windows 桌面壳',
   'mac-app': 'Mac 图标（.app）',
   cli: '命令行',
 };

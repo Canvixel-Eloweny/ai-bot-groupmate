@@ -32,8 +32,6 @@ import {
 } from './versions.mjs';
 import { lookupNapcatDigest, napcatOfflineDefault } from './napcat-local.mjs';
 
-const ZIP_RE = /^node-v.+-win-x64\.zip$/;
-
 // ── 小工具 ──────────────────────────────────────────────────────────────────
 function rmrf(p) {
   try { fs.rmSync(p, { recursive: true, force: true }); return true; } catch { return false; }

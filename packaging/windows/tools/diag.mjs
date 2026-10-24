@@ -22,10 +22,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import {
-  ROOT, APP, USER_ROOT, NAPCAT_DIR, CONFIG_JSON, SETUP_MARKER, exists, readJson,
+  APP, ROOT, USER_ROOT, NAPCAT_DIR, CONFIG_JSON, SETUP_MARKER, exists, readJson,
 } from './lib/common.mjs';
+
+// 顶层 tools/ 与 app/ 的相对层级在安装包里与开发树不同 ⇒ 发现模块按当前程序根懒加载。
+const requireApp = createRequire(path.join(APP, 'package.json'));
+let discoveryCache = null;
+function panelDiscovery() {
+  if (!discoveryCache) discoveryCache = requireApp(path.join(APP, 'src', 'panel-discovery.cjs'));
+  return discoveryCache;
+}
+function discoveryOrNull() {
+  try { return panelDiscovery(); } catch { return null; }
+}
 
 const OUT = path.join(USER_ROOT, 'diag-out');
 const SHARE = path.join(process.env.USERPROFILE || '', 'Documents', 'UTM-Share');
@@ -208,9 +220,22 @@ if (exists(NAPCAT_DIR)) {
 
 // ── ④ 端口与进程 ────────────────────────────────────────────────────────────
 head('④ 端口 / 进程');
-for (const [name, port] of [['协议端 OneBot', 3001], ['协议端 HTTP', 3000], ['控制台面板', 8788]]) {
+for (const [name, port] of [['协议端 OneBot', 3001], ['协议端 HTTP', 3000]]) {
   const open = await portOpen(port);
   say(`${name} ${port}`.padEnd(20) + (open ? '在听' : '**没在听**'));
+}
+// P3-1：控制台端口由系统分配，诊断不能再盯 8788。
+const d = discoveryOrNull();
+const panelInfo = d ? d.readDiscovery(USER_ROOT) : null;
+if (panelInfo && d.isLive(panelInfo)) {
+  const open = await portOpen(panelInfo.port);
+  say(`控制台面板 ${panelInfo.port}`.padEnd(20)
+    + (open ? `在听（系统分配 · pid ${panelInfo.pid}）` : '**发现文件在，但端口没在听**'));
+} else {
+  const legacyPort = d ? d.LEGACY_PANEL_PORT : 8788;
+  const legacyOpen = await portOpen(legacyPort);
+  say('控制台面板 动态'.padEnd(20)
+    + `**没有发现文件**（旧版/未知 ${legacyPort}：${legacyOpen ? '在听，升级前请先退出' : '没在听'}）`);
 }
 say('');
 say('相关进程（映像名 + PID）：');
@@ -276,6 +301,25 @@ head('⑥ 面板日志尾部（最后 80 行）');
 say(tail(path.join(USER_ROOT, 'panel', 'panel.log'), 80));
 head('⑥b 面板启动日志尾部（最后 40 行 —— 启动器写的那个）');
 say(tail(path.join(USER_ROOT, 'panel', 'start.log'), 40));
+{
+  // 安装版 launcher 的 stdout 实际落在 %TEMP%\Estrella-Bot-launch.log（不是 userdata）。
+  const temp = process.env.TEMP || process.env.TMP || '';
+  const launchLog = temp ? path.join(temp, 'Estrella-Bot-launch.log') : '';
+  head('⑥b2 安装版 launcher 日志尾部（最后 40 行）');
+  say(launchLog ? tail(launchLog, 40) : '**没有 TEMP 目录**');
+}
+head('⑥d Electron 壳日志尾部（最后 120 行）');
+say(tail(path.join(USER_ROOT, 'electron', 'shell.log'), 120));
+head('⑥e Electron 崩溃事件（最后 60 行）');
+say(tail(path.join(USER_ROOT, 'electron', 'crashes', 'shell-events.jsonl'), 60));
+head('⑥f 上次退出记录');
+say('panel：');
+say(tail(path.join(USER_ROOT, 'panel', '.last-exit.json'), 20));
+say('shell：');
+say(tail(path.join(USER_ROOT, 'electron', 'shell-exit.json'), 20));
+head('⑥g 版本与回滚');
+say(tail(path.join(ROOT, 'current.json'), 40));
+say(tail(path.join(USER_ROOT, 'update', 'rollback.json'), 40));
 // ── ⑥c 一键安装的逐阶段 boot 日志（2026-10-16 · Windows P0-3）───────────────
 // "双击之后卡在哪一步"最省事的证据：onekey 每一步都往 `diag-out/boot-<日期>.log`
 // 同步追一行（唯一实现住 `lib/common.mjs` 的 diag()）。这里把**最新那份**的尾部一起收走。

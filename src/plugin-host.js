@@ -61,6 +61,7 @@ import { pathToFileURL } from 'node:url';
 import {
   DIR_KINDS,
   MANIFEST_FILES,
+  PLUGIN_MAX,
   normalizeManifest,
   planLoad,
   stripBom,
@@ -226,12 +227,13 @@ function scanRoot({ dir, kind, name }) {
  *
  * 扫两个根 → 逐条校验 → 按白名单决定"加载 / 未启用 / 拒绝" → 写日志。
  *
- * @param {{root:string, enabled?:Iterable<string>, log?:{info?,warn?}}} opts
+ * @param {{root:string, enabled?:Iterable<string>, log?:{info?,warn?}, max?:number}} opts
  *        `root` 由调用方给（不在这里推导，见文件头）。
  *        `enabled` 是 config 里显式启用的 **id** 集合。
+ *        `max` 是本次最多加载几个（`custom.plugins.max`；缺省 `PLUGIN_MAX`）。
  * @returns {{plan:Array, sum:object, scans:Array, roots:Array}}
  */
-export function loadExtensions({ root, enabled = [], log = {} } = {}) {
+export function loadExtensions({ root, enabled = [], log = {}, max = PLUGIN_MAX } = {}) {
   const info = typeof log.info === 'function' ? log.info.bind(log) : () => {};
   const warn = typeof log.warn === 'function' ? log.warn.bind(log) : () => {};
 
@@ -244,12 +246,16 @@ export function loadExtensions({ root, enabled = [], log = {} } = {}) {
     entries.push(...sc.entries);
   }
 
-  const plan = planLoad(entries, enabled);
+  const plan = planLoad(entries, enabled, { max });
   const sum = summarize(plan);
 
   // 有问题的一条**逐条**报（这条线绝对不能只给汇总数字 —— 用户要靠它定位是哪个包）。
   for (const p of plan) {
     if (p.action === 'reject') warn(`扩展包 ✗ ${p.dirName}（id ${p.id}）：${p.detail}`);
+  }
+  // 超上限的一条也逐条报：这是"我明明启用了却没生效"最常见的第二因（第一因是未知钩子点）。
+  for (const p of plan) {
+    if (p.action === 'over') warn(`扩展包 ⏸ ${p.dirName}（id ${p.id}）：${p.detail}`);
   }
   for (const p of plan) {
     if (p.action === 'load') info(`扩展包 ✓ ${p.dirName}（id ${p.id} v${p.manifest?.version || '?'}）：已启用`);
@@ -265,7 +271,7 @@ export function loadExtensions({ root, enabled = [], log = {} } = {}) {
     .join(' · ');
   info(
     `扩展包 | 扫描：${scanned} | 合计 ${sum.total} 个 → ` +
-      `可加载 ${sum.load} · 未启用 ${sum.skip} · 有问题 ${sum.reject}` +
+      `可加载 ${sum.load} · 未启用 ${sum.skip} · 有问题 ${sum.reject} · 超上限 ${sum.over || 0}（上限 ${max}）` +
       (sum.reject ? `（${Object.entries(sum.byReason).filter(([k]) => k !== 'not-enabled' && k !== 'enabled').map(([k, v]) => `${k}×${v}`).join(' ')}）` : '')
   );
   // ① 这一段**只做识别与校验**，不执行扩展代码 —— 执行在 `createExtensionHost()` 里。
@@ -312,6 +318,9 @@ export const HOST_STATE = Object.freeze({
   LOADED: 'loaded',     // 真的加载并执行了
   SKIPPED: 'skipped',   // 启用了、也 import 成功了，但入口没有可执行的东西
   FAILED: 'failed',     // 校验不过 / import 抛错 / setup 抛错
+  // 启用了，但按白名单次序排在上限之后（2026-10-23）。**不是错误、也不是 reject** ——
+  // 面板据此显示「超上限·未加载」，开关仍可勾选（取消别人或调大上限即可恢复）。
+  OVER: 'over',
 });
 
 /**
@@ -345,20 +354,27 @@ function entryProblem(dir, entry) {
   return null;
 }
 
-/** 收集模块导出的钩子，挂到总线上。返回挂上去的 [点, 数量] 列表。 */
+/** 收集模块导出的钩子，挂到总线上。返回 `{list:[[点, 数量]], errors:[{point,reason}]}`。 */
 function attachHooks(mod, id, bus, warn) {
-  const out = [];
+  const list = [];
+  const errors = [];
   const hooks = mod?.hooks;
-  if (!hooks || typeof hooks !== 'object') return out;
+  if (!hooks || typeof hooks !== 'object') return { list, errors };
   for (const [point, fn] of Object.entries(hooks)) {
     // 一个钩子点可以挂多个函数（数组形式）—— 参考实现支持，这里也支持。
     const fns = Array.isArray(fn) ? fn : [fn];
     let n = 0;
     for (const f of fns) if (bus.on(point, f, { owner: id })) n += 1;
-    if (n) out.push([point, n]);
-    else warn(`扩展包「${id}」的钩子「${point}」没挂上（未知钩子点或不是函数）`);
+    if (n) list.push([point, n]);
+    else {
+      // ★ 不静默：把"哪个钩子点没挂上"带进运行期记录，面板要能显示 ——
+      //   以前只 warn，日志一滚就没人知道这个包为什么"加载了却不工作"。
+      const reason = '未知钩子点或不是函数（宿主支持的点见 hook-bus.js 的 HOOK_POINTS）';
+      errors.push({ point: String(point), reason });
+      warn(`扩展包「${id}」的钩子「${point}」没挂上（${reason}）`);
+    }
   }
-  return out;
+  return { list, errors };
 }
 
 /**
@@ -384,6 +400,8 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
    * （真去重载会让模块级状态与钩子表各出现两份，而那正是最难查的一类幽灵。）
    */
   let loaded = false;
+  /** 本次加载生效的插件上限（`custom.plugins.max`）。只由 load() 写，snapshot 读。 */
+  let maxPluginsUsed = PLUGIN_MAX;
 
   function record(id, fields) {
     records.set(id, {
@@ -397,6 +415,9 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
       detail: fields.detail ?? '',
       tools: [],
       hooks: [],
+      hookErrors: [],
+      /** loaded 但既没有工具也没有钩子 ⇒ 面板显示「空载」（"装了等于没装"的可观测面）。 */
+      empty: false,
       life: { setup: 'none', activate: 'none', deactivate: 'none', dispose: 'none' },
       permissions: fields.permissions ?? { known: [], unknown: [] },
       settingsKeys: fields.settingsKeys ?? [],
@@ -542,7 +563,8 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
     }
 
     // ③ 挂钩子（放在 setup **之后**：setup 抛错的包不该留下钩子）
-    const hooks = attachHooks(mod, p.id, bus, warn);
+    const attach = attachHooks(mod, p.id, bus, warn);
+    const hooks = attach.list;
 
     // ④ activate（起副作用：定时器 / 监听）
     //    ⚠️ 第 48 轮起**带参**：生态契约是 `activate(ctx)`，无参调用会让包里的
@@ -569,7 +591,17 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
       // `tools` 一起带出去：提示词注入时要用**真实注册名**（带 owner 前缀，
       // 如 `image-lib__image_lib_search`）告诉模型"这个包有哪些工具可调"——
       // 清单作者写的是裸 id，真实名字只有这里算得出来（`scopedToolId`）。
-      patch: { life, tools, hooks, toolErrors, promptSections: Array.isArray(m.promptSections) ? m.promptSections : [] },
+      patch: {
+        life,
+        tools,
+        hooks,
+        hookErrors: attach.errors,
+        // loaded 且两样都没有 = 这个包当前什么都不做。面板显示「空载」，
+        // 用户不必去翻日志才知道"装了等于没装"。
+        empty: tools.length === 0 && hooks.length === 0,
+        toolErrors,
+        promptSections: Array.isArray(m.promptSections) ? m.promptSections : [],
+      },
     });
     info(
       `扩展包 ✓ ${p.dirName}（id ${p.id} v${base.version || '?'}）：已加载` +
@@ -589,7 +621,8 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
       loaded = true;
 
       const enabled = getCustom?.()?.plugins?.enabled || [];
-      const { plan } = loadExtensions({ root, enabled, log });
+      maxPluginsUsed = Math.max(1, Math.trunc(Number(getCustom?.()?.plugins?.max)) || PLUGIN_MAX);
+      const { plan } = loadExtensions({ root, enabled, log, max: maxPluginsUsed });
       for (const p of plan) {
         if (p.action === 'load') continue; // 稍后逐条异步处理
         record(p.id, {
@@ -597,15 +630,20 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
           kind: p.kind,
           name: p.manifest?.name || p.id,
           version: p.manifest?.version || '',
-          state: p.action === 'skip' ? HOST_STATE.PENDING : HOST_STATE.FAILED,
+          state: p.action === 'skip' ? HOST_STATE.PENDING
+            : p.action === 'over' ? HOST_STATE.OVER
+              : HOST_STATE.FAILED,
           reason: p.reason,
           detail: p.detail,
           // 同上：读归一化的 `settingsKeys`，别读 `schemaKeys`（真实包写的是 `settings`）
           settingsKeys: Array.isArray(p.manifest?.settingsKeys) ? p.manifest.settingsKeys : [],
         });
       }
-      for (const p of plan) {
-        if (p.action !== 'load') continue;
+      // 按**白名单次序**加载：钩子注册顺序 = 否决顺序，工具额度先到先得。
+      // 以前按目录名（`listSubdirs().sort()`），用户改不了；现在与面板勾选顺序一致。
+      const toLoad = plan.filter((p) => p.action === 'load')
+        .sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
+      for (const p of toLoad) {
         // eslint-disable-next-line no-await-in-loop -- 顺序加载是刻意的：注册顺序 = 钩子判定顺序
         await activateOne(p);
       }
@@ -616,9 +654,10 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
       //    否则"一个都没启用"与"启用了但全失败"在日志里长得一模一样。
       info(
         `扩展包 | 执行：扫描 ${plan.length} 个 → 已加载 ${s.loaded} · 未启用 ${s.pending}` +
-          ` · 无入口契约 ${s.skipped} · 失败 ${s.failed}` +
+          ` · 无入口契约 ${s.skipped} · 失败 ${s.failed} · 超上限 ${s.over || 0}（上限 ${maxPluginsUsed}）` +
           ` | 工具 ${typeof registry.size === 'function' ? registry.size() : '?'}` +
-          ` · 钩子 ${typeof bus.total === 'function' ? bus.total() : '?'}`
+          `${typeof registry.max === 'function' ? ` / 上限 ${registry.max()}` : ''}` +
+          ` · 钩子 ${typeof bus.total === 'function' ? bus.total() : '?'} · 空载 ${s.empty || 0}`
       );
       return snap;
     },
@@ -635,9 +674,28 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
     /** 快照（可安全下发 / 打印：不含 api / mod / 绝对路径） */
     snapshot() {
       const items = [...records.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-      const sum = { total: items.length, loaded: 0, pending: 0, skipped: 0, failed: 0 };
+      const sum = { total: items.length, loaded: 0, pending: 0, skipped: 0, failed: 0, over: 0 };
       for (const it of items) sum[it.state] = (sum[it.state] || 0) + 1;
-      return { items, sum };
+      // 三个"看得见的分子"：插件自己注册了多少工具 / 挂了多少钩子 / 有几个空载。
+      // 面板直接读它们，不在页面再遍历一遍（两份遍历迟早漂）。
+      sum.tools = items.reduce((n, it) => n + (Array.isArray(it.tools) ? it.tools.length : 0), 0);
+      sum.hooks = items.reduce((n, it) => n + (Array.isArray(it.hooks)
+        ? it.hooks.reduce((m, [, c]) => m + Number(c || 0), 0)
+        : 0), 0);
+      sum.empty = items.filter((it) => it.state === HOST_STATE.LOADED && it.empty === true).length;
+      return {
+        items,
+        sum,
+        limits: {
+          plugins: maxPluginsUsed,
+          // `tools` 是注册表**生效上限**；`toolsUsed` 是全局已注册数（含宿主自带工具）。
+          // 两个数分开显示，避免"上限 64、插件卡合计 30、实际 34"这种对不上。
+          tools: typeof registry.max === 'function' ? registry.max() : null,
+          toolsUsed: typeof registry.size === 'function' ? registry.size() : null,
+          // 单条钩子超时（2026-10-23）：直接读总线上的生效值，不在快照里重算。
+          hookTimeoutMs: typeof bus?.timeoutMs === 'number' ? bus.timeoutMs : null,
+        },
+      };
     },
 
     /**

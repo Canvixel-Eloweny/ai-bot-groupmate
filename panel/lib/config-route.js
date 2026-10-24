@@ -20,7 +20,7 @@
  *  @param {object} deps 主文件注入的四个只读判据（见上面的「四个依赖是注入的」）
  *  @returns {function} 签名为 `(req, res, url)` 的路由 handler（与路由表约定一致）
  */
-import { ZHIPU_MODEL_META, capabilitiesOf, resolveFeatures, FEATURE_LABEL, THINK } from '../../src/model-caps.js';
+import { capabilitiesOf, resolveFeatures, FEATURE_LABEL, THINK } from '../../src/model-caps.js';
 import { patchCustom } from '../../src/custom-config.js';
 import { looksInjected } from '../../src/injection.js';
 import { GATE_ERROR_KIND, isBlocking } from '../../src/gate-scan.js';
@@ -29,10 +29,12 @@ import { providerOf } from '../../src/net-rules.js';
 // **写侧（这里）与读侧（state-collector / 三个启动器）共用同一份判定**，
 // 不许在这里再手写一遍 ['browser','window']（两份值域必然漂移）。
 import { validateLaunch } from '../../src/launch-mode.js';
+import { setAutostart } from '../../src/desktop/autostart.js';
 import { applySettingsPatch } from '../../src/plugin-settings.js';
-import { pushLog } from './runtime-state.js';
+import { pushLog, state } from './runtime-state.js';
 import { sendJson, readBody } from './http-io.js';
 import { readConfig, writeConfig } from './config-io.js';
+import { INSTALL_ROOT } from './paths.js';
 import { extensionsOf } from './extensions.js';
 import {
   CLOUD_PRESETS, MAX_CHAIN_LEN, chainModelsOf, localChannelOf, modelProviderMismatch, normalizeThinking,
@@ -279,6 +281,27 @@ export function makeConfigRoute(deps) {
     // 校验失败按本文件的一贯取向**拒绝整次保存并说清原因**，不做静默纠正 ——
     // 静默纠正会让用户以为"我明明点了独立窗口"。
     if (body.launch !== undefined) {
+      // 开机自启是**系统状态**，不是 config 的一个副本：先写系统，失败就不写配置；
+      // 读侧由 state-collector 直接读 Startup 快捷方式与 StartupApproved。
+      if (body.launch && typeof body.launch === 'object' && !Array.isArray(body.launch)
+        && Object.prototype.hasOwnProperty.call(body.launch, 'autoStart')) {
+        const want = body.launch.autoStart;
+        if (typeof want !== 'boolean') {
+          return sendJson(res, { ok: false, error: 'autoStart 只接受 true / false', reason: 'bad-launch' }, 400);
+        }
+        const a = setAutostart(want, { installRoot: INSTALL_ROOT });
+        if (!a.ok) {
+          pushLog(`✗ 开机自启没有保存：${a.error}`);
+          return sendJson(res, { ok: false, error: a.error, reason: 'autostart' }, 500);
+        }
+        // 写成功先在进程内给一个 15 秒的临时回执；否则面板要等下一次系统查询
+        // 才会从“关”变成“开”，用户会以为没生效。读侧仍以系统为最终真相。
+        state.autoStartState = a.state;
+        state.autoStartAt = Date.now();
+        state.autoStartDetail = a.state === 'on' ? (a.shortcut || '') : '';
+        const { autoStart, ...rest } = body.launch;
+        body.launch = rest;
+      }
       const r = validateLaunch(body.launch);
       if (!r.ok) {
         pushLog(`✗ 启动方式没有保存：${r.error}`);
@@ -334,7 +357,9 @@ export function makeConfigRoute(deps) {
       const psPatch = body.custom?.plugins?.settings;
       if (psPatch && typeof psPatch === 'object' && !Array.isArray(psPatch)) {
         const declaredById = new Map();
-        for (const it of (extensionsOf(cfg.custom?.plugins?.enabled || [])?.items || [])) {
+        for (const it of (extensionsOf(cfg.custom?.plugins?.enabled || [], {
+          maxPlugins: cfg.custom?.plugins?.max,
+        })?.items || [])) {
           // ⚠️ 只把**有默认值**的包纳入闸门。清单只声明了 `configSchema`（没有默认值）的包
           //    在投影里是空对象 —— 拿它当"声明的键的集合"会把用户所有合法输入判成越界。
           //    实测 13 个真实包**全部**有 `settings`（且与 configSchema 同键），所以这不影响覆盖面；

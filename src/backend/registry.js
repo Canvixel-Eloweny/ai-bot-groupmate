@@ -41,7 +41,11 @@ export const MEDIA_ACTIONS = Object.freeze([
   'can_send_record',
 ]);
 
-const UNTRUSTED_CAN_SEND = Object.freeze({
+/**
+ * 上游 `can_send_*` 自报一律不可信（LLBot 恒 true）。这是**唯一判定值**——
+ * `normalize.capabilitiesOf()` 只引用它，不再在 normalize 里另写一份字面量。
+ */
+export const UNTRUSTED_CAN_SEND = Object.freeze({
   image: 'untrusted',
   record: 'untrusted',
 });
@@ -128,27 +132,19 @@ const DEF = {
   },
 };
 
-export const BACKENDS = Object.freeze(
+const BACKENDS = Object.freeze(
   Object.fromEntries(Object.entries(DEF).map(([k, v]) => [k, Object.freeze(v)])),
 );
 
-export const BACKEND_IDS = Object.freeze(Object.keys(BACKENDS));
+const BACKEND_IDS = Object.freeze(Object.keys(BACKENDS));
 
 /** `auto` 是"让运行时按 `get_version_info` 识别"，不是一家后端。 */
-export const BACKEND_SELECTIONS = Object.freeze(['auto', ...BACKEND_IDS.filter((x) => x !== 'generic')]);
+const BACKEND_SELECTIONS = Object.freeze(['auto', ...BACKEND_IDS.filter((x) => x !== 'generic')]);
 
 /** 配置里的值 → 合法选择。不认识的一律回 `auto`（不猜、不抛）。 */
 export function normalizeBackend(value) {
   const v = String(value ?? '').trim().toLowerCase();
   return BACKEND_SELECTIONS.includes(v) ? v : 'auto';
-}
-
-/**
- * 从配置取后端选择。只认 `onebot.backend` 一处 —— 面板/机器人/安装器都读它。
- * @param {{onebot?:{backend?:string}}} cfg
- */
-export function backendOfConfig(cfg) {
-  return normalizeBackend(cfg?.onebot?.backend);
 }
 
 /**

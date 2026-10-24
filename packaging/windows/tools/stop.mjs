@@ -20,18 +20,64 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import {
   classifyProcess,
   isMainModule,
   readCurrentInfo,
   readInstallInfo,
 } from './lib/install-layout.mjs';
-import { say, sayErr } from './lib/common.mjs';
-
-const DEFAULT_PORT = Number(process.env.QQBOT_PANEL_PORT) || 8788;
+import { say, sayErr, APP } from './lib/common.mjs';
+import { createRequire } from 'node:module';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 发现模块按当前程序根懒加载；卸载旧版时 app 可能没有它，此时回落到 legacy 8788。
+const requireApp = createRequire(path.join(APP, 'package.json'));
+let discoveryCache = null;
+function panelDiscovery() {
+  if (!discoveryCache) discoveryCache = requireApp(path.join(APP, 'src', 'panel-discovery.cjs'));
+  return discoveryCache;
+}
+function discoveryOrNull() {
+  try { return panelDiscovery(); } catch { return null; }
+}
+
+/**
+ * 找面板端口（P3-1）：显式请求 > 发现文件 > **旧版** 8788（仅当它真的回面板 health）。
+ * 都找不到就返回 0 —— 后续走"按安装根精确识别进程"的兜底，绝不把 8788 上的陌生服务
+ * 当成我们的面板（否则卸载会因为它一直响而报"端口仍在监听"）。
+ */
+async function panelBelongsToInstall(installRoot, versions, pid) {
+  if (!pid || !versions.length) return false;
+  const table = listProcesses();
+  if (!table.ok) return false;
+  const proc = table.rows.find((r) => r.pid === pid);
+  if (!proc) return false;
+  const verdict = classifyProcess({
+    cmd: proc.cmd,
+    execPath: proc.execPath,
+    installRoot,
+    versions,
+    platform: process.platform === 'win32' ? 'win32' : 'posix',
+  });
+  return Boolean(verdict.ours);
+}
+
+async function resolvePanelPort(userRoot, requested, { installRoot, versions } = {}) {
+  const d = discoveryOrNull();
+  const forced = d ? d.normalizePort(requested) : Number(requested) || 0;
+  if (forced) return forced;
+  if (d) {
+    const info = d.readDiscovery(userRoot);
+    if (info && d.isLive(info)) return info.port;
+  }
+  const legacyPort = d ? d.LEGACY_PANEL_PORT : 8788;
+  const legacy = await healthInfo(legacyPort);
+  if (!legacy || !legacy.ok) return 0;
+  // legacy 8788 上可能是同机开发树/别的安装根的面板；必须先确认进程属于本安装根。
+  const pid = Number(legacy.pid) || 0;
+  return await panelBelongsToInstall(installRoot, versions, pid) ? legacyPort : 0;
+}
 
 
 function argOf(name) {
@@ -205,7 +251,9 @@ export async function stopInstalledApp({
   userRoot = '',
   timeoutMs = 20000,
   stopNapcat = false,
-  port = DEFAULT_PORT,
+  includeShell = false,
+  excludePid = 0,
+  port: requestedPort = 0,
   log = () => {},
   platform = process.platform,
 } = {}) {
@@ -224,7 +272,22 @@ export async function stopInstalledApp({
   const killed = [];
   const token = readToken(root);
   const versions = versionsOf(inst);
-  const health = await healthInfo(port);
+  const port = await resolvePanelPort(root, requestedPort, { installRoot: inst, versions });
+
+  // 面板重启的看门狗是 detached 的 PowerShell/sh：不先收掉，停完面板它会把新面板再拉起来。
+  try {
+    const intent = JSON.parse(fs.readFileSync(path.join(root, 'panel', '.restart.json'), 'utf8').replace(/^\uFEFF/, ''));
+    const wp = Number(intent && intent.watchdogPid) || 0;
+    if (wp && wp !== process.pid && wp !== excludePid && pidAlive(wp, { platform })) {
+      log(`- stopping panel restart watchdog pid ${wp}`);
+      const r = killPid(wp, { platform });
+      if (r.ok) killed.push(wp);
+      else errors.push(`结束重启看门狗 pid ${wp} 失败：${r.out}`);
+    }
+    try { fs.rmSync(path.join(root, 'panel', '.restart.json'), { force: true }); } catch { /* 已删 */ }
+  } catch { /* 没有重启意图或文件半写：忽略 */ }
+
+  const health = port ? await healthInfo(port) : null;
   const panelPid = health && Number(health.pid) ? Number(health.pid) : 0;
   const botPid = readPid(path.join(root, 'panel', '.bridge.pid'));
 
@@ -232,7 +295,7 @@ export async function stopInstalledApp({
   log(`user data root: ${root}`);
   if (panelPid) log(`panel pid: ${panelPid}`);
 
-  if (await portOpen(port)) {
+  if (port && await portOpen(port)) {
     if (token) {
       log('- asking the bot to quit gracefully (/api/bridge/stop)');
       const b = await post(port, '/api/bridge/stop', token, Math.max(5000, Math.floor(timeoutMs * 0.6)));
@@ -246,13 +309,13 @@ export async function stopInstalledApp({
       warnings.push('面板端口在监听，但读不到 panel/.token —— 改走 PID/精确身份兜底');
     }
   } else {
-    log('- panel port not listening');
+    log(port ? '- panel port not listening' : '- no panel discovery file; will stop by process identity');
   }
 
   // 等一会儿，让正常退出把锁/文件释放掉。
   const deadline = Date.now() + Math.max(2000, Math.floor(timeoutMs * 0.4));
   while (Date.now() < deadline) {
-    if (!(await portOpen(port))) break;
+    if (!port || !(await portOpen(port))) break;
     await sleep(250);
   }
 
@@ -268,8 +331,9 @@ export async function stopInstalledApp({
   for (let i = 0; i < 20 && panelPid && pidAlive(panelPid, { platform }); i += 1) await sleep(250);
 
   const botAlive = botPid && pidAlive(botPid, { platform });
-  const portStill = await portOpen(port);
-  const needSlowScan = portStill || Boolean(botAlive);
+  const portStill = port ? await portOpen(port) : false;
+  // 端口未知时必须扫一遍进程表：否则一个"发现文件没写成"的面板会整条链都漏掉。
+  const needSlowScan = !port || portStill || Boolean(botAlive) || includeShell;
 
   // 只有快速路径没搞定才读全量进程表（精确身份仍然是唯一判据）。
   if (needSlowScan && versions.length) {
@@ -277,8 +341,9 @@ export async function stopInstalledApp({
     if (!table.ok) {
       errors.push(`读进程表失败：${table.error}`);
     } else {
+      const shells = [];
       for (const proc of table.rows) {
-        if (proc.pid === process.pid) continue;
+        if (proc.pid === process.pid || proc.pid === excludePid) continue;
         const verdict = classifyProcess({
           cmd: proc.cmd,
           execPath: proc.execPath,
@@ -287,10 +352,25 @@ export async function stopInstalledApp({
           platform: platform === 'win32' ? 'win32' : 'posix',
         });
         if (!verdict.ours) continue;
+        // 壳最后杀：先让面板/机器人正常退出，再收窗，避免壳先死留下无主面板。
+        if (verdict.kind === 'shell') { shells.push({ proc, verdict }); continue; }
         log(`- fallback stop of ${verdict.kind} pid ${proc.pid} (${verdict.version})`);
         const r = killPid(proc.pid, { platform });
         if (r.ok) killed.push(proc.pid);
         else errors.push(`结束 pid ${proc.pid} 失败：${r.out}`);
+      }
+      for (const { proc, verdict } of shells) {
+        log(`- fallback stop of shell pid ${proc.pid} (${verdict.version})`);
+        const r = killPid(proc.pid, { platform });
+        if (r.ok) killed.push(proc.pid);
+        else errors.push(`结束壳 pid ${proc.pid} 失败：${r.out}`);
+      }
+      // 壳是被强杀的，不会自己清 .shell.json / .quit-intent.json；安装/卸载后留着
+      // 会让下一次启动看到一条“旧壳还活着”的假状态。
+      if (includeShell) {
+        for (const name of ['.shell.json', '.quit-intent.json']) {
+          try { fs.rmSync(path.join(root, 'panel', name), { force: true }); } catch { /* 已删 */ }
+        }
       }
     }
   } else if (portStill && !versions.length) {
@@ -322,7 +402,7 @@ export async function stopInstalledApp({
     const table = listProcesses({ platform });
     if (table.ok) {
       for (const proc of table.rows) {
-        if (proc.pid === process.pid) continue;
+        if (proc.pid === process.pid || proc.pid === excludePid) continue;
         const verdict = classifyProcess({
           cmd: proc.cmd,
           execPath: proc.execPath,
@@ -335,7 +415,7 @@ export async function stopInstalledApp({
     }
   }
   if (remaining.length) errors.push(`仍有本安装根的进程未退出：${remaining.join(', ')}`);
-  if (await portOpen(port)) errors.push(`面板端口 ${port} 仍在监听`);
+  if (port && await portOpen(port)) errors.push(`面板端口 ${port} 仍在监听`);
   for (const w of warnings) log(`! ${w}`);
   return { ok: errors.length === 0, killed, remaining, errors, warnings, userRoot: root };
 }
@@ -344,9 +424,11 @@ async function main() {
   const installRoot = argOf('--install-root') || process.argv[2];
   const userRoot = argOf('--user-root');
   const stopNapcat = has('--stop-napcat');
+  const includeShell = has('--include-shell');
+  const excludePid = Number(argOf('--exclude-pid') || 0) || 0;
   const timeoutMs = Number(argOf('--timeout') || 20000);
   if (!installRoot) {
-    sayErr('usage: node tools/stop.mjs --install-root <install-root> [--user-root <data-root>] [--stop-napcat]');
+    sayErr('usage: node tools/stop.mjs --install-root <install-root> [--user-root <data-root>] [--stop-napcat] [--include-shell] [--exclude-pid <pid>]');
     process.exitCode = 2;
     return;
   }
@@ -355,6 +437,8 @@ async function main() {
     userRoot,
     timeoutMs,
     stopNapcat,
+    includeShell,
+    excludePid,
     log: (m) => say(m),
   });
   if (!r.ok) {

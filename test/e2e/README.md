@@ -24,7 +24,9 @@
 
 ## 运行前提（缺了会得到假失败，不是代码坏了）
 
-1. **面板必须在跑**，且端口与脚本里写的一致（`real-e2e` / `self-restart` 走 `8788`，改过端口要同步改脚本）。
+1. **面板必须在跑**，且端口与脚本里写的一致（`real-e2e` / `self-restart` 默认走 dev 形态的 `8788`；
+   Windows 安装版/便携包是系统分配端口，先读 `userdata/panel/.panel.json` 的 `url`，
+   再把脚本里的 `BASE` 改成该地址）。
 2. 浏览器类脚本依赖本机 Chromium 与 puppeteer-core，路径写死在脚本顶部：
    - Chromium for Testing：`/Users/<你的用户名>/Library/Caches/ms-playwright/chromium-1234/...`
    - headless shell：`/Users/<你的用户名>/Library/Caches/ms-playwright/chromium_headless_shell-1234/...`

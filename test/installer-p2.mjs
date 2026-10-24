@@ -170,6 +170,31 @@ ck('classifyProcess：只认本安装根的精确 node 入口', () => {
   assert.equal(classifyProcess({ cmd: '"C:\\Other\\node.exe" "src\\index.js"', execPath: 'C:\\Other\\node.exe', installRoot: inst, versions: ['0.1.3'] }).ours, false);
 });
 
+ck('classifyProcess：壳只认本安装根 versions/<ver>/app/electron 的主进程', () => {
+  const inst = 'C:\\Users\\X\\AppData\\Local\\Programs\\Estrella-Bot';
+  const shellExe = `${inst}\\versions\\0.1.3\\app\\electron\\electron.exe`;
+  const appDir = `${inst}\\versions\\0.1.3\\app\\electron`;
+  assert.deepEqual(
+    classifyProcess({ cmd: `"${shellExe}" "${appDir}"`, execPath: shellExe, installRoot: inst, versions: ['0.1.3'] }),
+    { ours: true, reason: 'ok', version: '0.1.3', kind: 'shell' },
+  );
+  // 渲染/GPU 子进程带 --type=：不单杀，交给主进程 /T 树杀
+  assert.equal(classifyProcess({
+    cmd: `"${shellExe}" "${appDir}" --type=renderer`, execPath: shellExe, installRoot: inst, versions: ['0.1.3'],
+  }).ours, false);
+  // 同机其它 Electron、别的 app 目录、旧式 installRoot/electron 都不认
+  assert.equal(classifyProcess({
+    cmd: `"C:\\Other\\electron.exe" "${appDir}"`, execPath: 'C:\\Other\\electron.exe', installRoot: inst, versions: ['0.1.3'],
+  }).ours, false);
+  assert.equal(classifyProcess({
+    cmd: `"${shellExe}" "C:\\Other\\app"`, execPath: shellExe, installRoot: inst, versions: ['0.1.3'],
+  }).ours, false);
+  assert.equal(classifyProcess({
+    cmd: `"${inst}\\electron\\electron.exe" "${inst}\\electron"`,
+    execPath: `${inst}\\electron\\electron.exe`, installRoot: inst, versions: ['0.1.3'],
+  }).ours, false);
+});
+
 ck('launch defaultMode：无显式 mode 用 window，显式配置永远优先', () => {
   assert.equal(launchOfConfig({}, { defaultMode: 'window' }).mode, 'window');
   assert.equal(launchOfConfig({ launch: { openOnStart: false } }, { defaultMode: 'window' }).mode, 'window');

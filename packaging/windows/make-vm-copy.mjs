@@ -25,7 +25,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { isNapcatLauncherName } from './tools/lib/napcat-shape.mjs';
 
 const HOME = process.env.HOME || '';

@@ -9,7 +9,8 @@
  * 只有“包太大/上传中断”这类传输层失败才用 413/400。
  */
 
-import { readBody, readBodyBuffer, sendJson } from './http-io.js';
+import fs from 'node:fs';
+import { readBody, readBodyToFile, sendJson } from './http-io.js';
 import {
   MANIFEST_MAX_BYTES,
   SIGNATURE_MAX_BYTES,
@@ -52,9 +53,13 @@ export function makeOfflinePrepareRoute({ updater } = {}) {
 export function makeOfflineInstallerRoute({ updater } = {}) {
   return async function offlineInstaller(req, res, url) {
     void url;
+    if (!updater || typeof updater.completeOffline !== 'function' || typeof updater.offlineUploadPath !== 'function') {
+      return sendJson(res, { ok: false, error: '更新器不可用' }, 200);
+    }
+    const target = updater.offlineUploadPath();
     let got;
     try {
-      got = await readBodyBuffer(req, { maxBytes: OFFLINE_INSTALLER_MAX_BYTES });
+      got = await readBodyToFile(req, { file: target, maxBytes: OFFLINE_INSTALLER_MAX_BYTES });
     } catch (e) {
       return sendJson(res, { ok: false, error: `读取上传失败：${e.message}` }, 400);
     }
@@ -71,16 +76,15 @@ export function makeOfflineInstallerRoute({ updater } = {}) {
         tooBig ? 413 : 400,
       );
     }
-    if (!got.buf || !got.buf.length) {
+    if (!got.size) {
       return sendJson(res, { ok: false, error: '离线安装包为空' }, 400);
     }
     try {
-      if (!updater || typeof updater.completeOffline !== 'function') {
-        throw new Error('更新器不可用');
-      }
-      const s = await updater.completeOffline({ bytes: got.buf });
+      const s = await updater.completeOffline({ exePath: target });
       return sendJson(res, { ok: true, ...s });
     } catch (e) {
+      // 校验失败/处理失败都把这份（可能 200 MB 的）上传删掉，别留在 pending 里。
+      try { fs.rmSync(target, { force: true }); } catch { /* 已删 */ }
       return sendJson(res, { ok: false, error: e && e.message ? e.message : String(e) }, 200);
     }
   };

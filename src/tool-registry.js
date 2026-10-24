@@ -63,11 +63,16 @@ export const TOOL_NAME_MAX = 64;
 export const TOOL_NAME_RE = new RegExp(`^[A-Za-z0-9_-]{1,${TOOL_NAME_MAX}}$`);
 
 /**
- * 一次最多注册多少个工具。
+ * 默认一次最多注册多少个工具。
  * 全部工具的 schema 都会进**每一轮**请求前缀，条数直接决定固定成本。
- * 24 是**经验值**：按平均 200 token/条算约 5k token 前缀，已接近总量级上限。
+ * 64 是**默认值，不是写死的产品上限**（按平均 200 token/条算约 12.8k 前缀）；
+ * 用户可以在面板 / config.json 的 `custom.tools.max` 里改，实际生效值由
+ * `createToolRegistry({ max })` 钳到 `[1, TOOL_MAX_LIMIT]`。
  */
-export const TOOL_MAX = 24;
+export const TOOL_MAX = 64;
+
+/** `custom.tools.max` 的硬天花板。只防"配置写坏成几千条"，不是推荐值。 */
+export const TOOL_MAX_LIMIT = 256;
 
 /** 工具描述的长度上限（同样进每一轮前缀，且是固定成本里最容易被忽略的一块） */
 const TOOL_DESC_MAX = 512;
@@ -112,6 +117,35 @@ function normalizeDescription(raw) {
  *
  * @returns {object|null} null 表示形状不可救（调用方拒绝注册，别猜一个出来）
  */
+/**
+ * 把 JSON Schema 里的 `type: ['integer','string']` 收敛成单类型。
+ *
+ * OpenAI 兼容端只认字符串 `type`；数组会让整条 tools 被静默忽略（模型"想调"却
+ * 发不出 tool_calls，服务端还不报错）。这里递归处理 properties / items / anyOf…
+ * 只取第一个非 null 类型；一个都没有就删掉 `type`（让服务端按默认处理）。
+ */
+function normalizeSchemaNode(node) {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return node;
+  const out = { ...node };
+  if (Array.isArray(out.type)) {
+    const first = out.type.find((x) => typeof x === 'string' && x !== 'null');
+    if (first) out.type = first;
+    else delete out.type;
+  }
+  if (out.properties && typeof out.properties === 'object' && !Array.isArray(out.properties)) {
+    out.properties = Object.fromEntries(
+      Object.entries(out.properties).map(([k, v]) => [k, normalizeSchemaNode(v)])
+    );
+  }
+  if (out.items !== undefined) {
+    out.items = Array.isArray(out.items) ? out.items.map(normalizeSchemaNode) : normalizeSchemaNode(out.items);
+  }
+  for (const key of ['anyOf', 'oneOf', 'allOf']) {
+    if (Array.isArray(out[key])) out[key] = out[key].map(normalizeSchemaNode);
+  }
+  return out;
+}
+
 export function normalizeParameters(raw) {
   if (raw === undefined || raw === null) return { type: 'object', properties: {} };
   if (typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -119,7 +153,7 @@ export function normalizeParameters(raw) {
   if (type !== 'object') return null;
   const properties = raw.properties ?? {};
   if (typeof properties !== 'object' || Array.isArray(properties)) return null;
-  const out = { ...raw, type: 'object', properties };
+  const out = normalizeSchemaNode({ ...raw, type: 'object', properties });
   if (out.required !== undefined && !Array.isArray(out.required)) return null;
   return out;
 }
@@ -207,7 +241,10 @@ export function scopedToolId(owner, rawId) {
  * 这里一旦也去读盘，就会出现"两处各自知道怎么发现扩展包"，
  * 而这正是本项目反复在清的那种重复。
  */
-export function createToolRegistry() {
+export function createToolRegistry({ max = TOOL_MAX } = {}) {
+  // 上限从配置来（`custom.tools.max`），这里再钳一次：调用方/测试传坏值时
+  // 不能让注册表变成无上限，也不能让上限为 0（那会让所有工具都注册不上）。
+  const cap = Math.max(1, Math.min(TOOL_MAX_LIMIT, Math.trunc(Number(max)) || TOOL_MAX));
   /** @type {Map<string, {spec:object, execute:Function, owner:string, origin:string}>} */
   const items = new Map();
   /**
@@ -235,8 +272,8 @@ export function createToolRegistry() {
             : `工具名撞车：「${n.origin}」与「${prev.origin}」都收敛成「${n.name}」`,
         };
       }
-      if (items.size >= TOOL_MAX) {
-        return { ok: false, reason: `工具数已达上限 ${TOOL_MAX}（不再注册「${n.name}」）` };
+      if (items.size >= cap) {
+        return { ok: false, reason: `工具数已达上限 ${cap}（不再注册「${n.name}」；调大 custom.tools.max 可放开）` };
       }
       items.set(n.name, { spec: n.spec, execute: n.execute, owner: n.owner, origin: n.origin });
       cache = null;
@@ -258,6 +295,11 @@ export function createToolRegistry() {
 
     size() {
       return items.size;
+    },
+
+    /** 生效的工具上限（面板显示"工具 T / 上限 M"用；配置改过要重启才变）。 */
+    max() {
+      return cap;
     },
 
     /** 已注册的名字（**已排序**，顺序与 specs() 一致） */

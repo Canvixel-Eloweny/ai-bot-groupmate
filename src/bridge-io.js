@@ -401,6 +401,6 @@ function truncate(s, n = 60) {
 export {
   THINKING_FILE, TRACE_FILE, TRACE_MAX, JOURNAL_FILE,
   journal, promptText, noteCacheSample, writeTrace, writeSkip, writeJudgeCard,
-  noteUnread, consumeUnread, runQuiet, probeIsOurBridge, alive, truncate,
+  noteUnread, consumeUnread, probeIsOurBridge, alive, truncate,
   markThinking, clearStaleThinking,
 };

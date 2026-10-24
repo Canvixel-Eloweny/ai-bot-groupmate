@@ -26,6 +26,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      build_windows:
+        description: '跑完四层回归后构建未签名 Windows 安装器（不含 Release/tag）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
   contracts:
@@ -44,6 +53,9 @@ jobs:
       # 钩子在本 job 里永远不会被触发（runner 上没有人 commit），所以这里只验"装得上"。
       - run: bash scripts/pre-commit.sh --install
       - run: NODE_OPTIONS= node scripts/check-wb.mjs
+      # 变异清单是契约的“牙齿”：锚点失效/清单被删时，本地 pre-commit 会红，
+      # 但此前 GitHub CI 不跑它 —— PR 上判据腐烂没有人拦。补上这一层，约 1 秒。
+      - run: NODE_OPTIONS= node scripts/mutate-lint.mjs
 
   smoke:
     name: 行为回归（smoke）
@@ -59,7 +71,13 @@ jobs:
       # （这条用例正是 2026-10-06 首次真跑 CI 时逮出 `/usr/sbin/lsof` 写死缺陷的那一条：
       #   lsof 在 macOS 住 /usr/sbin、在 Debian/Ubuntu 住 /usr/bin。装上再跑才验得动。）
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq lsof
+      # T348 的夹具用 `bigmodel.cn.localhost` 让 provider 判成 zhipu 同时流量回环。
+      # macOS 自带解析，Debian/Ubuntu 精简镜像不一定有 nss-myhostname ⇒ 显式补一行，
+      # 否则 smoke 会以「模型调用失败: fetch failed」红，看起来像产品坏了。
+      - run: echo "127.0.0.1 bigmodel.cn.localhost" | sudo tee -a /etc/hosts
       - run: NODE_OPTIONS= node test/smoke.js
+        env:
+          QQBOT_SMOKE_BASE_PORT: '31000'
 
   # ── ★ Windows 契约（2026-10-15 新增 · 对应 Issue #5 里 ROI 最高的一条）────────────
   #
@@ -93,6 +111,36 @@ jobs:
       - run: node scripts/check-wb.mjs
         env:
           NODE_OPTIONS: ''
+      # P3-5：Windows 侧真渲染 DOM + 安装器纯判据。用 pwsh 循环逐个跑，
+      # 任何一步非零立即退出（$LASTEXITCODE 不会被 PowerShell 自动变成失败）。
+      - name: Windows 门禁（DOM + installer）
+        shell: pwsh
+        run: |
+          $env:NODE_OPTIONS = ''
+          $tests = @(
+            'check-desktop',
+            'desktop-diagnostics',
+            'panel-port',
+            'p3-differential-eval',
+            'p3-ci-eval',
+            'installer-p1', 'installer-p2', 'installer-p3',
+            'installer-p4', 'installer-p5', 'installer-p6'
+          )
+          foreach ($t in $tests) {
+            Write-Host "── node test/$t.mjs"
+            node "test/$t.mjs"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      # Windows runner 自带 Edge；panel-dom 若因找不到浏览器 SKIP，这里必须红，
+      # 否则「四层」里的 DOM 层在 CI 上又变成没人跑。
+      - name: 前端 DOM 必须真渲染（Windows Edge）
+        shell: pwsh
+        run: |
+          $env:NODE_OPTIONS = ''
+          $out = node test/panel-dom.mjs 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($out -match 'SKIP 前端 DOM 守卫') { Write-Error 'panel-dom 在 Windows 上 SKIP 了'; exit 1 }
 
   # 真值闸门：别让真实 QQ 号 / 群号 / 本机用户名 / API Key 进仓库
   publish-audit:
@@ -110,3 +158,71 @@ jobs:
       #    （放 job 级会连开发仓也一起跳过，那道真值闸就静默失效了）。
       - if: ${{ hashFiles('scripts/publish-audit.mjs') != '' }}
         run: node scripts/publish-audit.mjs
+
+  # ── P3-5：四层回归（只在手动构建时跑）──────────────────────────────────────
+  #
+  # `ci-verify.mjs` 从 `package.json.scripts.verify` 派生步骤，只允许在公开拷贝上
+  # 跳过按设计不发布的 `scripts/publish-audit.mjs`；其它缺失一律 fail-closed。
+  # 构建 job 必须等这一条和上面四个 job 全绿，才允许出包。
+  regression:
+    name: 四层回归（ci-verify）
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_windows }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq lsof rsync unzip
+      - run: echo "127.0.0.1 bigmodel.cn.localhost" | sudo tee -a /etc/hosts
+      - run: bash scripts/pre-commit.sh --install
+      - name: 全量四层回归
+        run: node scripts/ci-verify.mjs
+        env:
+          NODE_OPTIONS: ''
+          TZ: UTC
+          QQBOT_SMOKE_BASE_PORT: '31000'
+
+  # ── P3-5：Windows 安装器构建（手动 dispatch，四层全绿后才启动）──────────────
+  desktop-build:
+    name: Windows 安装器构建（未签名）
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_windows }}
+    needs: [contracts, smoke, windows-contracts, publish-audit, regression]
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+      - run: npm ci
+      - name: 工作树必须干净（BUILD-INFO 的 clean 标记）
+        shell: pwsh
+        run: |
+          $dirty = git status --porcelain
+          if ($dirty) {
+            Write-Host $dirty
+            Write-Error '工作树不干净，拒绝出包'
+            exit 1
+          }
+      - name: 安装 NSIS 3.13
+        run: choco install nsis --version=3.13.0 -y --no-progress
+      - name: 构建安装器
+        run: node packaging/windows/installer/build-installer.mjs --build-dir "$env:RUNNER_TEMP/eb-build" --artifact-dir "$env:RUNNER_TEMP/eb-artifact" --makensis "C:\Program Files (x86)\NSIS\makensis.exe" --require-provenance
+        env:
+          NODE_OPTIONS: ''
+      - name: 上传未签名构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: estrella-bot-setup-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/eb-artifact/Estrella-Bot-Setup-*.exe
+            ${{ runner.temp }}/eb-artifact/payload-manifest.json
+            ${{ runner.temp }}/eb-artifact/BUILD-INFO.txt
+            ${{ runner.temp }}/eb-artifact/build-receipt.json
+            ${{ runner.temp }}/eb-artifact/ARTIFACT-SHA256SUMS.txt
+            ${{ runner.temp }}/eb-artifact/makensis.log
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error

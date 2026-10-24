@@ -1,0 +1,63 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   渐进模糊遮罩（产品弹窗 + 制作站共用）
+   ══════════════════════════════════════════════════════════════════════════
+   做法：三层 backdrop-filter 用径向 mask 由外向内叠加。
+     · L1 4px 铺满视口（基础磨砂）
+     · L2 9px 以弹窗为中心向外羽化
+     · L3 16px 更小的椭圆，靠近弹窗最强
+   mask 与 backdrop-filter 同元素可用（2026-10-22 实测：圆内灰度、圆外原色），
+   遮罩裁的是“滤镜输出”，不是只裁元素本身。
+   ⚠️ 过渡只能写 opacity：backdrop-filter 不可插值，写 transition 会被静默忽略。
+   ⚠️ 本文件**不定义任何 --c-* 令牌**；颜色只从 style.css 的 :root / dark 块取。
+   ⚠️ 必须与 .modal 是相邻兄弟：`#glassScrim` 紧挨在 `#modal` 前。
+   ⚠️ .modal 自带 --c-scrim；遮罩打开时必须把它变透明，否则模糊被压暗一层。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.glass-scrim {
+  position: fixed; inset: 0; z-index: 55;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+.glass-scrim.on { opacity: 1; }
+.glass-scrim[hidden] { display: none !important; }
+
+.gsc-blur {
+  position: absolute; inset: 0;
+  -webkit-backdrop-filter: blur(var(--gsc-b, 9px)) saturate(var(--gsc-sat, 1.2));
+          backdrop-filter: blur(var(--gsc-b, 9px)) saturate(var(--gsc-sat, 1.2));
+}
+/* 三层半径可由调用方覆写（制作站用它调渐进模糊）；产品不传就是 4/9/16。 */
+.gsc-blur-1 { --gsc-b: var(--gsc-b1, 4px); }
+.gsc-blur-2 {
+  --gsc-b: var(--gsc-b2, 9px);
+  -webkit-mask-image: radial-gradient(ellipse var(--gsc-rx2, 58vw) var(--gsc-ry2, 48vh) at var(--gsc-cx, 50%) var(--gsc-cy, 50%), #000 0 54%, transparent 100%);
+          mask-image: radial-gradient(ellipse var(--gsc-rx2, 58vw) var(--gsc-ry2, 48vh) at var(--gsc-cx, 50%) var(--gsc-cy, 50%), #000 0 54%, transparent 100%);
+}
+.gsc-blur-3 {
+  --gsc-b: var(--gsc-b3, 16px);
+  -webkit-mask-image: radial-gradient(ellipse var(--gsc-rx3, 36vw) var(--gsc-ry3, 32vh) at var(--gsc-cx, 50%) var(--gsc-cy, 50%), #000 0 46%, transparent 100%);
+          mask-image: radial-gradient(ellipse var(--gsc-rx3, 36vw) var(--gsc-ry3, 32vh) at var(--gsc-cx, 50%) var(--gsc-cy, 50%), #000 0 46%, transparent 100%);
+}
+
+.gsc-tint { position: absolute; inset: 0; background: var(--c-scrim); }
+
+/* 遮罩打开时把 modal 自己的那层 scrim 交出去（tint 已在遮罩里统一压暗）。 */
+.glass-scrim:not([hidden]) + .modal { background-color: transparent; }
+
+/* 面积分档：低配/大视口只开 1–2 层 */
+.glass-scrim[data-layers="2"] .gsc-blur-3 { display: none; }
+.glass-scrim[data-layers="1"] .gsc-blur-2,
+.glass-scrim[data-layers="1"] .gsc-blur-3 { display: none; }
+
+/* 减少透明度 / 不支持 backdrop-filter：只留 tint，保证可读 */
+@media (prefers-reduced-transparency: reduce) {
+  .gsc-blur { display: none; }
+}
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .gsc-blur { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass-scrim { transition: none; }
+}

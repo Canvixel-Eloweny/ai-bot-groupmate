@@ -59,11 +59,20 @@ export const MANIFEST_FILES = ['skill.json', 'plugin.json'];
 export const DIR_KINDS = { plugins: 'plugin', skills: 'skill' };
 
 /**
- * 最多允许启用的扩展条目数（经验值，非官方阈值）。
+ * 默认最多允许启用的扩展条目数（经验值，非官方阈值）。
  * 它**不是**性能上限，是"配置写坏了"的兜底：一个把目录名写成通配符的
- * `enabled` 列表不该让机器人去扫一万个包。与 `SKILL_MAX` 同一性质。
+ * `enabled` 列表不该让机器人去扫一万个包。技能/记忆的条目数已不再截断，
+ * 它们只在"进提示词"时按可配预算封顶（见 `skillPrompt` / `memory.promptMax`）。
+ *
+ * ⚠️ 2026-10-23：这个数字**不再是写死的产品上限**。它只是 `custom.plugins.max`
+ *    缺省时的默认值；用户可以在面板 / config.json 里改，实际生效值由
+ *    `custom-config.js` 的 `pluginFields()` 钳到 `[1, PLUGIN_MAX_LIMIT]`。
+ *    超限的条目由 `planLoad()` 标成 `action:'over'`（可见），**不再静默截断**。
  */
-export const PLUGIN_MAX = 20;
+export const PLUGIN_MAX = 256;
+
+/** `custom.plugins.max` 的硬天花板。只防"配置写坏成百万条"，不是推荐值。 */
+export const PLUGIN_MAX_LIMIT = 1024;
 
 /** 入口文件默认名。清单里 `entry` 缺省时用它。 */
 const DEFAULT_ENTRY = 'index.js';
@@ -343,9 +352,13 @@ export function normalizeManifest(raw, { fallbackId = '', kind = null } = {}) {
  *        `action`：`load`（可加载）｜`skip`（发现了但没启用，**不是错误**）｜`reject`（有问题）
  *        `reason`：`enabled` / `not-enabled` / `no-manifest` / 或 fatal[0].code
  */
-export function planLoad(entries, enabledIds) {
-  const want = new Set();
-  for (const x of enabledIds || []) want.add(String(x));
+export function planLoad(entries, enabledIds, { max = PLUGIN_MAX } = {}) {
+  const orderOf = new Map();
+  for (const [i, x] of (Array.isArray(enabledIds) ? enabledIds : []).entries()) {
+    const s = String(x);
+    if (!orderOf.has(s)) orderOf.set(s, i);
+  }
+  const want = new Set(orderOf.keys());
 
   const out = [];
   for (const e of entries || []) {
@@ -363,6 +376,9 @@ export function planLoad(entries, enabledIds) {
       manifest: e.manifest || null,
       problems: e.problems || [],
       detail: '',
+      // 白名单里的次序（未启用为 Infinity）。加载 / 钩子注册 / 工具额度都按它排 ——
+      // 以前按目录名，等于"谁先占了额度"由一个与用户意图无关的字母序决定。
+      order: orderOf.has(id) ? orderOf.get(id) : Infinity,
     };
 
     // ① 没有清单 → 拒绝并**登记**（不是静默跳过）。
@@ -390,6 +406,19 @@ export function planLoad(entries, enabledIds) {
     }
 
     out.push({ ...base, action: 'load', reason: 'enabled', detail: '已启用' });
+  }
+
+  // ④ 上限：按**白名单次序**取前 N 个可加载项，其余标 `over`（不是 reject）。
+  //    · 不用 `reject`：面板把 reject 当"这个包坏了"并禁用开关，而超限只是"这次没轮到"；
+  //    · 不静默截断：`over` 会进 sum / 日志 / effective，面板显示「超上限·未加载」；
+  //    · 用户把上限调大或把别的包取消勾选后，这些条目会自动回到 load。
+  const cap = Math.max(1, Math.min(PLUGIN_MAX_LIMIT, Math.trunc(Number(max)) || PLUGIN_MAX));
+  const loadable = out.filter((p) => p.action === 'load' && Number.isFinite(p.order))
+    .sort((a, b) => a.order - b.order);
+  for (const p of loadable.slice(cap)) {
+    p.action = 'over';
+    p.reason = 'over-limit';
+    p.detail = `白名单第 ${p.order + 1} 个，超过上限 ${cap}，本次未加载（把上限调大或取消勾选别的包即可恢复）`;
   }
   return out;
 }

@@ -43,14 +43,14 @@ export default [
   },
   {
     id: 'Q3',
-    note: '把横线改回 bottom:3px / height:2px —— §131④ 必须变红'
-      + '（用户 2026-10-21 明确要求上移 + 加粗）。预期 BLOCKED',
+    note: '把二级选中胶囊改回旧的 bottom:6px / height:3px 下划线 —— §131④ 必须变红'
+      + '（导航改版后二级选中是 24px 淡色胶囊；退回 3px 下划线会与窄条/玻璃层级脱节）。预期 BLOCKED',
     file: CSS,
-    anchor: /\.nav2-ind \{\n  position: absolute; left: 0; bottom: 6px;\n  height: 3px; width: 0;/,
+    anchor: /\.nav2-ind \{\n  position: absolute; left: 0; top: 3px; z-index: 0;\n  height: 24px; width: 0;/,
     count: 1,
     apply: (s) => s.replace(
-      '.nav2-ind {\n  position: absolute; left: 0; bottom: 6px;\n  height: 3px; width: 0;',
-      '.nav2-ind {\n  position: absolute; left: 0; bottom: 3px;\n  height: 2px; width: 0;'),
+      '.nav2-ind {\n  position: absolute; left: 0; top: 3px; z-index: 0;\n  height: 24px; width: 0;',
+      '.nav2-ind {\n  position: absolute; left: 0; bottom: 6px;\n  height: 3px; width: 0;'),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

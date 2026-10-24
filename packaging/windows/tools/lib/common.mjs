@@ -16,13 +16,19 @@ import path from 'node:path';
 import net from 'node:net';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadUserRoot } from './user-root-loader.mjs';
 import { NAPCAT_LAUNCHER_CANDIDATES, NOT_LAUNCHER_RE, isNapcatLauncherName } from './napcat-shape.mjs';
 
 // ── 路径（P1：根由 src/user-root.js 唯一解析）──────────────────────────────
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ROOTS = await loadUserRoot();
+/**
+ * 快速登录判据的**唯一实现**在 `app/src/napcat-login.js`。工具层只负责把目录给它。
+ * 装包前（app 还不存在）导入失败 ⇒ null ⇒ 走二维码；不再在工具层抄第二份排序逻辑。
+ */
+const NAPCAT_LOGIN = await import(pathToFileURL(path.join(ROOTS.PROGRAM_ROOT, 'src', 'napcat-login.js')).href)
+  .catch(() => null);
 
 export const MODE = ROOTS.MODE;
 export const PROGRAM_ROOT = ROOTS.PROGRAM_ROOT;
@@ -394,6 +400,9 @@ export function unzip(zipPath, dir) {
   fs.mkdirSync(dir, { recursive: true });
   const tries = [
     ['tar', ['-xf', zipPath, '-C', dir]],
+    // Linux 的 GNU tar 不认 zip；Windows 的 bsdtar 认。补一条 unzip，让同一份工具
+    // 在 ubuntu runner 上也能跑 p6 的放置用例（Windows 上没有 unzip 时仍走 tar）。
+    ['unzip', ['-q', zipPath, '-d', dir]],
     ['powershell', ['-NoProfile', '-NonInteractive', '-Command',
       `Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${dir.replace(/'/g, "''")}' -Force`]],
   ];
@@ -684,20 +693,7 @@ export function knownAccounts() {
  */
 export function knownAccountsByMtime() {
   const dir = path.join(napcatHome() || NAPCAT_DIR, 'config');
-  if (!exists(dir)) return [];
-  const out = [];
-  let names = [];
-  try { names = fs.readdirSync(dir); } catch { return []; }
-  for (const n of names) {
-    const m = /^napcat(?:_protocol)?_(\d{5,12})\.json$/i.exec(n);
-    if (!m) continue;
-    let st;
-    try { st = fs.statSync(path.join(dir, n)); } catch { continue; }
-    const hit = out.find((x) => x.qq === m[1]);
-    if (hit) hit.mtime = Math.max(hit.mtime, st.mtimeMs);
-    else out.push({ qq: m[1], mtime: st.mtimeMs });
-  }
-  return out.sort((a, b) => b.mtime - a.mtime);
+  return NAPCAT_LOGIN ? NAPCAT_LOGIN.knownAccountsByMtimeIn(dir) : [];
 }
 
 /**
@@ -718,9 +714,8 @@ export function knownAccountsByMtime() {
  */
 export function resolveLoginQq(argCli = '') {
   void argCli; // ⚠️ 刻意忽略：命令行指定号码这条路已经关掉（见上面的说明）
-  const last = knownAccountsByMtime()[0];
-  if (last) return { qq: last.qq, from: 'NapCat 上次登录的账号' };
-  return { qq: '', from: '' };
+  const dir = path.join(napcatHome() || NAPCAT_DIR, 'config');
+  return NAPCAT_LOGIN ? NAPCAT_LOGIN.resolveLoginQqIn(dir) : { qq: '', from: '' };
 }
 
 /** OneBot11 配置目录（NapCat 的家下面的 `config/`）。 */

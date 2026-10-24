@@ -129,6 +129,48 @@ try {
     },
   };
   ex.llm.activeCustomId = 'fixture-brain';
+
+  /* ── 插件页夹具（2026-10-23）────────────────────────────────────────────
+     25 个真实目录 + `plugins.max=20` ⇒ 静态扫描 20 load / 5 over；
+     再伪造一份 effective.json 让运行期卡片有钩子/工具/空载/告警可显示。
+     ⚠️ 只写临时 USERDATA，不碰真机 `plugins/`（那份是 gitignore 的用户数据）。 */
+  const ids = Array.from({ length: 25 }, (_, i) => `qa${String(i + 1).padStart(2, '0')}`);
+  ex.custom = ex.custom && typeof ex.custom === 'object' ? ex.custom : {};
+  ex.custom.plugins = { enabled: ids, settings: { qa01: { mode: 'def' } }, max: 20 };
+  ex.custom.tools = { max: 64 };
+  for (const id of ids) {
+    const dir = path.join(USERDATA, 'plugins', id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({
+      id, name: `QA ${id}`, version: '1.0.0', apiVersion: 1, entry: 'index.js',
+      capabilities: [], permissions: [], requires: [],
+      settings: id === 'qa01' ? { mode: 'def' } : {},
+      configSchema: {},
+    }, null, 2), 'utf8');
+    fs.writeFileSync(path.join(dir, 'index.js'), 'export function setup() {}\n', 'utf8');
+  }
+  const rtItems = ids.slice(0, 20).map((id) => ({
+    id, dirName: id, kind: 'plugin', name: `QA ${id}`, version: '1.0.0', state: 'loaded',
+    tools: [`${id}__ping`], hooks: [['before-llm-messages', 1]], hookErrors: [], toolErrors: [], empty: false,
+  }));
+  rtItems[1] = { ...rtItems[1], tools: [], hooks: [], empty: true };
+  rtItems[2] = { ...rtItems[2], tools: [], hooks: [], empty: true, hookErrors: [{ point: 'bogus-hook', reason: '未知钩子点' }] };
+  rtItems[3] = { ...rtItems[3], toolErrors: [{ id: 'ping', reason: '工具数已达上限 64（不再注册「ping」）' }] };
+  const overItems = ids.slice(20).map((id, i) => ({
+    id, dirName: id, kind: 'plugin', name: `QA ${id}`, version: '1.0.0', state: 'over',
+    tools: [], hooks: [], hookErrors: [], toolErrors: [], empty: false,
+    detail: `白名单第 ${21 + i} 个，超过上限 20，本次未加载`,
+  }));
+  fs.mkdirSync(path.join(USERDATA, 'panel'), { recursive: true });
+  fs.writeFileSync(path.join(USERDATA, 'panel', 'effective.json'), JSON.stringify({
+    pid: 0, alive: true,
+    extensions: {
+      items: [...rtItems, ...overItems],
+      sum: { total: 25, loaded: 20, pending: 0, skipped: 0, failed: 0, over: 5, tools: 20, hooks: 20, empty: 1 },
+      limits: { plugins: 20, tools: 64, toolsUsed: 20 },
+    },
+  }, null, 2), 'utf8');
+
   fs.writeFileSync(path.join(USERDATA, 'config.json'), JSON.stringify(ex, null, 2));
 } catch { /* 缺模板就按默认 */ }
 
@@ -160,6 +202,26 @@ const browser = spawn(BROWSER, [
 browser.unref();
 
 let ws = null;
+
+/* 被 Ctrl-C / 终端关闭打断时，下面的 `finally` 不保证会跑：Node 默认直接退出，
+   子面板会被 init 收养（2026-10-20 五个 PPID-1 孤儿就是这么留下的）。
+   这里注册同步硬清理；正常结束时 `finally` 仍走优雅收尾，最后把 cleaned 置真。
+   ⚠️ SIGKILL 捕获不到 —— 这是无法兑现的承诺，不写。 */
+let cleaned = false;
+const hardCleanup = () => {
+  if (cleaned) return;
+  cleaned = true;
+  try { ws && ws.close(); } catch { /* 已断 */ }
+  try { process.kill(-browser.pid, 'SIGKILL'); } catch { try { browser.kill('SIGKILL'); } catch { /* 已退 */ } }
+  try { panel.kill('SIGKILL'); } catch { /* 已退 */ }
+  try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* 清不掉就留给 tmp */ }
+  try { fs.rmSync(USERDATA, { recursive: true, force: true }); } catch { /* 清不掉就留给 tmp */ }
+};
+for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+  process.once(sig, () => { hardCleanup(); process.exit(code); });
+}
+process.on('exit', hardCleanup);
+
 try {
   let up = false;
   for (let i = 0; i < 90 && !up; i++) { up = await tcpUp(panelPort); if (!up) await sleep(200); }
@@ -191,6 +253,11 @@ try {
       throw new Error('页面里求值抛错：' + JSON.stringify(m.result.exceptionDetails).slice(0, 300));
     }
     return m.result?.result?.value;
+  };
+  const shot = async (name) => {
+    const m = await send('Page.captureScreenshot', { format: 'png' });
+    const data = m.result?.data;
+    if (data) fs.writeFileSync(path.join('/tmp', name), Buffer.from(data, 'base64'));
   };
 
   await send('Page.enable');
@@ -257,7 +324,8 @@ try {
       for (let s = 0; s < nSubs; s++) {
         const before = errsBefore0();
         const sub = document.querySelectorAll('#nav2 .sub')[s];
-        const label = (document.querySelectorAll('#nav1 .grp')[g].textContent || '').replace(/\\d+$/, '') + ' / ' + (sub.textContent || '');
+        const grp = document.querySelectorAll('#nav1 .grp')[g];
+        const label = (grp.title || grp.textContent || '').replace(/（\d+ 页）$/, '') + ' / ' + (sub.title || sub.textContent || '');
         sub.click();
         await sleep(160);
         const page = document.getElementById('page');
@@ -313,7 +381,7 @@ try {
     if (gi < 0) return { err: '找不到「人格」功能域' };
     groups[gi].click(); await sleep(150);
     const subs = [...document.querySelectorAll('#nav2 .sub')];
-    const si = subs.findIndex((s) => (s.textContent || '').includes('回复设置'));
+    const si = subs.findIndex((s) => (s.title || '').includes('回复设置'));
     if (si < 0) return { err: '找不到「回复设置」子页' };
     subs[si].click(); await sleep(200);
     const box = document.querySelector('.tkx[data-tk="r.len"]');
@@ -391,15 +459,15 @@ try {
 
   /* ── 添加模型的「云端 ⇄ 本地」切换 + 标签右键菜单（2026-10-17 第二轮）──
      这两件事都只有**点下去**才知道对不对：静态扫描只能看到按钮存在。
-     ⚠️ 必须回到模型页再点 —— 上面的遍历停在最后一页（系统 / 面板维护）。 */
+     ⚠️ 必须回到模型页再点 —— 上面的遍历停在最后一页（维护 / 插件）。 */
   const brainUi = await evalJs(`(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const groups = [...document.querySelectorAll('#nav1 .grp')];
-    const g = groups.find((x) => /大脑/.test(x.textContent));
-    if (!g) return { error: '没找到「大脑」分组' };
+    const g = groups.find((x) => /模型/.test(x.title || ''));
+    if (!g) return { error: '没找到「模型」分组' };
     g.click(); await sleep(150);
     const subs = [...document.querySelectorAll('#nav2 .sub')];
-    const sub = subs.find((x) => /模型与线路/.test(x.textContent));
+    const sub = subs.find((x) => /模型与线路/.test(x.title || ''));
     if (!sub) return { error: '没找到「模型与线路」子页' };
     sub.click(); await sleep(220);
     const box = document.getElementById('modalBox');
@@ -413,6 +481,13 @@ try {
       head: (box.querySelector('[data-a="brain.mode"]') || {}).textContent || '',
       hasKey: !!box.querySelector('[data-bf="apiKey"]'),
       base: (box.querySelector('[data-bf="baseUrl"]') || {}).value || '',
+      scrimVisible: !!document.getElementById('glassScrim') && !document.getElementById('glassScrim').hidden,
+      scrimLayers: document.querySelectorAll('#glassScrim .gsc-blur').length,
+      scrimBd: (() => {
+        const b = document.querySelector('#glassScrim .gsc-blur-3');
+        return b ? getComputedStyle(b).backdropFilter : '';
+      })(),
+      modalBg: getComputedStyle(modalEl).backgroundColor,
     };
     (box.querySelector('[data-a="brain.mode"]') || {}).click && box.querySelector('[data-a="brain.mode"]').click();
     await sleep(120);
@@ -425,6 +500,10 @@ try {
     const close = box.querySelector('[data-a="__modal-close"]');
     if (close) close.click();
     await sleep(80);
+    const afterClose = {
+      scrimHidden: document.getElementById('glassScrim').hidden,
+      modalHidden: modalEl.hidden,
+    };
     // 右键标签 → 与列表行同一份菜单（改名 / 改设置 / 删除）
     const tag = document.querySelector('.brain-tag[data-brain]');
     let menu = null;
@@ -452,7 +531,7 @@ try {
       const c2 = box.querySelector('[data-a="__modal-close"]');
       if (c2) c2.click();
     }
-    return { first, second, menu };
+    return { first, second, menu, afterClose };
   })()`);
   console.log('\n── 添加模型：云端 ⇄ 本地 ──');
   ok(!brainUi.error, `打开「＋ 自定义模型」并读到表单（${brainUi.error || 'ok'}）`);
@@ -460,6 +539,14 @@ try {
     ok(brainUi.first.open && /添加自定义模型/.test(brainUi.first.title), `弹窗打开了（${brainUi.first.title}）`);
     ok(brainUi.first.head === '切换到本地模型', `云端模式下标题右侧写「切换到本地模型」（实得「${brainUi.first.head}」）`);
     ok(brainUi.first.hasKey, '云端模式有 API Key 输入框');
+    ok(brainUi.first.scrimVisible && brainUi.first.scrimLayers === 3,
+      `弹窗打开时三层渐进模糊遮罩出现（${brainUi.first.scrimLayers} 层）`);
+    ok(/blur\(/.test(brainUi.first.scrimBd || ''),
+      `遮罩层真的带 backdrop-filter（${brainUi.first.scrimBd || '空'}）`);
+    ok(brainUi.first.modalBg === 'rgba(0, 0, 0, 0)',
+      `.modal 在遮罩打开时交出 scrim（实得 ${brainUi.first.modalBg}）`);
+    ok(brainUi.afterClose && brainUi.afterClose.scrimHidden && brainUi.afterClose.modalHidden,
+      '关闭弹窗后遮罩与弹窗立即 hidden');
     brainUi.second && ok(brainUi.second.head === '切换到云端', `切到本地后按钮变成「切换到云端」（实得「${brainUi.second.head}」）`);
     ok(brainUi.second && brainUi.second.hasKey === false, '本地模式**没有** API Key 输入框（本地不需要 Key）');
     ok(brainUi.second && /127\.0\.0\.1:8080/.test(brainUi.second.base), `本地模式地址默认填本机（实得「${brainUi.second && brainUi.second.base}」）`);
@@ -480,10 +567,10 @@ try {
   console.log('\n── 切换反馈：横幅 / 选中态同步 ──');
   const pickUi = await evalJs(`(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => /大脑/.test(x.textContent));
-    if (!g) return { error: '没找到「大脑」分组' };
+    const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => /模型/.test(x.title || ''));
+    if (!g) return { error: '没找到「模型」分组' };
     g.click(); await sleep(120);
-    const sub = [...document.querySelectorAll('#nav2 .sub')].find((x) => /模型与线路/.test(x.textContent));
+    const sub = [...document.querySelectorAll('#nav2 .sub')].find((x) => /模型与线路/.test(x.title || ''));
     if (!sub) return { error: '没找到「模型与线路」子页' };
     sub.click(); await sleep(220);
     const S = window.__next;
@@ -580,10 +667,10 @@ try {
   console.log('\n── 插话冷却：进度条 ──');
   const coolUi = await evalJs(`(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => /发言与时机/.test(x.textContent));
-    if (!g) return { error: '没找到「发言与时机」分组' };
+    const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => /发言/.test(x.title || ''));
+    if (!g) return { error: '没找到「发言」分组' };
     g.click(); await sleep(150);
-    const sub = [...document.querySelectorAll('#nav2 .sub')].find((x) => /触发方式/.test(x.textContent));
+    const sub = [...document.querySelectorAll('#nav2 .sub')].find((x) => /触发方式/.test(x.title || ''));
     if (!sub) return { error: '没找到「触发方式」子页' };
     sub.click(); await sleep(250);
     const card = document.getElementById('card-cool');
@@ -610,66 +697,812 @@ try {
     ok(coolUi.aria && coolUi.aria === coolUi.after.val, `读屏文案与读数同源（aria-valuetext「${coolUi.aria}」）`);
   }
 
-  /* ── 吸顶导航行：并排 ⇄ 上下两行（2026-10-20 · 维护者报「临界宽度吞页签」）──
-     ⚠️ 这一条**必须真渲染**才测得出来：静态扫描看不出"页签被 overflow 裁掉"，
-        而 `.nav2` 的滚动条是隐藏的 ⇒ 被裁的时候页面零报错、契约全绿。
-     ⚠️ 修复前实测：1815 → 1629 时「运行」域的「终端」被裁；1815 切到「大脑」
-        （页签名最长，548px）同样被裁；再窄到 1280 以下反而正常。
-     ⚠️ 判据同时钉两头：该换行时必须换行，**不该换行时也不许提前换**
-        （否则等于把"裁字"换成"永远两行"，同样偏离用户要的并排观感）。 */
-  console.log('\n── 吸顶导航行：并排 / 上下两行 ──');
-  const navCases = [
-    { w: 2000, dom: '大脑', stacked: false },
-    // 2026-10-21：运行域新增「假QQ」后，1815 下该域已装不下 7 个页签 ——
-    // 合法换行；"不该提前换"由同域的 2000 案例继续钉住（不把整档阈值放宽）。
-    { w: 2000, dom: '运行', stacked: false },
-    { w: 1815, dom: '运行', stacked: true },
-    { w: 1815, dom: '大脑', stacked: true },
-    { w: 1629, dom: '运行', stacked: true },
-    { w: 1300, dom: '插件', stacked: false },
-    { w: 900, dom: '运行', stacked: true },
-  ];
-  for (const c of navCases) {
-    await send('Emulation.setDeviceMetricsOverride', {
-      width: c.w, height: 1000, deviceScaleFactor: 1, mobile: false,
-    });
-    await sleep(350);   // resize 防抖 120ms + 一次布局
+  /* ── 左下角设置层：结构 / 启停控件 / 关于 / 数据 ───────────────────── */
+  console.log('\n── 设置层：结构、启停控件与只读信息 ──');
+  const shellUi = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const gear = document.getElementById('setGear');
+    const layer = document.getElementById('settingsLayer');
+    const panel = document.getElementById('settingsPanel');
+    if (!gear || !layer || !panel) return { error: '找不到设置层入口' };
+    if (layer.dataset.open !== 'true') gear.click();
+    await sleep(420);
+    const q = (sel) => !!document.querySelector(sel);
+    const out = {
+      open: layer.dataset.open,
+      expanded: gear.getAttribute('aria-expanded'),
+      sections: [...document.querySelectorAll('#settingsPanel .set-section')].map((x) => x.id),
+      rail: document.querySelectorAll('#settingsPanel .set-rail-item').length,
+      cards: document.querySelectorAll('#settingsPanel .set-card').length,
+      theme: q('#setThemeSeg [data-theme-opt="light"]') && q('#setThemeSeg [data-theme-opt="dark"]'),
+      accents: document.querySelectorAll('#accentGrid [data-accent-opt]').length,
+      fonts: document.querySelectorAll('#fontGrid [data-font-opt]').length,
+      bgSwatches: document.querySelectorAll('#bgPickList [role="radio"]').length,
+      bgChecked: document.querySelectorAll('#bgPickList [aria-checked="true"]').length,
+      speeds: document.querySelectorAll('#bgSpeed [data-speed]').length,
+      mode: q('[data-mode-opt="browser"]') && q('[data-mode-opt="window"]'),
+      closeBoth: q('[data-close-opt="tray"]') && q('[data-close-opt="quit"]'),
+      autoStart: q('[data-set="autoStart"]'),
+      autoProtocol: q('[data-set="autoProtocol"]'),
+      openOnStart: q('[data-set="openOnStart"]'),
+      updateBtn: q('[data-a="update.check"]'),
+      exportAll: q('[data-a="export.all"]'),
+      exportDiag: q('[data-a="export.diag"]'),
+      repo: (document.getElementById('repoOpen') || {}).href || '',
+      runtime: (document.getElementById('aboutRuntime') || {}).textContent || '',
+      topbarInert: document.querySelector('.topbar').hasAttribute('inert'),
+      railNav: [],
+    };
+    for (const id of ['sec-startup', 'sec-about', 'sec-data', 'sec-appearance']) {
+      const b = document.querySelector('[data-target="' + id + '"]');
+      if (!b) { out.railNav.push({ id, active: '', ok: false }); continue; }
+      b.click();
+      await sleep(650);
+      const active = (document.querySelector('.set-rail-item.is-active') || {}).dataset?.target || '';
+      out.railNav.push({ id, active, ok: active === id });
+    }
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(380);
+    out.closed = layer.dataset.open;
+    out.expandedAfter = gear.getAttribute('aria-expanded');
+    out.inertAfter = document.querySelector('.topbar').hasAttribute('inert');
+    return out;
+  })()`);
+  ok(shellUi && !shellUi.error, `设置层能打开（${shellUi?.error || 'ok'}）`);
+  if (shellUi && !shellUi.error) {
+    ok(shellUi.open === 'true' && shellUi.expanded === 'true' && shellUi.topbarInert === true,
+      `打开态正确（open=${shellUi.open} · aria-expanded=${shellUi.expanded} · 背景 inert=${shellUi.topbarInert}）`);
+    ok(shellUi.sections.join(',') === 'sec-appearance,sec-startup,sec-about,sec-data' && shellUi.rail === 4,
+      `四个分区与侧栏齐全（${shellUi.sections.join(' / ')} · rail=${shellUi.rail}）`);
+    ok(shellUi.cards >= 8 && shellUi.theme && shellUi.accents === 7 && shellUi.fonts === 2,
+      `外观控件齐全（card=${shellUi.cards} · accent=${shellUi.accents} · font=${shellUi.fonts}）`);
+    ok(shellUi.bgSwatches === 8 && shellUi.bgChecked === 1 && shellUi.speeds === 4,
+      `背景 8 套、恰有一个选中、速度 4 档（swatches=${shellUi.bgSwatches} · checked=${shellUi.bgChecked} · speed=${shellUi.speeds}）`);
+    ok(shellUi.mode && shellUi.closeBoth && shellUi.autoStart && shellUi.autoProtocol && shellUi.openOnStart,
+      '启动/关闭控件齐全（打开方式、关闭两态、自启、协议端、自动打开）');
+    ok(shellUi.exportAll && shellUi.exportDiag && shellUi.updateBtn,
+      '关于/数据入口齐全（检查更新、导出全部、诊断包）');
+    ok(/^https:\/\/github\.com\//.test(shellUi.repo) && !!shellUi.runtime && shellUi.runtime !== '—',
+      `关于卡有真实来源（repo=${shellUi.repo} · runtime=${shellUi.runtime}）`);
+    ok(shellUi.railNav.every((x) => x.ok),
+      `侧栏四分区都能跳到对应 section（${shellUi.railNav.map((x) => `${x.id.replace('sec-', '')}=${x.active || '?'}`).join(' / ')}）`);
+    ok(shellUi.closed === 'false' && shellUi.expandedAfter === 'false' && shellUi.inertAfter === false,
+      `Esc 能关闭并解除背景 inert（open=${shellUi.closed} · expanded=${shellUi.expandedAfter}）`);
+  }
+
+  /* ── 数据：按范围导出（大小来自服务端 dry）─────────────────────────── */
+  console.log('\n── 设置层：按范围导出 ──');
+  const exportUi = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const gear = document.getElementById('setGear');
+    const layer = document.getElementById('settingsLayer');
+    if (!gear || !layer) return { error: '找不到设置层入口' };
+    if (layer.dataset.open !== 'true') gear.click();
+    await sleep(900);
+    const rows = [...document.querySelectorAll('#exportScopes .set-scope')];
+    const out = {
+      scopes: rows.length,
+      ids: rows.map((r) => r.querySelector('input')?.dataset.scope).filter(Boolean),
+      total: (document.getElementById('exportTotal') || {}).textContent || '',
+      button: !!(document.getElementById('exportSelected') || {}).disabled === false,
+    };
+    gear.click();
+    await sleep(260);
+    return out;
+  })()`);
+  ok(exportUi && !exportUi.error && exportUi.scopes >= 6 && exportUi.ids.includes('config')
+    && exportUi.ids.includes('log') && /合计/.test(exportUi.total) && exportUi.button,
+    `按范围导出的范围和实际大小已渲染（scopes=${exportUi?.scopes} · ${exportUi?.ids?.join(',')} · ${exportUi?.total}）`);
+
+  /* ── 外观：四件套真的生效 + 刷新后仍记得 ───────────────────────────── */
+  console.log('\n── 设置层：外观持久化（主题/主题色/字体/背景）──');
+  const appearance = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const gear = document.getElementById('setGear');
+    const layer = document.getElementById('settingsLayer');
+    if (!gear || !layer) return { error: '找不到设置层入口' };
+    if (layer.dataset.open !== 'true') gear.click();
+    await sleep(420);
+    const root = document.documentElement;
+    const stored = (k) => { try { return localStorage.getItem(k) || ''; } catch { return ''; } };
+    const click = (sel) => { const b = document.querySelector(sel); if (b) b.click(); return !!b; };
+    // 先归零，避免上一次运行留下的偏好让断言变成"碰巧"。
+    click('[data-font-opt="sans"]');
+    click('[data-accent-opt="ocean"]');
+    click('[data-theme-opt="light"]');
+    await sleep(700);
+    const before = {
+      font: root.dataset.fontStyle || '',
+      accent: root.dataset.accent || '',
+      theme: root.dataset.theme || '',
+      bg: window.ShaderBG ? window.ShaderBG.current : '',
+    };
+    click('[data-font-opt="serif"]');
+    await sleep(80);
+    const serif = {
+      style: root.dataset.fontStyle || '',
+      font: getComputedStyle(root).getPropertyValue('--font'),
+      stored: stored('next-font-style'),
+      pressed: document.querySelector('[data-font-opt="serif"]').getAttribute('aria-pressed'),
+    };
+    click('[data-theme-opt="dark"]');
+    for (let i = 0; i < 40 && root.dataset.theme !== 'dark'; i++) await sleep(50);
+    for (let i = 0; i < 40 && root.dataset.vt; i++) await sleep(50);
+    const dark = { theme: root.dataset.theme || '', stored: stored('next-theme'), vtCleared: !root.dataset.vt };
+    click('[data-accent-opt="lagoon"]');
+    await sleep(80);
+    const lagoon = {
+      accent: root.dataset.accent || '',
+      stored: stored('next-accent'),
+      css: getComputedStyle(root).getPropertyValue('--c-accent').trim(),
+      pressed: document.querySelector('[data-accent-opt="lagoon"]').getAttribute('aria-pressed'),
+    };
+    const btns = [...document.querySelectorAll('#bgPickList [role="radio"]')];
+    const target = btns[btns.length - 1];
+    const wantBg = target && target.dataset.id;
+    if (target) target.click();
+    await sleep(120);
+    const bg = {
+      want: wantBg,
+      current: window.ShaderBG ? window.ShaderBG.current : '',
+      stored: stored('qqbot-bgfx'),
+      checked: document.querySelectorAll('#bgPickList [aria-checked="true"]').length,
+    };
+    gear.click();
+    await sleep(220);
+    return { before, serif, dark, lagoon, bg };
+  })()`);
+  ok(appearance && !appearance.error, `外观控件可操作（${appearance?.error || 'ok'}）`);
+  if (appearance && !appearance.error) {
+    ok(appearance.serif.style === 'serif' && appearance.serif.pressed === 'true',
+      `字体切到衬线（style=${appearance.serif.style} · aria-pressed=${appearance.serif.pressed}）`);
+    ok(/Songti SC/.test(appearance.serif.font) && /SimSun/.test(appearance.serif.font),
+      `衬线栈同时覆盖 macOS 宋体-简与 Windows 宋体（--font=${String(appearance.serif.font).slice(0, 120)}…）`);
+    ok(appearance.serif.stored === 'serif', `字体偏好写进 localStorage（${appearance.serif.stored}）`);
+    ok(appearance.dark.theme === 'dark' && appearance.dark.stored === 'dark' && appearance.dark.vtCleared,
+      `夜间模式生效并持久化（theme=${appearance.dark.theme} · stored=${appearance.dark.stored}）`);
+    ok(appearance.lagoon.accent === 'lagoon' && appearance.lagoon.stored === 'lagoon'
+      && appearance.lagoon.pressed === 'true' && /rgb|#/.test(appearance.lagoon.css),
+      `主题色切到青碧（accent=${appearance.lagoon.accent} · stored=${appearance.lagoon.stored} · --c-accent=${appearance.lagoon.css}）`);
+    ok(appearance.bg.current === appearance.bg.want && appearance.bg.stored === appearance.bg.want && appearance.bg.checked === 1,
+      `背景切到最后一套并持久化（${appearance.bg.current} · checked=${appearance.bg.checked}）`);
+  }
+
+  await send('Page.reload');
+  await sleep(400);
+  let appearanceBack = false;
+  for (let i = 0; i < 60 && !appearanceBack; i++) {
+    try {
+      appearanceBack = await evalJs(`document.readyState === 'complete'
+        && !!document.getElementById('setGear')
+        && document.querySelectorAll('#page *').length > 5`);
+    } catch { appearanceBack = false; }
+    if (!appearanceBack) await sleep(200);
+  }
+  const persisted = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const gear = document.getElementById('setGear');
+    const layer = document.getElementById('settingsLayer');
+    if (gear && layer && layer.dataset.open !== 'true') gear.click();
+    await sleep(420);
+    const root = document.documentElement;
+    const serifBtn = document.querySelector('[data-font-opt="serif"]');
+    const lagoonBtn = document.querySelector('[data-accent-opt="lagoon"]');
+    const out = {
+      ok: !!gear && !!layer,
+      font: root.dataset.fontStyle || '',
+      theme: root.dataset.theme || '',
+      accent: root.dataset.accent || '',
+      bg: window.ShaderBG ? window.ShaderBG.current : '',
+      fontPressed: serifBtn ? serifBtn.getAttribute('aria-pressed') : '',
+      accentPressed: lagoonBtn ? lagoonBtn.getAttribute('aria-pressed') : '',
+      errs: (window.__errs || []).slice(0, 3),
+    };
+    // 还原默认外观与 localStorage（测试副作用不许过夜）
+    if (document.querySelector('[data-font-opt="sans"]')) document.querySelector('[data-font-opt="sans"]').click();
+    if (document.querySelector('[data-accent-opt="ocean"]')) document.querySelector('[data-accent-opt="ocean"]').click();
+    if (document.querySelector('[data-theme-opt="light"]')) document.querySelector('[data-theme-opt="light"]').click();
+    if (window.ShaderBG) window.ShaderBG.set(window.ShaderBG.DEFAULT || window.ShaderBG.VARIANTS[0].id);
+    await sleep(700);
+    try {
+      localStorage.removeItem('next-font-style');
+      localStorage.removeItem('next-accent');
+      localStorage.removeItem('next-theme');
+      localStorage.removeItem('qqbot-bgfx');
+    } catch (e) { /* 隐私模式 */ }
+    if (gear && layer && layer.dataset.open === 'true') gear.click();
+    out.restored = {
+      font: root.dataset.fontStyle || '',
+      theme: root.dataset.theme || '',
+      accent: root.dataset.accent || '',
+      bg: window.ShaderBG ? window.ShaderBG.current : '',
+    };
+    return out;
+  })()`);
+  ok(appearanceBack && persisted.ok && persisted.font === 'serif' && persisted.theme === 'dark'
+    && persisted.accent === 'lagoon' && persisted.bg === appearance.bg.want
+    && persisted.fontPressed === 'true' && persisted.accentPressed === 'true',
+    `刷新后四件套都记得（font=${persisted.font} · theme=${persisted.theme} · accent=${persisted.accent} · bg=${persisted.bg}）`);
+  ok((persisted.errs || []).length === 0,
+    `刷新后的启动脚本零运行时错误${(persisted.errs || []).length ? '：' + persisted.errs.join(' | ') : ''}`);
+  ok(persisted.restored && persisted.restored.font === 'sans' && persisted.restored.theme === 'light'
+    && persisted.restored.accent === 'ocean',
+    `测试结束后已还原默认外观（font=${persisted.restored?.font} · theme=${persisted.restored?.theme} · accent=${persisted.restored?.accent}）`);
+
+  /* ── 设置层：窄屏入口 ────────────────────────────────────────────────
+     旧断言盯的是顶栏「文」按钮在 ≤770px 收起；现在字体/主题/背景全部进了
+     左下角设置，顶栏只剩启停。判据改为：四档下齿轮始终可见、顶栏不溢出、
+     设置面板完整落在视口内且关闭按钮可达。 */
+  console.log('\n── 设置层：窄屏入口 ──');
+  for (const w of [800, 770, 760, 720]) {
+    await send('Emulation.setDeviceMetricsOverride', { width: w, height: 1000, deviceScaleFactor: 1, mobile: false });
+    await sleep(320);
     const m = await evalJs(`(async () => {
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => x.textContent.indexOf('${c.dom}') >= 0);
-      if (!g) return { error: '没找到分组' };
-      g.click(); await sleep(250);
-      const row = document.getElementById('navrow');
-      const nav = document.getElementById('nav2');
-      const wrap = document.getElementById('nav2wrap');
-      const nav1 = document.getElementById('nav1');
-      const nr = nav.getBoundingClientRect();
-      const wr = wrap.getBoundingClientRect();
-      const n1 = nav1.getBoundingClientRect();
-      const inner = document.querySelector('.nav-inner').getBoundingClientRect();
-      const outside = [...nav.querySelectorAll('.sub')].filter((s) => {
-        const b = s.getBoundingClientRect();
-        return b.left < nr.left - 0.5 || b.right > nr.right + 0.5;
-      }).map((s) => s.textContent.trim());
-      return {
-        stacked: row.classList.contains('is-stacked'),
-        twoRows: n1.top >= wr.bottom - 1,
-        outside,
-        islandCentered: Math.abs((inner.left - n1.left) - (n1.right - inner.right)) < 1.5,
+      const gear = document.getElementById('setGear');
+      const layer = document.getElementById('settingsLayer');
+      const panel = document.getElementById('settingsPanel');
+      const close = document.getElementById('settingsClose');
+      const tb = document.querySelector('.topbar');
+      if (!gear || !layer || !panel || !close || !tb) return { error: '缺少设置层/顶栏' };
+      const gr = gear.getBoundingClientRect();
+      const out = {
+        gearVisible: getComputedStyle(gear).display !== 'none' && gr.width > 0 && gr.left >= 0 && gr.right <= innerWidth,
+        overflow: tb.scrollWidth - tb.clientWidth,
       };
+      if (layer.dataset.open !== 'true') gear.click();
+      await sleep(420);
+      const pr = panel.getBoundingClientRect();
+      const cr = close.getBoundingClientRect();
+      out.panelIn = pr.left >= -1 && pr.right <= innerWidth + 1 && pr.top >= -1 && pr.bottom <= innerHeight + 1;
+      out.closeIn = cr.width > 0 && cr.left >= 0 && cr.right <= innerWidth && cr.top >= 0 && cr.bottom <= innerHeight;
+      out.scrollH = document.getElementById('settingsScroll').clientHeight;
+      gear.click();
+      await sleep(200);
+      return out;
     })()`);
-    /* ⚠️ 判据看**行为**（几行 / 有没有被裁 / 岛居中），不看 `.is-stacked` 这个类本身：
-       1280 以下的换行也可能是无 JS 兜底的那条媒体查询完成的 —— 类名是实现细节，
-       把它写成硬条件会让"行为其实正确"的路径变红。 */
-    const pass = !m.error
-      && m.twoRows === c.stacked
-      && (m.outside || []).length === 0
-      && m.islandCentered === true;
-    ok(pass, `${c.w}px / ${c.dom}：${c.stacked ? '上下两行' : '并排'}，页签完整、岛居中`
-      + `（实得 stacked=${m.stacked} 两行=${m.twoRows} 裁掉=[${m.outside || ''}] 居中=${m.islandCentered}`
-      + `${m.error ? ' · ' + m.error : ''}）`);
+    ok(m && !m.error && m.gearVisible && m.overflow <= 0 && m.panelIn && m.closeIn && m.scrollH > 60,
+      `${w}px：齿轮可见、顶栏不溢出、设置面板完整、关闭按钮可达（overflow=${m?.overflow} · panel=${m?.panelIn} · close=${m?.closeIn} · scroll=${m?.scrollH}）`);
   }
   await send('Emulation.clearDeviceMetricsOverride');
+  await sleep(200);
+
+  /* ── P2-4 四档内容区：导航 / 顶栏 / 设置层一个都不许静默消失 ─────────
+     外窗减 40 DIP 标题栏 = 内容区；这里直接按内容区尺寸量（Electron 的
+     BrowserWindow 也按 DIP 给 workArea/ bounds，不再做 ×1.25 换算）。 */
+  console.log('\n── P2-4 四档内容区：导航/顶栏/设置层 ──');
+  const p24 = [
+    { w: 1280, h: 680 },
+    { w: 1024, h: 728 },
+    { w: 800, h: 560 },
+    { w: 600, h: 440 },
+  ];
+  for (const c of p24) {
+    await send('Emulation.setDeviceMetricsOverride', {
+      width: c.w, height: c.h, deviceScaleFactor: 1, mobile: false,
+    });
+    await sleep(520);
+    const m = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const groups = [...document.querySelectorAll('#nav1 .grp')];
+      const visible = groups.filter((x) => getComputedStyle(x).display !== 'none' && x.getBoundingClientRect().width > 0);
+      const top = ['onekey-start', 'onekey-stop'].map((a) => {
+        const el = document.querySelector('[data-a="' + a + '"]');
+        if (!el) return { a, ok: false, why: 'missing' };
+        const r = el.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return {
+          a,
+          ok: r.width > 0 && r.left >= -1 && r.right <= innerWidth + 1 && !!hit && (hit === el || el.contains(hit)),
+          why: hit ? (hit.tagName + '.' + (hit.className || '')) : 'no-hit',
+        };
+      });
+      const gear = document.getElementById('setGear');
+      const gr = gear && gear.getBoundingClientRect();
+      const gHit = gr ? document.elementFromPoint(gr.left + gr.width / 2, gr.top + gr.height / 2) : null;
+      const out = {
+        groups: groups.length,
+        visible: visible.length,
+        missing: groups.filter((x) => !visible.includes(x)).map((x) => x.title || x.textContent).slice(0, 3),
+        top,
+        gear: !!gear && !!gr && gr.width > 0 && gr.left >= -1 && gr.right <= innerWidth + 1
+          && !!gHit && (gHit === gear || gear.contains(gHit)),
+        gearWhy: gHit ? gHit.tagName : 'no-hit',
+        overflowX: document.documentElement.scrollWidth - innerWidth,
+      };
+      if (gear) gear.click();
+      await sleep(420);
+      const panel = document.getElementById('settingsPanel');
+      const close = document.getElementById('settingsClose');
+      const pr = panel ? panel.getBoundingClientRect() : null;
+      const cr = close ? close.getBoundingClientRect() : null;
+      out.panel = !!pr && pr.left >= -1 && pr.right <= innerWidth + 1 && pr.top >= -1 && pr.bottom <= innerHeight + 1;
+      out.close = !!cr && cr.width > 0 && cr.left >= 0 && cr.right <= innerWidth && cr.top >= 0 && cr.bottom <= innerHeight;
+      out.scrollH = (document.getElementById('settingsScroll') || {}).clientHeight || 0;
+      out.exportBox = !!document.getElementById('exportScopes');
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await sleep(260);
+      out.closed = (document.getElementById('settingsLayer') || {}).dataset?.open === 'false';
+      return out;
+    })()`);
+    await shot(`p2-${c.w}x${c.h}.png`);
+    ok(m && m.groups >= 6 && m.visible === m.groups && m.top.every((x) => x.ok) && m.gear
+      && m.overflowX <= 1 && m.panel && m.close && m.scrollH > 60 && m.exportBox && m.closed,
+      `${c.w}×${c.h}：导航 ${m?.visible}/${m?.groups}、顶栏按钮 ${m?.top?.map((x) => `${x.a}=${x.ok}`).join('/')}、齿轮=${m?.gear}`
+      + `、横溢 ${m?.overflowX}px、设置面板=${m?.panel}/关闭=${m?.close}/滚动 ${m?.scrollH}`
+      + `${m?.missing?.length ? ' · 缺失 ' + m.missing.join(',') : ''}`);
+  }
+  // 设置层打开态截图（1280 / 600 两档；供人眼核对，不参与断言）
+  for (const c of [{ w: 1280, h: 680 }, { w: 600, h: 440 }]) {
+    await send('Emulation.setDeviceMetricsOverride', {
+      width: c.w, height: c.h, deviceScaleFactor: 1, mobile: false,
+    });
+    await sleep(420);
+    await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const g = document.getElementById('setGear');
+      const l = document.getElementById('settingsLayer');
+      if (g && l && l.dataset.open !== 'true') g.click();
+      await sleep(520);
+      return true;
+    })()`);
+    await shot(`p2-${c.w}x${c.h}-settings.png`);
+    await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const g = document.getElementById('setGear');
+      const l = document.getElementById('settingsLayer');
+      if (g && l && l.dataset.open === 'true') g.click();
+      await sleep(260);
+      return true;
+    })()`);
+  }
+  await send('Emulation.clearDeviceMetricsOverride');
+  await sleep(200);
+
+  /* ── 吸顶导航：一条 dock，一级在上、二级随内容收缩（2026-10-22 改版）──
+     旧版是「二级在左、岛居中」的并排 grid；改版后两级上下叠压，二级宽度按当前域
+     的内容收缩/展开。这里真渲染量三件事：
+       ① 二级宽度必须**按内容自适应**（模型 3 页签明显窄于运行 4 页签，
+          且窄条宽度不能比自身内容多出一大截）；
+       ② dock 不越出视口，一级/二级各有横向滚动，选中项始终可见；
+       ③ 吸顶行不再有「并排 ⇄ 上下两行」两态（那是旧结构的退路）。 */
+  console.log('\n── 吸顶导航：一条 dock / 二级随内容收缩 ──');
+  const navWidths = [2000, 1815, 1629, 1300, 900, 700, 520, 390];
+  for (const w of navWidths) {
+    await send('Emulation.setDeviceMetricsOverride', {
+      width: w, height: 1000, deviceScaleFactor: 1, mobile: false,
+    });
+    await sleep(520);   // resize 防抖 120ms + 二级宽度过渡 380ms
+    const m = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const findGroup = (re) => [...document.querySelectorAll('#nav1 .grp')]
+        .find((x) => re.test(x.title || x.textContent));
+      if (!findGroup(/模型/) || !findGroup(/运行/)) return { error: '没找到「模型 / 运行」分组' };
+      const measure = () => {
+        const row = document.getElementById('navrow');
+        const dock = document.getElementById('navDock');
+        const nav = document.getElementById('nav2');
+        const wrap = document.getElementById('nav2wrap');
+        const nav1 = document.getElementById('nav1');
+        const inner = document.getElementById('navInner');
+        const sel = nav.querySelector('.sub[aria-selected="true"]');
+        const nr = nav.getBoundingClientRect();
+        const sr = sel ? sel.getBoundingClientRect() : null;
+        return {
+          l2W: wrap.getBoundingClientRect().width,
+          l2ScrollW: nav.scrollWidth,
+          l2ClientW: nav.clientWidth,
+          dockW: dock.getBoundingClientRect().width,
+          stacked: row.classList.contains('is-stacked'),
+          islandCentered: Math.abs((inner.getBoundingClientRect().left - nav1.getBoundingClientRect().left)
+            - (nav1.getBoundingClientRect().right - inner.getBoundingClientRect().right)) < 1.5,
+          selectedVisible: !!(sr && sr.left >= nr.left - 1 && sr.right <= nr.right + 1),
+        };
+      };
+      findGroup(/模型/).click(); await sleep(520);
+      const narrowM = measure();
+      findGroup(/运行/).click(); await sleep(520);
+      const wideM = measure();
+      return {
+        narrowW: narrowM.l2W,
+        wideW: wideM.l2W,
+        narrowScrollW: narrowM.l2ScrollW,
+        wideScrollW: wideM.l2ScrollW,
+        dockW: wideM.dockW,
+        stacked: wideM.stacked,
+        islandCentered: wideM.islandCentered,
+        narrowSelVisible: narrowM.selectedVisible,
+        wideSelVisible: wideM.selectedVisible,
+        viewport: innerWidth,
+      };
+    })()`);
+    const pass = !!m && !m.error
+      && m.narrowW < m.wideW - 40                 // 3 页签必须明显窄于 4 页签
+      && m.narrowW <= m.narrowScrollW + 12        // 窄条不能比自身内容多出一大截
+      && m.dockW <= m.viewport + 1
+      && m.stacked === false
+      && m.islandCentered === true
+      && m.narrowSelVisible === true
+      && m.wideSelVisible === true;
+    ok(pass, `${w}px：二级自适应（模型 ${m && m.narrowW ? m.narrowW.toFixed(1) : '?'} / 运行 ${m && m.wideW ? m.wideW.toFixed(1) : '?'}）`
+      + ` · 模型内容 ${m && m.narrowScrollW ? m.narrowScrollW.toFixed(0) : '?'} · dock ${m && m.dockW ? m.dockW.toFixed(0) : '?'}`
+      + ` · 两级选中可见 ${m && m.narrowSelVisible}/${m && m.wideSelVisible}`
+      + `${m && m.error ? ' · ' + m.error : ''}`);
+  }
+  /* 维护域已回到岛内：先回到桌面宽度（上一段量到 390） */
+  await send('Emulation.clearDeviceMetricsOverride');
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await sleep(250);
+  /* 维护域：岛内 6 个可见域，顶栏不再有单独入口 */
+  console.log('\n── 岛内「维护」域 ──');
+  const maint = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const groups = [...document.querySelectorAll('#nav1 .grp')];
+    const visible = groups.filter((x) => !x.hidden && getComputedStyle(x).display !== 'none').length;
+    const sys = groups.find((x) => (x.getAttribute('aria-label') || '').startsWith('维护'));
+    const topbarBtn = !!document.querySelector('[data-a="nav.maint"]');
+    if (!sys) return { error: '岛内没有维护域' };
+    sys.click(); await sleep(240);
+    /* 点击后 paintPage 重建了一级按钮：必须**重新查**，读旧元素的 aria-selected 会拿到 false。 */
+    const groupsAfter = [...document.querySelectorAll('#nav1 .grp')];
+    const sysAfter = groupsAfter.find((x) => (x.getAttribute('aria-label') || '').startsWith('维护'));
+    const subs = [...document.querySelectorAll('#nav2 .sub')];
+    const ind = document.getElementById('navInd');
+    const out = {
+      visible, topbarBtn,
+      selected: sysAfter?.getAttribute('aria-selected'), hiddenSys: sysAfter?.hidden,
+      nav2: subs.length, first: (subs[0]?.title || ''), last: (subs[subs.length - 1]?.title || ''),
+      islandSelected: document.querySelectorAll('#nav1 .grp[aria-selected="true"]:not([hidden])').length,
+      indOp: Number(getComputedStyle(ind).opacity),
+    };
+    groupsAfter[0].click(); await sleep(180);   // 回到运行，别把后续检查留在维护页
+    return out;
+  })()`);
+  ok(maint && !maint.error
+    && maint.visible === 6 && maint.topbarBtn === false
+    && maint.selected === 'true' && maint.hiddenSys === false
+    && maint.nav2 === 5 && /安全红线/.test(maint.first) && /HUD调整/.test(maint.last)
+    && maint.islandSelected === 1 && maint.indOp > 0.9,
+    maint?.error || `岛内可见 ${maint?.visible} 域 · 顶栏入口 ${maint?.topbarBtn} · `
+      + `维护 tab selected=${maint?.selected} / hidden=${maint?.hiddenSys} · 二级 ${maint?.nav2} 页（首项 ${maint?.first} / 末项 ${maint?.last}） · `
+      + `岛内可见选中 ${maint?.islandSelected} · 指示器 opacity=${maint?.indOp}`);
+  /* ── 顶栏 HUD 信息岛：五颗胶囊已并入岛内，岛可见且顶栏不溢出 ── */
+  await sleep(1400);
+  const hudIsland = await evalJs(`(() => {
+    const isle = document.getElementById('hudIsle');
+    const tb = document.querySelector('.topbar');
+    const ids = ['pillMode', 'pillBridge', 'pillContainer', 'pillLocal', 'pillMem'];
+    return {
+      exists: !!isle,
+      pills: ids.filter((id) => document.getElementById(id)).length,
+      w: isle ? Math.round(isle.getBoundingClientRect().width) : 0,
+      overflow: tb.scrollWidth - tb.clientWidth,
+      hasGlyph: !!isle && !!isle.querySelector('.plate svg'),
+    };
+  })()`);
+  ok(hudIsland && hudIsland.exists && hudIsland.pills === 0 && hudIsland.w > 100 && hudIsland.overflow <= 0,
+    `HUD 岛=${hudIsland?.exists ? '在' : '缺'} · 残留胶囊 ${hudIsland?.pills} · 宽 ${hudIsland?.w}px`
+      + ` · 顶栏溢出 ${hudIsland?.overflow}px · 图标=${hudIsland?.hasGlyph ? '有' : '无'}`);
+  /* ── 液态玻璃制作站（隐藏实验页）：能启动、模板都渲染、默认无遮罩、无运行时异常 ── */
+  try {
+    await send('Page.navigate', { url: new URL('/lab-liquid-glass.html', BASE).href });
+    await sleep(400);
+    const station = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const t0 = Date.now();
+      while (Date.now() - t0 < 8000 && !(window.__glassLab && window.__glassLab.probe)) await sleep(120);
+      const p = window.__glassLab ? window.__glassLab.probe() : null;
+      return {
+        p,
+        templates: window.__glassLab ? window.__glassLab.templates : 0,
+        specs: document.querySelectorAll('.gs-spec').length,
+        errs: (window.__errs || []).length,
+      };
+    })()`);
+    ok(!!station.p && station.templates >= 6, `制作站启动（${station.templates} 个模板）`);
+    ok(station.specs >= 6, `模板与 A/B 示例都渲染了（${station.specs} 个 .gs-spec）`);
+    ok(station.p && station.p.scrimHidden === true, '制作站的设置遮罩默认 hidden');
+    ok(station.errs === 0, `制作站无运行时异常（${station.errs}）`);
+    /* 2026-10-22 深改版：拖得动、对比是双层、弹层开得开关得上。
+       这三条是用户当时点名“拖也拖不动、例子试不了”的反向守卫。 */
+    const inter = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const el = document.querySelector('#gsWorldA .gs-spec[data-key="media"]');
+      if (!el) return { error: 'no spec' };
+      const before = el.getBoundingClientRect();
+      const x = before.left + before.width / 2;
+      const y = before.top + before.height / 2;
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: x, clientY: y, button: 0, pointerId: 91 }));
+      document.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: x + 36, clientY: y + 18, pointerId: 91 }));
+      document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x + 36, clientY: y + 18, pointerId: 91 }));
+      await sleep(140);
+      const after = el.getBoundingClientRect();
+      const dx = Math.round(after.left - before.left);
+      document.querySelector('[data-view="compare"]').click();
+      await sleep(280);
+      const specs = document.querySelectorAll('#gsCanvas .gs-spec').length;
+      document.querySelector('[data-gs="openModal"]').click();
+      await sleep(240);
+      const scrim = document.getElementById('gsScrim');
+      const shown = !!scrim && !scrim.hidden && scrim.classList.contains('on');
+      document.querySelector('#gsModal [data-gs="closeModal"]').click();
+      await sleep(140);
+      const closed = !!scrim && scrim.hidden;
+      return { dx, specs, shown, closed };
+    })()`);
+    ok(inter && !inter.error && Math.abs(inter.dx) >= 20, `制作站玻璃可拖动（位移 ${inter?.dx}px）`);
+    ok(inter && inter.specs >= 8, `对比视图同时渲染两侧（${inter?.specs} 个 .gs-spec）`);
+    ok(inter && inter.shown && inter.closed, '制作站设置弹层可开可关');
+    /* 2026-10-23 吸收的光影三件套：三条新控件必须真的改到计算样式，不是只改了数据。 */
+    const absorb = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const setRange = (k, v) => {
+        const el = document.querySelector('[data-param="' + k + '"]');
+        if (!el) return false;
+        el.value = String(v);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      };
+      const setSel = (k, v) => {
+        const el = document.querySelector('[data-select-param="' + k + '"]');
+        if (!el) return false;
+        el.value = v;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      };
+      const read = () => {
+        const spec = document.querySelector('#gsWorldA .gs-spec');
+        const rim = spec && spec.querySelector('.gs-rim');
+        return {
+          shadow: rim ? getComputedStyle(rim).boxShadow : '',
+          spec: spec ? spec.dataset.spec : '',
+        };
+      };
+      /* 上一条把视图留在 compare（A 侧是 current 变体，rim 走 --c-eg-inset-isle，
+         壁/描边本来就不该影响它）—— 先切回场景，读精修侧。 */
+      document.querySelector('[data-view="scene"]').click();
+      await sleep(260);
+      if (!setRange('wall', 0) || !setSel('bevel', 'off') || !setSel('spec', 'sweep')) return { err: 'controls-missing' };
+      await sleep(220);
+      const a = read();
+      if (!setRange('wall', 0.5) || !setSel('bevel', 'raised') || !setSel('spec', 'corners')) return { err: 'controls-missing' };
+      await sleep(220);
+      const b = read();
+      return { a, b, changedShadow: a.shadow !== b.shadow, changedSpec: a.spec !== b.spec };
+    })()`);
+    ok(absorb && !absorb.err && absorb.changedShadow && absorb.changedSpec,
+      absorb?.err ? `光影三件套控件缺失（${absorb.err}）`
+        : `光影三件套接到计算样式（shadow ${absorb?.changedShadow} / spec ${absorb?.changedSpec}）`);
+  } catch (e) {
+    ok(false, `制作站冒烟失败：${e && e.message ? e.message : e}`);
+  }
+
+  /* ── 插件页：上限 / 运行期可观测 / 设置保存与回填（2026-10-23）──────────
+     上面的制作站已经跳到了 `lab-liquid-glass.html`，先回控制台再进维护 → 插件。 */
+  try {
+    await send('Page.navigate', { url: `${BASE}/` });
+    await sleep(1200);
+    await evalJs(`(() => {
+      const sys = [...document.querySelectorAll('#nav1 .grp')].find((x) => (x.getAttribute('aria-label') || '').startsWith('维护'));
+      sys?.click();
+      return true;
+    })()`);
+    await sleep(350);
+    const went = await evalJs(`(() => {
+      const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /插件/.test(x.title || x.textContent || ''));
+      if (s) s.click();
+      return !!s;
+    })()`);
+    await sleep(450);
+    ok(went, '插件页可进入（岛内维护 → 插件）');
+
+    const plug = await evalJs(`(() => {
+      const page = document.getElementById('page');
+      const text = page ? (page.textContent || '') : '';
+      const cards = [...document.querySelectorAll('.pcard')];
+      const tags = [...document.querySelectorAll('.pcard .tag')];
+      const titles = tags.map((t) => t.title || '');
+      return {
+        cards: cards.length,
+        text,
+        overTags: tags.filter((t) => /超上限/.test(t.textContent || '')).length,
+        emptyTags: tags.filter((t) => /空载/.test(t.textContent || '')).length,
+        bogus: titles.some((t) => /bogus-hook/.test(t)),
+        toolErr: titles.some((t) => /工具数已达上限/.test(t)),
+        plugMax: document.querySelector('[data-id="plug.max"]')?.value,
+        toolMax: document.querySelector('[data-id="tool.max"]')?.value,
+      };
+    })()`);
+    ok(plug.cards === 25, `插件板数 = 25（实际 ${plug.cards}）`);
+    ok(/超过上限\s*5|超上限\s*5/.test(plug.text.replace(/\s+/g, ' ')), '总览显示超上限 5');
+    ok(/已启用\s*25\s*\/\s*上限\s*20/.test(plug.text.replace(/\s+/g, ' ')), '总览显示「已启用 25 / 上限 20」');
+    ok(/工具\s*20\s*\/\s*上限\s*64/.test(plug.text.replace(/\s+/g, ' ')), '总览显示「工具 20 / 上限 64」');
+    ok(plug.overTags >= 5, `至少 5 张卡标了超上限（实际 ${plug.overTags}）`);
+    ok(plug.emptyTags >= 1, '空载卡有显式标记');
+    ok(plug.bogus, '钩子未挂的原因出现在卡片 title 上');
+    ok(plug.toolErr, '工具注册失败的原因出现在卡片 title 上');
+    ok(plug.plugMax === '20' && plug.toolMax === '64', `两个上限控件回显 20 / 64（实际 ${plug.plugMax} / ${plug.toolMax}）`);
+
+    // 设置保存：输入 → change → 保存 → 读临时根 config.json；reload 后回显。
+    const saved = await evalJs(`(async () => {
+      const inp = document.querySelector('[data-p="qa01|mode"]');
+      if (!inp) return { error: 'no-input' };
+      inp.focus(); inp.value = 'abc';
+      inp.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 150));
+      const bar = document.getElementById('savebar');
+      const dirty = !!bar && !bar.hidden && /1 处改动/.test(bar.textContent || '');
+      document.querySelector('[data-a="draft-save"]')?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      return { dirty, errs: (window.__errs || []).length };
+    })()`);
+    ok(saved && !saved.error && saved.dirty, `输入后保存条出现「1 处改动」（${saved?.error || 'ok'}）`);
+    let written = null;
+    try { written = JSON.parse(fs.readFileSync(path.join(USERDATA, 'config.json'), 'utf8')); } catch { /* 读不到就红 */ }
+    ok(written?.custom?.plugins?.settings?.qa01?.mode === 'abc',
+      `保存后临时根 config.json 里 qa01.mode=abc（实际 ${JSON.stringify(written?.custom?.plugins?.settings?.qa01?.mode)}）`);
+
+    await send('Page.reload');
+    await sleep(1400);
+    await evalJs(`(() => {
+      const sys = [...document.querySelectorAll('#nav1 .grp')].find((x) => (x.getAttribute('aria-label') || '').startsWith('维护'));
+      sys?.click();
+      return true;
+    })()`);
+    await sleep(350);
+    await evalJs(`(() => {
+      const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /插件/.test(x.title || x.textContent || ''));
+      if (s) s.click(); return !!s;
+    })()`);
+    await sleep(450);
+    const back = await evalJs(`document.querySelector('[data-p="qa01|mode"]')?.value ?? ''`);
+    ok(back === 'abc', `刷新后输入框回显 abc（实际 ${JSON.stringify(back)}）`);
+
+    /* 2026-10-23：预算控件必须真的在页面上 + 能保存回临时根（不是只在 schema 里声明）。 */
+    const hook0 = await evalJs(`document.querySelector('[data-id="plug.hookTimeout"]')?.value ?? ''`);
+    ok(hook0 === '5000', `钩子超时控件回显 5000（实际 ${JSON.stringify(hook0)}）`);
+    const hookSaved = await evalJs(`(async () => {
+      const el = document.querySelector('[data-id="plug.hookTimeout"]');
+      if (!el) return { error: 'no-hook-timeout' };
+      el.value = '6000';
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 150));
+      document.querySelector('[data-a="draft-save"]')?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      return { ok: true };
+    })()`);
+    ok(hookSaved && !hookSaved.error, `钩子超时输入并保存（${hookSaved?.error || 'ok'}）`);
+    let writtenHook = null;
+    try { writtenHook = JSON.parse(fs.readFileSync(path.join(USERDATA, 'config.json'), 'utf8')); } catch { /* 读不到就红 */ }
+    ok(writtenHook?.custom?.plugins?.hookTimeoutMs === 6000,
+      `保存后临时根 config.json 里 hookTimeoutMs=6000（实际 ${JSON.stringify(writtenHook?.custom?.plugins?.hookTimeoutMs)}）`);
+
+    await evalJs(`(() => {
+      const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => /记忆/.test(x.title || x.textContent || ''));
+      if (g) g.click(); return !!g;
+    })()`);
+    await sleep(400);
+    await evalJs(`(() => {
+      const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /自我记忆/.test(x.title || x.textContent || ''));
+      if (s) s.click(); return !!s;
+    })()`);
+    await sleep(450);
+    const mem0 = await evalJs(`document.querySelector('[data-id="m.promptMax"]')?.value ?? ''`);
+    ok(mem0 === '12', `记忆注入上限控件回显 12（实际 ${JSON.stringify(mem0)}）`);
+    const memSaved = await evalJs(`(async () => {
+      const el = document.querySelector('[data-id="m.promptMax"]');
+      if (!el) return { error: 'no-memory-max' };
+      el.value = '8';
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 150));
+      document.querySelector('[data-a="draft-save"]')?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      return { ok: true };
+    })()`);
+    ok(memSaved && !memSaved.error, `记忆注入上限输入并保存（${memSaved?.error || 'ok'}）`);
+    let writtenMem = null;
+    try { writtenMem = JSON.parse(fs.readFileSync(path.join(USERDATA, 'config.json'), 'utf8')); } catch { /* 读不到就红 */ }
+    ok(writtenMem?.custom?.memory?.promptMax === 8,
+      `保存后临时根 config.json 里 memory.promptMax=8（实际 ${JSON.stringify(writtenMem?.custom?.memory?.promptMax)}）`);
+
+    await evalJs(`(() => {
+      const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /知识包/.test(x.title || x.textContent || ''));
+      if (s) s.click(); return !!s;
+    })()`);
+    await sleep(450);
+    const skillBudget = await evalJs(`(() => ({
+      max: document.querySelector('[data-id="skill.promptMax"]')?.value,
+      chars: document.querySelector('[data-id="skill.promptChars"]')?.value,
+    }))()`);
+    ok(skillBudget && skillBudget.max === '3' && skillBudget.chars === '2000',
+      `技能预算控件回显 3 / 2000（实际 ${skillBudget?.max} / ${skillBudget?.chars}）`);
+  } catch (e) {
+    ok(false, `插件/记忆/技能页冒烟失败：${e && e.message ? e.message : e}`);
+  }
+  await send('Emulation.clearDeviceMetricsOverride');
+
+  /* ── P3-2：浏览器没有壳时必须仍走 HTTP；壳内离线要有明确横幅 ───────────── */
+  console.log('\n── P3-2 重启/退出入口与半死界面 ──');
+  await evalJs(`(() => {
+    const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => /维护/.test(x.title || x.textContent || ''));
+    if (g) g.click();
+    return !!g;
+  })()`);
+  await sleep(350);
+  await evalJs(`(() => {
+    const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /面板维护/.test(x.title || x.textContent || ''));
+    if (s) s.click();
+    return !!s;
+  })()`);
+  await sleep(450);
+  const browserFallback = await evalJs(`(async () => {
+    const orig = window.fetch;
+    const calls = [];
+    window.fetch = (url, opt = {}) => {
+      calls.push(String(url));
+      if (String(url).includes('/api/panel/restart')) {
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, restarted: false, msg: 'stub' }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        }));
+      }
+      return orig(url, opt);
+    };
+    const btn = document.querySelector('#page [data-a="panel.restart"]');
+    if (!btn) { window.fetch = orig; return { error: 'no-restart-button' }; }
+    btn.click();
+    await new Promise((r) => setTimeout(r, 500));
+    window.fetch = orig;
+    return { calls, errs: (window.__errs || []).length };
+  })()`);
+  ok(browserFallback && !browserFallback.error, `浏览器模式有「重启面板」按钮（${browserFallback?.error || 'ok'}）`);
+  ok((browserFallback?.calls || []).some((u) => u.includes('/api/panel/restart')),
+    '浏览器模式点重启走的是 HTTP /api/panel/restart（没有壳时不能只剩 IPC）');
+  ok((browserFallback?.errs || 0) === 0, '浏览器模式重启动作没有运行时错误');
+
+  // 同一个页面在壳里：离线时横幅必须说清「后端没响应」并给出重启/退出。
+  await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `window.estrellaShell = {
+      isShell: true, platform: 'test',
+      notify: () => Promise.resolve(), retry: () => Promise.resolve(),
+      quit: () => Promise.resolve(), isWindowVisible: () => Promise.resolve(true),
+      restartPanel: () => Promise.resolve({ ok: false, error: 'test' }),
+      quitConsole: () => Promise.resolve({ ok: false, error: 'test' }),
+      panelState: () => Promise.resolve({ ok: true, alive: false }),
+    };`,
+  });
+  await send('Network.enable');
+  await send('Page.navigate', { url: `${BASE}/` });
+  let shellBooted = false;
+  for (let i = 0; i < 50 && !shellBooted; i++) {
+    shellBooted = await evalJs('document.querySelectorAll("#page *").length > 5');
+    if (!shellBooted) await sleep(300);
+  }
+  ok(shellBooted, '注入壳 API 后首屏仍能渲染');
+  await send('Network.setBlockedURLs', { urls: ['*api/state*'] });
+  const shellOffline = await (async () => {
+    for (let i = 0; i < 30; i++) {
+      const v = await evalJs(`(() => {
+        const banner = [...document.querySelectorAll('.banner')].find((x) => /控制台后端没有响应/.test(x.textContent || ''));
+        if (!banner) return null;
+        return {
+          text: banner.textContent || '',
+          restart: banner.querySelectorAll('[data-a="panel.restart"]').length,
+          quit: banner.querySelectorAll('[data-a="panel.quit"]').length,
+          subline: document.getElementById('subline')?.textContent || '',
+          demo: /演示模式/.test(banner.textContent || ''),
+        };
+      })()`);
+      if (v) return v;
+      await sleep(300);
+    }
+    return null;
+  })();
+  ok(Boolean(shellOffline), '壳内后端断开后出现「控制台后端没有响应」横幅（不是一直转圈）');
+  ok(shellOffline?.restart >= 1, '离线横幅有「重启面板」');
+  ok(shellOffline?.quit >= 1, '离线横幅有「退出控制台」');
+  ok(shellOffline && !shellOffline.demo, '壳内离线没有误显示「演示模式」');
+  ok(/后端未连接/.test(shellOffline?.subline || ''), '顶栏副标题说明后端未连接');
+  await send('Network.setBlockedURLs', { urls: [] });
 } catch (e) {
   fails.push(`守卫自己出错：${e && e.message ? e.message : e}`);
 } finally {
@@ -680,6 +1513,7 @@ try {
   if (panel.exitCode === null) panel.kill('SIGKILL');
   try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* 清不掉就算了 */ }
   try { fs.rmSync(USERDATA, { recursive: true, force: true }); } catch { /* 清不掉就留给 tmp */ }
+  cleaned = true;
 }
 
 if (fails.length) {
@@ -687,5 +1521,5 @@ if (fails.length) {
   console.log(`── ${fails.length} 处问题 ──`);
   process.exit(1);
 }
-console.log('\n✓ 前端 DOM 守卫通过：首屏 + 检查表 + 逐页遍历（含零运行时错误 / 无白屏页）+ 插话冷却进度条 + 导航行响应式换行');
+console.log('\n✓ 前端 DOM 守卫通过：首屏 + 检查表 + 逐页遍历（含零运行时错误 / 无白屏页）+ 插话冷却进度条 + 设置层外观/持久化/窄屏入口 + 二级随内容收缩 + 岛内维护域（6 域）');
 process.exit(0);

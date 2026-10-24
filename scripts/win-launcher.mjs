@@ -27,33 +27,49 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import panelDiscovery from '../src/panel-discovery.cjs';
 
 /** 仓库根：`.bat` 把 `%~dp0` 当第一个参数传进来；直接 `node` 跑就从本文件退一级。 */
 const ROOT = path.resolve(
   process.argv[2] || path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 );
-const PORT = Number(process.env.QQBOT_PANEL_PORT) || 8788;
-const PANEL_URL = `http://127.0.0.1:${PORT}/`;
+/** 显式覆盖；默认 0 = 系统分配。开发树的用户根就是仓库根。 */
+const PORT_OVERRIDE = panelDiscovery.normalizePort(process.env.QQBOT_PANEL_PORT);
 
-/** 探一次面板在不在。只判"端口上有没有东西应答"，与 `.app` 的 `panel_up` 同一口径。 */
-function panelUp(timeout = 2000) {
+function livePanel() {
+  const info = panelDiscovery.readDiscovery(ROOT);
+  return info && panelDiscovery.isLive(info) ? info : null;
+}
+
+function healthAt(port, timeout = 1500) {
   return new Promise((resolve) => {
-    const req = http.get({ host: '127.0.0.1', port: PORT, path: '/api/state', timeout }, (res) => {
-      res.resume();
-      resolve(true);
+    const req = http.get({ host: '127.0.0.1', port, path: '/api/health', timeout }, (res) => {
+      let body = '';
+      res.on('data', (d) => { body += d; });
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(body);
+          resolve(j && j.ok === true ? j : null);
+        } catch { resolve(null); }
+      });
     });
-    req.on('timeout', () => { req.destroy(); resolve(false); });
-    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
   });
 }
 
+/** 等发现文件出现并通过 /api/health；旧版 dev 面板没有发现文件时只按 health 识别 8788。 */
 async function waitPanelUp(ms) {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
-    if (await panelUp(1500)) return true;
+    const info = livePanel();
+    if (info && await healthAt(info.port)) return { port: info.port, url: info.url };
+    if (!info && await healthAt(panelDiscovery.LEGACY_PANEL_PORT, 800)) {
+      return { port: panelDiscovery.LEGACY_PANEL_PORT, url: panelDiscovery.legacyPanelUrl() };
+    }
     await new Promise((s) => setTimeout(s, 400));
   }
-  return false;
+  return null;
 }
 
 /**
@@ -72,8 +88,8 @@ function openBrowser(url) {
 }
 
 async function main() {
-  const already = await panelUp();
-  if (!already) {
+  let panel = await waitPanelUp(1200);
+  if (!panel) {
     if (!fs.existsSync(path.join(ROOT, 'panel', 'server.js'))) {
       console.log(`✗ 这里不像是项目根目录（找不到 panel/server.js）：${ROOT}`);
       process.exitCode = 1;
@@ -85,17 +101,22 @@ async function main() {
     //    "怎么甩掉一个后台进程"只该有一种写法。
     const log = fs.openSync(path.join(ROOT, 'panel', 'panel.log'), 'a');
     const child = spawn(process.execPath, [path.join(ROOT, 'panel', 'server.js')], {
-      cwd: ROOT, detached: true, windowsHide: true, stdio: ['ignore', log, log],
+      cwd: ROOT,
+      detached: true,
+      windowsHide: true,
+      stdio: ['ignore', log, log],
+      env: { ...process.env, QQBOT_PANEL_PORT: String(PORT_OVERRIDE) },
     });
     child.unref();
-    if (!(await waitPanelUp(25000))) {
+    panel = await waitPanelUp(25000);
+    if (!panel) {
       console.log('✗ 控制台没能在 25 秒内起来。看一下 panel/panel.log 里的报错。');
       process.exitCode = 1;
       return;
     }
   }
-  openBrowser(PANEL_URL);
-  console.log(`已打开控制台：${PANEL_URL}`);
+  openBrowser(panel.url);
+  console.log(`已打开控制台：${panel.url}`);
   console.log('机器人不会自动开始说话 —— 到页面里点右上角的「一键启动」。');
 }
 

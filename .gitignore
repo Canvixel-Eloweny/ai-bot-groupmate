@@ -35,6 +35,8 @@ id_rsa*
 *.pem
 # P3 更新公钥是公开件；私钥仍被上面的 *.pem 挡住，且永不入库
 !resources/update-pubkey.pem
+# P3-3 评估的测试公钥也是公开件；测试私钥在仓库外，仍被 *.pem 挡住
+!docs/desktop/evidence/p3-differential/test-update-pubkey.pem
 *.p12
 *.pfx
 *.crt
@@ -106,6 +108,17 @@ panel/.bridge-cmd.json
 panel/reminder-state.json
 # 面板 token（B9c · AUTH-PANEL）：写操作的凭据。进程自己生成，**入库即等于把写权限提交出去**
 panel/.token
+# P3-1：系统分配端口的发现文件（面板写、启动器/壳/停止链读）。
+# dev 形态的用户根就是仓库根，所以它会落在 panel/ 下；里面是本机 pid/端口，属运行产物。
+panel/.panel.json
+panel/.panel.json.tmp-*
+# P1-9/P1-10 运行态（2026-10-23）：上次退出、重启看护、壳状态/退出意图、崩溃事件。
+# 都是本机运行产物；进 git 会让别人的机器读到不属于它的 pid/退出码。
+panel/.last-exit.json
+panel/.restart.json
+panel/.shell.json
+panel/.quit-intent.json
+panel/crashes/
 panel/*.tmp
 # 原子写的中间态（第 48 轮 B12e-4 · EX-TEMPSWEEP）：形状 `.<目标名>.<pid>.<8位hex>.tmp`。
 # 正常情况下它存在的时间是毫秒级；只有进程在 write 与 rename 之间**被强杀**时才会留下。

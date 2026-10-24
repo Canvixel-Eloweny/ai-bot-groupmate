@@ -132,7 +132,10 @@ function swapMarkerPath(installRoot) {
 
 export function readSwapMarker(installRoot, { fsApi = fs } = {}) {
   try {
-    const obj = JSON.parse(fsApi.readFileSync(swapMarkerPath(installRoot), 'utf8'));
+    // PowerShell 5.1 的 Set-Content -Encoding UTF8 会写 BOM；helper 被杀在
+    // “runtime 已交换、指针未写”之间时，读不到 marker 就会按旧指针启动（新 app + 旧 runtime）。
+    const text = fsApi.readFileSync(swapMarkerPath(installRoot), 'utf8').replace(/^\uFEFF/, '');
+    const obj = JSON.parse(text);
     return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null;
   } catch {
     return null;

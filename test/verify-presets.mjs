@@ -693,6 +693,19 @@ console.log('\n【19】导出：技能子集 + 两级脱敏');
   check('★ mask=1 把群号也藏掉（这份可以发给别人）', (!realGroup || !m1.includes(realGroup)) && /已隐藏/.test(m1), m1.slice(0, 140));
   check('★ 两级脱敏都清空了 Key（不存在"连 Key 都不脱敏"的导出）',
     !/"apiKey":\s*"[^"]+"/.test(m0) && !/"apiKey":\s*"[^"]+"/.test(m1));
+
+  // P2：按范围导出。大小必须来自服务端真实文本，前端不抄假 MB 数。
+  const dry = await (await fetch(`${BASE}/api/custom/export?what=selected&dry=1`)).json();
+  check('★ dry=1 返回可导出范围与真实字节数',
+    dry.ok === true && Array.isArray(dry.scopes) && dry.scopes.length >= 6
+      && dry.totalBytes > 0 && dry.scopes.every((s) => typeof s.bytes === 'number' && s.label),
+    JSON.stringify(dry).slice(0, 220));
+  const sel = await (await fetch(`${BASE}/api/custom/export?what=selected&format=json&scopes=config,memory`)).json();
+  check('★ what=selected 只含所选两份文件',
+    Object.keys(sel.selected || {}).sort().join(',') === 'config-已脱敏.json,记忆.md',
+    Object.keys(sel.selected || {}).join(','));
+  const badScope = await fetch(`${BASE}/api/custom/export?what=selected&format=json&scopes=config,../etc`);
+  check('★ 未知 scope 被 400 拒绝（不拼路径）', badScope.status === 400, String(badScope.status));
 }
 
 console.log('\n【20】/api/state 必须下发工作台配置 + 面板自检（用户报的三个问题根因都在这儿）');

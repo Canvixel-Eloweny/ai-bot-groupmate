@@ -172,7 +172,7 @@ export function readPeople(limit = 200, dir = PEOPLE_DIR) {
  *    所以这里不猜字段名 —— 猜一个 `cat` / `category` 出来，页面会显示一个
  *    永远为空的分组，而没人会想到是"面板猜错了字段名"。
  */
-export function readGallery(file = GALLERY_FILE) {
+function readGallery(file = GALLERY_FILE) {
   const r = readJson(file);
   if (!r.ok) return { ok: false, reason: r.reason, missing: !!r.missing };
   const n = isObj(r.data) && Array.isArray(r.data.images) ? r.data.images.length : null;

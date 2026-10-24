@@ -11,7 +11,12 @@
 <meta name="panel-token" content="__QQBOT_PANEL_TOKEN__" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Estrella Bot Console</title>
+<!-- 首屏同步启动层：必须在样式表之前执行，先把本地偏好写到 <html>；
+     CSP 只允许同源脚本（script-src 'self'），所以不能写成内联。 -->
+<script src="./splash.js"></script>
 <link rel="stylesheet" href="./style.css" />
+<!-- HUD 信息岛样式：仅玻璃材质（跟随主题自动切换，无 HUD 核）。 -->
+<link rel="stylesheet" href="./island.css" />
 <!-- 动效组件样式。⚠️ **必须在 style.css 之后**：它的规则要能覆盖令牌默认值
      （如 .liq-track 的尺寸、mini 档的 --liq-thumb）。
      ⚠️⚠️ **样式表用 `<link>`，不要写成 `<script rel="stylesheet">`**：
@@ -23,8 +28,36 @@
         而 `check-wb` 抓不到 —— 它只看文件在不在，不执行 JS。 -->
 <link rel="stylesheet" href="./liquid-toggle.css">
 <link rel="stylesheet" href="./ticks.css">
+<!-- 渐进模糊遮罩（2026-10-22）：产品与制作站共用同一份配方。
+     ⚠️ 必须排在 style.css 之后：它要把 .modal 的 --c-scrim 接管成透明。 -->
+<link rel="stylesheet" href="./glass-scrim.css">
+<!-- 左下角设置层（2026-10-23 · P2）：必须在 style.css 之后，用现有令牌覆盖。 -->
+<link rel="stylesheet" href="./settings.css">
 </head>
 <body>
+
+<!-- 设置层图标（内联 SVG，零依赖；与 tabler/Lucide 同 24 网格） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="si-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </symbol>
+    <symbol id="si-star" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1.8l2.34 6.86L21.2 12l-6.86 2.34L12 22.2l-2.34-7.86L2.8 12l6.86-3.34L12 1.8z"/></symbol>
+    <symbol id="si-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="si-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.4 14.2A8.4 8.4 0 1 1 9.8 3.6a6.8 6.8 0 0 0 10.6 10.6z"/></symbol>
+    <symbol id="si-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18h1.2a1.8 1.8 0 0 0 0-3.6h-.7a1.5 1.5 0 0 1 0-3h3.1A5.4 5.4 0 0 0 21 9c0-3.3-4-6-9-6z"/><circle cx="7.5" cy="9" r=".9" fill="currentColor" stroke="none"/><circle cx="11" cy="6.5" r=".9" fill="currentColor" stroke="none"/><circle cx="15.5" cy="7.5" r=".9" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="si-power" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v9"/><path d="M18.4 5.6a8.5 8.5 0 1 1-12.8 0"/></symbol>
+    <symbol id="si-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><circle cx="12" cy="7.6" r=".9" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="si-db" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+    <symbol id="si-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l4.6 4.6L19.5 6.8"/></symbol>
+    <symbol id="si-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></symbol>
+    <symbol id="si-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 5.5A1.5 1.5 0 0 0 13.5 4h-8A1.5 1.5 0 0 0 4 5.5v8A1.5 1.5 0 0 0 5.5 15"/></symbol>
+    <symbol id="si-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
+    <symbol id="si-github" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.1-1.47-1.1-1.47-.9-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0 1 12 6.8c.85 0 1.7.11 2.5.33 1.9-1.29 2.74-1.02 2.74-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></symbol>
+    <symbol id="si-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.6v12.8a.7.7 0 0 0 1.07.6l10.2-6.4a.7.7 0 0 0 0-1.2L9.07 5a.7.7 0 0 0-1.07.6z"/></symbol>
+    <symbol id="si-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7L4 12l5 5"/><path d="M4 12h9a6 6 0 0 1 0 12h-1"/></symbol>
+  </defs>
+</svg>
 
 <!-- ══════════════ 背景引擎 · 颗粒渐变（2026-10-04 · 接替 .aurora 六团流体）════════
      ⚠️ **必须排在 `<body>` 的最前面**，理由是层序而不是视觉顺序：
@@ -53,102 +86,46 @@
     </div>
   </div>
 
-  <div class="tb-pills" id="tbPills" aria-live="polite">
-    <span class="pill" id="pillMode"><span class="dot"></span>读取中</span>
-    <span class="pill" id="pillBridge"><span class="dot"></span>机器人</span>
-    <span class="pill" id="pillContainer"><span class="dot"></span>容器</span>
-    <span class="pill" id="pillLocal"><span class="dot"></span>本机模型</span>
-    <span class="pill" id="pillMem"><span class="dot"></span>内存</span>
-  </div>
+  <!-- 顶栏状态岛：由 island.js 挂载（仅玻璃材质，跟随主题；无 HUD 核）。
+       原来的五颗状态胶囊已并入岛内，可在「维护 → HUD调整」里选择轮播项。 -->
+  <div class="tb-pills" id="tbPills" aria-live="polite"></div>
 
   <div class="tb-actions">
     <!-- 这里原本有一个「旧界面」跳转入口（回到 `panel/parts/` 拼装的那一页）。
          2026-10-02 旧页面连同它的拼装模块一起删掉了，所以这个入口**没有对象**了 ——
          留一个指向不存在页面的链接，比没有链接更糟（点下去是 404，而看起来一切正常）。
          ⚠️ 页面上**不再有任何跨版本跳转**：控制台只有这一套。 -->
-    <!-- ══════════════ 圆形深浅切换（2026-10-04）══════════════
-         beui「Theme Toggle · circle-blur」变体的**零构建移植**（原件是
-         React + next-themes + motion，本页零构建 ⇒ 只取配方不取包）：
-         圆形描边按钮 + 太阳/月亮图标（图标由 app.js 按当前主题画），
-         点击后整页以**按钮圆心**为发散点做 View Transition 圆形揭开
-         （用户裁决「发散位置以我们的为主」，不取 beui 默认的 bottom-up）。
-         ⚠️ 深浅只有两态 ⇒ 形状是「切换器」（按钮）不是「选择器」（下拉）
-         —— 原 #themeSel 下拉因此退役。动画的 CSS 在 style.css 的
-         「深浅切换的整页揭开」段，JS 在 app.js 的 toggleTheme。 -->
-    <button id="themeBtn" class="theme-btn" type="button"
-            aria-label="切换深浅色" title="切换深浅色（只影响这一页，不改机器人任何行为）"></button>
-    <!-- 一条细竖线：左边是"换"（配色），右边是"动"（起停进程）。
-         没有它，三个控件是一排等权的按钮，扫一眼分不出哪些会改运行时状态。 -->
-    <!-- 背景样式选择器（2026-10-04 · 仿 beui ColorSelector：swatch + 弹簧选中环）。
-         swatch 由 shader-bg.js 按 VARIANTS 数据驱动生成，这里只放容器。 -->
-    <div class="bgpick" id="bgPick" title="切换背景流光样式（只影响这一页）">
-      <span class="bgpick-cap" aria-hidden="true">背景</span>
-      <div class="bgpick-list" id="bgPickList" role="radiogroup" aria-label="背景流光样式"></div>
-    </div>
+    <!-- 主题 / 字体 / 背景 / 流速已迁到左下角设置（2026-10-23 · P2）。
+         顶栏只留"会改运行时状态"的启停动作；吸顶带因此不再需要为色板预留宽度。 -->
     <span class="tb-sep" aria-hidden="true"></span>
-    <button class="btn btn-primary" data-a="onekey-start">一键启动</button>
-    <button class="btn btn-danger" data-a="onekey-stop">结束本次运行</button>
+    <button class="btn btn-fill btn-fill-accent" data-a="onekey-start">一键启动</button>
+    <button class="btn btn-danger btn-fill" data-a="onekey-stop">结束本次运行</button>
   </div>
 </header>
 
-<!-- ══════════════ 动画速度（B33→B36）：顶栏下挂小三角 + 展开式步进器 ══════════════
-     ⚠️ 结构与行为都在 shader-bg.js（与 bgpick 同一纪律：背景引擎自己建自己的控件，
-        不新开文件）。这里只放锚点 —— left 由 JS 按「背景」色板（#bgPick）
-        的实测位置写入（用户要求钉在色板正下方），CSS 的 50% 只是兜底。 -->
-<div class="spd" id="spdAnchor"></div>
+<!-- 动画速度已迁到设置层「背景」卡（2026-10-23 · P2）。
+     旧的 #spdAnchor 不再存在，shader-bg.js 的 buildSpeedUI 会自然 no-op；
+     设置层通过 window.ShaderBG.SPEEDS / setSpeed 渲染四档。 -->
 
-<!-- ══════════════ 吸顶导航行：二级栏 + 灵动岛（同一行，B40 起有共同父容器）════════
-     ⚠️⚠️ **2026-10-04 B40 新增这一层包裹**。前一轮（B39）用「两个块级兄弟 + 负 margin」
-        把两者挪到同一行 —— 那个做法**必然互相遮挡**：块级盒子各自占满整行宽度，
-        负 margin 只能让它们**垂直**错位，**完全无法分配水平空间**。
-        表现（用户实机截图）：视口不够宽时岛的玻璃从左边压过来，
-        **二级栏整条被盖住**，而页面上没有任何报错、契约全绿。
-        ⚠️ 而且 B39 给 `.nav1` 写的 `justify-content: space-between` 是**空转**的 ——
-        `.nav1` 里只有 `.nav-inner` 一个子元素，space-between 对单元素等同 flex-start，
-        岛永远贴左 ⇒ 必然压在二级栏上。（这句已写进 `.nav1` 的注释，别再写一次。）
-        ⇒ 正解：**让两者进入同一个 flex 容器 `.navrow`**，由它分配宽度 ——
-          · 二级栏 `flex: 0 1 auto`（可压缩，溢出由内部 `.nav2` 横向滚动接住）
-          · 岛     `flex: 0 0 auto`（不压缩，保证 8 个域一直完整可点）
-        空间不够时压缩的是二级栏，**岛不会再遮住它**。
-     ⚠️ DOM 顺序仍是 `nav2wrap → nav1`（契约 N14 钉的就是它），只是外面多包了一层；
-        而 `nav2wrap → nav1` 这个顺序在 flex 行里也是"二级栏在左、岛在右"。
-     ⚠️ 二者**不再各自 `position: sticky`**：吸顶由 `.navrow` 一处负责
-        （B29 记过"三层各自 sticky 时文档顺序决定谁在上"，合并后那条复杂度直接消失）。 -->
+<!-- ══════════════ 吸顶导航：一级在上、二级在下（2026-10-22 导航改版）════════
+     一条玻璃：一级 48px 胶囊，二级 30px 窄条，用 42 × 11.5 的连续肩线连接；
+     二级宽度由 JS 按当前域内容收缩/展开。⚠️ DOM 顺序 nav1 → nav2wrap 是视觉层级，
+     不是 B40 的并排结构；契约 N14 已按新层级改写。 -->
 <div class="navrow" id="navrow">
-  <!-- 二级导航：当前域内的页面。⚠️ B29 整块上移到顶栏正下方（用户的原话：「与顶部
-       现有的液态玻璃区域融为一体」）；B40 起它与灵动岛同处 `.navrow`。 -->
-  <div class="nav2wrap" id="nav2wrap">
-    <!-- ⚠️ 二级导航的滑块**必须是静态元素**（同 `.nav-ind` 的理由）：
-         `renderNav2()` 每次切页用 `innerHTML` 重建按钮，滑块若跟着重建，
-         每次都变成"从 0 长出来"——滑动感当场消失，而页面照常工作。
-         B29 的下划线（`.sub::after`）在本轮退役：它无法跨"切换"表达位移，
-         而 §6.4 的三条准入对导航全中（本项目自己的教规）。 -->
-    <span class="nav2-ind" id="nav2Ind" aria-hidden="true"></span>
-    <nav class="nav2" id="nav2" role="tablist" aria-label="页面"></nav>
-  </div>
-  <!-- B30：`.page-meta`（「即时页 / 点一下立刻生效」说明）按用户要求整块删除 ——
-       玻璃条只包住二级选项本身，右侧留斜角切割（见 style.css `.nav2wrap` 的 --nav2-cut）。 -->
-
-  <!-- ══════════════ 一级导航「灵动岛」Hero Navbar ══════════════
-       分层（理由写在 style.css 的同名区块里）：
-         .nav1        岛的容器（**不再自己吸顶**，由 .navrow 统一吸顶）
-           .nav-inner   岛本体 = **玻璃胶囊** + 横向滚动容器 + 指示器的定位基准
-           .nav-ind     唯一的高亮滑块（描边），由 app.js 写位置与宽度
-
-       ⚠️ 指示器为什么是**静态元素**、而不是 renderNav1 里生成的：
-          renderNav1 每次切页都会重建按钮（`innerHTML` 换掉），指示器若跟着一起重建，
-          每次都变成"新元素从 0 位置长出来" —— 滑动感当场消失，而页面照常工作。
-       ⚠️ 它为什么必须待在 `.nav-inner` **内部**：窄屏靠这一层横向滚动，
-          指示器挂在外层 `.nav1` 上，它会相对视口静止，一滑就与选中项错位。
-       ⚠️ `role="tablist"` 从 `.nav1` 挪到 `.nav-inner`：它现在才是 8 个 tab 的直接父节点
-          （`.nav-ind` 带 `aria-hidden`，不进无障碍树）。
-       ⚠️ B29 起岛**跟随主题**（原设计是"两套主题都是纯黑"）：浅色下是浅玻璃胶囊，
-          深色下是深玻璃胶囊。详细推导见 style.css 里 `--c-nav-bg` 上方那段注释。 -->
-  <nav class="nav1" id="nav1">
-    <div class="nav-inner" id="navInner" role="tablist" aria-label="功能域">
-      <span class="nav-ind" id="navInd" aria-hidden="true"></span>
+  <div class="nav-dock-wrap" id="navDockWrap">
+    <div class="nav-dock" id="navDock">
+      <nav class="nav1" id="nav1">
+        <div class="nav-inner" id="navInner" role="tablist" aria-label="功能域">
+          <span class="nav-ind" id="navInd" aria-hidden="true"></span>
+        </div>
+      </nav>
+      <div class="nav2wrap" id="nav2wrap">
+        <span class="nav2-ind" id="nav2Ind" aria-hidden="true"></span>
+        <nav class="nav2" id="nav2" role="tablist" aria-label="页面"></nav>
+      </div>
     </div>
-  </nav>
+    <svg class="nav-dock-edge" id="navDockEdge" aria-hidden="true"><path d=""></path></svg>
+  </div>
 </div>
 
 <!-- ══════════════ 告警条（按需出现，平时不占位置）══════════════
@@ -167,6 +144,209 @@
   <span id="footStat" class="foot-stat"></span>
 </footer>
 
+<!-- ══════════════ 左下角设置层（2026-10-23 · P2）══════════════════════════
+     一个入口收拢外观 / 启动 / 关于 / 数据。外观只写 localStorage；启动与
+     关闭行为写 config.json（启动器、shell、面板读同一份）。 -->
+<button class="set-fab" id="setGear" type="button" aria-label="打开设置" aria-expanded="false" aria-controls="settingsPanel" title="设置">
+  <span class="set-fab-rot" id="setGearRot"><svg aria-hidden="true"><use href="#si-gear"/></svg></span>
+  <span class="set-fab-label">设置</span>
+</button>
+
+<div class="settings-layer" id="settingsLayer" data-open="false">
+  <div class="settings-backdrop" id="settingsBackdrop" aria-hidden="true"></div>
+  <section class="settings-panel" id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" tabindex="-1">
+    <header class="set-head">
+      <span class="set-head-icon" aria-hidden="true"><svg><use href="#si-gear"/></svg></span>
+      <div class="set-head-txt">
+        <h2 id="settingsTitle">设置</h2>
+        <p id="setHeadSub">外观、启动、关于与数据，都从这里进</p>
+      </div>
+      <span class="spacer"></span>
+      <span class="set-chip"><i aria-hidden="true"></i><span id="setChip">海蓝 · 日间</span></span>
+      <button class="set-close" id="settingsClose" type="button" aria-label="关闭设置" title="关闭设置"><svg aria-hidden="true"><use href="#si-close"/></svg></button>
+    </header>
+
+    <div class="set-body">
+      <nav class="set-rail" id="setRail" aria-label="设置分类">
+        <button class="set-rail-item is-active" type="button" data-target="sec-appearance"><svg aria-hidden="true"><use href="#si-palette"/></svg>外观</button>
+        <button class="set-rail-item" type="button" data-target="sec-startup"><svg aria-hidden="true"><use href="#si-power"/></svg>启动</button>
+        <button class="set-rail-item" type="button" data-target="sec-about"><svg aria-hidden="true"><use href="#si-info"/></svg>关于</button>
+        <button class="set-rail-item" type="button" data-target="sec-data"><svg aria-hidden="true"><use href="#si-db"/></svg>数据</button>
+        <span class="set-rail-version" id="setRailVersion">v—</span>
+      </nav>
+
+      <div class="set-scroll" id="settingsScroll">
+        <section class="set-section" id="sec-appearance">
+          <div class="set-sechead"><div><h3>外观</h3><p>只影响这台机器的控制台，不改机器人的任何行为</p></div></div>
+
+          <div class="set-card">
+            <div class="set-cardhead">
+              <div><h4>显示模式</h4><p>日间与夜间各有一套独立令牌</p></div>
+              <span class="spacer"></span>
+              <div class="set-seg" id="setThemeSeg" role="group" aria-label="显示模式">
+                <button type="button" data-theme-opt="light" aria-pressed="true"><svg aria-hidden="true"><use href="#si-sun"/></svg>日间</button>
+                <button type="button" data-theme-opt="dark" aria-pressed="false"><svg aria-hidden="true"><use href="#si-moon"/></svg>夜间</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="set-card">
+            <div class="set-cardhead"><div><h4>主题色</h4><p>主按钮、选中态与开关共用同一个强调色</p></div><span class="spacer"></span><span class="set-tag" id="setAccentName">海蓝</span></div>
+            <div class="set-cardbody"><div class="set-acc-grid" id="accentGrid" role="group" aria-label="主题色"></div></div>
+          </div>
+
+          <div class="set-card">
+            <div class="set-cardhead"><div><h4>背景</h4><p>八套流动色团，保持安静仪表盘的底子</p></div><span class="spacer"></span><span class="set-tag" id="setBgName">海雾</span></div>
+            <div class="set-cardbody">
+              <div class="bgpick" id="bgPick"><div class="bgpick-list" id="bgPickList" role="radiogroup" aria-label="背景流光样式"></div></div>
+              <div class="set-row set-row-inline">
+                <div class="txt"><b>流动速度</b><span>「无」会真正停掉背景重绘，不是把速度调到最小</span></div>
+                <div class="set-speed" id="bgSpeed" role="group" aria-label="背景流动速度"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="set-card">
+            <div class="set-cardhead"><div><h4>字体</h4><p>只影响控制台，不影响机器人回复</p></div></div>
+            <div class="set-cardbody">
+              <div class="set-font-grid" id="fontGrid" role="group" aria-label="字体风格">
+                <button class="set-font" type="button" data-font-opt="sans" aria-pressed="true"><span class="sample">星星正在读群里的消息。</span><small>无衬线 · 系统字体</small><span class="state"><svg aria-hidden="true"><use href="#si-check"/></svg>正在使用</span></button>
+                <button class="set-font" type="button" data-font-opt="serif" aria-pressed="false"><span class="sample">星星正在读群里的消息。</span><small>衬线 · 阅读档</small><span class="state"><svg aria-hidden="true"><use href="#si-check"/></svg>正在使用</span></button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-section" id="sec-startup">
+          <div class="set-sechead"><div><h3>启动</h3><p>控制台与协议端的启动方式；改完下次启动生效</p></div></div>
+
+          <div class="set-card">
+            <div class="set-cardhead"><div><h4>打开方式</h4><p>双击启动器 / 桌面图标时控制台以什么形态出现</p></div></div>
+            <div class="set-cardbody">
+              <div class="set-seg set-seg-wide" id="setModeSeg" role="group" aria-label="打开方式">
+                <button type="button" data-mode-opt="browser" aria-pressed="true">浏览器标签页</button>
+                <button type="button" data-mode-opt="window" aria-pressed="false">独立窗口 · 无地址栏</button>
+              </div>
+              <p class="set-hint">注意：内测版先不要点「独立窗口 · 无地址栏」，还有部分 BUG（首跑可能出一个灰色空窗，要再双击一次）。系统里没有 Edge / Chrome 时会自动回落到浏览器标签页。</p>
+            </div>
+          </div>
+
+          <div class="set-card">
+            <div class="set-cardhead"><div><h4>启动偏好</h4><p>下次启动控制台时生效</p></div></div>
+            <div class="set-cardbody set-cardbody-tight">
+              <div class="set-row">
+                <div class="txt"><b>登录后自动启动控制台</b><span id="setAutostartHint">开机后在后台待命，不主动弹窗。</span></div>
+                <button class="set-switch" id="setAutostart" type="button" role="switch" aria-checked="false" data-set="autoStart" aria-label="登录后自动启动控制台"></button>
+              </div>
+              <div class="set-row">
+                <div class="txt"><b>启动时自动拉起协议端</b><span>关掉后不自动拉起、也不自动重启；仍可手动启动。</span></div>
+                <button class="set-switch" id="setAutoProtocol" type="button" role="switch" aria-checked="true" data-set="autoProtocol" aria-label="启动时自动拉起协议端"></button>
+              </div>
+              <div class="set-row">
+                <div class="txt"><b>就绪后自动打开界面</b><span>关掉后只把控制台放进后台，不弹任何窗口。</span></div>
+                <button class="set-switch" id="setOpenOnStart" type="button" role="switch" aria-checked="true" data-set="openOnStart" aria-label="就绪后自动打开界面"></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="set-card">
+            <div class="set-cardhead"><div><h4>关闭窗口时</h4><p>决定关闭按钮 / Alt+F4 的行为</p></div></div>
+            <div class="set-cardbody">
+              <div class="set-seg set-seg-wide" id="setCloseSeg" role="group" aria-label="关闭窗口时">
+                <button type="button" data-close-opt="tray" aria-pressed="true">驻留托盘</button>
+                <button type="button" data-close-opt="quit" aria-pressed="false">退出程序</button>
+              </div>
+              <p class="set-hint" id="setCloseHint">程序继续在后台运行；托盘不可用时，关闭会自动最小化到任务栏。</p>
+            </div>
+          </div>
+
+          <div class="set-card">
+            <div class="set-cardhead"><div><h4>上次启动</h4><p>哪个入口、用什么形态、有没有回落</p></div></div>
+            <div class="set-cardbody"><dl class="set-kv" id="setLastLaunch"><dt>记录</dt><dd>启动一次后这里会出现</dd></dl></div>
+          </div>
+        </section>
+
+        <section class="set-section" id="sec-about">
+          <div class="set-sechead"><div><h3>关于</h3><p>版本、仓库与反馈入口</p></div></div>
+
+          <div class="set-card">
+            <div class="set-cardhead"><div><h4>版本情况</h4><p>只显示有来源的字段，不伪造构建日期</p></div></div>
+            <div class="set-cardbody">
+              <div class="set-verhero">
+                <span class="set-vermark" aria-hidden="true"><svg><use href="#si-star"/></svg></span>
+                <div class="set-vermeta"><b>Estrella Bot</b><span id="aboutVersion">版本读取中…</span><span id="aboutBuild">桌面版</span></div>
+                <button class="btn btn-sm" type="button" data-a="update.check"><svg width="13" height="13" aria-hidden="true"><use href="#si-play"/></svg>检查更新</button>
+              </div>
+              <dl class="set-kv">
+                <dt>更新通道</dt><dd>稳定版</dd>
+                <dt>运行时</dt><dd id="aboutRuntime">—</dd>
+                <dt>桌面壳</dt><dd id="aboutShell">—</dd>
+                <dt>上次检查</dt><dd id="aboutUpdateState">以「维护 → 面板维护」的更新卡为准</dd>
+              </dl>
+              <p class="set-hint">下载、校验与安装仍在「维护 → 面板维护」的更新卡里完成；这里只发起同一次检查，不复制第二套安装流程。</p>
+            </div>
+          </div>
+
+          <div class="set-card">
+            <div class="set-cardhead"><div><h4>GitHub</h4><p>源码、更新日志与问题跟踪</p></div></div>
+            <div class="set-cardbody">
+              <div class="set-repo">
+                <span class="set-repo-icon" aria-hidden="true"><svg><use href="#si-github"/></svg></span>
+                <div class="txt"><div class="set-repo-path" id="aboutRepoPath">Canvixel-Eloweny / ai-bot-groupmate</div><div class="set-repo-meta">开源 · 欢迎提 Issue 或 Star</div></div>
+                <button class="btn btn-sm" id="repoCopy" type="button"><svg width="13" height="13" aria-hidden="true"><use href="#si-copy"/></svg>复制</button>
+                <a class="btn btn-sm btn-primary" id="repoOpen" href="#" target="_blank" rel="noopener noreferrer">打开<svg width="12" height="12" aria-hidden="true"><use href="#si-external"/></svg></a>
+              </div>
+              <div class="set-linkrow">
+                <a class="btn btn-sm btn-ghost" id="repoIssues" href="#" target="_blank" rel="noopener noreferrer">报告问题</a>
+                <a class="btn btn-sm btn-ghost" id="repoReleases" href="#" target="_blank" rel="noopener noreferrer">更新日志</a>
+              </div>
+              <p class="set-hint">意见箱只开 GitHub Issues 外链：不在这里收集内容、不上传任何数据，也不需要额外凭据。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-section" id="sec-data">
+          <div class="set-sechead"><div><h3>数据</h3><p>把这一版的数据带走，或换机器时再导入</p></div></div>
+
+          <div class="set-card">
+            <div class="set-cardhead"><div><h4>按范围导出</h4><p>只选你需要的部分；大小是服务端实际文本字节数</p></div></div>
+            <div class="set-cardbody">
+              <div class="set-scopes" id="exportScopes"><p class="set-hint">正在读取可导出范围…</p></div>
+              <div class="set-exportsum">
+                <span id="exportTotal">—</span>
+                <button class="btn btn-primary" id="exportSelected" type="button">导出所选</button>
+              </div>
+              <p class="set-hint">没有数据源的项不会出现在这里；配置默认脱敏，日志可能含运行信息。</p>
+            </div>
+          </div>
+
+          <div class="set-card">
+            <div class="set-cardhead"><div><h4>导出</h4><p>配置、人格、记忆、技能与运行日志</p></div></div>
+            <div class="set-cardbody">
+              <div class="set-export">
+                <div><b>完整数据包</b><span>ZIP；配置默认脱敏，日志可能含运行信息。</span></div>
+                <button class="btn btn-primary" type="button" data-a="export.all">导出全部数据</button>
+              </div>
+              <div class="set-export">
+                <div><b>诊断包</b><span>固定清单：壳日志、退出记录、更新日志；自动脱敏。</span></div>
+                <button class="btn btn-ghost" type="button" data-a="export.diag">导出诊断包</button>
+              </div>
+              <p class="set-hint">按范围导出会在后续批次接到同一入口；现在不显示没有后端数据源的勾选项。</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <footer class="set-foot">
+      <i class="dot" aria-hidden="true"></i>
+      <span>外观只存在本机；启动与关闭偏好写入 config.json</span>
+      <span class="spacer"></span>
+      <button class="set-link" id="setResetAppearance" type="button"><svg width="12" height="12" aria-hidden="true"><use href="#si-undo"/></svg>恢复默认外观</button>
+    </footer>
+  </section>
+</div>
+
 <!-- ══════════════ 草稿保存条：页面有未保存改动时出现 ══════════════ -->
 <div class="savebar" id="savebar" hidden>
   <span class="savebar-txt" id="savebarTxt"></span>
@@ -178,6 +358,15 @@
 <!-- ══════════════ 反馈 ══════════════ -->
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="busy" id="busy" hidden><span class="spin"></span><span id="busyTxt">处理中…</span></div>
+<!-- 渐进模糊：三层 backdrop-filter + 径向 mask。必须紧挨在 #modal 之前（相邻兄弟），
+     由 glass-scrim.css 的 `.glass-scrim:not([hidden]) + .modal` 接管 .modal 的 scrim；
+     放进 .modal 内部会让 .modal 成为背景根（契约 §60 G11 的反面）。 -->
+<div class="glass-scrim" id="glassScrim" hidden aria-hidden="true">
+  <span class="gsc-blur gsc-blur-1"></span>
+  <span class="gsc-blur gsc-blur-2"></span>
+  <span class="gsc-blur gsc-blur-3"></span>
+  <span class="gsc-tint"></span>
+</div>
 <div class="modal" id="modal" hidden><div class="modal-box" id="modalBox"></div></div>
 
 <!-- ══════════════ 液态玻璃引擎（2026-10-03）══════════════════════════════
@@ -197,6 +386,8 @@
      ⚠️ 是否启用液态开关由 `app.js` 的 `LIQUID_ON` 决定 —— 退回原生只改那一行。 -->
 <script src="./motion.js"></script>
 <script src="./icons.js"></script>
+<!-- HUD 信息岛：依赖 icons.js（Icons.icon），必须在它之后；app.js 只负责喂状态。 -->
+<script src="./island.js"></script>
 <script src="./morph.js"></script>
 <script src="./liquid-toggle.js"></script>
 <!-- 排序引擎（2026-10-03 · 模型线路拖拽排序）。⚠️ **必须在 motion.js 之后**：

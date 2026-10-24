@@ -26,7 +26,7 @@ import path from 'node:path';
 import {
   NAPCAT_DIR, humanSize, exists, sha256File, unzip, flattenSingleDir,
   findNapcatLauncher, napcatHome, overlay, diag, loadNapcatSource,
-  say, ok, warn, dim,
+  say, ok, warn,
 } from './common.mjs';
 import { writeNapcatRecord, napcatInstalled, verifyNapcatZip } from './versions.mjs';
 import { pathEq, pathInside } from './install-layout.mjs';

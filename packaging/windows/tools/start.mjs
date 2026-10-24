@@ -15,7 +15,7 @@
  */
 
 import { CONFIG_JSON, say, ok, warn, bad, title, dim, exists, isMain, portOpen } from './lib/common.mjs';
-import { ensureConsole, PANEL_URL } from './lib/console.mjs';
+import { ensureConsole } from './lib/console.mjs';
 import { startNapcat } from './start-napcat.mjs';
 
 const PROTOCOL_PORT = 3001;
@@ -43,7 +43,7 @@ async function main() {
     return;
   }
   say('');
-  ok(c.opened ? `已打开浏览器：${PANEL_URL}` : `控制台地址：${PANEL_URL}`);
+  ok(c.opened ? `已打开浏览器：${c.url}` : `控制台地址：${c.url}`);
   say('  控制台在后台跑，**没有黑窗口**；要停它就在页面里点「退出控制台」。');
   say('  机器人不会自己开口 —— 到页面里点右上角「一键启动」。');
 

@@ -238,6 +238,7 @@ export function makeUsageReport({
       unknownRate: 0,
       creditUsage: { calls: 0, prompt: 0, completion: 0, total: 0 },
       bySource: [],
+      byChat: [], byDay: [], cacheHitRate: 0,
       avgCost: 0, lastAt: null, recent: [], rates: RATES,
     };
     if (!files.length) {
@@ -270,6 +271,10 @@ export function makeUsageReport({
     const bySrc = new Map(srcKeys.map((k) => [k, { calls: 0, tokens: 0 }]));
     const unmarked = { calls: 0, tokens: 0 };
     const recent = [];
+    // 2026-10-22（C5）：按会话 / 按天分账。账本记录里 `chat` 与 `t` 都有，
+    // 不需要新账本；认不出 `chat` 的老记录进「未标注」，不猜。
+    const byChat = new Map();
+    const byDay = new Map();
 
     for (const r of records) {
       const free = !isBillable(r);
@@ -323,6 +328,23 @@ export function makeUsageReport({
         bucket.tokens += (r.p || 0) + (r.c || 0);
       }
 
+      {
+        const chatKey = String(r.chat || '') || '未标注';
+        const bucket = byChat.get(chatKey) || { key: chatKey, calls: 0, tokens: 0, cost: 0 };
+        bucket.calls += 1;
+        bucket.tokens += (r.p || 0) + (r.c || 0);
+        bucket.cost += c;
+        byChat.set(chatKey, bucket);
+      }
+      {
+        const day = dayKeyOf(new Date(Number.isFinite(r.t) ? r.t : Date.now()));
+        const bucket = byDay.get(day) || { key: day, calls: 0, tokens: 0, cost: 0 };
+        bucket.calls += 1;
+        bucket.tokens += (r.p || 0) + (r.c || 0);
+        bucket.cost += c;
+        byDay.set(day, bucket);
+      }
+
       recent.push({
         t: r.t,
         model: shortModel(r.model, r.b),
@@ -365,6 +387,11 @@ export function makeUsageReport({
       ].filter((b) => b.calls > 0),
       // 单条均价只按「真正花钱的那些」算，不然一堆免费的本机调用会把均值拉低到没意义
       avgCost: paidCalls ? cost / paidCalls : 0,
+      // 缓存命中率：缓存命中 token ÷ 输入 token（没有输入时为 0）。
+      cacheHitRate: prompt ? cached / prompt : 0,
+      // 按会话 / 按天：只给有过调用的；会话按花费降序取前 12，日期按升序取近 30 天。
+      byChat: [...byChat.values()].sort((a, b) => b.cost - a.cost || b.tokens - a.tokens).slice(0, 12),
+      byDay: [...byDay.values()].sort((a, b) => a.key.localeCompare(b.key)).slice(-30),
       lastAt: recent[recent.length - 1]?.t || null,
       recent: recent.slice(-25).reverse(),
       rates: RATES,

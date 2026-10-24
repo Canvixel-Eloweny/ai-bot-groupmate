@@ -31,7 +31,7 @@ import { readZip } from './zip.js';
  * （而用户看到的是"这个 ZIP 里不是一个包"，完全猜不到是 Finder 加的东西）。
  * ⚠️ 忽略名单是**封闭的**：不肯为"看起来像垃圾"的任意条目开口子（那会让判据失效）。
  */
-export function isIgnorableEntry(name) {
+function isIgnorableEntry(name) {
   const n = String(name ?? '');
   if (!n) return true;
   if (n.startsWith('__MACOSX/')) return true;

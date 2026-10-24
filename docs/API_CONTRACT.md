@@ -3,9 +3,13 @@
 > 来源：`panel/server.js` 的 `http.createServer` 手写分发器（无第三方框架）。**它是唯一真相源** ——
 > 本文只是它的说明；两者不一致时以代码为准，并**当场把本文改回来**（2026-10-01 清理轮实测：
 > 本文停在"29 个 API"，而代码里已经有 39 条 —— 文档烂掉之后比没有文档更糟，因为它会被信）。
-> 所有接口走 HTTP/1.1，面板地址默认 `http://127.0.0.1:8788`，**只监听 127.0.0.1**（本机）。
+> 所有接口走 HTTP/1.1，面板**只监听 127.0.0.1**（本机）。Windows 产品形态（installed / portable）
+> 由系统分配端口，实际地址写在 `USER_ROOT/panel/.panel.json`（`schema/pid/port/url/appId/version`）；
+> dev 形态默认 `http://127.0.0.1:8788`，沙箱/CI 用 `QQBOT_PANEL_PORT` 显式固定。
 > 响应统一为 JSON（`sendJson`），二进制接口单独标注。错误统一返回 `{ error }` 或 `{ ok:false, ... }`。
-> 路由总数：**2 个页面（`/` 与 `/next/`）+ 62 个 API**。
+> 路由总数：**2 个页面（`/` 与 `/next/`）+ 63 个 API**（以 `panel/server.js` 的
+> `API_ROUTES` 为准；2026-10-22 在 §41 补齐 24 条此前没有字段级契约的路由 ——
+> 其中 19 条此前连独立小节都没有）。
 >
 > 2026-10-21（Win-v0.1.2 移植）新增 5 条：`POST /api/persona/adopt`
 > （角色卡 AI 认领，写路由：token + 审计）、`GET /api/fake-qq/state`、
@@ -55,8 +59,9 @@ token 的注入落点**只有这一处**（`injectPanelToken`，只替换 `<meta
 - `/next`、`/next/` → **302 → `/`**；`/next/<资产>` → **302 → `/<资产>`**；未登记的 → **404**。
 - ⚠️ 兼容做成**跳转**而不是"再发一次"：同一份资产两处可发 = 又多一条静的入口，而"多一条入口"不会报错。
 - ⚠️ 跳转目标**只从登记过的名字里来**，绝不回显请求里的路径（否则 `Location` 就成了一个能塞任意串的地方）。
-- **消费者**：`Estrella-Bot.app` 的 `launcher.sh` **开根地址**（`http://127.0.0.1:8788/`）。
-  自检：`node panel/next/verify.mjs`（默认就验根地址，并单独断言这条 302）。
+- **消费者**：Mac 的 `launcher.sh` 开根地址（dev 形态 `http://127.0.0.1:8788/`）；
+  Windows 启动器先读 `panel/.panel.json`，再开发现文件里的根地址。
+  自检：`node panel/next/verify.mjs`（dev 默认验 8788 根地址；产品形态用 `--url http://127.0.0.1:<port>/`）。
 
 ---
 
@@ -73,6 +78,8 @@ token 的注入落点**只有这一处**（`injectPanelToken`，只替换 `<meta
   - `allow` / `deny` / `trigger`、`persona`、`custom`（工作台 8 分区）
   - `usage`（用量，**按账本文件签名 + 当天日期缓存**，逐文件解析结果也各自缓存）、`localChannel`（本机两条通道互斥状态）
   - `panel`（pid/bootedAt/codeMtime/codeMtimeNow/**stale**）—— 用于检测「面板进程跑旧代码」
+  - `appMeta`（`version` / `runtime` / `platform` / `repo`）—— 关于页的唯一来源；`runtime` 是本进程的 Node 版本，
+    `repo` 来自程序根 `package.json` 的 `homepage`，前端不手抄第二份 URL。
   - **第 53 轮（Windows 适配）新增 / 改动的几项**（2026-10-09）：
     · `container.applicable` —— **这台机器走没走"容器"这条路**。`false` = 原生 NapCat
       （Windows 便携版不装 Docker）⇒ 页面**不许**把"容器没跑"当故障显示（那是假警报，
@@ -209,14 +216,17 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
     ⚠️ `stickers`（发 QQ 表情）已于 2026-10-17 随该能力整体下线删除 —— 传入会被忽略。
   - `groups[]` / `denyGroups[]` / `denyUsers[]` / `requireAtInGroup` / `interjectChance` / `aliases[]` / `personaName`
   - `custom` —— 工作台那一块（走 `patchCustom` 局部合并）
-  - `launch.{mode,openOnStart}` —— 桌面端「启动方式」（`mode` 只收 `browser` | `window`；`openOnStart` 只收布尔）。
+  - `launch.{mode,openOnStart,closeAction,autoProtocol}` —— 桌面端启动/关闭偏好
+    （`mode` 只收 `browser` | `window`；`openOnStart` / `autoProtocol` 只收布尔；
+    `closeAction` 只收 `tray` | `quit`，默认 `tray`）。
     ⚠️ 它由**启动器**（Windows 快捷方式 / Mac 图标 / 命令行）在启动时读取一次 ——
     **保存成功 ≠ 立刻生效，下次启动才换形态**（面板上的提示语照此措辞）。
 - **出参**：`{ ok, bridgeRunning, applied, autoDisabled[], autoDisabledMsg, msg }`
   - `applied`：机器人是否已真正读入新配置（热重载约 1s 延迟，会 `await` 后再返回）
   - `autoDisabledMsg`：换到不支持的模型时**如实告知**被自动关掉的能力（如「已自动关闭 识图」）
 - **校验失败返回 400**：跨服务商模型、降级链含「始终思考」模型、链超长（`MAX_CHAIN_LEN`）、
-  `launch.mode` 越界 / `openOnStart` 非布尔（值域与判定唯一一份在 `src/launch-mode.js`）。
+  `launch.mode` 越界 / `openOnStart`、`autoProtocol` 非布尔 / `closeAction` 不在 `tray|quit`
+  （值域与判定唯一一份在 `src/launch-mode.js`）。
 - **副作用**：写 `config.json`、物化到对应大脑预设、可能触发 `stashCurrentPreset`、等待机器人热重载。
 - **幂等**：否（会覆盖落盘配置；重复提交同值 = 幂等效果，但本身是写操作）。
 
@@ -463,7 +473,7 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 - **副作用**：改 `panel/memory-records.json`（直接决定"下一轮提示词里带不带这条"）。
 - **幂等**：否。🟡 **写路由**。
 - ⚠️ 沙箱**不拦**这条：`memory-records.json` 本来就被排除在沙箱之外，沙箱里改的是 /tmp 副本 ——
-  这也是 `verify-panel` 能真的点一次按钮的前提。
+  这也是 `panel/next/verify.mjs` 能真的点一次按钮的前提。
 
 ---
 
@@ -502,9 +512,15 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 
 导出工作台配置（下载）。
 
-- **入参**：`?what=all|persona|prompt|rules|memory|skills|log|faces`、`?format=json|txt|zip`、`?mask=0`（保留群号，默认脱敏）。
+- **入参**：`?what=all|persona|prompt|rules|memory|skills|log|faces|diag|selected`、`?format=json|txt|zip`、`?mask=0`（保留群号，默认脱敏）。
+  - `what=selected` 时用 `?scopes=config,persona,prompt,rules,memory,skills,log` 选范围；未知 id 返回 400。
+  - `?dry=1` 只返回每个范围的真实字节数与文件清单，不生成附件。
 - **响应**：`application/json | text/plain | application/zip`，`Content-Disposition: attachment`。
   - `zip`：零依赖手写 store 模式 + CRC32，多文件打包。
+  - `selected`：只打包所选范围；`dry=1` 返回 `{ok, dry, scopes:[{id,label,bytes,files}], totalBytes, mask}`。
+  - `diag`：强制 ZIP；固定清单（壳/面板/机器人/更新/回滚日志 + 崩溃事件 + 版本指针），
+    不扫目录，故 `config.json`、`.token`、`bridge.log`（聊天正文）、`napcat/` 不会进包；
+    逐行 `maskSecrets` + QQ/群号/用户名脱敏，残余凭据 fail-closed 替换。
 - **副作用**：无（只读，默认脱敏群号）。
 - **幂等**：是。
 
@@ -660,5 +676,281 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 - **副作用**：写 `panel/window-state.json`。
 - **幂等**：是（同值重复上报 = 覆盖同样的内容）。
 - **谁在发**：只有独立窗口的页面（URL 带启动器加的 `__win=1` 标记时才上报）—— 标签页不上报。
+
+---
+
+## 41. 补充路由契约（2026-10-22）
+
+> 63 条 API 中，39 条已在 §1–§40 有独立字段章节；剩下的 **24 条**在本节补字段级契约
+> （其中 19 条此前连独立小节都没有，另外 5 条此前只在表格/导语里出现过）。
+> 写路由仍统一走 token + 审计（`WRITE_ROUTES`）；业务失败通常是 **HTTP 200 + `ok:false`**，
+> 只有参数/传输/鉴权失败才用 4xx/5xx。
+
+### 41.1 路由总表（机器可核对）
+
+> 这一段由 `check-wb` §135 与 `panel/server.js` 的 `API_ROUTES` 双向核对；加删路由必须
+> 同时改总表、`WRITE_ROUTES`（若是 POST）和 §135 的精确计数。
+
+<!-- api-inventory:begin -->
+| 方法 | 路径 |
+|---|---|
+| GET | `/api/health` |
+| GET | `/api/update/state` |
+| POST | `/api/update/check` |
+| POST | `/api/update/download` |
+| POST | `/api/update/install` |
+| POST | `/api/update/cancel` |
+| POST | `/api/update/offline/prepare` |
+| POST | `/api/update/offline/installer` |
+| GET | `/api/state` |
+| GET | `/api/audit` |
+| GET | `/api/logs` |
+| GET | `/api/sessions` |
+| GET | `/api/sessions/detail` |
+| GET | `/api/chats` |
+| GET | `/api/chats/detail` |
+| POST | `/api/config/undo` |
+| POST | `/api/config` |
+| GET | `/api/groups` |
+| POST | `/api/bridge/start` |
+| POST | `/api/bridge/stop` |
+| POST | `/api/bridge/command` |
+| POST | `/api/check` |
+| POST | `/api/local-model/start` |
+| POST | `/api/local-model/stop` |
+| POST | `/api/switch` |
+| GET | `/api/provider-info` |
+| POST | `/api/custom-brain/save` |
+| POST | `/api/custom-brain/rename` |
+| POST | `/api/custom-brain/delete` |
+| POST | `/api/onekey/start` |
+| POST | `/api/onekey/stop` |
+| GET | `/api/balance` |
+| POST | `/api/try` |
+| POST | `/api/trace/clear` |
+| POST | `/api/custom/memory/clear` |
+| POST | `/api/custom/memory/delete` |
+| POST | `/api/memory/search` |
+| POST | `/api/memory/review` |
+| POST | `/api/custom/preview` |
+| POST | `/api/extensions/install` |
+| GET | `/api/custom/export` |
+| GET | `/api/zhipu/packages` |
+| GET | `/api/models` |
+| POST | `/api/usage/reset` |
+| POST | `/api/debug` |
+| POST | `/api/stop-all` |
+| POST | `/api/protocol/start` |
+| POST | `/api/napcat/restart` |
+| POST | `/api/napcat/import-auto` |
+| POST | `/api/napcat/open-folder` |
+| GET | `/api/qrcode` |
+| POST | `/api/qrcode/refresh` |
+| POST | `/api/logs/clear` |
+| POST | `/api/panel/restart` |
+| GET | `/api/console/stream` |
+| GET | `/api/console/tail` |
+| POST | `/api/panel/quit` |
+| POST | `/api/panel/window` |
+| POST | `/api/persona/adopt` |
+| GET | `/api/fake-qq/state` |
+| POST | `/api/fake-qq/start` |
+| POST | `/api/fake-qq/send` |
+| POST | `/api/fake-qq/stop` |
+<!-- api-inventory:end -->
+
+### 41.2 字段契约（24 条）
+
+#### 41.2.1 GET `/api/health`
+
+<!-- api-fields: GET /api/health -->
+- **入参**：无。
+- **出参**：`{ok, appId, version, pid, uptimeSec}` —— 只有身份与存活信息，不含路径/token/Key/群号。
+- **副作用**：无；不读配置、不依赖机器人，配置坏了也能答。
+- **幂等**：是；正在退出时回 **503** 且 `ok:false`。
+
+#### 41.2.2 GET `/api/update/state`
+
+<!-- api-fields: GET /api/update/state -->
+- **入参**：无。
+- **出参**：`{ok, enabled, testMode, phase, reason, currentVersion, latest|null, progress|null, error, checkedAt, downloadedAt, offline|null, source}`。
+- **副作用**：只读状态机快照，不联网、不落盘。
+- **幂等**：是。
+
+#### 41.2.3 POST `/api/update/check`
+
+<!-- api-fields: POST /api/update/check -->
+- **入参**：无强制字段。
+- **出参**：`{ok, ...snapshot}`；检查失败时 `phase:'error'`、`error` 可读，HTTP 仍 200。
+- **副作用**：联网拉取签名清单并验签；更新 `checkedAt`，失败原因写入状态机。
+- **幂等**：是；检查已在进行中时直接回当前快照。
+
+#### 41.2.4 POST `/api/update/download`
+
+<!-- api-fields: POST /api/update/download -->
+- **入参**：无。
+- **出参**：`{ok, ...snapshot}`；进度经 SSE 的 `update` 帧推送。
+- **副作用**：下载 EXE 到更新缓存；受 `ready`/下载中状态保护。
+- **幂等**：否；已有下载/待安装时只回快照，不重复启动。
+
+#### 41.2.5 POST `/api/update/install`
+
+<!-- api-fields: POST /api/update/install -->
+- **入参**：`{silent?:boolean}` —— 只有显式 `true` 才静默安装。
+- **出参**：`{ok, ...snapshot}`；业务失败仍 200 + `ok:false`。
+- **副作用**：从 `ready` 显式启动安装器；安装前停应用，安装后由启动器接管（见 §109/§110）。
+- **幂等**：否；这是两次点击契约里的第二次。
+
+#### 41.2.6 POST `/api/update/cancel`
+
+<!-- api-fields: POST /api/update/cancel -->
+- **入参**：无。
+- **出参**：`{ok, ...snapshot}`。
+- **副作用**：中止下载并清进度，回到可重试状态。
+- **幂等**：是。
+
+#### 41.2.7 POST `/api/update/offline/prepare`
+
+<!-- api-fields: POST /api/update/offline/prepare -->
+- **入参**：`{manifestBase64, sigBase64}` —— 都是 base64 **文本**；`.sig` 文件内容不要再二次 base64。
+- **出参**：`{ok, ...snapshot}`；验签/校验失败 200 + `ok:false`。
+- **副作用**：按原始字节验签、校验清单，把 `latest.json` + `.sig` 暂存到 pending；**不联网**。
+- **幂等**：否；重复提交会覆盖 pending（同值结果一致，但本身是写操作）。
+
+#### 41.2.8 POST `/api/update/offline/installer`
+
+<!-- api-fields: POST /api/update/offline/installer -->
+- **入参**：请求体是**原始 EXE 字节**（不是 JSON）；上限 256 MiB（Electron 载荷约 150 MiB，P1-7 实测后校准）。
+- **出参**：`{ok, ...snapshot}`；过大 413、上传中断/为空 400。
+- **副作用**：校 size + SHA-256，通过后移入 cache，`phase` 置 `ready`。
+- **幂等**：否；每次上传都会覆盖待安装包。
+
+#### 41.2.9 GET `/api/console/stream`
+
+<!-- api-fields: GET /api/console/stream -->
+- **入参**：无。
+- **出参**：SSE 长连接 —— `hello` 帧 `{lines,total}`、`update` 帧（更新快照）、每 3 秒 `state` 帧 `{t,bridge,proto,pid}`。
+- **副作用**：保持连接与心跳定时器；连接关闭时清定时器、移出客户端集合。
+- **幂等**：是；每次连接各自拿一份快照。
+
+#### 41.2.10 GET `/api/console/tail`
+
+<!-- api-fields: GET /api/console/tail -->
+- **入参**：query `src=napcat|panel`（缺省 `napcat`）；`lines=1..500`（缺省 200）。
+- **出参**：`{src, file, lines, missing, hint}`；`file` 是相对 `USER_ROOT` 的路径。
+- **副作用**：只读文件尾部（最多回看 256 KiB），不整份读入内存。
+- **幂等**：是。
+
+#### 41.2.11 POST `/api/panel/quit`
+
+<!-- api-fields: POST /api/panel/quit -->
+- **入参**：无。
+- **出参**：`{ok:true, msg}` —— 先回响应，约 400ms 后退出面板。
+- **副作用**：只退出控制台，**不动机器人**。
+- **幂等**：是；重复点只是再触发一次退出。
+
+#### 41.2.12 GET `/api/provider-info`
+
+<!-- api-fields: GET /api/provider-info -->
+- **入参**：query `baseUrl`（必填）。
+- **出参**：`{ok, provider, known, vendor, officialBaseUrl, official, chain, quota|null}`；`chain` 含主模型，前端按当前模型名剔除。
+- **副作用**：无；纯读，不落盘、不碰进程。
+- **幂等**：是；坏地址 400 + `reason:'bad-url'`。
+
+#### 41.2.13 POST `/api/custom-brain/save`
+
+<!-- api-fields: POST /api/custom-brain/save -->
+- **入参**：`{id?, name?, baseUrl, model, apiKey?, fallbackModels?, features?, maxTokens?, temperature?}`；编辑时地址留空 = 不改，新增时 `baseUrl`/`model` 必填。
+- **出参**：`{ok, id, name, switched, applied, msg}`；400 可带 `reason:'bad-base-url'|'model-provider-mismatch'`。
+- **副作用**：写 `config.json`；新增或编辑当前套时切换并等待热重载；降级链只保留属于该服务商的模型。
+- **幂等**：否；会写入/切换。
+
+#### 41.2.14 POST `/api/custom-brain/rename`
+
+<!-- api-fields: POST /api/custom-brain/rename -->
+- **入参**：`{id, name}`；`name` 必填。
+- **出参**：`{ok, id, name, msg}`；找不到 404，空名 400。
+- **副作用**：只改名字并写 `config.json`，其它字段不动。
+- **幂等**：是；同值重复结果一致（仍是写操作）。
+
+#### 41.2.15 POST `/api/custom-brain/delete`
+
+<!-- api-fields: POST /api/custom-brain/delete -->
+- **入参**：`{id}`。
+- **出参**：`{ok, id, fellBack, applied, msg}`；找不到 404。
+- **副作用**：删除该套；若正在使用则切回智谱并等待热重载。
+- **幂等**：否；第二次调用会因找不到而 404。
+
+#### 41.2.16 POST `/api/memory/search`
+
+<!-- api-fields: POST /api/memory/search -->
+- **入参**：`{query, chatKey?}`；`query` 必填。
+- **出参**：`{ok, lines, hits, scanned, reason?}`；与机器人“你还记得吗”共用同一份检索判据。
+- **副作用**：无；只读，不加 samples、不落盘。
+- **幂等**：是；空 query 400。
+
+#### 41.2.17 POST `/api/protocol/start`
+
+<!-- api-fields: POST /api/protocol/start -->
+- **入参**：无。
+- **出参**：`{ok, msg}`；拉起失败 500，`msg` 可读。
+- **副作用**：强制跑一次协议端守护步骤（与定时守护共用 `runStep`）；`force` 只越过“从没起来/冷却/超限”，不越“账号掉线/协议端仍活着”。
+- **幂等**：否；重复调用可能再次尝试拉起或等待冷却。
+
+#### 41.2.18 POST `/api/napcat/import-auto`
+
+<!-- api-fields: POST /api/napcat/import-auto -->
+- **入参**：无；仅 Windows 安装版可用。
+- **出参**：导入脚本的 JSON（`{ok, action, from?, status?, error?}`）；非 Windows 400。
+- **副作用**：扫描下载/桌面/文档并复制 NapCat 到 `userdata/napcat`；可能继续下载。
+- **幂等**：是；已装好时回 `already`，不重复导入。
+
+#### 41.2.19 POST `/api/napcat/open-folder`
+
+<!-- api-fields: POST /api/napcat/open-folder -->
+- **入参**：无；仅 Windows 安装版可用。
+- **出参**：`{ok, dir}`；失败 500，非 Windows 400。
+- **副作用**：创建协议端目录并拉起 `explorer.exe`。
+- **幂等**：是。
+
+#### 41.2.20 GET `/api/fake-qq/state`
+
+<!-- api-fields: GET /api/fake-qq/state -->
+- **入参**：query `since`（上次看到的行号，缺省 0）。
+- **出参**：`{running, pid, startedAt, opts, seq, lines, exited, script}`；`lines` 只回 `n > since` 的新行。
+- **副作用**：无。
+- **幂等**：是。
+
+#### 41.2.21 POST `/api/fake-qq/start`
+
+<!-- api-fields: POST /api/fake-qq/start -->
+- **入参**：`{offline?:boolean, sandbox?:boolean}`。
+- **出参**：`{ok, msg, pid?}`；真机器人在跑且未勾 `sandbox` 时 `ok:false`。
+- **副作用**：spawn `scripts/fake-qq.mjs`，stdin/stdout 作为会话输入/回显。
+- **幂等**：否；已有会话在跑时拒绝再起。
+
+#### 41.2.22 POST `/api/fake-qq/send`
+
+<!-- api-fields: POST /api/fake-qq/send -->
+- **入参**：`{text}`；换行会被拍平，上限 2000 字。
+- **出参**：`{ok, msg}`。
+- **副作用**：向假 QQ 子进程 stdin 写一行（斜杠命令也走这里）。
+- **幂等**：否；每次都是一句新输入。
+
+#### 41.2.23 POST `/api/fake-qq/stop`
+
+<!-- api-fields: POST /api/fake-qq/stop -->
+- **入参**：无。
+- **出参**：`{ok, msg}`；本来没在跑也回 `ok:true`。
+- **副作用**：关 stdin + SIGTERM，4 秒后补 SIGKILL。
+- **幂等**：是。
+
+#### 41.2.24 POST `/api/persona/adopt`
+
+<!-- api-fields: POST /api/persona/adopt -->
+- **入参**：`{name?, text, fields?}`；`text` 至少 20 字、截 12000；`name` 截 40。
+- **出参**：认领脚本 JSON（`{ok, fields, wrote[]}`，或 `{ok:false, error, detail?}`）；失败 500。
+- **副作用**：花一次模型调用；**不直接改配置**，结果只回预览，写回仍走 `/api/config`。
+- **幂等**：否；每次都会重新调用模型。
 
 ---

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import {
   ENHANCE, ENHANCE_KEYS, ENHANCE_GROUPS, PERSONA_KEYS, PLAY_RULES, REPLY_LENGTHS, SCENES,
-  SKILL_IN_PROMPT, MANUAL_MEMORY_IN_PROMPT, SIMILAR_THRESHOLD, readCustom,
+  SKILL_IN_PROMPT, SKILL_CHARS_IN_PROMPT, MANUAL_MEMORY_IN_PROMPT, SIMILAR_THRESHOLD, readCustom,
 } from '../../src/custom-config.js';
 import {
   PROMPT_BUDGET_CHARS, RECALL_MAX, RECORD_STATUS, RECORD_STATUS_LABELS,
@@ -19,6 +19,7 @@ import { classifyOneBotReply, selfReportTrustOf } from '../../src/backend/normal
 // 面板这里只下发**结论**（与启动器执行的那一个值逐字一致），不许自己再判一遍；
 // 启动跟踪（launch-log）的读口也在这里，卡片上的「上次启动」就是它。
 import { LAUNCH_ENTRY_LABELS, launchLogPath, launchOfConfig, readLaunchLog } from '../../src/launch-mode.js';
+import { readAutostartState } from '../../src/desktop/autostart.js';
 // 「这家的免费额度长什么样」（额度类型 / 能不能查实时余额 / 该去哪个页面看）。
 // 唯一实现住 src/free-quota.js —— 面板**不要**自己再写一份文案：
 // 千问那句"用完即停开关默认是关的"是**真会让人被扣钱**的提醒，抄一份就多一处会腐烂的地方。
@@ -45,8 +46,26 @@ import { readBotData } from './bot-data.js';
 import { gradePersonaCard } from '../../src/persona-grade.js';
 import { readConfig } from './config-io.js';
 import { readModelSync } from './model-sync-state.js';
-import { readTrace, TRACE_AGGREGATE } from './trace-io.js';
+import { readTrace } from './trace-io.js';
 import { state } from './runtime-state.js';
+
+/** 开机自启三态每 10 秒最多查一次系统：面板轮询 3 秒一次，不能每轮起 PowerShell/reg。 */
+let autoStartCache = { at: 0, value: null };
+function autoStartStateOf() {
+  const now = Date.now();
+  if (autoStartCache.value && now - autoStartCache.at < 10000) return autoStartCache.value;
+  const value = readAutostartState();
+  autoStartCache = { at: now, value };
+  return value;
+}
+
+/** 面板刚写过系统启动项时先用 15 秒临时回执，之后回到系统查询。 */
+function launchAutoStartState() {
+  if (state.autoStartState && Date.now() - Number(state.autoStartAt || 0) < 15000) {
+    return { state: state.autoStartState, shortcut: state.autoStartDetail || '' };
+  }
+  return autoStartStateOf();
+}
 
 /**
  * 把 `get_version_info` / `get_status` 两份回包收成「协议端自报」这一块。
@@ -496,6 +515,8 @@ export function makeStateCollector(deps) {
         // 让"双击了却没按我选的来"在现场就能看见，而不用去猜。
         launch: {
           ...launchOfConfig(cfg),
+          autoStartState: launchAutoStartState().state,
+          autoStartDetail: launchAutoStartState().shortcut || '',
           last: (() => {
             const e = readLaunchLog(launchLogPath(CONFIG_FILE, PANEL_STATE_DIR), { limit: 1 })[0] || null;
             if (!e) return null;
@@ -539,10 +560,12 @@ export function makeStateCollector(deps) {
         enhanceKeys: ENHANCE_KEYS,
         // 导入白名单：前端渲染「导入到此为止」的说明和导入本身都用它，只有这一份
         importableKeys: IMPORTABLE_KEYS,
-        // 技能相关上限：界面上要写明"最多同时上几条"，不然用户会以为填了就一定生效
-        skillInPrompt: SKILL_IN_PROMPT,
+        // 技能相关上限：界面上要写明"最多同时上几条"，不然用户会以为填了就一定生效。
+        // 2026-10-23 起是**生效值**（config 可配），不是常量默认值。
+        skillInPrompt: custom.skillPrompt?.max ?? SKILL_IN_PROMPT,
+        skillInPromptChars: custom.skillPrompt?.chars ?? SKILL_CHARS_IN_PROMPT,
         // 手动记忆的注入上限，同样由后端下发 —— 前端一个数字都不自存。
-        manualMemoryInPrompt: MANUAL_MEMORY_IN_PROMPT,
+        manualMemoryInPrompt: custom.memory?.promptMax ?? MANUAL_MEMORY_IN_PROMPT,
         // 数值类设置的**默认值与上下限**（B12b · SCHEMA-LITE）。
         // 页面用它填三件事：① 提示文字里的数字（`data-num`）；② `<input min max>`（`data-limit`）；
         // ③ 收集表单时的兜底值。以前这三处各抄一次，漂了只会让界面撒谎。
@@ -607,7 +630,15 @@ export function makeStateCollector(deps) {
       // D7：第二个参数是"用户在面板上填的那份设置" —— 由 `extensionsOf` 把每个包的设置
       // 算成**控件描述**（类型 / 是否密码框 / 当前值）随状态下发。
       // 为什么判据在服务端：类型只有一份来源，页面只按 `kind` 渲染（两份判定必然漂移）。
-      extensions: extensionsOf(custom.plugins.enabled, custom.plugins.settings),
+      // ⚠️ 第二个参数是 **opts 对象**（`{userSettings, maxPlugins}`），不是"设置本体"。
+      //    2026-10-23 修：这里原先直接传 `custom.plugins.settings`，被解构成
+      //    `{now, force, userSettings}` ⇒ `userSettings` 恒为 `{}` ⇒ 面板永远显示
+      //    清单默认值，用户填的值存进了 config 却在刷新后"消失"。这是"设置存不上"
+      //    的第二条真因（第一条是 app.js 的 change 分支缺失）。
+      extensions: extensionsOf(custom.plugins.enabled, {
+        userSettings: custom.plugins.settings,
+        maxPlugins: custom.plugins.max,
+      }),
       // ── 插件写的数据（2026-10-02）─────────────────────────────────────
       // 情绪 / 群友档案 / 图库张数 / 免费额度情报 —— 这四份数据**一直是插件在写**，
       // 但从来没有出口，所以页面只能摆一张写着"未实现"的骨架。

@@ -235,6 +235,17 @@ ck('swap marker：写入/读取/清除', () => {
   fs.rmSync(t, { recursive: true, force: true });
 });
 
+ck('swap marker：PowerShell 5.1 带 BOM 也能读', () => {
+  const t = tmp('p4-marker-bom-');
+  const inst = path.join(t, 'inst');
+  fs.mkdirSync(path.join(inst, 'runtime'), { recursive: true });
+  fs.writeFileSync(path.join(inst, 'runtime', '.swap.json'), `\uFEFF${JSON.stringify({
+    schema: 1, from: '0.1.4', to: '0.1.3', phase: 'swapped',
+  })}\n`);
+  assert.equal(readSwapMarker(inst).from, '0.1.4');
+  fs.rmSync(t, { recursive: true, force: true });
+});
+
 /* ── 3. 回滚证据 ───────────────────────────────────────────────────── */
 ck('回滚证据：只复制 panel.log 尾部与 current.json，不复制 config.json', () => {
   const t = tmp('p4-evidence-');
@@ -277,6 +288,17 @@ ck('保留计划：只删旧 semver/改目录残留，未知名字/软链/文件
 ck('保留计划：current 缺失 → 不删任何东西（fail-safe）', () => {
   const plan = planRetention({ current: '', versions: [{ name: '0.1.2', isDirectory: true }] });
   assert.deepEqual(plan.versionsToRemove, []);
+});
+
+ck('保留计划：node.previous.old-* 也算残留（P1-8 改名备份）', () => {
+  const plan = planRetention({
+    current: '0.1.4',
+    runtime: [
+      { name: 'node', path: '/tmp/inst/runtime/node', isDirectory: true, isSymlink: false },
+      { name: 'node.previous.old-0.1.4-2026', path: '/tmp/inst/runtime/node.previous.old-0.1.4-2026', isDirectory: true, isSymlink: false },
+    ],
+  });
+  assert.deepEqual(plan.runtimeToRemove, ['node.previous.old-0.1.4-2026']);
 });
 
 ck('保留计划：runtime 只删 previous/failed 残留，跳过正在运行的 execPath', () => {

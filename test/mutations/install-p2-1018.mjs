@@ -23,11 +23,11 @@ export default [
     id: 'M2',
     note: 'apiHealth 读配置 —— 配置坏了安装器就没有就绪信号，且健康端点开始依赖业务',
     file: 'panel/server.js',
-    anchor: /version: APP_VERSION,/m,
+    anchor: /    version: APP_VERSION,\n    pid: process\.pid,/,
     count: 1,
     apply: (s) => s.replace(
-      'version: APP_VERSION,',
-      "version: readConfig()?.version || APP_VERSION,"
+      '    version: APP_VERSION,\n    pid: process.pid,',
+      "    version: readConfig()?.version || APP_VERSION,\n    pid: process.pid,"
     ),
     layer: 'check-wb',
     expect: 'BLOCKED',

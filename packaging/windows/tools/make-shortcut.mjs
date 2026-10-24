@@ -21,7 +21,7 @@
 
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { ROOT, IS_WIN, exists, ok, warn, bad, say, dim, isMain } from './lib/common.mjs';
+import { ROOT, IS_WIN, exists, ok, bad, say, dim, isMain } from './lib/common.mjs';
 
 export const SHORTCUT_NAME = 'Estrella Bot.lnk';
 export const ICO_REL = 'estrella-bot.ico';

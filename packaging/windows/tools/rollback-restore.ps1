@@ -19,7 +19,12 @@ function Say([string]$msg) {
 }
 
 function WriteJson([string]$file, $obj) {
-  $obj | ConvertTo-Json -Depth 20 | Set-Content -Path $file -Encoding UTF8
+  # PowerShell 5.1 Set-Content -Encoding UTF8 writes a BOM. Write to a temp file
+  # with UTF8Encoding($false), then replace, so a crash cannot leave half a pointer.
+  $json = $obj | ConvertTo-Json -Depth 20
+  $tmp = $file + '.tmp-' + $PID
+  [System.IO.File]::WriteAllText($tmp, $json, (New-Object System.Text.UTF8Encoding($false)))
+  Move-Item -LiteralPath $tmp -Destination $file -Force
 }
 
 function Cleanup {

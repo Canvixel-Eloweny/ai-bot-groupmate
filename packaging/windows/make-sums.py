@@ -96,6 +96,8 @@ ITEMS = [
     "app/scripts/dev-sim.mjs",
     "app/scripts/lib/fake-host.mjs",
     "app/src/user-root.js",
+    # P3-1：面板与工具层共用的端口发现模块；少了它面板启动即 import 失败。
+    "app/src/panel-discovery.cjs",
     "app/src/config.js",
     "app/src/net-rules.js",
     # ⚠️ 2026-10-17（回退后重新定性）：`app/src/launch-mode.js` **仍须随包** —— 但理由变了。

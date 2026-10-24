@@ -107,6 +107,11 @@ rsync -a --exclude 'napcat/' --exclude '.backup/' --exclude '.backup-*' \
   --exclude 'panel/*.log' --exclude 'config.json' \
   --exclude 'panel/.bridge.pid' --exclude 'panel/.thinking.json' --exclude 'panel/.debug' \
   --exclude 'panel/.token' \
+  --exclude 'panel/.last-exit.json' \
+  --exclude 'panel/.restart.json' \
+  --exclude 'panel/.shell.json' \
+  --exclude 'panel/.quit-intent.json' \
+  --exclude 'panel/crashes/' \
   --exclude 'panel/.bridge-cmd.json' \
   --exclude 'panel/.bridge.lock*' \
   --exclude 'panel/config-history.jsonl' \

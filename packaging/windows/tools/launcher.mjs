@@ -42,8 +42,20 @@ import { applyRetention, listEntries, planRetention } from './lib/retention.mjs'
 
 const IS_WIN = process.platform === 'win32';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.QQBOT_PANEL_PORT) || 8788;
-const PANEL_URL = `http://127.0.0.1:${PORT}/`;
+
+function normalizePort(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 && n <= 65535 ? n : 0;
+}
+
+/**
+ * 传给面板的端口：显式 `QQBOT_PANEL_PORT` 优先（测试/多实例），否则 **0 = 系统分配**。
+ * P3-1 之后启动器不再预设 8788；实际端口从 `USER_ROOT/panel/.panel.json` 读。
+ * 发现模块自身**按当前程序根动态加载**（下面 main 里）—— 顶层 tools/ 与 versions/<ver>/app
+ * 的相对层级在安装包里与开发树不同，静态相对 import 会在真机上直接找不到文件。
+ */
+const PORT_OVERRIDE = normalizePort(process.env.QQBOT_PANEL_PORT);
+const WANT_HIDDEN = process.argv.includes('--hidden');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function argOf(name) {
@@ -71,6 +83,66 @@ function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
+function killPidTree(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return;
+  if (IS_WIN) {
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 10000 });
+    return;
+  }
+  try { process.kill(pid, 'SIGTERM'); } catch { /* 已退出 */ }
+}
+
+function processCommandLine(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return '';
+  try {
+    if (IS_WIN) {
+      const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`],
+      { encoding: 'utf8', windowsHide: true, timeout: 8000 });
+      return String(r.stdout || '').trim();
+    }
+    const r = spawnSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8', timeout: 3000 });
+    return String(r.stdout || '').trim();
+  } catch { return ''; }
+}
+
+/**
+ * 8788 上的面板是不是**本安装根**的旧面板。
+ * P3-1 的 legacy 回退只在"确认是自己的"时才拒绝启动/才允许停止；否则同机别的回环服务
+ * （例如开发树里正在跑的面板）会被误认成旧版，轻则挡住启动，重则被停止链杀掉。
+ * 命令行查询失败时按"可能是我们的"处理（fail-closed），宁可让用户先退出旧控制台。
+ */
+function legacyPanelBelongsToInstall(cmd, installRoot, versions) {
+  const text = String(cmd || '').replace(/\\/g, '/').toLowerCase();
+  if (!text) return true;
+  const root = path.resolve(installRoot).replace(/\\/g, '/').toLowerCase();
+  if (!text.includes(root) || !text.includes('/panel/server.js')) return false;
+  const list = versions.map((v) => String(v || '').toLowerCase()).filter(Boolean);
+  return list.length === 0 || list.some((v) => text.includes(`/versions/${v}/app/`));
+}
+
+/**
+ * 旧壳接管：新版本启动前，若 .shell.json 里的壳是**另一个 exe 路径**（旧版本目录），
+ * 先让它退出。否则 Electron 的单实例锁会按共享 userData 判定“已有实例”，新壳直接退出，
+ * 用户看到的是旧壳配新面板。同一路径则不杀——第二次启动交给 second-instance 唤起。
+ */
+async function stopStaleShell({ userRoot, targetExe }) {
+  const file = path.join(userRoot, 'panel', '.shell.json');
+  let info = null;
+  try { info = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch { return { ok: true, skipped: 'no-shell' }; }
+  const pid = Number(info && info.pid) || 0;
+  const exe = String((info && info.exe) || '');
+  if (!pid || !pidAlive(pid)) return { ok: true, skipped: 'stale' };
+  if (!exe || !/electron(?:\.exe)?$/i.test(exe)) return { ok: true, skipped: 'unknown-exe' };
+  if (path.resolve(exe) === path.resolve(targetExe)) return { ok: true, reused: true, pid };
+  logLine(`⚠ 发现旧壳 pid ${pid}（${exe}），先退出再启动新壳`);
+  killPidTree(pid);
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && pidAlive(pid)) await sleep(200);
+  if (pidAlive(pid)) return { ok: false, reason: `旧壳 pid ${pid} 5 秒内没有退出` };
+  return { ok: true, killed: pid };
+}
+
 /**
  * 双击竞态锁：同一个 USER_ROOT 同时只让一个 launcher 走启动流程。
  * 另一个正在启动 ⇒ 直接成功退出（它会把窗口开出来）。
@@ -96,22 +168,11 @@ function acquireLock(userRoot) {
   return { ok: false, held: false, file, error: '启动锁抢不到（可能有两个启动器同时卡住）' };
 }
 
-function portOpen(timeout = 800) {
-  return new Promise((resolve) => {
-    const s = net.connect({ port: PORT, host: '127.0.0.1' });
-    const done = (v) => { s.destroy(); resolve(v); };
-    s.setTimeout(timeout);
-    s.once('connect', () => done(true));
-    s.once('timeout', () => done(false));
-    s.once('error', () => done(false));
-  });
-}
-
-async function health() {
+async function healthAt(port) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 2500);
   try {
-    const res = await fetch(`http://127.0.0.1:${PORT}/api/health`, { signal: ac.signal });
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: ac.signal });
     const text = (await res.text()).slice(0, 2000);
     let body = null;
     try { body = JSON.parse(text); } catch { /* 非 JSON 由调用方按“旧面板/陌生服务”处理 */ }
@@ -133,7 +194,7 @@ function patchCurrent(installRoot, patch) {
   }
 }
 
-async function startPanel({ installRoot, programRoot, userRoot, configFile }) {
+async function startPanel({ installRoot, programRoot, userRoot, configFile, discovery }) {
   const nodeExe = path.join(installRoot, 'runtime', 'node', IS_WIN ? 'node.exe' : 'node');
   if (IS_WIN && !fs.existsSync(nodeExe)) return { up: false, error: `缺共享运行时：${nodeExe}` };
   const panelFile = path.join(programRoot, 'panel', 'server.js');
@@ -154,6 +215,8 @@ async function startPanel({ installRoot, programRoot, userRoot, configFile }) {
         QQBOT_MODE: 'installed',
         QQBOT_USER_ROOT: userRoot,
         QQBOT_CONFIG: configFile,
+        // 显式写进去：即使继承到的 QQBOT_PANEL_PORT 是空/非法，也不会回落到 8788。
+        QQBOT_PANEL_PORT: String(PORT_OVERRIDE),
       },
     });
     childPid = Number(child.pid) || 0;
@@ -167,8 +230,13 @@ async function startPanel({ installRoot, programRoot, userRoot, configFile }) {
 
   const t0 = Date.now();
   while (Date.now() - t0 < 30000) {
-    const h = await health();
-    if (h.status === 200 && h.body && h.body.ok) return { up: true, health: h.body, pid: childPid };
+    const info = discovery.readDiscovery(userRoot);
+    if (info && info.pid === childPid && discovery.isLive(info)) {
+      const h = await healthAt(info.port);
+      if (h.status === 200 && h.body && h.body.ok) {
+        return { up: true, health: h.body, pid: childPid, port: info.port, url: info.url };
+      }
+    }
     await sleep(350);
   }
   return { up: false, error: `控制台 30 秒内没有通过 /api/health（日志：${log}）`, pid: childPid };
@@ -197,14 +265,111 @@ async function stopPanel(pid) {
   return { ok: !pidAlive(pid), reason: `面板 ${pid} 10 秒内没有退出` };
 }
 
-async function openWindow({ installRoot, programRoot, userRoot, configFile }) {
+/**
+ * 有 Electron 壳就走壳；没有就回落 Edge --app。壳在**版本目录内**：
+ * `versions/<ver>/app/electron/`，这样回滚时旧 app 自带旧壳。
+ * `QQBOT_DESKTOP_DIR` / `QQBOT_ELECTRON_EXE` 只作显式覆盖（dev/救急）。
+ * 这里必须删掉 ELECTRON_RUN_AS_NODE：一旦继承，Electron 会以 Node 跑而不是开窗。
+ */
+async function openShell({ installRoot, programRoot, userRoot, configFile, panelUrl, hidden = WANT_HIDDEN }) {
+  let desktopDir = path.join(programRoot, 'electron');
+  let shellExe = '';
+  try {
+    const sp = await import(pathToFileURL(path.join(programRoot, 'src', 'desktop', 'shell-path.js')).href);
+    const paths = sp.shellPaths({ programRoot, env: process.env });
+    desktopDir = paths.desktopDir;
+    shellExe = paths.exe;
+  } catch { /* 老版本没有 shell-path.js：回落到 programRoot/electron */ }
+  const exe = shellExe || (process.env.QQBOT_ELECTRON_EXE
+    ? path.resolve(process.env.QQBOT_ELECTRON_EXE)
+    : path.join(desktopDir, IS_WIN ? 'electron.exe' : 'electron'));
+  if (!fs.existsSync(exe) || !fs.existsSync(path.join(desktopDir, 'package.json'))) {
+    return { ok: false, reason: 'no-shell' };
+  }
+  const stale = await stopStaleShell({ userRoot, targetExe: exe });
+  if (!stale.ok) logLine(`⚠ 旧壳没退干净：${stale.reason || '未知原因'}`);
+  let pkg;
+  try { pkg = readPackageInfo(programRoot); } catch (e) { return { ok: false, error: e.message }; }
+  const env = {
+    ...process.env,
+    QQBOT_PANEL_URL: panelUrl,
+    QQBOT_USER_ROOT: userRoot,
+    QQBOT_CONFIG: configFile,
+    QQBOT_INSTALL_ROOT: installRoot,
+    QQBOT_PROGRAM_ROOT: programRoot,
+    QQBOT_APP_ID: pkg.appId,
+    QQBOT_APP_VERSION: pkg.version,
+    QQBOT_DESKTOP_DIR: desktopDir,
+    ...(hidden ? { QQBOT_START_HIDDEN: '1' } : {}),
+  };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const args = [desktopDir];
+  if (hidden) args.push('--hidden');
+  try {
+    const child = spawn(exe, args, {
+      cwd: programRoot, detached: true, windowsHide: true, stdio: 'ignore', env,
+    });
+    const result = await new Promise((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve({ ok: true, pid: child.pid });
+      }, 800);
+      child.once('error', (e) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ ok: false, error: `桌面壳起不来：${e.message}` });
+      });
+    });
+    child.unref();
+    if (!result.ok) return result;
+    try {
+      const lm = await import(pathToFileURL(path.join(programRoot, 'src', 'launch-mode.js')).href);
+      await lm.recordLaunch(path.join(userRoot, 'panel', 'launch-log.jsonl'), {
+        entry: 'win-shell', kind: 'electron',
+        opened: !hidden,
+        ...(hidden ? { skipped: true, hidden: true } : {}),
+        used: 'electron', pid: result.pid,
+      });
+    } catch (e) { logLine(`⚠ 壳启动跟踪写不进去：${e.message}`); }
+    return {
+      ok: true,
+      result: {
+        opened: !hidden,
+        ...(hidden ? { skipped: true, hidden: true } : {}),
+        kind: 'electron', used: 'electron', pid: result.pid,
+      },
+    };
+  } catch (e) {
+    return { ok: false, error: `桌面壳起不来：${e.message}` };
+  }
+}
+
+async function openWindow({ installRoot, programRoot, userRoot, configFile, panelUrl }) {
   const modPath = path.join(programRoot, 'src', 'launch-mode.js');
-  if (!fs.existsSync(modPath)) return { ok: false, error: `缺启动方式模块：${modPath}` };
-  const lm = await import(pathToFileURL(modPath).href);
+  let lm = null;
+  try { lm = await import(pathToFileURL(modPath).href); } catch { lm = null; }
+  let launch = null;
+  try { launch = lm ? lm.readLaunchFile(configFile) : null; } catch { launch = null; }
+  // `--hidden`（登录自启）与 launch.openOnStart=false 任一成立都留在后台；
+  // 老版本 app 没有 shouldStartHidden 时只认 --hidden（fail-open，不因升级顺序把窗口吞掉）。
+  const hidden = lm && typeof lm.shouldStartHidden === 'function'
+    ? lm.shouldStartHidden({ wantHidden: WANT_HIDDEN, openOnStart: launch ? launch.openOnStart : true })
+    : WANT_HIDDEN;
+  if (hidden) logLine(`ℹ 启动后留在后台（${WANT_HIDDEN ? '--hidden' : 'launch.openOnStart=false'}）`);
+
+  const shell = await openShell({ installRoot, programRoot, userRoot, configFile, panelUrl, hidden });
+  if (shell.ok) return { ok: true, result: shell.result };
+  if (shell.reason !== 'no-shell' && shell.error) logLine(`⚠ ${shell.error}`);
+  if (hidden) return { ok: true, skipped: true, reason: 'hidden-without-shell' };
+  if (!lm) return { ok: false, error: `缺启动方式模块：${modPath}` };
+
   const hiddenVbs = path.join(installRoot, 'launcher', 'run-hidden.vbs');
   const r = lm.openPanelFromConfig({
     configPath: configFile,
-    url: PANEL_URL,
+    url: panelUrl,
     entry: 'win-installed',
     defaultMode: 'window',
     logFile: path.join(userRoot, 'panel', 'launch-log.jsonl'),
@@ -269,7 +434,7 @@ function retentionAfterSuccess(installRoot) {
   }
 }
 
-async function attemptLaunch({ installRoot, programRoot, userRoot, configFile, appId }) {
+async function attemptLaunch({ installRoot, programRoot, userRoot, configFile, appId, discovery }) {
   let pkg;
   try { pkg = readPackageInfo(programRoot); } catch (e) {
     return { ok: false, pid: 0, error: `程序目录不可用：${e.message}` };
@@ -277,7 +442,7 @@ async function attemptLaunch({ installRoot, programRoot, userRoot, configFile, a
   if (pkg.appId !== appId) {
     return { ok: false, pid: 0, error: `程序目录 appId 不对：${pkg.appId} ≠ ${appId}` };
   }
-  const started = await startPanel({ installRoot, programRoot, userRoot, configFile });
+  const started = await startPanel({ installRoot, programRoot, userRoot, configFile, discovery });
   if (!started.up) return { ok: false, pid: started.pid || 0, error: started.error };
   const h = started.health;
   if (!h || h.appId !== pkg.appId || h.version !== pkg.version) {
@@ -288,7 +453,7 @@ async function attemptLaunch({ installRoot, programRoot, userRoot, configFile, a
       identity: true,
     };
   }
-  return { ok: true, pid: started.pid || 0, health: h, pkg };
+  return { ok: true, pid: started.pid || 0, health: h, pkg, port: started.port, url: started.url };
 }
 
 /**
@@ -448,6 +613,21 @@ async function applyRollback({ installRoot, userRoot, appId, decision }) {
     patchCurrent(installRoot, { health: 'failed', failures: decision.failures });
     return { ok: false, reason: sw.reason, exitCode: 4 };
   }
+  // `swapped:false` = 没有 runtime/node.previous。此时翻指针会变成“旧 app + 新 runtime”，
+  // 与 Windows helper 的 throw 对齐：宁可不回滚，也不制造错配。
+  if (!sw.swapped) {
+    const reason = sw.reason || '没有 runtime/node.previous';
+    logLine(`✗ ${reason}，拒绝翻指针（避免旧 app + 新 runtime）`);
+    clearSwapMarker(installRoot);
+    try {
+      writeJsonAtomic(path.join(userRoot, 'update', 'rollback.json'), rollbackRecord({
+        from, to, reason, failures: decision.failures,
+        runtimeRestored: false, result: 'blocked', evidenceDir: evidence.dir || '',
+      }));
+    } catch { /* 证据尽力 */ }
+    patchCurrent(installRoot, { health: 'failed', failures: decision.failures });
+    return { ok: false, reason, exitCode: 4 };
+  }
   writeSwapMarker(installRoot, {
     from, to, failures: decision.failures, phase: 'swapped',
     runtimeRestored: sw.swapped, evidenceDir: evidence.dir || '',
@@ -494,7 +674,7 @@ async function applyRollback({ installRoot, userRoot, appId, decision }) {
   return { ok: true, to, runtimeRestored: sw.swapped };
 }
 
-async function handleStartFailure({ installRoot, userRoot, configFile, appId, error, pid }) {
+async function handleStartFailure({ installRoot, userRoot, configFile, appId, error, pid, discovery }) {
   const stop = await stopPanel(pid);
   if (!stop.ok) logLine(`⚠ ${stop.reason || '面板没有停干净'}`);
 
@@ -545,7 +725,7 @@ async function handleStartFailure({ installRoot, userRoot, configFile, appId, er
     logLine(`✗ 回滚后版本目录不可用：${eff.error}`);
     return 2;
   }
-  const second = await attemptLaunch({ installRoot, programRoot: eff.programRoot, userRoot, configFile, appId });
+  const second = await attemptLaunch({ installRoot, programRoot: eff.programRoot, userRoot, configFile, appId, discovery });
   if (!second.ok) {
     await stopPanel(second.pid);
     patchCurrent(installRoot, { health: 'failed', failures: 1 });
@@ -554,7 +734,7 @@ async function handleStartFailure({ installRoot, userRoot, configFile, appId, er
   }
   patchCurrent(installRoot, { health: 'ok', failures: 0 });
   retentionAfterSuccess(installRoot);
-  const w = await openWindow({ installRoot, programRoot: eff.programRoot, userRoot, configFile });
+  const w = await openWindow({ installRoot, programRoot: eff.programRoot, userRoot, configFile, panelUrl: second.url });
   if (!w.ok) { logLine(`✗ 回滚成功，但窗口打不开：${w.error}`); return 5; }
   return 0;
 }
@@ -717,6 +897,16 @@ async function main() {
     return 2;
   }
 
+  // 发现模块从**当前程序根**加载：顶层 tools/ 与 versions/<ver>/app 的相对层级在安装包里
+  // 与开发树不同，静态 import 会在真机上找不到文件（P3-1 施工时实际踩到）。
+  let panelDiscovery;
+  try {
+    panelDiscovery = await import(pathToFileURL(path.join(eff.programRoot, 'src', 'panel-discovery.cjs')).href);
+  } catch (e) {
+    logLine(`✗ 缺端口发现模块（app/src/panel-discovery.cjs）：${e.message}`);
+    return 2;
+  }
+
   const lock = acquireLock(userRoot);
   if (!lock.ok) {
     logLine(`✗ ${lock.error}`);
@@ -728,34 +918,58 @@ async function main() {
   }
 
   try {
-    const h = await health();
-    if (h.status === 200 && h.body && h.body.ok) {
-      if (h.body.appId === pkg.appId && h.body.version === eff.version) {
-        patchCurrent(installRoot, { health: 'ok', failures: 0 });
-        retentionAfterSuccess(installRoot);
-        const w = await openWindow({ installRoot, programRoot: eff.programRoot, userRoot, configFile });
-        if (!w.ok) { logLine(`✗ 控制台已在运行，但窗口打不开：${w.error}`); return 5; }
-        return 0;
+    // P3-1：先认发现文件。它是唯一能告诉我们"面板在哪个端口"的东西。
+    const disc = panelDiscovery.readDiscovery(userRoot);
+    const running = disc && panelDiscovery.isLive(disc) ? disc : null;
+    if (running) {
+      const h = await healthAt(running.port);
+      if (h.status === 200 && h.body && h.body.ok) {
+        if (h.body.appId === pkg.appId && h.body.version === eff.version) {
+          patchCurrent(installRoot, { health: 'ok', failures: 0 });
+          retentionAfterSuccess(installRoot);
+          const w = await openWindow({
+            installRoot, programRoot: eff.programRoot, userRoot, configFile, panelUrl: running.url,
+          });
+          if (!w.ok) { logLine(`✗ 控制台已在运行，但窗口打不开：${w.error}`); return 5; }
+          return 0;
+        }
+        logLine(`✗ 正在跑的控制台版本不同（appId=${h.body.appId} version=${h.body.version}，期望 ${eff.version}）；`
+          + '请先在旧控制台里点「退出控制台」，再重新打开。');
+        return 3;
       }
-      logLine(`✗ 端口 ${PORT} 上是一个不同版本的控制台（appId=${h.body.appId} version=${h.body.version}）；`
-        + '请先在旧控制台里点「退出控制台」，再重新打开。');
-      return 3;
-    }
-    if (await portOpen()) {
-      logLine(`✗ 端口 ${PORT} 被占用，但它没有 /api/health（可能是旧版/别的程序）；`
-        + '请先退出占用它的程序，再重新打开。');
-      return 3;
+      logLine(`⚠ 发现文件指向 pid ${running.pid}、端口 ${running.port}，但 /api/health 不通 —— 按陈旧发现处理`);
     }
 
+    // 旧版（P3-1 之前）没有发现文件，只可能占着 legacy 8788。
+    // 这里**只做识别**：让用户先退出旧面板；绝不把 8788 当成新面板的端口，也不拿它开窗。
+    // 关键：必须确认它属于**本安装根** —— 同机开发树面板也可能在 8788，不能把它当旧版。
+    const legacyPort = panelDiscovery.LEGACY_PANEL_PORT;
+    const legacy = await healthAt(legacyPort);
+    if (legacy.status === 200 && legacy.body && legacy.body.ok) {
+      const legacyPid = Number(legacy.body.pid) || 0;
+      const legacyVersions = [current && current.current, current && current.previous].filter(Boolean);
+      const legacyCmd = processCommandLine(legacyPid);
+      if (legacyPanelBelongsToInstall(legacyCmd, installRoot, legacyVersions)) {
+        logLine(`✗ 检测到本安装根的旧版控制台仍在 ${legacyPort}（version=${legacy.body.version || '?'}）；`
+          + '请先在旧控制台里点「退出控制台」，再重新打开。');
+        return 3;
+      }
+      logLine(`· ${legacyPort} 上有一个不属于本安装根的面板（pid ${legacyPid}），忽略；`
+        + '新面板使用系统分配端口。');
+    }
+    // 8788 被别的程序占着（没有 /api/health）不挡路：新面板会用系统分配的端口，两者互不影响。
+
     const started = await attemptLaunch({
-      installRoot, programRoot: eff.programRoot, userRoot, configFile, appId: pkg.appId,
+      installRoot, programRoot: eff.programRoot, userRoot, configFile, appId: pkg.appId, discovery: panelDiscovery,
     });
     if (started.ok) {
       patchCurrent(installRoot, { health: 'ok', failures: 0 });
       retentionAfterSuccess(installRoot);
-      const w = await openWindow({ installRoot, programRoot: eff.programRoot, userRoot, configFile });
+      const w = await openWindow({
+        installRoot, programRoot: eff.programRoot, userRoot, configFile, panelUrl: started.url,
+      });
       if (!w.ok) {
-        logLine(`✗ 控制台已启动，但窗口打不开：${w.error}。可手动打开 ${PANEL_URL}`);
+        logLine(`✗ 控制台已启动，但窗口打不开：${w.error}。可手动打开 ${started.url}`);
         return 5;
       }
       return 0;
@@ -767,6 +981,7 @@ async function main() {
       appId: pkg.appId,
       error: started.error,
       pid: started.pid,
+      discovery: panelDiscovery,
     });
   } finally {
     releaseLock(lock.file, lock.held);

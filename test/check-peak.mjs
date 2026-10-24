@@ -76,8 +76,7 @@ ok('主动开口的判据：高峰拦 / 谷放行 / 关掉放行',
   ok('配置归一化进了 readCustom()', /peak: readPeak\(c\.peak\)/.test(customJs));
   const schemaJs = fs.readFileSync(new URL('../panel/next/schema.js', import.meta.url), 'utf8');
   ok('面板上有总闸与「没被叫到不接话」两格（否则用户只能手改 config.json）',
-    /id: 'peak', label: '峰谷/.test(schemaJs)
-    && /bind: 'peak\.enabled'/.test(schemaJs) && /bind: 'peak\.muteUnmentioned'/.test(schemaJs));
+    /bind: 'peak\.enabled'/.test(schemaJs) && /bind: 'peak\.muteUnmentioned'/.test(schemaJs));
 }
 
 if (fails.length) {

@@ -30,13 +30,11 @@ import {
 import { collectEnv } from './check-env.mjs';
 import { collectVersions } from './lib/versions.mjs';
 import { ensureNodeRuntime, ensureNapcat, ensureQQ } from './lib/repair.mjs';
-import { ensureConsole, PANEL_URL } from './lib/console.mjs';
+import { ensureConsole } from './lib/console.mjs';
 import { makeShortcut } from './make-shortcut.mjs';
 import { ensureConfigJson, writeOnebotConfig } from './setup.mjs';
 import { startNapcat } from './start-napcat.mjs';
 import { migrateIfNeeded } from './migrate.mjs';
-
-const PROTOCOL_PORT = 3001;
 
 const argOf = (name) => {
   const i = process.argv.indexOf(name);
@@ -228,7 +226,7 @@ async function main() {
 
   const c = await ensureConsole({ open: !noBrowser });
   say('');
-  ok(c.opened ? `已打开浏览器：${PANEL_URL}` : `控制台地址：${PANEL_URL}`);
+  ok(c.opened ? `已打开浏览器：${c.url}` : `控制台地址：${c.url}`);
   diag(`⑤ 界面：opened=${c.opened} · ${c.reused ? '复用已在跑的面板' : '新拉起面板'}`);
   say('  控制台在**后台**跑，没有黑窗口；要停它就在页面里点「退出控制台」。');
 

@@ -46,6 +46,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isPublishCopy, isHeldBackForGates, isMaintainerCheckout } from './lib/publish-copy.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = path.join(REPO, 'test', 'mutations');
@@ -92,9 +93,13 @@ export async function lintAnchors(o = {}) {
   const dir = o.dir || DIR;
   const readFile = o.readFile || ((p) => fs.readFileSync(p, 'utf8'));
   const exists = o.exists || ((p) => fs.existsSync(p));
+  const publishCopy = o.publishCopy == null ? isPublishCopy(REPO) : Boolean(o.publishCopy);
+  const maintainer = o.maintainer == null ? isMaintainerCheckout(REPO) : Boolean(o.maintainer);
+  const isHeldBack = o.isHeldBack || isHeldBackForGates;
   const plans = fs.readdirSync(dir).filter((x) => x.endsWith('.mjs')).sort();
   const bad = [];
   const noop = [];
+  const skipped = [];
   let total = 0;
 
   for (const f of plans) {
@@ -111,7 +116,15 @@ export async function lintAnchors(o = {}) {
       total += 1;
       const want = m.count == null ? 1 : m.count;
       const target = path.join(REPO, m.file || '');
+      if (m.maintainerOnly && !maintainer) {
+        skipped.push({ file: f, id: m.id, target: m.file, why: '维护者本机专属（发布拷贝/他人 clone 不适用）' });
+        continue;
+      }
       if (!m.file || !exists(target)) {
+        if (publishCopy && m.file && isHeldBack(m.file)) {
+          skipped.push({ file: f, id: m.id, target: m.file, why: '目标按设计不随公开拷贝发布' });
+          continue;
+        }
         bad.push({ file: f, id: m.id, hits: 0, want, target: String(m.file || '(缺 file 字段)'), why: '目标文件不存在' });
         continue;
       }
@@ -135,7 +148,7 @@ export async function lintAnchors(o = {}) {
       }
     }
   }
-  return { files: plans.length, total, bad, noop, plans };
+  return { files: plans.length, total, bad, noop, skipped, plans };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -186,8 +199,31 @@ export async function lintSelftest() {
     L.push(`${poisonInert === 1 ? '✓' : '✗'} 投毒·惰性（apply 是空操作）—— 报出 ${poisonInert} 条（应为 1）`);
     const baseOk = r.files === 3 && r.total === 3;
     if (!baseOk) L.push(`✗ 基数异常：扫到 ${r.files} 份 / ${r.total} 条（应为 3 / 3）`);
-    const ok = baseOk && okBad + okNoop === 0 && poisonAnchor === 1 && poisonInert === 1;
-    L.push(ok ? '✓ 自证通过：合格不误报 · 两类投毒各自必报（双向可见）'
+
+    // 发布模式：同一个「目标不存在」的变异，只有 held-back 目标可以跳过；
+    // 开发仓模式下它仍必须是 bad（绝不把「文件没了」静默放行）。
+    const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'mutate-lint-selftest-pub-'));
+    let pubOk = false;
+    let devOk = false;
+    try {
+      fs.writeFileSync(path.join(tmp2, 'heldback.mjs'), [
+        'export default [',
+        "  { id: 'HELDBACK', file: 'docs/internal-only.md', anchor: /^x$/m, count: 1, apply: (s) => s + '// x', layer: 'check-wb', expect: 'BLOCKED' },",
+        '];',
+      ].join('\n'));
+      const held = (rel) => rel === 'docs/internal-only.md';
+      const rPub = await lintAnchors({ dir: tmp2, publishCopy: true, maintainer: true, isHeldBack: held });
+      const rDev = await lintAnchors({ dir: tmp2, publishCopy: false, maintainer: true, isHeldBack: held });
+      pubOk = rPub.skipped.length === 1 && rPub.bad.length === 0 && rPub.noop.length === 0;
+      devOk = rDev.bad.length === 1;
+      L.push(`${pubOk ? '✓' : '✗'} 发布模式·held-back 目标缺失 —— 跳过 ${rPub.skipped.length} / bad ${rPub.bad.length} / noop ${rPub.noop.length}（应为 1 / 0 / 0）`);
+      L.push(`${devOk ? '✓' : '✗'} 开发模式·同一目标缺失 —— bad ${rDev.bad.length}（应为 1，不许静默跳过）`);
+    } finally {
+      fs.rmSync(tmp2, { recursive: true, force: true });
+    }
+
+    const ok = baseOk && pubOk && devOk && okBad + okNoop === 0 && poisonAnchor === 1 && poisonInert === 1;
+    L.push(ok ? '✓ 自证通过：合格不误报 · 两类投毒各自必报 · 发布跳过只在 held-back（双向可见）'
       : '✗ 自证失败：这个量尺现在不可信（恒真或恒假），先修它再看真仓库的结论。');
     return { ok, lines: L };
   } finally {
@@ -210,10 +246,13 @@ async function main() {
 
   const r = await lintAnchors();
   if (argv.includes('--json')) {
-    console.log(JSON.stringify({ files: r.files, total: r.total, bad: r.bad, noop: r.noop }, null, 2));
+    console.log(JSON.stringify({ files: r.files, total: r.total, bad: r.bad, noop: r.noop, skipped: r.skipped }, null, 2));
     process.exit(r.bad.length || r.noop.length ? 1 : 0);
   }
-  console.log(`共 ${r.files} 份清单 · ${r.total} 条变异 · **锚点失效 ${r.bad.length} 条** · **惰性 ${r.noop.length} 条**`);
+  console.log(`共 ${r.files} 份清单 · ${r.total} 条变异 · **锚点失效 ${r.bad.length} 条** · **惰性 ${r.noop.length} 条** · **发布跳过 ${r.skipped.length} 条**`);
+  for (const b of r.skipped) {
+    console.log(`  · [跳过] ${b.file} ${b.id} · ${b.why} · ${b.target}`);
+  }
   for (const b of r.bad) {
     console.log(`  ✗ [锚点] ${b.file} ${b.id} · ${b.why} · ${b.target}${b.anchor ? ` · ${b.anchor}` : ''}`);
   }

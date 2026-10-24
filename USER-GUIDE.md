@@ -242,7 +242,9 @@ npm start          # bot only (the container must already be running)
 ```
 
 > The UI, brain switching, and persona editing all live in the console. The command line just runs
-> the bot. To open the console: `node panel/server.js`, then browse to <http://127.0.0.1:8788/>.
+> the bot. To open the console: `node panel/server.js` (development default is
+> <http://127.0.0.1:8788/>; Windows installed/portable builds let the OS assign the port and the
+> launcher opens the printed URL, also recorded in `USER_ROOT/panel/.panel.json`).
 
 ---
 
@@ -344,7 +346,7 @@ So the Windows route is shorter — **no Docker, no WSL2, no Linux subsystem.**
 |---|---|---|
 | QQ protocol side | NapCat + Linux QQ, inside a Docker container | **NapCat for Windows, installed natively** |
 | Double-click launcher | `Estrella-Bot.app` | `Estrella-Bot.bat` |
-| Bridge + console | Same code · same ports (3001 / 3000 / 8788) | Same code · same ports |
+| Bridge + console | Same code · protocol ports 3001 / 3000 | Same code · protocol ports; console port is OS-assigned |
 | Config, brain switching, status | The console page | **Identical** |
 
 ### Installing (Windows)
@@ -427,7 +429,8 @@ Post the output of those to GitHub Issues — what this build needs most is exac
   Don't post it in a group, don't screenshot it, don't paste it into an issue.
 - ⚠️ **Never commit, screenshot, or sync `config.json` or `.env`.** The first holds your API key,
   the second your bot's QQ number. Both are already in `.gitignore`.
-- ✅ The console **listens on localhost only** (127.0.0.1:8788), and the container ports are
+- ✅ The console **listens on localhost only** (127.0.0.1; the port is assigned by the OS in
+  Windows builds and written to `USER_ROOT/panel/.panel.json`), and the container ports are
   **bound to the loopback interface**. Nobody else on your network can reach them.
   **Don't change that to `0.0.0.0`.**
 - ✅ **Start with a narrow allowlist.** Put it in one test group first; once you're happy with how it

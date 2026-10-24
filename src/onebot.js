@@ -1,6 +1,10 @@
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import path from 'node:path';
 import WebSocket from 'ws';
 import scoped from './logger.js';
+import { NAPCAT_DIR } from './user-root.js';
+import { imageMimeOf } from './images.js';
 import { probeForwardSegment } from './forward-probe.js';
 // L3 归一层（2026-10-20）：`status === 'ok' || retcode === 0` 这条判据会把
 // 「业务失败仍回 retcode 200」的后端当成成功（Lagrange 实证）；归一判据只有一份。
@@ -25,6 +29,57 @@ const log = scoped('onebot');
 export function triggerTextOf(parsed) {
   const bare = parsed?.bareText;
   return typeof bare === 'string' ? bare : String(parsed?.text ?? '');
+}
+
+/**
+ * 入站图片允许读的本地根（Windows 原生 NapCat 常只给 `file` 文件名，不给 URL）。
+ *
+ * ⚠️ **只认这些根之下的真实路径**（realpath 后复核）：入站段来自协议端，
+ *    但把它当成"任意绝对路径都能读"就是把本机文件读取权交给了对面。
+ *    不在根内的路径一律当没图，只记一条 warn。
+ */
+const INBOUND_IMAGE_MAX_BYTES = 6 * 1024 * 1024;
+
+function inboundImageRoots() {
+  const cands = [
+    process.env.NAPCAT_IMAGE_DIR,
+    path.join(NAPCAT_DIR, 'data', 'images'),
+    path.join(process.cwd(), 'napcat', 'data', 'images'),
+    path.join(process.cwd(), 'app', 'napcat', 'data', 'images'),
+  ];
+  const out = [];
+  for (const p of cands) {
+    if (!p) continue;
+    try { out.push(fs.realpathSync(p)); } catch { /* 没这个目录就跳过 */ }
+  }
+  return [...new Set(out)];
+}
+
+/** 把入站图片段里的本地 `file` 读成 data URL；不在允许根内/不是图/太大 → 空串。 */
+function localImageToDataUrl(rawFile) {
+  const raw = String(rawFile ?? '').trim();
+  if (!raw) return '';
+  // 只认 `file:///` 本地形式；`file://server/share` 是 UNC，直接拒绝。
+  if (/^file:/i.test(raw) && !/^file:\/\/\//i.test(raw)) return '';
+  const p = raw.replace(/^file:\/\/\/?/i, '');
+  if (!p) return '';
+  const roots = inboundImageRoots();
+  if (!roots.length) return '';
+  const isAbs = /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('/') || p.startsWith('\\\\');
+  const candidates = isAbs ? [p] : roots.map((r) => path.join(r, p));
+  for (const cand of candidates) {
+    try {
+      const real = fs.realpathSync(cand);
+      if (!roots.some((r) => real === r || real.startsWith(r + path.sep))) continue;
+      const st = fs.statSync(real);
+      if (!st.isFile() || st.size <= 0 || st.size > INBOUND_IMAGE_MAX_BYTES) continue;
+      const bytes = fs.readFileSync(real);
+      const mime = imageMimeOf(bytes);
+      if (!mime) continue;
+      return `data:${mime};base64,${bytes.toString('base64')}`;
+    } catch { /* 下一个候选 */ }
+  }
+  return '';
 }
 
 /**
@@ -90,8 +145,18 @@ export function flattenMessage(segments, selfId, opts = {}) {
         replyTo = String(data.id ?? '');
         break;
       case 'image': {
-        const url = String(data.url || data.file || '');
-        if (/^https?:\/\//i.test(url)) images.push(url);
+        // 2026-10-22 修「群里的图看不见，私聊能看」：Windows 原生 NapCat 在群里
+        // 常只给 `file`（本地文件名/绝对路径），`url` 为空；旧实现只认 http(s)，
+        // 群图在采集阶段就被丢掉。现在本地文件按允许根读成 data URL。
+        const rawUrl = String(data.url || '').trim();
+        const rawFile = String(data.file || '').trim();
+        let resolved = /^https?:\/\//i.test(rawUrl)
+          ? rawUrl
+          : (/^https?:\/\//i.test(rawFile) ? rawFile : '');
+        if (!resolved && /^data:image\//i.test(rawUrl)) resolved = rawUrl;
+        if (!resolved) resolved = localImageToDataUrl(rawFile || rawUrl);
+        if (resolved) images.push(resolved);
+        else if (rawUrl || rawFile) log.warn(`图片段没有可用地址（url='${rawUrl.slice(0, 40)}' file='${rawFile.slice(0, 60)}'）`);
         text += '[图片]';
         bareText += '[图片]';
         break;

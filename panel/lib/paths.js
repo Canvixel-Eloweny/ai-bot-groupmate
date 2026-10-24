@@ -52,9 +52,25 @@ if (typeof PKG.appId !== 'string' || !PKG.appId.trim() || typeof PKG.version !==
 }
 export const APP_ID = PKG.appId.trim();
 export const APP_VERSION = PKG.version.trim();
+// 关于页的仓库入口也走程序根这一份 package.json；前端不再手抄第二份 URL。
+export const APP_HOMEPAGE = String(PKG.homepage || '').trim();
 
-/** 面板监听端口。`QQBOT_PANEL_PORT` 让沙箱/多实例能改（既有约定，不变）。 */
-export const PORT = Number(process.env.QQBOT_PANEL_PORT) || 8788;
+/**
+ * 面板监听端口（P3-1 · 2026-10-24）。
+ *
+ * 产品形态（installed / portable）默认 **0 = 由系统分配**：8788 被别的进程占着也照样能起，
+ * 实际端口写进 `USER_ROOT/panel/.panel.json` 供启动器/壳/停止链读取。
+ * dev 形态保留 8788，只为本地书签与既有文档不变；Mac 本地 `.app` 也走 dev 形态。
+ *
+ * `QQBOT_PANEL_PORT` 仍是显式覆盖（沙箱/CI/多实例）—— 显式写非 0 就按固定端口监听，
+ * 撞车时照旧 EADDRINUSE 退出；只有默认值不再赌 8788 空闲。
+ */
+function requestedPanelPort() {
+  const raw = Number(process.env.QQBOT_PANEL_PORT);
+  if (Number.isInteger(raw) && raw >= 0 && raw <= 65535) return raw;
+  return MODE === 'dev' ? 8788 : 0;
+}
+export const PORT = requestedPanelPort();
 
 /**
  * 沙箱隔离开关：`test/sandbox.sh` 起面板时置 1。
@@ -246,10 +262,15 @@ export const PATROL_SNAPSHOT_FILE = path.join(DATA_DIR, 'patrol-state.json');
  */
 export const BACKEND_SOURCES = [
   'src/user-root.js',
+  'src/desktop/autostart.js',
+  'src/desktop/crash-record.js',
+  'src/redact-identifiers.js',
   'panel/server.js',
   'panel/lib/paths.js',
   'panel/lib/runtime-state.js',
   'panel/lib/http-io.js',
+  'panel/lib/last-exit.js',
+  'panel/lib/diagnostics.js',
   'panel/lib/config-io.js',
   'panel/lib/models.js',
   'panel/lib/proc.js',
@@ -277,6 +298,9 @@ export const BACKEND_SOURCES = [
   // 原生 NapCat（Windows 便携包，2026-10-12）：定位 / 起停 / WebUI token / 本地二维码图。
   // 进表的理由同 control.js —— 改了它必须重启面板才生效，否则"页面换了而取码方式还是旧的"。
   'panel/lib/napcat-native.js',
+  // 协议端进程级守护（2026-10-22）：纯判据 + 注入式实例，零 src 依赖（L1）。
+  // 进表的理由同 napcat-native.js —— 改了它必须重启面板才生效。
+  'panel/lib/protocol-guard.js',
   // D21：ZIP 编解码（读与写共用**同一份** crc32）与扩展包安装（staging / 备份 / 回滚）。
   // 进表的理由同上 —— 改了它们必须重启面板才生效，否则"页面换了而判据还是旧的"。
   'panel/lib/zip.js',

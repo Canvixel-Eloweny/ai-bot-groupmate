@@ -21,7 +21,10 @@ import { numDefault, numBounds, numOr } from './field-schema.js';
 // 扩展包（第 44 轮 B12d · EX-PLUGIN）的两个常量。
 // 与上面同理：上限数字与「什么算合法 id」都由**拥有它的模块** export，这里 import 使用，
 // 不在两处各写一遍。`plugin-manifest.js` 是零依赖叶子，import 它不会成环。
-import { isValidPluginId, PLUGIN_MAX } from './plugin-manifest.js';
+import { isValidPluginId, PLUGIN_MAX, PLUGIN_MAX_LIMIT } from './plugin-manifest.js';
+// 工具上限的默认值与天花板归 `tool-registry.js`（拥有「注册多少个工具」这份判据）。
+// 与上面同理：这里只做配置面的钳制，不另写一份数字。
+import { TOOL_MAX, TOOL_MAX_LIMIT } from './tool-registry.js';
 // 浏览锁定（D15 · 报告 E11 ②）。同样是"默认值与归一化只有一处"：
 // 那份判据叶子 export 了默认值与 `readBrowseLock`，这里 import 使用 ——
 // 不在这里再写一遍 `{enabled:false, hosts:[]}`（写了就是第二份会漂的真相）。
@@ -50,10 +53,13 @@ const TEXT_MAX = 300;
  * 但不能无限：这些字段每轮都要进 system 提示词，撑爆了模型会开始忽略别的部分。
  */
 const TEXT_LONG = 1200;
-/** 记忆条目数上限：条数一多，提示词里那一节会盖过人格本身 */
-const MEMORY_MAX = 60;
-/** 技能条数上限。技能是"按需注入"的，但同时命中的可能不止一条，所以上限要压住 */
-const SKILL_MAX = 20;
+/**
+ * ⚠️ 2026-10-23：这里**不再有条目数上限**。
+ * 以前 `MEMORY_MAX = 60` / `SKILL_MAX = 20` 会在归一化时直接 `break`，
+ * 面板保存一次就把多余条目从 config.json 永久丢掉 —— 与"插件写死 20 个"同一种
+ * 静默失效。真正撑爆提示词的是**注入条数**，不是存储条数；那两项预算现在可配
+ * （`memory.promptMax` / `skillPrompt.max|chars`），并且只在组提示词时封顶。
+ */
 /** 单条技能的背景文本上限 */
 const SKILL_BG_MAX = 1500;
 /**
@@ -183,10 +189,14 @@ export const PLAY_RULES = [
   { id: 'allAges', text: '全年龄向，不碰政治、不碰低俗。', safety: true },
   { id: 'noSpam', text: '主动找话题可以，但不刷屏、不抢话。', safety: true },
 ];
-/** 一轮里最多注入几条技能 —— 再多就会盖过人格本身，理由同自动记忆只放 12 条 */
-export const SKILL_IN_PROMPT = 3;
-/** 注入提示词的技能背景总字数上限（所有命中技能加起来） */
-export const SKILL_CHARS_IN_PROMPT = 2000;
+/**
+ * 一轮里最多注入几条技能 —— 再多就会盖过人格本身。
+ * 默认值住在 `field-schema.js` 的 `skillPromptMax`（2026-10-23 起可配），
+ * 这里保留同名导出只是为了让旧 import / 测试继续可用。
+ */
+export const SKILL_IN_PROMPT = numDefault('skillPromptMax');
+/** 注入提示词的技能背景总字数上限（所有命中技能加起来），默认见 field-schema */
+export const SKILL_CHARS_IN_PROMPT = numDefault('skillPromptChars');
 
 /**
  * 一轮里最多注入几条**手动记忆**。
@@ -196,11 +206,12 @@ export const SKILL_CHARS_IN_PROMPT = 2000;
  * 是整份 system 提示词里最大的一个口子（固定部分合计约 5.6 万字符）。
  * 后果不只是费钱：这一节比人格本身还长，小模型会被它带跑偏。
  *
- * 取 12 与「自动记忆只放 12 条」对齐，理由一致：**记忆是背景，不是主角**。
+ * 默认 12 与「自动记忆只放 12 条」对齐，理由一致：**记忆是背景，不是主角**。
+ * 2026-10-23 起可配（`custom.memory.promptMax`，默认值在 field-schema）。
  * 超出部分不是被删掉，只是**不进这一轮的提示词**（数据仍在，面板上能看能改），
  * 所以面板必须把这个上限写明，免得用户以为"我填了却不生效"。
  */
-export const MANUAL_MEMORY_IN_PROMPT = 12;
+export const MANUAL_MEMORY_IN_PROMPT = numDefault('memoryPromptMax');
 
 /*
  * QQ 内置表情表（`FACE_PRESETS`，15 张黄豆脸）已于 2026-10-17 **整表删除**。
@@ -342,6 +353,11 @@ const CUSTOM_DEFAULTS = {
    */
   skills: [],
   /**
+   * 技能注入预算（2026-10-23）。默认值只在 `field-schema.js` 写一份；
+   * 这里保留在默认结构里，是为了让「老配置没这一段」时 readCustom 有确定形状。
+   */
+  skillPrompt: { max: SKILL_IN_PROMPT, chars: SKILL_CHARS_IN_PROMPT },
+  /**
    * 扩展包白名单（第 44 轮 B12d · EX-PLUGIN）。
    *
    * ⚠️ 为什么是**白名单**而不是"目录里有就加载"：
@@ -362,7 +378,12 @@ const CUSTOM_DEFAULTS = {
    * 两份**不是**同一件事（一个是"包自带的默认"，一个是"这个人填的"），
    * 合成一份会让"升级包之后新键从哪来"说不清。
    */
-  plugins: { enabled: [], settings: {} },
+  plugins: { enabled: [], settings: {}, max: PLUGIN_MAX, hookTimeoutMs: numDefault('hookTimeoutMs') },
+  /**
+   * 工具注册上限（2026-10-23）。工具 schema 会进每一轮请求前缀，所以它有一个
+   * **可配的上限**而不是写死的 24；默认值与天花板由 `tool-registry.js` 拥有。
+   */
+  tools: { max: TOOL_MAX },
   /**
    * 浏览锁定（D15 · 报告 E11 ②）—— 抓取**范围**：只允许去名单内的站点。
    *
@@ -491,7 +512,7 @@ const CUSTOM_DEFAULTS = {
    *                   所以自动记忆单独存 panel/auto-memory.jsonl（见 src/memory.js），
    *                   谁写谁读各有一个明确的归属。这里只留一个开关。
    */
-  memory: { auto: false, manual: [] },
+  memory: { auto: false, manual: [], promptMax: MANUAL_MEMORY_IN_PROMPT },
   /** 安全设置 */
   safety: { banned: [], antiFlood: false, filterLinks: false },
 };
@@ -515,8 +536,12 @@ const num = (v, def, min, max) => {
   return Math.min(max, Math.max(min, n));
 };
 
-/** 记忆条目：统一形状，非法项直接丢弃（宁缺勿烂） */
-function memoryItems(v, limit = MEMORY_MAX) {
+/**
+ * 记忆条目：统一形状，非法项直接丢弃（宁缺勿烂）。
+ * ⚠️ 2026-10-23：**不按条数截断**。保留所有合法条目；注入条数由
+ * `activeManualMemory()` 按 `custom.memory.promptMax` 封顶。
+ */
+function memoryItems(v) {
   if (!Array.isArray(v)) return [];
   const out = [];
   for (const it of v) {
@@ -532,7 +557,6 @@ function memoryItems(v, limit = MEMORY_MAX) {
       ...(it.score === undefined ? {} : { score: num(it.score, 0.5, 0, 1) }),
       ...(it.from === undefined ? {} : { from: str(it.from, 40) }),
     });
-    if (out.length >= limit) break;
   }
   return out;
 }
@@ -664,13 +688,16 @@ function skillItems(v) {
       // 知识包不带这个字段：它只提供背景知识，不换人。
       ...(it.kind === 'persona' ? { fields: cardFields(it.fields) } : {}),
     });
-    if (out.length >= SKILL_MAX) break;
+    // ⚠️ 2026-10-23：这里**不再按 20 条截断**。保存全部；注入条数由
+    // `pickSkillsForPrompt()` 按 `custom.skillPrompt.max` 封顶。
   }
   return out;
 }
 
 /**
- * 扩展包白名单归一化：只留**合法英文 id**，去重，压到上限（第 44 轮 B12d · EX-PLUGIN）。
+ * 扩展包白名单归一化：只留**合法英文 id**、去重（第 44 轮 B12d · EX-PLUGIN）。
+ * ⚠️ 2026-10-23：这里**不再按数量截断**。截断等于静默改用户意图；真正的加载上限
+ *    在 `planLoad()` 里按白名单次序判定，超限项标成 `over` 并由面板 / 日志显示。
  *
  * ⚠️ 「什么算合法 id」的判据**不在这里**，来自 `src/plugin-manifest.js` 的
  *    `isValidPluginId()`。清单侧与白名单侧必须用同一条正则，各写一遍必然漂移 ——
@@ -689,7 +716,6 @@ function pluginIds(v) {
     if (!s || seen.has(s) || !isValidPluginId(s)) continue;
     seen.add(s);
     out.push(s);
-    if (out.length >= PLUGIN_MAX) break;
   }
   return out;
 }
@@ -724,7 +750,14 @@ function pluginSettings(v, enabled = []) {
 /** `custom.plugins` 的**唯一归一化口**（白名单 + 各包设置）。 */
 function pluginFields(v) {
   const enabled = pluginIds(v?.enabled);
-  return { enabled, settings: pluginSettings(v?.settings, enabled) };
+  // 上限是**可配的**：缺省取 `PLUGIN_MAX`，坏值 / 越界一律钳回合法区间。
+  // 不改写用户原值（config.json 里写 5000 仍是 5000），只在生效值上钳 ——
+  // 面板显示的是生效值，回写时才由 draft 提交。
+  const max = Math.max(1, Math.min(PLUGIN_MAX_LIMIT, Math.trunc(Number(v?.max)) || PLUGIN_MAX));
+  // 钩子单条超时（2026-10-23）：与 max 同一取法 —— 坏值 / 越界钳回合法区间，
+  // 不改写用户原值，只在生效值上钳。
+  const hookTimeoutMs = numOr('hookTimeoutMs', v?.hookTimeoutMs);
+  return { enabled, settings: pluginSettings(v?.settings, enabled), max, hookTimeoutMs };
 }
 
 /** 免打扰时段：整数小时。**区间与默认值都取自 src/field-schema.js**，这里不写第二份数字。
@@ -753,12 +786,24 @@ export function readCustom(raw) {
     enhance: enhanceFields(c.enhance),
     personaResetOnChange: c.personaResetOnChange !== false,
     playRules: c.playRules !== false,
+    // 技能条目本身不再截断；真正进提示词的条数 / 字数由 skillPrompt 决定。
     skills: skillItems(c.skills),
+    // ⚠️ 必须出现在这个返回对象里：readCustom 是白名单投影，漏了它，
+    //    面板保存一次就会把用户设的预算冲回默认值（config.json 里也存不住）。
+    skillPrompt: {
+      max: numOr('skillPromptMax', c.skillPrompt?.max),
+      chars: numOr('skillPromptChars', c.skillPrompt?.chars),
+    },
     // 扩展包白名单（EX-PLUGIN）。**只有这里有值，别处不许再解析一遍** ——
     // 消费方 `src/plugin-host.js` 的 `loadExtensions({enabled})` 直接吃这个数组。
     // `settings` 依赖 `enabled` 的结果（没启用的包不留设置）—— 所以先算出 enabled，
     // 一个变量只承担一个用途（第 49 轮那条纪律）。
     plugins: pluginFields(c.plugins),
+    // 工具注册上限（2026-10-23）：可配，默认 / 天花板归 `tool-registry.js`。
+    // 与 plugins.max 同一条纪律 —— 钳生效值，不改用户原值。
+    tools: {
+      max: Math.max(1, Math.min(TOOL_MAX_LIMIT, Math.trunc(Number(c.tools?.max)) || TOOL_MAX)),
+    },
     replyStyle: {
       length,
       mentionAt: bool(c.replyStyle.mentionAt),
@@ -816,6 +861,8 @@ export function readCustom(raw) {
     memory: {
       auto: bool(c.memory.auto),
       manual: memoryItems(c.memory.manual),
+      // 只封顶"这一轮带几条"，不封顶保存条数（2026-10-23）。
+      promptMax: numOr('memoryPromptMax', c.memory?.promptMax),
     },
     safety: {
       banned: (Array.isArray(c.safety.banned) ? c.safety.banned : [])
@@ -845,9 +892,11 @@ export function patchCustom(existing, patch) {
  * **不会让任何一条记忆从界面上消失**，只影响"进不进这一轮提示词"。
  */
 export function activeManualMemory(custom) {
+  // 裸对象（没有 memory.promptMax）也要能用：numOr 在缺省/非法时回落默认值。
+  const cap = numOr('memoryPromptMax', custom?.memory?.promptMax);
   return (custom?.memory?.manual || [])
     .filter((m) => m.on !== false)
-    .slice(0, MANUAL_MEMORY_IN_PROMPT);
+    .slice(0, cap);
 }
 
 /**

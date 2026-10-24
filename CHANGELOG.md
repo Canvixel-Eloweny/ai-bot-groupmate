@@ -3,6 +3,211 @@
 本项目在 `main` 上持续迭代，每个对外可见的版本打一个 tag。以下按**批次**记录对外可见的变化。
 内部批次台账（含未交付项与裁决记录）是**内部件，不随公开仓库发布**。
 
+## Unreleased — 2026-10-24
+
+**Windows desktop builds can now run in GitHub Actions (`P3-5`).** A manual
+`workflow_dispatch` (`build_windows=true`) runs the full four-layer regression first and only
+then builds the unsigned Windows installer on `windows-latest` with NSIS 3.13. The job fails on
+any `makensis` warning, on a fake-sized EXE, on a dirty source tree, or when the published
+source provenance is missing. The artifact contains the EXE plus its payload manifest,
+`BUILD-INFO.txt`, build receipt and SHA-256 list, retained for 14 days. A cross-lineage
+`sourceCommit` is recorded so the CI payload can be compared file-by-file with a local portable
+package; the comparison checks every mapped hash, both `clean` markers and the ④ SHA-256 list.
+No tag, Release, version bump or signing is performed by this workflow.
+
+**Differential update evaluated, not adopted (`P3-3`).** The Windows updater stays on full
+signed NSIS packages. On an isolated VM test root, full downloads completed 16/16 across
+5/10/20 Mbps and unthrottled (5 Mbps median 242.3 s), all four injected download-failure modes
+recovered 5/5, the `after-backup` install transaction recovered 3/3, and three test-mode `/S`
+installs completed in 73–74 s with `current=0.1.5` / `previous=0.1.4` / health ok / userdata
+intact. Installer-level delta was measured on the best adjacent Electron pair: a CDC patch was
+99.90% of the full installer because the NSIS payload is one solid LZMA stream; the real
+0.1.4 → first Electron transition was also 99.90%. A file-level diff would be ~0.09% but would
+require replacing the NSIS install path, which is out of scope at the current 140.9 MB size
+(below the checklist's 200–280 MB trigger). Decision: no-go; no production updater code changed;
+raw data and reproduction steps are in the P3-3 evaluation report.
+
+**`launch.openOnStart=false` now really stays in the background.** The Windows launcher
+previously opened the Electron shell before consulting the launch preference, so turning off
+"open the interface when ready" still produced a visible window. The launcher now reads
+`launch.openOnStart` first and starts the shell with `--hidden` when the setting is off (or when
+the auto-start shortcut passes `--hidden`). The launch log records this as skipped/background
+instead of "opened", the no-shell fallback no longer opens a browser window, and an older app
+without the new helper falls back to the old `--hidden` behavior (fail-open). Tray-unavailable
+still shows the window as the accessibility fallback.
+
+**Desktop console recovery (`P3-2`).** The Electron shell now handles "restart panel" and
+"quit console" over IPC instead of relying only on HTTP. A healthy panel still uses its own
+idempotent restart route (so a no-op stays a no-op and the port is preserved); when the panel
+process is gone or unresponsive, the shell restarts it directly from the program root, using the
+shared runtime and waiting for the discovery file plus `/api/health` identity. If the window is
+open while the backend is down, the panel page shows "控制台后端没有响应" with restart/quit
+actions instead of an endless spinner, and the local error page can restart the backend in place.
+"退出控制台" stops the panel and shell but leaves the standalone bot alone, matching the existing
+page wording; the tray "退出" still runs the full quit chain. Browser access is unchanged: both
+HTTP routes and their regression tests remain, and the preload surface is limited to seven named
+actions with no generic IPC bridge.
+
+**System-assigned console port.** Installed and portable Windows builds no longer assume
+`127.0.0.1:8788` is free. The panel binds to port 0 (OS-assigned), writes the actual
+`port`/`url`/`pid` to `USER_ROOT/panel/.panel.json` right after listening, and the launcher,
+Electron shell, stop chain and diagnostics all read that discovery file instead of guessing a
+fixed port. Host/Origin checks now require the actual listening port rather than any loopback
+port. A panel self-restart keeps the same port so the page origin stays valid, and a clean quit
+removes only its own discovery file. `8788` remains the development default and the legacy port
+used only to recognize/stop pre-P3-1 panels; explicit `QQBOT_PANEL_PORT` still fixes a port for
+sandboxes and tests.
+
+**Desktop settings, close behavior, and scoped export.** The theme, font and background controls
+leave the topbar for a bottom-left gear that opens a settings layer: appearance (light/dark,
+seven accent colors, eight backgrounds with speed, sans/serif), startup (open mode, Windows
+auto-start, protocol auto-start, open-on-start), about (version/runtime/Electron, update check,
+GitHub links) and data (scoped export with server-reported sizes, full bundle, diagnostics).
+Appearance stays in `localStorage`; launch preferences stay in `config.json`. Close behavior is
+now a real two-state setting (`launch.closeAction`: `tray` by default, or `quit`); a tray that is
+unavailable degrades to minimize instead of hiding the window, a minimized window is no longer
+mistaken for a hidden one by the tray guard, and an absent Explorer is treated as an unavailable
+tray. `launch.autoProtocol=false` skips
+both the startup launch and the process guard. The theme preference now survives reloads
+(`splash.js` finally defines the boot hook it was reading), and the topbar no longer carries a
+second set of appearance controls. Scoped export only shows ranges that have a real data source;
+the group-profile range is deliberately not shown until its data source and redaction rules are
+settled. The feedback form is an external GitHub Issues link only — nothing is uploaded and no
+token is needed.
+
+**Configurable plugin limits, restored host patches, and a vision token floor.** The hard-coded
+20-plugin / 24-tool caps are now `custom.plugins.max` (default 256) and `custom.tools.max`
+(default 64); over-limit entries are reported in the panel and the log instead of being silently
+dropped, and load order follows the whitelist instead of directory names. The five host patches
+that were previously hand-applied to 0.1.4 are now part of the tree: the `after-incoming-message`
+hook, `chatKey` / sender fields in hook payloads, an anchored history window, batched history
+reclaim, and a panel `plugin.set` change handler. The panel now shows per-plugin hook/tool counts,
+dropped hooks, tool-registration failures and empty plugins, and plugin settings persist across
+reloads. Requests containing images now have a 700-token output floor, so low `max_tokens`
+values no longer produce empty image replies (the old 150/400 workaround is no longer needed).
+
+**Topbar HUD status island.** The five status chips in the topbar are now a single glass island:
+it wakes up with a "Welcome to Estrella" expansion, rotates through usage / bot status / memory
+(and more), shows a brief gray halo clipped inside the pill during item changes, and opens a
+popover with all status items. Settings live in the browser and are editable under
+**维护 → HUD调整** (items, rotation interval, width, height, animation speed, replay entrance).
+The island is glass-only and follows the theme automatically; there is no HUD-core material.
+
+**Update chain P0 closure.** GitHub release assets redirect to
+`release-assets.githubusercontent.com`; that host is in the allowlist (shipped in `5ec2155`) and
+the exact five-host set, the final-redirect URL validation, and the offline installer ceiling are
+now pinned by contracts and mutations. The offline installer upload ceiling rises from 64 MiB to
+256 MiB to accommodate the Electron payload.
+
+**Windows desktop shell (MVP).** A new Electron 44.9.3 shell wraps the existing panel without
+moving the backend: the external Node process stays on `127.0.0.1:8788`, and the shell owns only
+the window, tray, notifications, auto-start and lifecycle. It adds single-instance focus, a tray
+with close-to-tray plus a one-time confirmation, a minimize fallback when the tray is unusable,
+a 40 DIP `titleBarOverlay` with native window buttons, theme-matched overlay colors, window state
+with off-screen clamping, Windows auto-start with on/off/blocked states, and a security baseline
+(`contextIsolation`, `sandbox`, `nodeIntegration:false`, navigation/window-open guards). Tray
+"Quit" stops the panel and the bot in order and leaves no orphan process. Native notifications
+are wired, but the Windows Toast still needs a Start Menu shortcut with the matching AUMID;
+packaging and signing are not part of this change.
+
+**Desktop shell: panel controls and notifications.** The launch card now has a Windows
+auto-start switch that reads the Startup shortcut and `StartupApproved` state (on / off /
+blocked) instead of a config copy; enabling it clears a Task Manager block, and the panel shows
+the blocked state explicitly. When the window is hidden, the panel sends shell notifications for
+an update that finished downloading and for the bot stopping; the Toast identity still depends on
+the AUMID shortcut noted above.
+
+**Windows desktop shell, part 2: Electron in the installer payload.** The shell is no longer a
+developer-only add-on. `versions/<version>/app/electron/` now ships the shell code together with
+the full Electron 44.9.3 win32-x64 runtime, pinned by version, size and SHA-256 in
+`installer/toolchain.json`. The launcher resolves the shell from the versioned program root, so
+rolling back an app also rolls back its shell; `app.isPackaged` is no longer used to decide
+whether DevTools is enabled in an installed build, and the shell's browser data lives under the
+user data root so `/DELETEUSERDATA` removes it. The measured payload is about 473 MB / 2327 files
+(368.2 MiB of it Electron); packaging and signing are still separate approval gates. A 4-second
+show fallback covers sessions where a hidden window never paints, so the first launch still opens
+a visible window; the installed EXE is 134.3 MiB, well below the 256 MiB update ceiling.
+
+**Windows desktop shell, part 3: large-package updates and Toast identity.** The update chain
+now treats a 150–250 MB installer as the normal case. The old `runtime/node.previous` is moved
+aside through the install journal instead of being deleted before the new runtime is copied, and
+a rollback without a previous runtime no longer flips the pointer (which would pair an old app
+with a new runtime). PowerShell 5.1 writes are BOM-free and atomic, so a rollback helper killed
+mid-write cannot leave a half pointer. Downloads carry a `.part` sidecar bound to the version,
+size and SHA-256 (a rebuilt same-version package no longer resumes from an unrelated prefix),
+manifest size is capped before download, disk space is checked, old cache installers are swept,
+and offline uploads stream to disk instead of buffering the whole package in memory. On Windows
+the shell now writes its AppUserModelID onto the Start Menu shortcut, which is what makes native
+Toast notifications appear; installing an update asks the shell to quit before the installer
+touches the versioned shell directory.
+
+**Desktop shell, part 4: crash records and a one-click diagnostic bundle.** The shell now starts
+Electron's crash reporter and appends main-process, renderer-process, GPU/utility, and load-failure
+events to a capped JSONL under the user data root, plus a `shell-exit.json` written on exit. The
+panel writes `.last-exit.json` on normal shutdown and on EADDRINUSE, and shows the last exit on the
+export card. A new **Diagnostics** button downloads a fixed-list ZIP (shell/panel/bridge-journal
+tails, crash events, install/current/rollback, update logs) instead of scanning directories, so
+`config.json`, `.token`, chat logs and NapCat configuration never enter the package; every line is
+run through credential masking plus QQ/group-number and user-name redaction, and a final residual
+scan replaces any suspicious line fail-closed. The CLI diag output now also includes shell logs,
+crash events, last-exit and rollback state.
+
+## 0.1.4 — 2026-10-21
+
+**Windows: feature port, reliability fixes, and a reply-length control.** This release brings the
+Win-v0.1.2 line into the main tree and closes the reliability gaps found while exercising it.
+
+### Conversation and persona
+
+- **Persona cards can be scoped per group.** A card no longer has to replace the whole persona;
+  memory can be attached per card and is recalled with relevance ordering.
+- **Ten-dimension card grading** is visible in the panel, and an AI adoption pass can map an
+  unstructured card onto the standard fields before the user saves it.
+- **Peak/valley gating, anti-template constraints, conversational waiting, and restricted image
+  tools** are now part of the reply path instead of separate config-only experiments.
+- **Friends, nightly output, heat patrol, and the fake-QQ virtual entry** have panel controls and
+  can be exercised without editing `config.json` by hand.
+
+### Reliability and data safety
+
+- Fixed reply-quote handling, trickle timeouts, single-flight behavior, session LRU, local-address
+  detection, memory ordering, atomic writes, prototype-key handling, ZIP limits, request-body
+  closes, and export redaction (B1–B6).
+- The protocol side has a provider table, normalized failure classes, one argument-order decision,
+  and a health snapshot; switching backends no longer depends on hand-written branches.
+- The Windows installer was rebuilt from the 0.1.4 tree; the real-machine 0.1.3 → 0.1.4 upgrade
+  preserved the data marker and reported `health ok`.
+
+### Panel
+
+- The reply-length setting is a horizontal progress bar with live legend and keyboard semantics.
+- Peak/valley, patrol, fake-QQ, and persona adoption no longer require a manual config edit.
+
+## 0.1.3 — 2026-10-19
+
+**Windows: per-user installer, signed updates, and data-safe upgrades.** The Windows route moved
+from a portable folder to a standard installer while keeping user data outside the program tree.
+
+### Install and data layout
+
+- **NSIS per-user installation** with a standard uninstaller, a desktop shortcut, and an Edge app
+  window; installing or upgrading does not overwrite `userdata`.
+- **Program root and user-data root are separated.** Config, panel state, data, persona, plugins,
+  skills, and the protocol-side tree live under the user data root; the tool layer migrates the
+  old portable layout before first use.
+- **The protocol side is optional at install time.** The public payload does not bundle NapCat;
+  the installer can fetch and place it, and the installed app can report whether it is present.
+
+### Updates and rollback
+
+- **Signed update manifests (Ed25519).** The app checks GitHub, verifies the manifest over raw
+  bytes, downloads with size/SHA-256 checks, and waits for an explicit user click before install.
+- **Rollback, offline update, and retention.** A failed start can swap back to the previous
+  runtime, offline manifests/installers follow the same signature and hash rules, and retention
+  keeps `current` plus `previous` only.
+- **`/api/health`** gives the installer and launcher a single readiness signal without exposing
+  paths or tokens.
+
 ## 0.1.2 — 2026-10-15
 
 **Windows: bug fixes and a one-command startup.** Everything below was reproduced on real

@@ -10,12 +10,14 @@ import { fileURLToPath } from 'node:url';
 import {
   HEAT_BASE, HEAT_FLOOR, HEAT_NIGHT_FLOOR, HEAT_JITTER, HEAT_CHAIN_MAX, HEAT_COOL_STEP,
   heatIsNight, heatFloor, newHeatEntry, normalizeHeatEntry, noteHeatTurn,
-  heatCoolOf, heatWeightOf, heatBandOf, chatHeatOf, CHAT_HEAT_TARGET,
+  heatCoolOf, heatWeightOf, heatBandOf, chatHeatOf, CHAT_HEAT_TARGET, heatLine,
+  FEEDBACK_HEAT_FLOOR, feedbackHeatOf, noteFeedbackHeat,
 } from '../src/heat.js';
 import {
   PATROL_DEFAULTS, patrolTuningOf, patrolDigestOf, patrolPlanOf, patrolEventOf,
 } from '../src/patrol.js';
 import { Brain } from '../src/brain.js';
+import { restLineOf, REST_LINE_SLEEPY, REST_LINE_VERY_TIRED } from '../src/reply-text.js';
 import { readCustom } from '../src/custom-config.js';
 import { DECISION_KINDS, TIER_OF_KIND } from '../src/tier.js';
 
@@ -218,7 +220,9 @@ const NIGHT = new Date(2026, 9, 18, 1, 0, 0).getTime();
 
   const idx = read('src/index.js');
   ok('index：记账（noteHeatTurn + heatEntryOf）', /noteHeatTurn\(heatEntryOf\(/.test(idx));
-  ok('index：判定前算权重并传给 decide', /const heatWeight = session \? heatWeightOf\(heatEntryOf\(/.test(idx)
+  ok('index：判定前算权重并传给 decide',
+    /const heatEntry = session \? heatEntryOf\(session\.key, evt\.user_id\) : null;/.test(idx)
+    && /const heatWeight = heatWeightOf\(heatEntry\);/.test(idx)
     && /patrol: evt\.isPatrol \? evt\.patrol : null/.test(idx));
   ok('index：巡逻挂在既有 tick 上（runPatrolTick 在 tickProactive 里被调）',
     /if \(runPatrolTick\(now\.getTime\(\)\) > 0\) return;/.test(idx));
@@ -253,6 +257,33 @@ const NIGHT = new Date(2026, 9, 18, 1, 0, 0).getTime();
   ok('面板：现状表控件已登记 CTRL_KINDS', /'patrolView',/.test(sch));
   ok('面板：渲染器存在（读 S.state.patrol，缺失不报错）',
     /patrolView: \(\) => \{/.test(read('panel/next/app.js')) && /\(S\.state \|\| DEMO\)\.patrol/.test(read('panel/next/app.js')));
+
+  // ── §C1：关系温度进提示词（2026-10-22）─────────────────────────────────
+  const noon = Date.parse('2026-10-22T12:00:00');
+  const hotEntry = { w: 0.8, at: noon, decayedAt: noon, chain: 0 };
+  ok('heatLine：满温不出行（默认提示词逐字不变）', heatLine(hotEntry, noon) === '');
+  const coolLine = heatLine({ ...hotEntry, w: 0.72 }, noon);
+  ok('heatLine：冷温出行且带百分数', coolLine.includes('关系温度') && coolLine.includes('72%'), coolLine);
+  ok('heatLine：半夜带标记', heatLine({ ...hotEntry, w: 0.5 }, Date.parse('2026-10-22T00:30:00')).includes('半夜'));
+  ok('brain：接住 heatLine 入参', /opts\.heatLine/.test(read('src/brain.js')));
+  ok('index：同一 entry 两处共读', /heatLineText = heatEntry \? heatLine\(heatEntry\)/.test(read('src/index.js')));
+
+  // ── §C2：群级反馈热（看过没出声 → 降温；回话 → 回满）────────────────────
+  ok('反馈热：沉默一轮 ×0.5', noteFeedbackHeat(1, false) === 0.5);
+  ok('反馈热：连沉默到地板 0.2', noteFeedbackHeat(noteFeedbackHeat(1, false), false) === 0.25
+    && noteFeedbackHeat(0.25, false) === FEEDBACK_HEAT_FLOOR);
+  ok('反馈热：回话回满', noteFeedbackHeat(0.2, true) === 1);
+  ok('反馈热：坏值按满热处理', feedbackHeatOf(undefined) === 1 && feedbackHeatOf('x') === 1);
+  ok('index：巡逻概率乘反馈热', /chatHeatFor\(chat\.key, nowMs\) \* feedbackHeatFor\(chat\.key\)/.test(idx));
+  ok('index：沉默/回话两条记账都在', /noteFeedbackTurn\(session\.key, false\)/.test(idx)
+    && /noteFeedbackTurn\(session\.key, true\)/.test(idx));
+
+  // ── §C3：困倦分级（沿用 sleep 快照，不新增第二套深夜判据）────────────────
+  const snapAt = (ms) => ({ enabled: true, asleep: false, bedAt: noon + ms, wakeAt: 0 });
+  ok('困倦：两小时内 → 有点犯困', restLineOf(snapAt(90 * 60000), { now: noon }) === REST_LINE_SLEEPY);
+  ok('困倦：半小时内 → 犯困', /犯困/.test(restLineOf(snapAt(20 * 60000), { now: noon })));
+  ok('困倦：已过入睡点但没睡 → 很困', restLineOf(snapAt(-60000), { now: noon }) === REST_LINE_VERY_TIRED);
+  ok('困倦：总闸关着 → 一个字都不加', restLineOf({ enabled: false, asleep: false, bedAt: noon + 60000 }, { now: noon }) === '');
 }
 
 if (fails.length) {

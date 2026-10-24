@@ -59,7 +59,7 @@ OneBot 事件
 | L1 静态契约 | `scripts/check-wb.mjs` | 结构自洽：函数有定义、能力键两处同步、唯一入口成立…… |
 | L2 行为回归 | `test/smoke.js` | 判据真跑一遍（含真进程用例） |
 | L3 预设层 | `test/verify-presets.mjs` | 各家大脑预设与页面一致 |
-| L4 面板层 | `test/verify-panel.mjs` | 页面在 jsdom 里真跑一遍 |
+| L4 面板层 | `test/panel-boot.mjs` · `test/panel-dom.mjs` | 面板启动自检 + 真实浏览器逐页遍历（DOM / 交互 / 响应式） |
 | 变异测试 | `test/mutations/` | **判据本身**能不能拦住改坏 |
 
 ## 5. 刻意不做的事（以及为什么）

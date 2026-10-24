@@ -42,7 +42,7 @@ for (const r of ['/api/fake-qq/start', '/api/fake-qq/send', '/api/fake-qq/stop']
   ok(`WRITE_ROUTES 收下了 ${r}`, writeBlock.includes(`'${r}'`));
 }
 ok('只读状态路由**没有**被误收进写路由', !writeBlock.includes("'/api/fake-qq/state'"));
-ok('面板退出时收掉会话（不留孤儿）', /function shutdown\(\)[\s\S]{0,220}fakeDispose\(\)/.test(serverSrc));
+ok('面板退出时收掉会话（不留孤儿）', /function shutdown\([^)]*\)[\s\S]{0,800}fakeDispose\(\)/.test(serverSrc));
 ok('起会话前问过真机器人在不在跑', /apiFakeStart[\s\S]{0,400}bridgeRunning\(\)/.test(serverSrc));
 
 // ── ② 面板界面接线 ───────────────────────────────────────────────────────

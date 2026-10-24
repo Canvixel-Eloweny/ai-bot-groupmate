@@ -15,7 +15,7 @@ import path from 'node:path';
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 /** install-commit 的改目录残留：`<ver>.old-<stamp>` / `<ver>.new-<stamp>`。 */
 const RESIDUE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\.(?:old|new)-/;
-const RUNTIME_RESIDUE = /^node\.(?:previous|failed|new|old)(?:$|-)/;
+const RUNTIME_RESIDUE = /^node\.(?:previous|failed|new|old)(?:$|[-.])/;
 
 function realOrResolved(p, fsApi) {
   try { return fsApi.realpathSync(p); } catch { return path.resolve(p); }

@@ -41,7 +41,7 @@ const CR = 'panel/lib/config-route.js';
 // 第 19 轮：/api/state 的组装搬进了这里
 const STCOL = 'panel/lib/state-collector.js';
 
-const HOST_BLOCK = `  if (!LOOPBACK_HOST_RE.test(String(req.headers.host || ''))) {
+const HOST_BLOCK = `  if (!isLoopbackHost(String(req.headers.host || ''))) {
     audit.done(403);
     return sendJson(res, { ok: false, error: 'bad host', reason: 'host-not-loopback' }, 403);
   }`;
@@ -68,11 +68,14 @@ const S1 = {
 // ── S2：把常量本身放宽（调用点一个字没动） ─────────────────────────────────
 const S2 = {
   id: 'S2',
-  note: '`LOOPBACK_HOST_RE` 放宽成 `/.*/` —— 调用点 `LOOPBACK_HOST_RE.test(` 完全没变，只验"调用了没"的判据会假绿。预期 BLOCKED（由"常量必须锚定且含 127.0.0.1"那条拦）',
-  anchor: /const LOOPBACK_HOST_RE = \/\^\(\?:127/,
-  count: 1,
+  note: 'Host/Origin 的「端口等于 ACTUAL_PORT」被放宽成「任意端口」—— 调用点没变，只验"调了 isLoopbackHost"的判据会假绿。预期 BLOCKED（§3g 要求与实际端口比相等）',
+  anchor: /return isLoopbackName\(u\.hostname\) && Number\(u\.port\) === ACTUAL_PORT;/g,
+  count: 2,
   file: SRV,
-  apply: (s) => s.replace(/const LOOPBACK_HOST_RE = [^;\n]+;/, 'const LOOPBACK_HOST_RE = /.*/;'),
+  apply: (s) => s.replaceAll(
+    'return isLoopbackName(u.hostname) && Number(u.port) === ACTUAL_PORT;',
+    'return true;',
+  ),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };

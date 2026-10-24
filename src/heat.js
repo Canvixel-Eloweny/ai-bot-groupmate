@@ -125,6 +125,43 @@ export function heatBandOf(w) {
   return '很不耐烦';
 }
 
+/**
+ * 关系温度进提示词的那一行（2026-10-22 · DeepSleep 移植）。
+ *
+ * ⚠️ 这是**状态**不是指令：只说它现在跟这个人到哪一步，不说"你该怎么答"
+ *    （后者是人格文件的地盘）。满温/没有快照时返回空串 —— 默认提示词逐字不变。
+ */
+export function heatLine(entry, now = Date.now()) {
+  if (!entry) return '';
+  const w = Number(entry.w);
+  if (!Number.isFinite(w) || w >= HEAT_BASE) return '';
+  const pct = Math.round(w * 100);
+  const band = w >= HEAT_FLOOR ? '有点冷却' : (w >= HEAT_NIGHT_FLOOR ? '比较冷' : '很冷');
+  const night = heatIsNight(now) ? '（半夜）' : '';
+  return `【关系温度】跟这个人现在大约 ${pct}%${night}（${band}）。`;
+}
+
+/** 群级反馈热的底线：再冷也不会把巡逻概率压成 0（否则冷场会自我锁死）。 */
+export const FEEDBACK_HEAT_FLOOR = 0.2;
+/** 看过积压但没出声：热值乘这个数。 */
+const FEEDBACK_HEAT_DECAY = 0.5;
+
+/** 读一个群级反馈热；坏值按 1（满热）处理 —— 宁可多看一眼，也别把它永久冻住。 */
+export function feedbackHeatOf(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(1, Math.max(FEEDBACK_HEAT_FLOOR, n));
+}
+
+/**
+ * 记一轮巡逻的结果：真的出声 → 回满；看过但没出声 → 乘 0.5，地板 0.2。
+ * 只影响「积压触发」那条概率门；@ / 私聊 / 超时不看它。
+ */
+export function noteFeedbackHeat(prev, spoke) {
+  if (spoke) return 1;
+  return Math.max(FEEDBACK_HEAT_FLOOR, feedbackHeatOf(prev) * FEEDBACK_HEAT_DECAY);
+}
+
 
 /**
  * 群活跃度（0–1）：近窗口内有多少条消息，越近越满。

@@ -40,6 +40,22 @@ async function download(url, dest) {
   }
 }
 
+function extractZip(zip, extractDir) {
+  fs.mkdirSync(extractDir, { recursive: true });
+  if (process.platform === 'win32') {
+    const r = spawnSync('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      `Expand-Archive -LiteralPath ${JSON.stringify(zip)} -DestinationPath ${JSON.stringify(extractDir)} -Force`,
+    ], { encoding: 'utf8', windowsHide: true });
+    if (r.error || r.status !== 0) throw new Error(`解压失败：${r.error ? r.error.message : r.stderr || `退出码 ${r.status}`}`);
+    return;
+  }
+  const r = spawnSync('unzip', ['-q', zip, '-d', extractDir], { encoding: 'utf8' });
+  if (r.error || r.status !== 0) {
+    throw new Error(`解压失败：${r.error ? r.error.message : r.stderr || `退出码 ${r.status}`}`);
+  }
+}
+
 async function main() {
   const out = path.resolve(argOf('--out') || path.join(HERE, '..', '..', 'runtime-node'));
   const from = argOf('--from');
@@ -90,11 +106,7 @@ async function main() {
 
   const extract = path.join(tmp, 'extract');
   fs.mkdirSync(extract, { recursive: true });
-  const un = spawnSync('unzip', ['-q', zip, '-d', extract], { encoding: 'utf8' });
-  if (un.error || un.status !== 0) {
-    fs.rmSync(tmp, { recursive: true, force: true });
-    throw new Error(`解压失败：${un.error ? un.error.message : un.stderr || `退出码 ${un.status}`}`);
-  }
+  extractZip(zip, extract);
   const entries = fs.readdirSync(extract, { withFileTypes: true }).filter((e) => e.isDirectory());
   const src = entries.length === 1 ? path.join(extract, entries[0].name) : extract;
   fs.cpSync(src, out, { recursive: true, force: true });

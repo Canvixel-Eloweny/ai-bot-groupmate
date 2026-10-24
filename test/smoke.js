@@ -31,7 +31,7 @@ import { cachedTokensOf, LlmClient, WEB_SEARCH_TOOL, NO_VISION_NOTE, blindNoteOf
 // 就等于把本批要钉住的语义又抄了一遍（B11c 收敛掉的正是这类东西）。
 import {
   createToolRegistry, normalizeToolName, normalizeToolDef, normalizeParameters,
-  TOOL_NAME_MAX, TOOL_NAME_RE, TOOL_MAX,
+  TOOL_NAME_MAX, TOOL_NAME_RE, TOOL_MAX, TOOL_MAX_LIMIT,
 } from '../src/tool-registry.js';
 import {
   createToolLoop, parseToolCalls, parseToolArgs, formatToolResult, aggregateUsage,
@@ -52,7 +52,11 @@ import { providerOf, isLocalBase, providerHostOk, consoleHostReject, onebotEndpo
 import { quotaOf, QUOTA_KIND } from '../src/free-quota.js';
 import { recordUsage, usageFilePath, usageLevelOf, usageGateOf, sumUsageOf, USAGE_LIMITS, tokenTotalOf } from '../src/usage.js';
 // D8：预算侧的判据与收缩实现（同一个模块既是生产实现，也是断言的金标准）
-import { budgetOf, applyBudget, shrinkHistory, SAVING_DROP, NEVER_DROP, SHRINK_RATIO } from '../src/context-budget.js';
+import { budgetOf, applyBudget, shrinkHistory, anchorHistory, HIST_ANCHOR, SAVING_DROP, NEVER_DROP, SHRINK_RATIO } from '../src/context-budget.js';
+// 2026-10-23：钩子载荷的唯一投影点（纯函数）；入站/上下文/入模三份载荷直接喂反例。
+import { incomingMessagePayload, contextPayload, llmMessagesPayload } from '../src/hook-payload.js';
+// 视觉额度真 HTTP 用例用它起一个本地假模型（只回固定话，不持有凭据）。
+import { startFakeLlm } from '../scripts/lib/fake-host.mjs';
 import { resolveRoots } from '../src/user-root.js';
 import {
   Brain, SessionStore, renderSpeakerLine, trailingBlankLines, lateSendReason,
@@ -71,7 +75,10 @@ import {
 import { abortError, isAborted, abortOutcome, retryDecision, createSessionControl } from '../src/session-control.js';
 import { createSemaphore } from '../src/async-util.js';
 import { kindOfSetting, isSensitiveKey, settingsSpec, coerceSetting, applySettingsPatch } from '../src/plugin-settings.js';
-import { activeManualMemory, MANUAL_MEMORY_IN_PROMPT, readCustom } from '../src/custom-config.js';
+import {
+  activeManualMemory, MANUAL_MEMORY_IN_PROMPT, SKILL_IN_PROMPT, SKILL_CHARS_IN_PROMPT, readCustom,
+} from '../src/custom-config.js';
+import { pickSkillsForPrompt } from '../src/skills.js';
 // 数值类设置的声明表（第 42 轮 B12b · SCHEMA-LITE）。测试与生产读的是**同一份** ——
 // 在测试里另抄一份默认值，等于把本批要消灭的东西搬进测试。
 import {
@@ -182,7 +189,7 @@ import { dayKeyOf } from '../src/holidays.js';
 // （而这正是本项目做 B11c 判据收敛时消灭的东西）。
 import {
   normalizeManifest, isSafeRelPath, stripBom, planLoad, summarize, isValidPluginId,
-  PLUGIN_API_VERSION,
+  PLUGIN_API_VERSION, PLUGIN_MAX, PLUGIN_MAX_LIMIT,
 } from '../src/plugin-manifest.js';
 import {
   loadExtensions, extensionRoots, EXTENSION_ENV,
@@ -191,7 +198,7 @@ import {
 // ⚠️ `loadExtensions` 与 `buildApi` 都要 import：前者走归一化（真路径），
 //    后者单独 import 时会**绕过归一化** —— 两种用法都要有测试覆盖（T168 就是补这一格的）。
 // 钩子总线 / ctx 裁剪 / 发送闸（第 46 轮 B12e-2）。同上：判据只从生产模块来。
-import { createHookBus, HOOK_POINTS } from '../src/hook-bus.js';
+import { createHookBus, HOOK_POINTS, HOOK_TIMEOUT_MS, HOOK_TIMEOUT_LIMIT } from '../src/hook-bus.js';
 import { buildApi, activateCtxOf, splitPermissions, settingsOf, PERMISSION_NAMES } from '../src/plugin-api.js';
 // 扩展包的受策略约束 fetch（第 55 轮）。判据与形状适配都在生产模块里，测试直接喂反例。
 import { createExtFetch } from '../src/ext-fetch.js';
@@ -561,22 +568,22 @@ async function main() {
     );
 
     // T159b 把真机那类失败**搬进回归**：开着思考 + 小额度 → 额度被 reasoning 吃光、
-    //       content 恒为空；关掉思考后同样的额度就正常出结果。
-    //       ⚠️ 这条的价值不在"关思考"本身，而在于它复现了一个**只会在真机上出现**的失败。
+    //       content 恒为空。2026-10-22 起不再直接抛，而是**同一模型抬额度重试一次**
+    //       （关不掉思考的模型也够用）。这条同时验证"重试真的发生了"（两次请求、第二次额度更大）。
     const MARK159b = `probe-small-budget-${process.pid}`;
-    let threw159b = '';
-    try {
-      await probeThink.chatWithUsage([{ role: 'user', content: MARK159b }], { maxTokens: 160 });
-    } catch (e) {
-      threw159b = e.message;
-    }
+    const retried159b = await probeThink.chatWithUsage([{ role: 'user', content: MARK159b }], { maxTokens: 160 });
+    const calls159b = llm.calls.filter((c) => (c.messages ?? []).some((m) => m.content === MARK159b));
     const ok159b = await probeThink.chatWithUsage(
       [{ role: 'user', content: MARK159b }], { maxTokens: 160, thinking: { mode: 'off' } }
     );
     check(
-      'T159b 复现真机失败：开着思考 + 小额度 → content 恒为空（抛「内容为空」）；关掉后就正常',
-      /内容为空/.test(threw159b) && typeof ok159b.text === 'string' && ok159b.text.length > 0,
-      `开着思考=${threw159b ? '抛错' : '居然没抛'}｜关掉后=${JSON.stringify(ok159b.text).slice(0, 16)}`
+      'T159b ★ 小额度空回复会抬额度重试：同模型两次请求（160 → 更大），最终拿到正文；关掉思考也正常',
+      typeof retried159b.text === 'string' && retried159b.text.length > 0
+        && calls159b.length === 2
+        && Number(calls159b[0]?.max_tokens) === 160
+        && Number(calls159b[1]?.max_tokens) > 160
+        && typeof ok159b.text === 'string' && ok159b.text.length > 0,
+      `首次=${JSON.stringify(retried159b.text).slice(0, 16)}｜请求额度=${calls159b.map((c) => c.max_tokens).join('→')}｜关掉后=${JSON.stringify(ok159b.text).slice(0, 16)}`
     );
 
     // ── 结构化记忆的注入与 memoryUsed 的如实性（第 10 轮）────────────────────
@@ -4653,7 +4660,7 @@ async function main() {
     //   为什么用"挂住不回"的服务端：这一条要证明的是"请求发出去了、然后被掐断"，
     //   而不是"压根没发"。让服务端一直不响应，才能把这两个瞬间分开。
     {
-      const HOLD_PORT = 39994;
+      const HOLD_PORT = SMOKE_BASE_PORT + 4;
       const calls = [];
       const held = [];
       const srv = http.createServer((req, res) => {
@@ -5346,12 +5353,14 @@ async function main() {
       );
     }
 
-    // T123 钩子点名单与参考实现 5 点逐一对应（拿 orchestrator.js 真实样本核的，不是猜的）
+    // T123 钩子点名单：前 5 个与参考实现 orchestrator.js 逐一对应（含顺序），
+    // 第 6 个是 2026-10-23 回迁的宿主扩展点 `after-incoming-message`。
     {
       const want = ['before-context', 'before-llm-messages', 'before-tool', 'after-tool', 'after-response'];
       check(
-        'T123 HOOK_POINTS 与参考实现 orchestrator.js 触发的 5 个钩子点**完全一致**（含顺序）',
-        HOOK_POINTS.length === 5 && want.every((p, i) => HOOK_POINTS[i] === p),
+        'T123 HOOK_POINTS = 参考实现 5 点（含顺序）+ 宿主扩展点 after-incoming-message',
+        HOOK_POINTS.length === 6 && want.every((p, i) => HOOK_POINTS[i] === p)
+          && HOOK_POINTS[5] === 'after-incoming-message',
         `实际=${HOOK_POINTS.join(',')}`
       );
     }
@@ -5893,7 +5902,7 @@ async function main() {
     //   桩必须**真的按顺序**回 400 再回 200 —— 只断言"某函数存在"是这个项目
     //   反复吃过的亏（"断言存在 ≠ 断言接线"）。
     {
-      const p = 39994;
+      const p = SMOKE_BASE_PORT + 4;
       const scripted = await startScriptedLlm({
         port: p,
         script: [
@@ -5926,7 +5935,7 @@ async function main() {
 
     // T192 与图片无关的 400 **不许**走去图那条路（否则每次内容过滤都白打一枪）
     {
-      const p = 39995;
+      const p = SMOKE_BASE_PORT + 5;
       const scripted = await startScriptedLlm({
         port: p,
         script: [{ status: 400, body: JSON.stringify({ error: { code: '1301', message: '输入或生成内容可能包含不安全或敏感内容' } }) }],
@@ -5949,7 +5958,7 @@ async function main() {
 
     // T193 ★ 语义降级 · 超长收缩重试（`shrink` 由调用方注入，llm 不自己猜历史）
     {
-      const p = 39996;
+      const p = SMOKE_BASE_PORT + 6;
       const scripted = await startScriptedLlm({
         port: p,
         script: [
@@ -5980,7 +5989,7 @@ async function main() {
     //   （超长是请求本身的问题，重发同样的东西只会再被拒一次；本项目对
     //   "白打一枪"一贯按缺陷处理，理由与 T42a 相同）。
     {
-      const p = 39997;
+      const p = SMOKE_BASE_PORT + 7;
       const scripted = await startScriptedLlm({
         port: p,
         script: [
@@ -10579,6 +10588,16 @@ const fs = require('node:fs');
         '越界 mode 放行 —— 面板能存下一个启动器认不出的值');
       ck385(LM.validateLaunch({ openOnStart: 'no' }).ok === false, '非布尔 openOnStart 放行');
       ck385(LM.validateLaunch(null).ok === false, 'null 补丁被放行');
+      // P2-3：关闭行为与协议端自启也走同一份写侧值域；坏值必须在保存时被拒，
+      // 而不是等到关窗时才发现“这个值壳不认识”。
+      ck385(LM.validateLaunch({ closeAction: 'tray' }).ok === true
+        && LM.validateLaunch({ closeAction: 'quit' }).ok === true, '合法 closeAction 被拒');
+      ck385(LM.validateLaunch({ closeAction: 'hide' }).ok === false, '越界 closeAction 放行');
+      ck385(LM.validateLaunch({ autoProtocol: false }).ok === true
+        && LM.validateLaunch({ autoProtocol: 'no' }).ok === false, 'autoProtocol 值域不对');
+      const d385b = LM.normalizeLaunch({});
+      ck385(d385b.closeAction === 'tray' && d385b.autoProtocol === true,
+        '关闭/协议端自启的缺省值不是 tray/true（老配置零感知被破坏）');
 
       // ③ 决策：mac + window + 装了 Edge → open -na "Microsoft Edge" --args --app=…
       const p1 = LM.planOpen({
@@ -11786,6 +11805,349 @@ const fs = require('node:fs');
           && cfg.throttle.perHourPerSession === 60
           && /配置文件不是合法 JSON/.test(badErr) && badErr.includes(f),
         `cfgErr=${cfgErr || '无'}｜温度=${cfg?.llm?.temperature} 插话=${cfg?.trigger?.interjectChance} 小时=${cfg?.throttle?.perHourPerSession}｜坏JSON=${badErr.slice(0, 60)}`
+      );
+    }
+
+    // T421：P1 路径回归 —— config.example / README 写的是 `persona/qq-chat.md`，
+    // 而 PERSONA_DIR 已经指向 `<userRoot>/persona`。旧实现直接 resolve(PERSONA_DIR, relFile)
+    // 会拼成 persona/persona/qq-chat.md，文件明明存在也读不到（dryrun 实测过）。
+    // 这里同时钉两种历史写法，以及一条 `../` 越界必须被拒为空。
+    {
+      const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+      const expected = fs.readFileSync(path.join(repoRoot, 'persona/qq-chat.md'), 'utf8').trim();
+      const load = (name, file) => {
+        const f = tmpPath(`smoke-persona-${name}`, 'json');
+        fs.writeFileSync(f, JSON.stringify({
+          allow: { groups: ['100000001'] },
+          llm: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-flash' },
+          persona: { name: '小鱼', file },
+        }), 'utf8');
+        try { return loadConfig(f); } finally { fs.rmSync(f, { force: true }); }
+      };
+      const legacy = load('legacy', 'persona/qq-chat.md');
+      const bare = load('bare', 'qq-chat.md');
+      const unsafe = load('unsafe', '../../.env');
+      check(
+        'T421 人设路径：persona/qq-chat.md 与 qq-chat.md 都读到同一份；../ 越界被拒为空',
+        expected.length > 0
+          && legacy.persona.text === expected
+          && bare.persona.text === expected
+          && unsafe.persona.text === '',
+        `期望=${expected.length}字 · legacy=${legacy.persona.text.length} · bare=${bare.persona.text.length} · unsafe=${unsafe.persona.text.length}`
+      );
+    }
+
+    // ── 2026-10-23：插件上限 / 五处补丁 / 识图额度 / 运行期可观测的行为判据 ──
+    // 这些用例都直接喂**生产模块**（不另写一份判据）；T430/T431 会真的起宿主、
+    // 真的 import 临时插件目录，验的是"上限/空载/钩子未挂"在运行期的形状。
+
+    // T422 入站载荷：10 个字段、media 是张数、self 恒 false、messageId 空串兜底。
+    {
+      const inc = incomingMessagePayload({
+        chatKey: 'group:1', scene: 'group',
+        evt: { user_id: 12345, message_id: '' },
+        parsed: { text: 'hi', mentionedSelf: true, images: ['a', '', 'b'] },
+        sender: '小明', now: 1700000000000,
+      });
+      const want = ['chatKey', 'scene', 'senderId', 'senderName', 'text', 'messageId', 'mentionedSelf', 'media', 'timestamp', 'self'];
+      check(
+        'T422 入站载荷：10 个字段 · media 是张数（2）· self=false · messageId 空串兜底 · senderId 是字符串',
+        Object.keys(inc).join(',') === want.join(',')
+          && inc.media === 2 && inc.self === false && inc.messageId === ''
+          && inc.senderId === '12345' && inc.senderName === '小明' && inc.timestamp === 1700000000000,
+        `keys=${Object.keys(inc).join(',')} media=${inc.media} self=${inc.self} id=${JSON.stringify(inc.senderId)}`
+      );
+    }
+
+    // T423 上下文 / 入模载荷：chatKey + 发送者七字段；messages 必须**同引用**。
+    {
+      const ctx = contextPayload({
+        chatKey: 'group:1', evt: { user_id: 12345, message_id: '' },
+        parsed: { text: 'hi', mentionedSelf: true, images: ['a', '', 'b'] }, sender: '小明', now: 1700000000000,
+      });
+      const te = ctx.triggerEntries[0];
+      const msgs = [{ role: 'user', content: 'x' }];
+      const llm = llmMessagesPayload({ messages: msgs, chatKey: 'group:1' });
+      check(
+        'T423 上下文载荷：chatKey + triggerEntries 七字段 · before-llm 带 chatKey 且 messages 同引用',
+        ctx.chatKey === 'group:1' && te.senderId === '12345' && te.senderName === '小明'
+          && te.messageId === '' && te.mentionedSelf === true && te.media === 2
+          && typeof te.timestamp === 'number' && te.self === false
+          && llm.messages === msgs && llm.chatKey === 'group:1',
+        `ctx=${JSON.stringify(ctx).slice(0, 160)} · sameRef=${llm.messages === msgs}`
+      );
+    }
+
+    // T424 锚定历史：起点按 6 条粒度跳；最近 recentTurns 条永不丢；追加 1–5 条起点不变。
+    {
+      const hist = (n) => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `m${i}` }));
+      const big = { enabled: true, historyChars: 1e9 };
+      const a23 = anchorHistory(hist(23), big, { recentTurns: 12 });
+      const a18 = anchorHistory(hist(18), big, { recentTurns: 12 });
+      const a17 = anchorHistory(hist(17), big, { recentTurns: 12 });
+      const stable = [1, 2, 3, 4, 5].every((k) => anchorHistory(hist(18 + k), big, { recentTurns: 12 }).anchor.start === a18.anchor.start);
+      const all = [];
+      for (let n = 12; n <= 60; n += 1) all.push(anchorHistory(hist(n), big, { recentTurns: 12 }));
+      const tiny = anchorHistory(hist(23), { enabled: true, historyChars: 10 }, { recentTurns: 12 });
+      check(
+        'T424 锚定历史：23 条起点=6/丢 6 · 18 条起点=6 · 17 条起点=0 · 追加 1–5 条起点不变 · 12–60 全扫起点是 6 的倍数且至少留 12 条 · 极小预算仍保 12 条',
+        HIST_ANCHOR.step === 6 && HIST_ANCHOR.countFactor === 2
+          && a23.anchor.start === 6 && a23.items.length === 17 && a23.dropped[0]?.lines === 6
+          && a18.anchor.start === 6 && a17.anchor.start === 0 && stable
+          && all.every((r) => r.anchor.start % 6 === 0 && r.items.length >= 12)
+          && tiny.items.length >= 12 && tiny.anchor.start <= 23 - 12,
+        `23=${a23.anchor.start}/${a23.items.length} · 18=${a18.anchor.start} · 17=${a17.anchor.start} · stable=${stable} · tiny=${tiny.items.length}`
+      );
+    }
+
+    // T425 批量回收：23 不裁，第 24 条一次变 12，随后 11 条不再裁，保留的是最新 12 条。
+    {
+      const b = Object.create(Brain.prototype);
+      b.cfg = { context: { recentTurns: 12 } };
+      const s = { history: [] };
+      for (let i = 0; i < 23; i += 1) b.remember(s, 'user', `m${i}`);
+      const len23 = s.history.length;
+      b.remember(s, 'user', 'm23');
+      const len24 = s.history.length;
+      for (let i = 0; i < 11; i += 1) b.remember(s, 'user', `x${i}`);
+      check(
+        'T425 remember 批量回收：23 条不裁 · 第 24 条一次砍回 12 · 之后 11 条不再动 · 保留最新 12 条',
+        len23 === 23 && len24 === 12 && s.history.length === 23
+          && s.history.at(-1).content === 'x10' && s.history[0].content === 'm12',
+        `23=${len23} · 24=${len24} · 之后=${s.history.length}`
+      );
+    }
+
+    // T426 配置上限：默认 256/64、越界钳制、白名单 300 个一个不丢。
+    {
+      const d = readCustom({});
+      const hi = readCustom({ custom: {
+        plugins: { max: 5000, enabled: Array.from({ length: 300 }, (_, i) => `qa${i}`) },
+        tools: { max: 9999 },
+      } });
+      check(
+        'T426 配置上限：默认 256/64 · 5000→1024 / 9999→256 · 300 个合法 id 一个不丢',
+        d.plugins.max === 256 && d.tools.max === 64
+          && hi.plugins.max === PLUGIN_MAX_LIMIT && hi.tools.max === TOOL_MAX_LIMIT
+          && hi.plugins.enabled.length === 300 && PLUGIN_MAX === 256 && TOOL_MAX === 64,
+        `默认=${d.plugins.max}/${d.tools.max} · 钳制=${hi.plugins.max}/${hi.tools.max} · ids=${hi.plugins.enabled.length}`
+      );
+    }
+
+    // T427 planLoad：按白名单顺序取前 max，其余 over（不是 reject）。
+    {
+      const entries = Array.from({ length: 300 }, (_, i) => ({
+        dirName: `qa${i}`, dir: `/tmp/qa${i}`, kind: 'plugin',
+        manifest: { id: `qa${i}`, name: `QA${i}`, version: '1.0.0' }, problems: [], fatal: [],
+      }));
+      const enabled = Array.from({ length: 300 }, (_, i) => `qa${299 - i}`);
+      const plan = planLoad(entries, enabled, { max: 256 });
+      const load = plan.filter((p) => p.action === 'load');
+      const over = plan.filter((p) => p.action === 'over');
+      const ordered = [...load].sort((a, b) => a.order - b.order);
+      check(
+        'T427 planLoad：300 个启用 / max=256 ⇒ 256 load + 44 over · over 原因是 over-limit · 按白名单顺序取前 256 · summarize().over=44',
+        load.length === 256 && over.length === 44 && over.every((p) => p.reason === 'over-limit')
+          && ordered[0]?.id === 'qa299' && ordered.at(-1)?.id === 'qa44'
+          && summarize(plan).over === 44,
+        `load=${load.length} over=${over.length} 首=${ordered[0]?.id} 末=${ordered.at(-1)?.id}`
+      );
+    }
+
+    // T428 工具上限：注入 max 后第 4 个失败；默认 64。
+    {
+      const reg = createToolRegistry({ max: 3 });
+      const def = (id) => ({ id, description: 'x', parameters: { type: 'object', properties: {} }, execute: () => ({ content: 'ok' }) });
+      const rs = ['a', 'b', 'c', 'd'].map((id) => reg.register(def(id)));
+      check(
+        'T428 工具上限：max=3 时前 3 个 ok、第 4 个带"上限 3"失败 · registry.max()=3 · 默认 64',
+        rs.slice(0, 3).every((r) => r.ok) && rs[3].ok === false && /上限 3/.test(rs[3].reason)
+          && reg.max() === 3 && reg.size() === 3 && createToolRegistry().max() === TOOL_MAX && TOOL_MAX === 64,
+        `前3=${rs.slice(0, 3).map((r) => r.ok).join(',')} 第4=${rs[3].reason || 'ok'}`
+      );
+    }
+
+    // T429 识图额度：带图 + 400 ⇒ 700；纯文本 400 仍是 400；带图 + 2000 不降级。
+    {
+      const srv = await startFakeLlm({ text: '看到了。' });
+      try {
+        const mk = () => new LlmClient({
+          baseUrl: `http://127.0.0.1:${srv.port}/v1`, apiKey: '', model: 'glm-4.6v-flash',
+          provider: 'zhipu', temperature: 1, maxTokens: 400, timeoutMs: 8000, features: { vision: true },
+        });
+        const img = [
+          { type: 'text', text: '颜色？' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+        ];
+        await mk().chatWithUsage([{ role: 'user', content: img }], { maxTokens: 400, thinking: { mode: 'off' } });
+        const visionBody = srv.requests.at(-1);
+        await mk().chatWithUsage([{ role: 'user', content: '纯文本' }], { maxTokens: 400, thinking: { mode: 'off' } });
+        const textBody = srv.requests.at(-1);
+        await mk().chatWithUsage([{ role: 'user', content: img }], { maxTokens: 2000, thinking: { mode: 'off' } });
+        const bigBody = srv.requests.at(-1);
+        check(
+          'T429 识图额度：带图 + 400 ⇒ 700 且图片段仍在 · 纯文本 400 仍是 400 · 带图 + 2000 不降级',
+          visionBody.max_tokens === 700 && Array.isArray(visionBody.messages.at(-1)?.content)
+            && textBody.max_tokens === 400 && bigBody.max_tokens === 2000,
+          `图/400=${visionBody.max_tokens} · 文/400=${textBody.max_tokens} · 图/2000=${bigBody.max_tokens}`
+        );
+      } finally { srv.close(); }
+    }
+
+    // T430 宿主上限：max=1 ⇒ 1 loaded + 1 over，limits 正确。
+    {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-maxplug-'));
+      const mk = (id) => {
+        const d = path.join(root, 'plugins', id);
+        fs.mkdirSync(d, { recursive: true });
+        fs.writeFileSync(path.join(d, 'plugin.json'), JSON.stringify({
+          id, name: id, version: '1.0.0', apiVersion: 1, entry: 'index.js',
+          capabilities: [], permissions: [], requires: [], settings: {}, configSchema: {},
+        }), 'utf8');
+        fs.writeFileSync(path.join(d, 'index.js'), `export function setup(api) {\n`
+          + `  api.registerTool({ id: 'ping', description: 'ping', parameters: { type: 'object', properties: {} }, execute: () => ({ content: 'pong' }) });\n`
+          + `}\n`, 'utf8');
+      };
+      try {
+        mk('max-a'); mk('max-b');
+        const host = createExtensionHost({
+          root, registry: createToolRegistry({ max: 64 }), bus: createHookBus({ log: {} }),
+          getCustom: () => ({ plugins: { enabled: ['max-a', 'max-b'], max: 1 } }),
+          log: { info() {}, warn() {} },
+        });
+        const snap = await host.load();
+        const over = snap.items.find((i) => i.id === 'max-b');
+        check(
+          'T430 宿主上限：max=1 ⇒ 1 loaded + 1 over · limits.plugins=1 · over 项是白名单第 2 个',
+          snap.sum.loaded === 1 && snap.sum.over === 1 && snap.limits?.plugins === 1
+            && over?.state === 'over' && /上限 1/.test(over?.detail || ''),
+          `loaded=${snap.sum.loaded} over=${snap.sum.over} limits=${JSON.stringify(snap.limits)}`
+        );
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    }
+
+    // T431 钩子未挂 / 空载：未知钩子点不杀包，但要进 hookErrors 且 empty=true。
+    {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-hookerr-'));
+      const d = path.join(root, 'plugins', 'hook-a');
+      fs.mkdirSync(d, { recursive: true });
+      fs.writeFileSync(path.join(d, 'plugin.json'), JSON.stringify({
+        id: 'hook-a', name: 'hook-a', version: '1.0.0', apiVersion: 1, entry: 'index.js',
+        capabilities: [], permissions: [], requires: [], settings: {}, configSchema: {},
+      }), 'utf8');
+      fs.writeFileSync(path.join(d, 'index.js'),
+        `export const hooks = { 'bogus-hook': async () => ({}) };\nexport function setup() {}\n`, 'utf8');
+      try {
+        const host = createExtensionHost({
+          root, registry: createToolRegistry({ max: 64 }), bus: createHookBus({ log: {} }),
+          getCustom: () => ({ plugins: { enabled: ['hook-a'], max: 8 } }),
+          log: { info() {}, warn() {} },
+        });
+        const snap = await host.load();
+        const it = snap.items.find((x) => x.id === 'hook-a');
+        check(
+          'T431 钩子未挂：未知钩子点不杀包（仍 loaded）· hookErrors 记到 bogus-hook · 空载标记为真',
+          it?.state === 'loaded' && it?.hookErrors?.length === 1
+            && it.hookErrors[0].point === 'bogus-hook' && it.empty === true,
+          `state=${it?.state} errs=${JSON.stringify(it?.hookErrors)} empty=${it?.empty}`
+        );
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    }
+
+    // T432 钩子超时：默认 5000/120000；超时 fail-open，继续跑下一个钩子。
+    {
+      const warns = [];
+      const bus = createHookBus({ log: { warn: (m) => warns.push(m) }, timeoutMs: 120 });
+      bus.on('before-tool', () => new Promise(() => {}), { owner: 'slow' });
+      let fastRan = false;
+      bus.on('before-tool', () => { fastRan = true; return { block: true, reason: 'ok' }; }, { owner: 'fast' });
+      const t0 = Date.now();
+      const r = await bus.emit('before-tool', {});
+      const ms = Date.now() - t0;
+      check(
+        'T432 钩子超时：默认 5000/120000 · 慢钩子被放行且记错 · 快钩子照跑并能否决',
+        HOOK_TIMEOUT_MS === 5000 && HOOK_TIMEOUT_LIMIT === 120000 && bus.timeoutMs === 120
+          && ms >= 100 && ms < 1000 && fastRan
+          && r.ran === 2 && r.errors.length === 1 && /超时/.test(r.errors[0].message)
+          && r.errors[0].owner === 'slow' && r.vetoed?.owner === 'fast'
+          && warns.some((m) => /超时/.test(m)),
+        `ms=${ms} ran=${r.ran} errs=${JSON.stringify(r.errors)} veto=${JSON.stringify(r.vetoed)}`
+      );
+    }
+
+    // T433 技能注入预算：条数与字数都可配，三参默认仍是 3 / 2000。
+    {
+      const packs = Array.from({ length: 10 }, (_, i) => ({
+        id: `p${i}`, name: `P${i}`, kind: 'pack', enabled: true,
+        scope: { type: 'global' }, triggers: [], background: `短${i}`, examples: [],
+      }));
+      const five = pickSkillsForPrompt(packs, { groupId: 'g' }, '', { max: 5, chars: 2000 });
+      const dflt = pickSkillsForPrompt(packs, { groupId: 'g' }, '');
+      const tiny = pickSkillsForPrompt(packs, { groupId: 'g' }, '', { max: 10, chars: 2 });
+      check(
+        'T433 技能预算：max=5 ⇒ 5 条 · 三参默认 3 条 · 字数不够时只进装得下的',
+        SKILL_IN_PROMPT === 3 && SKILL_CHARS_IN_PROMPT === 2000
+          && five.length === 5 && dflt.length === 3 && tiny.length === 1,
+        `five=${five.length} default=${dflt.length} tiny=${tiny.length}`
+      );
+    }
+
+    // T434 记忆注入预算：promptMax 可配；裸对象回落默认 12。
+    {
+      const manual = Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, text: `m${i}`, on: true }));
+      const five = activeManualMemory({ memory: { manual, promptMax: 5 } });
+      const bare = activeManualMemory({ memory: { manual } });
+      const cfg = readCustom({ custom: { memory: { manual, promptMax: 7 } } });
+      check(
+        'T434 记忆预算：promptMax=5 ⇒ 5 条 · 裸对象回落 12 · readCustom 带回 7',
+        MANUAL_MEMORY_IN_PROMPT === 12 && five.length === 5 && bare.length === 12
+          && cfg.memory.promptMax === 7,
+        `five=${five.length} bare=${bare.length} cfg=${cfg.memory.promptMax}`
+      );
+    }
+
+    // T435 不再按条数截断：100 技能 / 200 记忆全部保留，越界只钳预算。
+    {
+      const skills = Array.from({ length: 100 }, (_, i) => ({
+        id: `big${i}`, name: `B${i}`, kind: 'pack', enabled: true,
+        scope: { type: 'global' }, triggers: [], background: 'bg', examples: [],
+      }));
+      const manual = Array.from({ length: 200 }, (_, i) => ({ id: `bm${i}`, text: `bm${i}`, on: true }));
+      const big = readCustom({ custom: { skills, memory: { manual } } });
+      const clamped = readCustom({
+        custom: { skillPrompt: { max: 99999, chars: 1 }, memory: { promptMax: -5 }, plugins: { hookTimeoutMs: 999999 } },
+      });
+      check(
+        'T435 不按条数截断：100 技能 / 200 记忆全保留 · 越界预算是钳制不是丢条目',
+        big.skills.length === 100 && big.memory.manual.length === 200
+          && clamped.skillPrompt.max === 50 && clamped.skillPrompt.chars === 200
+          && clamped.memory.promptMax === 1 && clamped.plugins.hookTimeoutMs === 120000,
+        `big=${big.skills.length}/${big.memory.manual.length} clamp=${JSON.stringify({ s: clamped.skillPrompt, m: clamped.memory.promptMax, h: clamped.plugins.hookTimeoutMs })}`
+      );
+    }
+
+    // T436 桌面启动静默：--hidden 与 launch.openOnStart=false 任一成立都不得弹窗。
+    // 这一条补的是 P2 壳层遗留：Electron 壳只认 --hidden，openOnStart=false 被绕过。
+    {
+      const LM = await import(new URL('../src/launch-mode.js', import.meta.url));
+      const f = LM.shouldStartHidden;
+      check(
+        'T436 启动静默：--hidden / openOnStart=false 任一成立即隐藏；只有两者都为“开”才显示；坏值 fail-open',
+        typeof f === 'function'
+          && f({ wantHidden: true, openOnStart: true }) === true
+          && f({ wantHidden: true, openOnStart: false }) === true
+          && f({ wantHidden: false, openOnStart: false }) === true
+          && f({ wantHidden: false, openOnStart: true }) === false
+          && f({}) === false
+          && f({ wantHidden: false, openOnStart: 'no' }) === false,
+        `hidden=${JSON.stringify([
+          f({ wantHidden: true, openOnStart: true }),
+          f({ wantHidden: true, openOnStart: false }),
+          f({ wantHidden: false, openOnStart: false }),
+          f({ wantHidden: false, openOnStart: true }),
+          f({}),
+          f({ wantHidden: false, openOnStart: 'no' }),
+        ])}`,
       );
     }
   }

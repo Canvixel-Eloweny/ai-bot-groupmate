@@ -1,7 +1,9 @@
 import scoped from './logger.js';
-import { capabilitiesOf, resolveThinking } from './model-caps.js';
+import { capabilitiesOf, resolveThinking, THINK } from './model-caps.js';
 import { sanitizeDeep } from './text-hygiene.js';
 import { abortError } from './session-control.js';
+// 带图片段的请求的输出额度下限（2026-10-23）。与 `view_image` 共用同一个常量。
+import { VISION_MIN_MAX_TOKENS } from './images.js';
 
 // supportsVision 的实现在 model-caps.js（全项目唯一的能力判定入口）。
 // 这里转出去只是为了不破坏 brain.js 的既有 import —— 但它**不允许**再有一份自己的名单。
@@ -389,7 +391,7 @@ export class LlmClient {
     return this.#run(messages, opts);
   }
 
-  async #chatOnce(messages, { temperature, maxTokens, tools, thinking, signal, shrink } = {}, model, counter) {
+  async #chatOnce(messages, { temperature, maxTokens, tools, thinking, signal, shrink, lengthRetry = false } = {}, model, counter) {
     const provider = this.cfg.provider;
     // ⚠️ 第三个参数必须传：自定义大脑的能力来自**用户勾的那几项**，
     //    不传的话 `capabilitiesOf` 会按"能力表里没这个型号"全判 false ——
@@ -403,12 +405,20 @@ export class LlmClient {
     // 降级到看不见图的模型时，图片被剥掉、它只看到「[图片]」，界面与日志一个字都没有。
     const sentMsgs = stripImagesIfUnsupported(msgs, provider, model, this.cfg.declaredFeatures);
     if (sentMsgs !== msgs) this.#noteBlind(model, provider, 'unsupported');
+    // ★ 带图请求的额度下限（2026-10-23）：低于 700 时视觉模型常把额度花在
+    //   图像编码 / 思考上、正文返回空（群友实测 150 / 400 都是这个洞）。
+    //   用 `sentMsgs` 判：纯文本模型已经把图剥掉了，不应为不存在的图抬额度。
+    //   这一个点兜住主链路 / view_image / 工具回合 / lengthRetry，没有第二条旁路。
+    const baseMaxTokens = Math.max(
+      maxTokens ?? this.cfg.maxTokens,
+      hasImageParts(sentMsgs) ? VISION_MIN_MAX_TOKENS : 0,
+    );
     const body = {
       model,
       // 不支持图片的模型要把图剥掉再发，否则整条消息会被 400 拒掉
       messages: sentMsgs,
       temperature: temperature ?? this.cfg.temperature,
-      max_tokens: maxTokens ?? this.cfg.maxTokens,
+      max_tokens: baseMaxTokens,
       stream: false,
     };
     this.#applyThinking(body, model, thinking);
@@ -566,7 +576,27 @@ export class LlmClient {
     }
 
     if (!content && !hasToolCalls) {
-      throw new Error(`模型返回内容为空: ${JSON.stringify(data).slice(0, 300)}`);
+      const finishReason = String(choice?.finish_reason || '');
+      // 2026-10-22：`finish_reason=length` 的空回复不是"模型坏了"，而是 max_tokens
+      // 被 reasoning 吃满（DeepSeek 等关不掉思考的模型尤其常见）。同一模型抬额度
+      // 再试一次；不换模型、不无限重试（`lengthRetry` 只允许一次）。
+      if (!lengthRetry && finishReason === 'length' && baseMaxTokens < 4000) {
+        const bumped = Math.min(Math.max(baseMaxTokens * 4, 1200), 4000);
+        if (bumped > baseMaxTokens) {
+          log.warn(`${model} 返回空且 finish_reason=length（max_tokens=${baseMaxTokens}），抬到 ${bumped} 重试一次`);
+          return this.#chatOnce(messages, {
+            temperature, tools, signal, shrink, lengthRetry: true,
+            maxTokens: bumped,
+            thinking: caps?.think === THINK.OFFABLE ? { mode: 'off' } : thinking,
+          }, model, counter);
+        }
+      }
+      const err = new Error(
+        `模型返回内容为空（model=${model} finish_reason=${finishReason || '?'}）: ${JSON.stringify(data).slice(0, 300)}`
+      );
+      err.finishReason = finishReason;
+      err.model = model;
+      throw err;
     }
     // `assistant` 原样带出去给工具回合用（它要靠 `tool_calls` 回灌）。
     // 这里**不解析** tool_calls —— 判据只有一处（src/tool-loop.js 的 parseToolCalls），

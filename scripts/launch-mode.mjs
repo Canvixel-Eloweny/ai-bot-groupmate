@@ -24,8 +24,18 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LAUNCH_MODES, openPanelFromConfig, planOpen, readLaunchFile, readWindowState, consoleProfileDir } from '../src/launch-mode.js';
+import { resolveRoots } from '../src/user-root.js';
+import panelDiscovery from '../src/panel-discovery.cjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/** 没传 --url 时（手工调试）读发现文件；最后才回落 legacy 8788。 */
+function defaultPanelUrl() {
+  if (process.env.QQBOT_PANEL_URL) return String(process.env.QQBOT_PANEL_URL);
+  const info = panelDiscovery.readDiscovery(resolveRoots().userRoot);
+  if (info && panelDiscovery.isLive(info)) return info.url;
+  return panelDiscovery.legacyPanelUrl();
+}
 
 function usage(msg) {
   if (msg) console.error(`✗ ${msg}`);
@@ -49,7 +59,7 @@ for (let i = 0; i < argv.length; i += 1) {
 if (cmd !== 'resolve' && cmd !== 'open') usage(`认不出的子命令：${cmd || '(空)'}`);
 
 const configPath = opt.config ? path.resolve(opt.config) : path.join(ROOT, 'config.json');
-const url = opt.url || `http://127.0.0.1:${Number(process.env.QQBOT_PANEL_PORT) || 8788}/`;
+const url = opt.url || defaultPanelUrl();
 const log = (m) => console.error(`[launch] ${m}`);
 
 if (cmd === 'resolve') {

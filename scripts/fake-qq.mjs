@@ -119,7 +119,10 @@ async function main() {
     child.kill('SIGTERM');
     bot.close();
     llm?.close();
-    if (workDir) fs.rmSync(workDir, { recursive: true, force: true });
+    // 临时目录清理失败**不许**把退出码变成 1：子进程还握着文件句柄时
+    // `rmSync` 会抛 ENOTEMPTY，而那与"程序跑没跑起来"是两件事
+    // （2026-10-23：25 插件验收里实测到了这条假红）。
+    try { if (workDir) fs.rmSync(workDir, { recursive: true, force: true }); } catch { /* 留给 tmp */ }
     console.log(`\n退出。程序日志：${logPath}`);
     process.exit(0);
   };

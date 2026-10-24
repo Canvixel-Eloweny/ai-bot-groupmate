@@ -20,9 +20,15 @@
     "test:panel": "bash test/sandbox.sh --run",
     "panel:boot": "node test/panel-boot.mjs",
     "panel:dom": "node test/panel-dom.mjs",
-    "check:features": "node test/check-anti-template.mjs && node test/check-card-scope.mjs && node test/check-fake-panel.mjs && node test/check-friends.mjs && node test/check-heat-patrol.mjs && node test/check-nightly.mjs && node test/check-peak.mjs && node test/check-persona-adopt.mjs && node test/check-persona-grade.mjs && node test/check-wait-images.mjs",
-    "verify": "node scripts/check-wb.mjs && node scripts/check-backend.mjs && npm run check:features && node test/installer-p1.mjs && node test/installer-p2.mjs && node test/installer-p3.mjs && node test/installer-p4.mjs && node test/installer-p5.mjs && node test/installer-p6.mjs && node test/smoke.js && bash test/sandbox.sh --run && node test/panel-boot.mjs && node test/panel-dom.mjs",
+    "panel:port": "node test/panel-port.mjs",
+    "desktop:ipc": "node test/desktop-ipc.mjs",
+    "check:desktop": "node test/check-desktop.mjs",
+    "shell:dev": "node scripts/dev-shell.mjs",
+    "check:features": "node test/check-anti-template.mjs && node test/check-card-scope.mjs && node test/check-fake-panel.mjs && node test/check-friends.mjs && node test/check-heat-patrol.mjs && node test/check-nightly.mjs && node test/check-peak.mjs && node test/check-persona-adopt.mjs && node test/check-persona-grade.mjs && node test/check-wait-images.mjs && node test/check-protocol-guard.mjs && node test/check-napcat-login.mjs && node test/check-message-reliability.mjs && node test/check-day-log.mjs",
+    "verify": "NODE_OPTIONS= node scripts/check-wb.mjs && NODE_OPTIONS= node scripts/mutate-lint.mjs && NODE_OPTIONS= node scripts/check-backend.mjs && NODE_OPTIONS= node test/check-desktop.mjs && NODE_OPTIONS= node test/panel-port.mjs && NODE_OPTIONS= node test/desktop-diagnostics.mjs && NODE_OPTIONS= node test/p3-differential-eval.mjs && NODE_OPTIONS= node test/p3-ci-eval.mjs && NODE_OPTIONS= npm run check:features && NODE_OPTIONS= node scripts/publish-audit.mjs && NODE_OPTIONS= node test/installer-p1.mjs && NODE_OPTIONS= node test/installer-p2.mjs && NODE_OPTIONS= node test/installer-p3.mjs && NODE_OPTIONS= node test/installer-p4.mjs && NODE_OPTIONS= node test/installer-p5.mjs && NODE_OPTIONS= node test/installer-p6.mjs && NODE_OPTIONS= node test/smoke.js && NODE_OPTIONS= bash test/sandbox.sh --run && NODE_OPTIONS= node test/panel-boot.mjs && NODE_OPTIONS= node test/panel-dom.mjs",
     "verify:backend": "node scripts/check-backend.mjs",
+    "perf:panel": "node test/panel-perf.mjs",
+    "lab:glass": "node scripts/make-glass-lab-standalone.mjs",
     "publish:audit": "node scripts/publish-audit.mjs",
     "config:example": "node scripts/make-config-example.mjs"
   },
@@ -31,5 +37,8 @@
   },
   "dependencies": {
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "44.9.3"
   }
 }

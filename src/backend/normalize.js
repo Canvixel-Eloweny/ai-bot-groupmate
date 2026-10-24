@@ -16,11 +16,11 @@
  */
 
 import {
-  PRODUCTION_ACTIONS, MEDIA_ACTIONS, backendOf, backendLabel,
+  PRODUCTION_ACTIONS, MEDIA_ACTIONS, UNTRUSTED_CAN_SEND, backendOf, backendLabel,
 } from './registry.js';
 
 /** 归一后的错误码（调用方只认这些，不比中文文案）。 */
-export const REPLY_CODE = Object.freeze({
+const REPLY_CODE = Object.freeze({
   ok: 'ok',
   business_failed: 'business_failed',
   malformed: 'malformed',
@@ -106,7 +106,7 @@ export function messageIdShapeOf(id) {
  * LLBot 把它也按 resId 字符串解读（且明写"不要把整数 message_id 用在这里"），
  * 其余家按整数回查 —— 数字化的字符串也还原成数字，免得对方把它当 resId 下载。
  */
-export function normalizeMessageId(backendId, id) {
+function normalizeMessageId(backendId, id) {
   const b = backendOf(backendId);
   if (b.messageId === 'resid-string') return String(id);
   const n = Number(id);
@@ -151,7 +151,7 @@ function residOf(resId) {
  * ⚠️ 生产动作没在表里写差异的默认 `yes`（四家都对这 8 个有实现，取证见蓝图 §1）；
  *    但 `get_version_info` / `get_status` 这类有差异的必须在表里显式写。
  */
-export function actionSupportOf(backendId, action) {
+function actionSupportOf(backendId, action) {
   const b = backendOf(backendId);
   if (b.supports[action] !== undefined) return b.supports[action];
   if (PRODUCTION_ACTIONS.includes(action)) return 'yes';
@@ -167,8 +167,8 @@ export function capabilitiesOf(backendId) {
     backend: b.id,
     label: backendLabel(b.id),
     actions,
-    // 上游自报的 can_send_* 一律不可信（LLBot 恒 true）；将来做了真实发送观测再加来源。
-    canSend: { image: 'untrusted', record: 'untrusted' },
+    // 上游自报的 can_send_* 一律不可信（LLBot 恒 true）；值只有 registry 一份。
+    canSend: { ...UNTRUSTED_CAN_SEND },
     forwardOrder: [...b.forwardOrder],
     messageId: b.messageId,
   };

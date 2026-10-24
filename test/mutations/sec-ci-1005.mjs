@@ -18,6 +18,7 @@
  *   | C2  | dependabot 去掉 github-actions | §25「没有覆盖 github-actions」 | BLOCKED |
  *   | C3  | ci.yml 去掉 `NODE_OPTIONS=` 前缀 | §25「没带 NODE_OPTIONS=」 | BLOCKED |
  *   | C4  | 只在 ci.yml 加注释，代码一字不动 | 防线**不该**响 | NOT-BLOCKED |
+ *   | C5  | 删掉 ci.yml 的 mutate-lint 步骤 | §25「ci.yml 没有跑 mutate-lint.mjs」 | BLOCKED |
  *
  * ⚠️ **C1 是这一组的重点**：`publish-audit` 是**真值闸门** ——
  *    真实 QQ 号 / 群号 / 本机路径进仓库时，它按 `scripts/known-real.mjs` 扫
@@ -28,7 +29,7 @@
  *    所以这条钉的是"注释里提到不会误报"这个**当前事实**；
  *    若将来判据升级成 YAML 结构化解析，这条会变成更有意义的形状。
  *
- * 期望：C1–C3 `BLOCKED`，C4 `NOT-BLOCKED`，`INVALID` 为 0。
+ * 期望：C1–C3、C5 `BLOCKED`，C4 `NOT-BLOCKED`，`INVALID` 为 0。
  */
 const CI = '.github/workflows/ci.yml';
 const DEP = '.github/dependabot.yml';
@@ -68,11 +69,11 @@ const C2 = {
 const C3 = {
   id: 'C3',
   note: 'ci.yml 跑测试去掉 `NODE_OPTIONS=` 前缀 —— R39：shell 注入的 shim 会把 err.code 改写成 CODEBUDDY_BROKER_DENY，CI 上会出现假红（人极易读成"项目坏了"）。预期 BLOCKED',
-  // ⚠️ 锚 `run: NODE_OPTIONS=`，计数 2（两个 run 步骤）。
+  // ⚠️ 锚 `run: NODE_OPTIONS=`，计数 3（check-wb / mutate-lint / smoke 三个 run 步骤）。
   //    只锚裸的 `NODE_OPTIONS=` 会连文件头注释一起数进来（那里在讲 R39），
   //    计数对不上；而判据侧同样只认 run 行 —— 两边形状必须一致。
   anchor: /run: NODE_OPTIONS=/,
-  count: 2,
+  count: 3,
   file: CI,
   apply: (s) => s.replace(/NODE_OPTIONS= /g, ''),
   layer: 'check-wb',
@@ -92,4 +93,16 @@ const C4 = {
   expect: 'NOT-BLOCKED',
 };
 
-export default [C1, C2, C3, C4];
+// ── C5：删掉变异清单步骤 ───────────────────────────────────────────────────
+const C5 = {
+  id: 'C5',
+  note: '删掉 ci.yml 的 mutate-lint 步骤 —— 变异锚点失效/清单腐烂在 PR 上没人拦。预期 BLOCKED',
+  anchor: /- run: NODE_OPTIONS= node scripts\/mutate-lint\.mjs\n/,
+  count: 1,
+  file: CI,
+  apply: (s) => s.replace(/- run: NODE_OPTIONS= node scripts\/mutate-lint\.mjs\n/, ''),
+  layer: 'check-wb',
+  expect: 'BLOCKED',
+};
+
+export default [C1, C2, C3, C4, C5];

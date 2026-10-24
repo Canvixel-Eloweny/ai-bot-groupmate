@@ -72,6 +72,40 @@ export const NUM_FIELDS = {
    * 所以这里不声明 max。
    */
   antiFloodChunks: { default: 2, min: 1 },
+
+  /**
+   * 最多启用几个扩展包（2026-10-23）。默认值 / 天花板与
+   * `plugin-manifest.js` 的 `PLUGIN_MAX` / `PLUGIN_MAX_LIMIT` 必须相等 ——
+   * 那个文件是零依赖叶子（不许 import 本文件），所以两边各写一份数字，
+   * 由 `scripts/check-wb.mjs` §139 逐值对账。改一处必须同时改另一处。
+   */
+  pluginMax: { default: 256, min: 1, max: 1024 },
+
+  /**
+   * 最多注册多少个工具（2026-10-23）。同样与 `tool-registry.js` 的
+   * `TOOL_MAX` / `TOOL_MAX_LIMIT` 由 §140 对账。
+   */
+  toolMax: { default: 64, min: 1, max: 256 },
+
+  /**
+   * 每轮最多把几条手动记忆放进提示词（2026-10-23）。
+   * 存储层**不再按条数截断**：这个数只决定"这一轮带哪几条"，
+   * 超出部分仍在 config.json 与面板里，不会丢。
+   */
+  memoryPromptMax: { default: 12, min: 1, max: 100 },
+
+  /**
+   * 每轮最多同时注入几条知识包 / 每轮技能背景的总字数上限（2026-10-23）。
+   * 与 memoryPromptMax 同一性质：只封顶提示词，不封顶保存。
+   */
+  skillPromptMax: { default: 3, min: 1, max: 50 },
+  skillPromptChars: { default: 2000, min: 200, max: 20000 },
+
+  /**
+   * 单条插件钩子的超时（毫秒，2026-10-23）。超时按 fail-open 放行并记一条错误；
+   * 与 `hook-bus.js` 的 `HOOK_TIMEOUT_MS` / `HOOK_TIMEOUT_LIMIT` 由 §145 对账。
+   */
+  hookTimeoutMs: { default: 5000, min: 100, max: 120000 },
 };
 
 /**

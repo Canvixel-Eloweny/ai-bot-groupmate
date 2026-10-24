@@ -83,15 +83,20 @@ export function lateSendReason(gateReason, sessionLive) {
 }
 
 /**
- * 快到入睡点多久之内算"开始犯困"（**经验值**：一小时，够它开始敷衍两句了）。
+ * 快到入睡点多久之内算"开始犯困"（**经验值**：两小时，够它从敷衍两句到半句）。
  * ⚠️ **不导出**：只有一个消费者（本文件里的 `restLineOf`）。导出它会被 §56
  *    的「导出全仓无人引用」当场拦下 —— 那正是那条判据要防的形态。
  */
-const DROWSY_BEFORE_BED_MS = 60 * 60 * 1000;
+const DROWSY_BEFORE_BED_MS = 2 * 60 * 60 * 1000;
+/** 半小时内 = 已经困了（比"有点犯困"再短一档）。 */
+const DROWSY_CRITICAL_MS = 30 * 60 * 1000;
 /** 作息状态行（三条，都是**状态**不是指令）。⚠️ 改文案要同步 smoke T329 的上限断言。 */
 export const REST_LINE_WOKE = '你刚醒，还没完全开机 —— 说话可以慢半拍。';
 export const REST_LINE_EMERGENCY = '你被人连着喊醒的，还有点懵 —— 别装作精神很好。';
 export const REST_LINE_DROWSY = '快到你睡觉的点了，你开始犯困。';
+/** 2026-10-22 · 困倦分级：两小时内 / 半小时内 / 已过入睡点但没睡。 */
+export const REST_LINE_SLEEPY = '你有点犯困了 —— 句子可以短一点。';
+export const REST_LINE_VERY_TIRED = '你已经很困了 —— 半句或几个字，关键的问题还是要答。';
 /** 补看轮那句（只有 `isCatchUp` 的轮次才有）。 */
 export const CATCHUP_LINE = '你刚醒，翻到了睡着时错过的消息 —— 挑一两条自然地接上，别一股脑全回，也别提自己睡着了。';
 /** 巡逻轮那句（只有 `isPatrol` 的轮次才有）：这不是谁在跟它说话，是它自己翻了一遍积压。 */
@@ -125,7 +130,11 @@ export function restLineOf(snap, { now = 0 } = {}) {
   // 本夜正式起床（含刚被叫醒）：wokeKind === 'owner'
   if (snap.wakeKind === 'owner') return REST_LINE_WOKE;
   const untilBed = Number(snap.bedAt) - Number(now);
-  if (Number.isFinite(untilBed) && untilBed > 0 && untilBed <= DROWSY_BEFORE_BED_MS) return REST_LINE_DROWSY;
+  if (Number.isFinite(untilBed)) {
+    if (untilBed <= 0) return REST_LINE_VERY_TIRED;
+    if (untilBed <= DROWSY_CRITICAL_MS) return REST_LINE_DROWSY;
+    if (untilBed <= DROWSY_BEFORE_BED_MS) return REST_LINE_SLEEPY;
+  }
   return '';
 }
 

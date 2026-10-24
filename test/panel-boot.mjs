@@ -126,6 +126,22 @@ const stop = async () => {
   }
 };
 
+/* 被 Ctrl-C / 终端关闭打断时，上面的 `finally` 不保证会跑：Node 默认直接退出，
+   子面板会被 init 收养（2026-10-20 五个 PPID-1 孤儿就是这么留下的）。
+   这里注册同步硬清理；正常结束时 `finally` 仍走优雅 stop，最后把 cleaned 置真。
+   ⚠️ SIGKILL 捕获不到 —— 这是无法兑现的承诺，不写。 */
+let cleaned = false;
+const hardCleanup = () => {
+  if (cleaned) return;
+  cleaned = true;
+  try { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); } catch { /* 已退 */ }
+  try { fs.rmSync(USERDATA, { recursive: true, force: true }); } catch { /* 清不掉就留给 tmp */ }
+};
+for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+  process.once(sig, () => { hardCleanup(); process.exit(code); });
+}
+process.on('exit', hardCleanup);
+
 try {
   // ① 等监听起来（最多约 15 秒）。启动期要读配置、扫扩展包，慢一点是正常的。
   //    ⚠️ 这里只探 **TCP**，不探 HTTP：面板坏掉时 HTTP 请求会永远挂着
@@ -267,6 +283,7 @@ try {
 } finally {
   await stop();
   try { fs.rmSync(USERDATA, { recursive: true, force: true }); } catch { /* 清不掉就留给 tmp */ }
+  cleaned = true;
 }
 
 if (problems.length) {

@@ -21,17 +21,32 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
+import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { APP, USER_ROOT, MODE, CONFIG_JSON, NODE_EXE, IS_WIN, exists, ok, warn, dim, say } from './common.mjs';
 
-export const PANEL_PORT = Number(process.env.QQBOT_PANEL_PORT) || 8788;
-export const PANEL_URL = `http://127.0.0.1:${PANEL_PORT}/`;
+function normalizePort(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 && n <= 65535 ? n : 0;
+}
+
+/** 显式覆盖（测试/多实例）；默认 0 = 系统分配，实际端口从发现文件读。 */
+const PORT_OVERRIDE = normalizePort(process.env.QQBOT_PANEL_PORT);
+
+// 发现模块从**当前程序根**加载（与 launcher 同理）：工具层顶层 `tools/` 与 `app/` 的
+// 相对层级在便携包与开发树里不同，静态 import 会在真机上找不到文件。
+const requireApp = createRequire(path.join(APP, 'package.json'));
+let discoveryCache = null;
+function panelDiscovery() {
+  if (!discoveryCache) discoveryCache = requireApp(path.join(APP, 'src', 'panel-discovery.cjs'));
+  return discoveryCache;
+}
 export const PANEL_LOG = path.join(USER_ROOT, 'panel', 'panel.log');
 
-/** 端口上有没有东西应答（与面板自己的判据同一口径：只问在不在）。 */
-export function panelUp(timeout = 1500) {
+/** 指定端口上有没有东西应答（与面板自己的判据同一口径：只问在不在）。 */
+export function panelUp(port, timeout = 1500) {
   return new Promise((resolve) => {
-    const s = net.connect({ port: PANEL_PORT, host: '127.0.0.1' });
+    const s = net.connect({ port, host: '127.0.0.1' });
     const done = (v) => { s.destroy(); resolve(v); };
     s.setTimeout(timeout);
     s.once('connect', () => done(true));
@@ -40,13 +55,33 @@ export function panelUp(timeout = 1500) {
   });
 }
 
-export async function waitPanelUp(ms = 25000) {
+async function healthAt(port) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 2000);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: ac.signal });
+    const body = JSON.parse(await res.text());
+    return { ok: res.status === 200 && body && body.ok === true, body };
+  } catch {
+    return { ok: false, body: null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 等**本次 spawn 的那个 pid** 写出发现文件并通过 /api/health。 */
+export async function waitPanelUp(ms = 25000, childPid = 0) {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
-    if (await panelUp(1500)) return true;
+    const d = panelDiscovery();
+    const info = d.readDiscovery(USER_ROOT);
+    if (info && d.isLive(info) && (!childPid || info.pid === childPid)) {
+      const h = await healthAt(info.port);
+      if (h.ok) return info;
+    }
     await new Promise((r) => setTimeout(r, 400));
   }
-  return false;
+  return null;
 }
 
 /**
@@ -74,18 +109,25 @@ export async function startPanel() {
       QQBOT_USER_ROOT: USER_ROOT,
       QQBOT_MODE: MODE,
       QQBOT_CONFIG: CONFIG_JSON,
+      // 显式写进去：继承到的空/非法值不会让面板回落到 8788。
+      QQBOT_PANEL_PORT: String(PORT_OVERRIDE),
     },
   });
   child.once('error', (e) => {
     try { fs.appendFileSync(PANEL_LOG, `[${new Date().toISOString()}] ✗ 控制台起不来：${e.message}\n`); } catch { /* 兜底 */ }
   });
   child.unref();
-  const up = await waitPanelUp(25000);
-  return { up, pid: child.pid, url: PANEL_URL };
+  const info = await waitPanelUp(25000, Number(child.pid) || 0);
+  return {
+    up: Boolean(info),
+    pid: child.pid,
+    port: info ? info.port : 0,
+    url: info ? info.url : '',
+  };
 }
 
 /** 用系统默认浏览器打开。打不开不算失败 —— 页面上还会给出地址。 */
-export function openBrowser(url = PANEL_URL) {
+export function openBrowser(url) {
   if (!IS_WIN) { say(`  请在浏览器打开：${url}`); return false; }
   try {
     // ⚠️ `start` 是 cmd 内建命令；那个空串是**窗口标题**位，少了它 URL 会被当成标题、
@@ -102,18 +144,20 @@ export function openBrowser(url = PANEL_URL) {
  * @returns {Promise<{url:string, reused:boolean, opened:boolean}>}
  */
 export async function ensureConsole({ open = true } = {}) {
-  if (await panelUp()) {
-    ok(`控制台已在运行（${PANEL_PORT}）`);
-    const opened = open ? openBrowser() : false;
-    return { url: PANEL_URL, reused: true, opened };
+  const d = panelDiscovery();
+  const live = d.readDiscovery(USER_ROOT);
+  if (live && d.isLive(live) && await panelUp(live.port)) {
+    ok(`控制台已在运行（系统分配端口 ${live.port}）`);
+    const opened = open ? openBrowser(live.url) : false;
+    return { url: live.url, reused: true, opened };
   }
   dim('  正在拉起控制台（后台运行，**不会有黑窗口**）…');
   const r = await startPanel();
   if (!r.up) {
     warn(`控制台 25 秒内没应答 —— 看 ${path.relative(USER_ROOT, PANEL_LOG)} 里的报错`);
-    return { url: PANEL_URL, reused: false, opened: false };
+    return { url: '', reused: false, opened: false };
   }
-  ok('控制台已就绪');
-  const opened = open ? openBrowser() : false;
-  return { url: PANEL_URL, reused: false, opened };
+  ok(`控制台已就绪（系统分配端口 ${r.port}）`);
+  const opened = open ? openBrowser(r.url) : false;
+  return { url: r.url, reused: false, opened };
 }

@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-backdrop="aurora" data-explode="0">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Estrella · Liquid Glass Lab</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="./style.css" />
+<link rel="stylesheet" href="./glass-scrim.css" />
+<link rel="stylesheet" href="./glass-station.css" />
+</head>
+<body class="glass-lab">
+
+<header class="gs-top">
+  <div class="gs-top-inner">
+    <div class="gs-brand">
+      <span class="gs-brand-mark"><i>E</i></span>
+      <span class="gs-brand-text">
+        <b>Liquid Glass Lab</b>
+        <small>ESTRELLA · 光学制作站</small>
+      </span>
+    </div>
+
+    <div class="gs-top-mid">
+      <span class="gs-engine-chip" id="gsEngineChip"><i></i> 正在探测引擎</span>
+      <span class="gs-top-rule" aria-hidden="true"></span>
+      <span class="gs-top-note">拖动玻璃 · 拖对比线 · 点场景卡</span>
+    </div>
+
+    <div class="gs-top-actions">
+      <button class="gs-icon-btn" type="button" data-gs="help" aria-label="快捷键与说明" title="快捷键与说明">?</button>
+      <button class="gs-icon-btn gs-wide-btn gs-theme-btn" type="button" data-gs="theme" aria-label="切换深浅色" title="切换深浅色">
+        <span class="gs-theme-dot"></span><span data-theme-label>深色</span>
+      </button>
+      <button class="gs-icon-btn gs-wide-btn" type="button" data-gs="fullscreen" aria-label="全屏演示" title="全屏演示">
+        <span class="gs-fullscreen-glyph" aria-hidden="true"></span>全屏
+      </button>
+      <button class="gs-primary-btn" type="button" data-gs="openModal">
+        <span class="gs-spark" aria-hidden="true"></span>渐进模糊
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="gs-shell">
+
+  <aside class="gs-left" aria-label="模板与参数">
+    <section class="gs-panel gs-panel-palette">
+      <header class="gs-panel-head">
+        <div><p class="gs-kicker">Palette</p><h2>模板库</h2></div>
+        <span class="gs-count" id="gsTemplateCount">16</span>
+      </header>
+      <div class="gs-palette" id="gsPalette"></div>
+    </section>
+
+    <section class="gs-panel gs-panel-presets">
+      <header class="gs-panel-head">
+        <div><p class="gs-kicker">Recipes</p><h2>预设</h2></div>
+        <button class="gs-link-btn" type="button" data-gs="resetAll">全部复位</button>
+      </header>
+      <div class="gs-presets" id="gsPresets"></div>
+    </section>
+
+    <section class="gs-panel gs-panel-controls">
+      <header class="gs-panel-head">
+        <div><p class="gs-kicker">Optics</p><h2>参数</h2></div>
+        <span class="gs-pill-note" id="gsParamDirty">已调校</span>
+      </header>
+      <div class="gs-controls" id="gsControls"></div>
+      <p class="gs-hint">双击参数名单项复位。数值实时写入当前场景的全部玻璃。</p>
+    </section>
+  </aside>
+
+  <section class="gs-main" aria-label="舞台">
+    <section class="gs-stage-panel" id="gsStagePanel">
+      <div class="gs-stage-bar">
+        <div class="gs-view-tabs" role="tablist" aria-label="视图">
+          <button type="button" role="tab" data-gs="view" data-view="scene" aria-selected="true">场景</button>
+          <button type="button" role="tab" data-gs="view" data-view="single" aria-selected="false">单件</button>
+          <button type="button" role="tab" data-gs="view" data-view="compare" aria-selected="false">对比</button>
+        </div>
+
+        <div class="gs-backdrops" id="gsBackdrops" role="group" aria-label="背板"></div>
+
+        <div class="gs-stage-tools">
+          <button class="gs-tool" type="button" data-gs="zoom" title="循环缩放舞台">100%</button>
+          <button class="gs-tool" type="button" data-gs="grid" aria-pressed="false" title="显示设计网格">网格</button>
+          <button class="gs-tool" type="button" data-gs="explode" aria-pressed="false" title="拆开选中玻璃的图层">拆层</button>
+          <button class="gs-tool" type="button" data-gs="resetLayout" title="把当前场景的玻璃放回原位">复位布局</button>
+        </div>
+      </div>
+
+      <div class="gs-canvas" id="gsCanvas" data-view="scene">
+        <div class="gs-world-wrap" id="gsWorldWrapA">
+          <div class="gs-world" id="gsWorldA"></div>
+        </div>
+        <div class="gs-world-wrap gs-world-b" id="gsWorldWrapB" hidden>
+          <div class="gs-world" id="gsWorldB"></div>
+        </div>
+
+        <div class="gs-grid" id="gsGrid" hidden aria-hidden="true"></div>
+
+        <div class="gs-vlabels" id="gsVLabels" hidden>
+          <span class="is-a"><i></i>当前 · 磨砂</span>
+          <span class="is-b"><i></i>精修 · SDF 透镜</span>
+        </div>
+
+        <div class="gs-compare" id="gsCompare" hidden>
+          <div class="gs-compare-line" aria-hidden="true"></div>
+          <button class="gs-compare-handle" id="gsCompareHandle" type="button"
+                  role="slider" aria-label="拖动对比分割线" aria-valuemin="8" aria-valuemax="92"
+                  aria-valuenow="50" title="拖动对比">
+            <span class="gs-compare-grip" aria-hidden="true"></span>
+          </button>
+        </div>
+
+        <div class="gs-stage-badge" id="gsStageBadge">正在布置舞台…</div>
+        <div class="gs-canvas-hint" id="gsCanvasHint">
+          <span class="gs-hint-dot"></span>拖动任意玻璃 · 拖角点缩放 · 双击复位
+        </div>
+      </div>
+
+      <div class="gs-stage-foot">
+        <div class="gs-selection" id="gsSelection">未选中玻璃</div>
+        <div class="gs-shortcuts">
+          <span><kbd>←↑→↓</kbd> 微调</span>
+          <span><kbd>Shift</kbd> ×10</span>
+          <span><kbd>Alt</kbd> + 滚轮缩放</span>
+          <span><kbd>Esc</kbd> 取消选择</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="gs-panel gs-panel-scenes">
+      <header class="gs-panel-head">
+        <div><p class="gs-kicker">Scenarios</p><h2>场景配方</h2></div>
+        <span class="gs-count" id="gsSceneCount">7</span>
+      </header>
+      <div class="gs-scenes" id="gsScenes"></div>
+    </section>
+
+    <section class="gs-gooey">
+      <header class="gs-gooey-head">
+        <div><b>液态融合（gooey）</b> · 移动指针把中间的圆拉过去，看它们粘在一起再断开</div>
+        <div class="gs-gooey-acts">
+          <button class="gs-tool" type="button" data-gs="gooey" aria-pressed="true">融合：开</button>
+          <small>blur + contrast · 无 backdrop-filter · 不进产品</small>
+        </div>
+      </header>
+      <div class="gs-gooey-stage" id="gsGooeyStage" data-gooey="on">
+        <span class="blob b1"></span>
+        <span class="blob b2 follow" id="gsGooeyBlob"></span>
+        <span class="blob b3"></span>
+        <span class="gpill"></span>
+      </div>
+    </section>
+  </section>
+
+  <aside class="gs-right" aria-label="图层、引擎与导出">
+    <section class="gs-panel gs-panel-layers">
+      <header class="gs-panel-head">
+        <div><p class="gs-kicker">Material</p><h2>图层堆叠</h2></div>
+        <button class="gs-tool" type="button" data-gs="explode" aria-pressed="false">拆层</button>
+      </header>
+      <div class="gs-layer-stack" id="gsLayerStack"></div>
+
+      <div class="gs-map-preview">
+        <div class="gs-map-head">
+          <span>位移贴图</span>
+          <span class="gs-map-meta" id="gsMapMeta">等待生成</span>
+        </div>
+        <div class="gs-map-frame">
+          <img id="gsMapImg" alt="当前参数的 SDF 位移贴图预览" />
+          <span class="gs-map-axis gs-map-x">R → X</span>
+          <span class="gs-map-axis gs-map-y">B → Y</span>
+        </div>
+        <p>中性值 128 不位移；靠近边缘位移最大，中心保持清晰。</p>
+      </div>
+    </section>
+
+    <section class="gs-panel gs-panel-engine">
+      <header class="gs-panel-head">
+        <div><p class="gs-kicker">Runtime</p><h2>引擎</h2></div>
+        <span class="gs-pill-note" id="gsPerf">—</span>
+      </header>
+      <div class="gs-support" id="gsSupport"></div>
+    </section>
+
+    <section class="gs-panel gs-panel-export">
+      <header class="gs-panel-head">
+        <div><p class="gs-kicker">Handoff</p><h2>导出</h2></div>
+        <span class="gs-count gs-count-soft" id="gsExportMeta">—</span>
+      </header>
+      <div class="gs-export-tabs" role="tablist" aria-label="导出格式">
+        <button type="button" role="tab" data-export="css" aria-selected="true">CSS</button>
+        <button type="button" role="tab" data-export="js" aria-selected="false">JS</button>
+        <button type="button" role="tab" data-export="json" aria-selected="false">JSON</button>
+      </div>
+      <pre class="gs-code" id="gsCode" tabindex="0" aria-label="导出代码"></pre>
+      <div class="gs-export-actions">
+        <button class="gs-primary-btn gs-sm" type="button" data-gs="copy">复制</button>
+        <button class="gs-tool" type="button" data-gs="download">下载</button>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<div class="gs-help" id="gsHelp" hidden>
+  <div class="gs-help-card">
+    <header>
+      <div><p class="gs-kicker">Guide</p><h3>怎么玩这张验收页</h3></div>
+      <button class="gs-icon-btn" type="button" data-gs="help" aria-label="关闭说明">×</button>
+    </header>
+    <div class="gs-help-grid">
+      <div><b>拖动</b><p>按住任意玻璃移动；在“对比”里拖中间的分割线。</p></div>
+      <div><b>缩放</b><p>拖选中玻璃的四个角；<kbd>Alt</kbd> + 滚轮也能缩放。</p></div>
+      <div><b>复位</b><p>双击玻璃复位位置与尺寸；“复位布局”清空整场。</p></div>
+      <div><b>换材质</b><p>左侧模板、右侧场景、底部预设都会即时重挂透镜。</p></div>
+      <div><b>研究参数</b><p>右侧贴图预览会跟着 SDF 参数实时更新。</p></div>
+      <div><b>渐进模糊</b><p>顶栏“渐进模糊”打开弹层；面板可下拖关闭，层数/强度可调。</p></div>
+    </div>
+    <p class="gs-help-note">页面完全离线：没有外链、没有构建、没有请求；参数与布局会存在本机 localStorage。</p>
+  </div>
+</div>
+
+<div class="glass-scrim" id="gsScrim" hidden aria-hidden="true">
+  <span class="gsc-blur gsc-blur-1"></span>
+  <span class="gsc-blur gsc-blur-2"></span>
+  <span class="gsc-blur gsc-blur-3"></span>
+  <span class="gsc-tint"></span>
+</div>
+<div class="modal" id="gsModal" hidden>
+  <div class="modal-box gs-modal-box" id="gsModalBox">
+    <button class="gs-modal-x" type="button" data-gs="closeModal" aria-label="关闭">×</button>
+    <div class="gs-modal-grab" id="gsModalGrab" title="向下拖动关闭"><span></span></div>
+
+    <div class="gs-modal-head">
+      <p class="gs-kicker">Progressive Blur</p>
+      <h3>越靠近卡片，背景越糊</h3>
+      <p>三层 <code>backdrop-filter</code> 配径向遮罩，由外向内叠加；中心和边缘的过渡区互相重叠，所以看不到硬边。</p>
+    </div>
+
+    <div class="gs-blur-tune">
+      <label class="gs-blur-field">
+        <span>层数</span>
+        <select data-blur="layers" aria-label="模糊层数">
+          <option value="1">1 层 · 省电</option>
+          <option value="2">2 层 · 均衡</option>
+          <option value="3" selected>3 层 · 完整</option>
+        </select>
+      </label>
+      <label class="gs-blur-field">
+        <span>强度 <output id="gsBlurOut">1.0×</output></span>
+        <input type="range" data-blur="strength" min="0.4" max="2" step="0.1" value="1" aria-label="模糊强度" />
+      </label>
+    </div>
+
+    <div class="gs-modal-list">
+      <div class="gs-modal-row is-on">
+        <span class="gs-modal-ico">◐</span>
+        <div><b>液态玻璃</b><small>边缘折射、内侧焦散与一层薄高光</small></div>
+        <span class="gs-switch" role="switch" aria-checked="true" tabindex="0"></span>
+      </div>
+      <div class="gs-modal-row is-on">
+        <span class="gs-modal-ico">◍</span>
+        <div><b>渐进模糊</b><small>只模糊卡片附近，视口边缘保持清晰</small></div>
+        <span class="gs-switch" role="switch" aria-checked="true" tabindex="0"></span>
+      </div>
+      <div class="gs-modal-row">
+        <span class="gs-modal-ico">▤</span>
+        <div><b>减少透明度</b><small>只留底色，不启用 backdrop-filter</small></div>
+        <span class="gs-switch" role="switch" aria-checked="false" tabindex="0"></span>
+      </div>
+    </div>
+
+    <div class="gs-modal-foot">
+      <button class="gs-primary-btn gs-sm" type="button" data-gs="closeModal">完成</button>
+      <span>拖动面板顶部可下移关闭</span>
+    </div>
+  </div>
+</div>
+
+<div class="gs-toast" id="gsToast" role="status" aria-live="polite"></div>
+
+<script src="./glass.js"></script>
+<script src="./glass-station.js"></script>
+</body>
+</html>

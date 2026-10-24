@@ -10,7 +10,7 @@ import { memoryScopeOf } from './memory-scope.js';
 import { isFriend } from './friends.js';
 import { autoMemoryForPrompt, recordsForPrompt, recallForPrompt, wantsRecall, RECALL_MAX } from './memory.js';
 import { scanEgress } from './egress.js';
-import { budgetOf, applyBudget, fitHistory, SAVING_DROP } from './context-budget.js';
+import { budgetOf, applyBudget, anchorHistory, HIST_ANCHOR, SAVING_DROP } from './context-budget.js';
 import { pickAmbient } from './ambient.js';
 // 表达规范（ATI-1）：词表与对照示例住在 speech-rules（零依赖叶子），
 // 因为它有**两个消费者** —— 这里写进提示词，index 那边扫回复记 trace。
@@ -719,6 +719,10 @@ export class Brain {
     //    不说"你应该怎么回答" —— 后者是人格文件的地盘，挤进来会让两者互相打架。
     const restLine = restLineOf(opts.sleep, { now });
     if (restLine) volatileSec.lines.push(restLine);
+    // ── 关系温度（2026-10-22 · DeepSleep 移植）─────────────────────────────
+    // 只加**状态行**；满温/无快照时调用方传空串 ⇒ 默认提示词逐字不变。
+    // 位置在必变段内部、当前时间之前（与作息行同一条理由：system 末尾两行仍是时间+场景）。
+    if (opts.heatLine) volatileSec.lines.push(String(opts.heatLine));
     // ── D31-3 · 刚起床补看（只有补看轮才有）─────────────────────────────
     // 补看轮回的是一条**几小时前的**消息，不给这句话，模型会当成"刚发生的"来接，
     // 或者反过来开始道歉"我刚才没看手机" —— 那不是人，那是客服。
@@ -741,9 +745,16 @@ export class Brain {
     const budget = budgetOf(this.cfg.context?.budget);
     const fitted = applyBudget(sections, budget, opts.saving ? { drop: SAVING_DROP } : {});
 
-    // ── 历史段：recentTurns 封顶照旧，另加一道字符预算（单条无上限的长文能顶穿上下文）──
-    // D9a：这里的 `recentTurns` 已换成**按档位收窄**过的那份（`limits`）。
-    const histFit = fitHistory(session.history.slice(-limits.recentTurns), budget);
+    // ── 历史段：锚定窗口（2026-10-23 · 回迁维护者补丁）──
+    // 以前是 `slice(-recentTurns)` 再 `fitHistory`：窗口第一格每轮都在滑，
+    // 请求前缀跟着每轮变，服务商的前缀缓存每轮作废（费用问题，不是功能问题）。
+    // 现在由 `anchorHistory` 一起算「条数 + 字符」并把起点按 6 条粒度跳；
+    // `recentTurns` 仍是**按档位收窄**过的那份（D9a），逐字不变。
+    const histFit = anchorHistory(session.history, budget, {
+      recentTurns: limits.recentTurns,
+      // 显式传粒度：与导出的 `HIST_ANCHOR` 同一个来源，不在这里再写一个 6。
+      step: HIST_ANCHOR.step,
+    });
 
     // 注意：只能有「一条」system 消息，且必须在最前。
     // 部分推理后端（mlx_lm / Qwen 的 chat template）遇到第二条 system 会直接
@@ -785,6 +796,9 @@ export class Brain {
     return {
       messages,
       dropped: fitted.dropped.concat(histFit.dropped),
+      // 锚点信息只给 trace / 测试用，不进提示词。没有它，"这轮为什么只带了 17 条"
+      // 只能靠猜；有了它就能直接看出窗口起点是不是按 6 条粒度跳的。
+      historyAnchor: histFit.anchor,
       ambient: { count: ambientPick.entries.length, refreshed: ambientPick.refreshed },
       // D11a：这一轮**记忆没提什么**。带出去给 trace 落痕 ——
       // 只在函数内部算、不往外传的话，"它怎么突然不提那件事了"就查不出来
@@ -908,8 +922,9 @@ export class Brain {
    */
   memorySelection(ctx) {
     const custom = this.cfg.custom || {};
-    // 手动记忆由 activeManualMemory 封顶（默认 12 条，见 custom-config.js 的
-    // MANUAL_MEMORY_IN_PROMPT）。面板报出去的也只是**实际注入的这几条**，
+    // 手动记忆由 activeManualMemory 按 custom.memory.promptMax 封顶
+    //（默认 12，见 field-schema 的 memoryPromptMax）。
+    // 面板报出去的也只是**实际注入的这几条**，
     // 不是"用户填了多少条" —— 否则又变成把没发生的事说成发生了。
     const manual = activeManualMemory(custom).map((m) => ({ kind: 'manual', text: m.text }));
     const auto = custom.memory?.auto
@@ -964,7 +979,9 @@ export class Brain {
     return pickSkillsForPrompt(
       custom.skills,
       { groupId: evt?.group_id, userId: evt?.user_id },
-      parsed?.text
+      parsed?.text,
+      // 预算由配置面送入（2026-10-23 可配）；缺省由 skills.js 回落常量。
+      { max: custom.skillPrompt?.max, chars: custom.skillPrompt?.chars }
     );
   }
 
@@ -1011,8 +1028,12 @@ export class Brain {
     // ⚠️ 这里用**全局** recentTurns，不是档位收窄后的那份（D9a）——
     //    「留多少」与「带多少」是两件事：按档位收窄等于"插话一多，历史就不留了"，
     //    那是把缓存容量当成了显示窗口，下一轮带满历史时会发现中间空了一截。
-    const cap = this.cfg.context.recentTurns * 2;
-    if (session.history.length > cap) session.history.splice(0, session.history.length - cap);
+    // 2026-10-23：改**批量回收**（维护者补丁 4）。以前每条超 cap 就 splice 一条 →
+    // 存下来的历史本身每轮滑一格，就算带上来的窗口锚定了，内容照样往前挪。
+    // 现在涨到 HIGH 才一次砍回 LOW：两次回收之间历史只追加不删除，前缀连续多轮不变。
+    const high = this.cfg.context.recentTurns * 2;
+    const low = this.cfg.context.recentTurns;
+    if (session.history.length >= high) session.history.splice(0, session.history.length - low);
   }
 
   /**

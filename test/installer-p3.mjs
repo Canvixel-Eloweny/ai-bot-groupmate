@@ -11,19 +11,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { Readable } from 'node:stream';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 
 import {
   compareVersions as panelCompare, parseVersion, isNewerVersion,
 } from '../panel/lib/update-version.js';
 import {
-  validateManifest, isAllowedUrl, MANIFEST_MAX_BYTES, SIGNATURE_MAX_BYTES,
+  validateManifest, isAllowedUrl, ALLOWED_HOSTS,
+  MANIFEST_MAX_BYTES, SIGNATURE_MAX_BYTES, OFFLINE_INSTALLER_MAX_BYTES, INSTALLER_MAX_BYTES,
 } from '../panel/lib/update-manifest.js';
 import {
   loadPublicKey, verifyRawSignature, fingerprintOf,
 } from '../panel/lib/update-signature.js';
-import { fetchCapped, downloadWithProgress } from '../panel/lib/update-download.js';
-import { createUpdater, canTransition, PHASES } from '../panel/lib/update.js';
+import { fetchCapped, downloadWithProgress, diskBudgetOk } from '../panel/lib/update-download.js';
+import { readBodyBuffer, readBodyToFile } from '../panel/lib/http-io.js';
+import { createUpdater, canTransition, PHASES, sweepUpdateCache } from '../panel/lib/update.js';
 import { compareVersions as installerCompare } from '../packaging/windows/tools/lib/install-layout.mjs';
 
 const APP_ID = 'com.estrellabot.windows';
@@ -188,14 +191,29 @@ async function main() {
     assert.equal(isAllowedUrl('https://evil.example/x', {}).ok, false);
     assert.equal(isAllowedUrl('http://127.0.0.1:8080/x', { testMode: true }).ok, true);
     assert.equal(isAllowedUrl('http://127.0.0.1:8080/x', {}).ok, false);
+    /* GitHub release 资产的最终重定向 host。final URL 不要求
+       `/releases/download/<tag>/` 形状（名单里是 CDN 的签名 URL），
+       所以这里不传 requireFixedTag。 */
+    assert.equal(isAllowedUrl('https://release-assets.githubusercontent.com/github-production-release-asset/1/x', {}).ok, true);
+    assert.equal(isAllowedUrl('https://release-assets.githubusercontent.com.evil.example/x', {}).ok, false);
   });
   ck('坏 sha256 / size 拒绝', () => {
     assert.equal(validateManifest(baseManifest({ installer: { sha256: 'xyz' } }), ctx).ok, false);
     assert.equal(validateManifest(baseManifest({ installer: { size: 0 } }), ctx).ok, false);
+    assert.equal(validateManifest(baseManifest({ installer: { size: INSTALLER_MAX_BYTES + 1 } }), ctx).ok, false);
   });
   ck('地址白名单常量符合规格', () => {
     assert.equal(MANIFEST_MAX_BYTES, 64 * 1024);
     assert.equal(SIGNATURE_MAX_BYTES, 8 * 1024);
+    assert.deepEqual([...ALLOWED_HOSTS], [
+      'github.com',
+      'objects.githubusercontent.com',
+      'release-assets.githubusercontent.com',
+      'gh-proxy.com',
+      'ghproxy.net',
+    ]);
+    assert.equal(ALLOWED_HOSTS.includes('*'), false);
+    assert.equal(OFFLINE_INSTALLER_MAX_BYTES, 256 * 1024 * 1024);
   });
 
   console.log('── Ed25519 原始字节验签 ──');
@@ -243,6 +261,84 @@ async function main() {
     );
   });
 
+  await ckA('重定向后校验最终 URL（不是初始 URL）', async () => {
+    const seen = [];
+    const srv = await serve((req, res) => {
+      if (req.url === '/redirect') {
+        res.writeHead(302, { location: '/manifest.json' });
+        res.end();
+        return;
+      }
+      if (req.url === '/manifest.json') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{"ok":true}');
+        return;
+      }
+      res.writeHead(404);
+      res.end('not found');
+    });
+    try {
+      const r = await fetchCapped(`http://127.0.0.1:${srv.port}/redirect`, {
+        maxBytes: 1024,
+        validateUrl: (u) => { seen.push(u); return { ok: true }; },
+      });
+      assert.equal(r.buffer.toString(), '{"ok":true}');
+      assert.equal(seen.length, 1);
+      assert.match(seen[0], /\/manifest\.json$/);
+    } finally {
+      srv.server.close();
+    }
+  });
+
+  await ckA('离线上限可容纳 >64 MiB 安装包', async () => {
+    const size = 65 * 1024 * 1024;
+    const buf = Buffer.alloc(size, 0x41);
+    const underOld = await readBodyBuffer(Readable.from([buf]), { maxBytes: 64 * 1024 * 1024 });
+    assert.equal(underOld.ok, false);
+    assert.equal(underOld.error, 'too-large');
+    const underNew = await readBodyBuffer(Readable.from([buf]), { maxBytes: OFFLINE_INSTALLER_MAX_BYTES });
+    assert.equal(underNew.ok, true);
+    assert.equal(underNew.buf.length, size);
+  });
+
+  await ckA('readBodyToFile：流式落盘；超限删半份', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'p3-bodyfile-'));
+    const f = path.join(dir, 'ok.bin');
+    const r = await readBodyToFile(Readable.from([Buffer.from('abc'), Buffer.from('def')]), { file: f, maxBytes: 10 });
+    assert.equal(r.ok, true);
+    assert.equal(r.size, 6);
+    assert.equal(fs.readFileSync(f, 'utf8'), 'abcdef');
+    const f2 = path.join(dir, 'too.bin');
+    const r2 = await readBodyToFile(Readable.from([Buffer.alloc(11, 1)]), { file: f2, maxBytes: 10 });
+    assert.equal(r2.ok, false);
+    assert.equal(r2.error, 'too-large');
+    assert.equal(fs.existsSync(f2), false);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  ck('磁盘预算：2× 包体 + 64 MB 保留', () => {
+    assert.equal(diskBudgetOk({ freeBytes: 1000, size: 100 }), false);
+    assert.equal(diskBudgetOk({ freeBytes: 64 * 1024 * 1024 + 200, size: 100 }), true);
+    assert.equal(diskBudgetOk({ freeBytes: 0, size: 100 }), false);
+  });
+
+  await ckA('cache 清理：只保留最近 2 份 EXE 与配套 json/sig', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'p3-cache-'));
+    for (const [name, t] of [['0.1.1', 1000], ['0.1.2', 2000], ['0.1.3', 3000]]) {
+      for (const ext of ['exe', 'json', 'sig']) {
+        const file = path.join(dir, `${name}.${ext}`);
+        fs.writeFileSync(file, 'x');
+        fs.utimesSync(file, new Date(t), new Date(t));
+      }
+    }
+    const r = sweepUpdateCache({ cacheDir: dir, keep: 2 });
+    assert.deepEqual(r.kept.sort(), ['0.1.2.exe', '0.1.3.exe']);
+    assert.equal(fs.existsSync(path.join(dir, '0.1.1.exe')), false);
+    assert.equal(fs.existsSync(path.join(dir, '0.1.1.json')), false);
+    assert.equal(fs.existsSync(path.join(dir, '0.1.1.sig')), false);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   await ckA('完整下载 + 进度回调 + 哈希校验', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'p3-dl-'));
     const dest = path.join(dir, 'payload.bin');
@@ -264,6 +360,9 @@ async function main() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'p3-dl-'));
     const dest = path.join(dir, 'payload.bin');
     fs.writeFileSync(`${dest}.part`, payload.subarray(0, 1000));
+    fs.writeFileSync(`${dest}.part.json`, `${JSON.stringify({
+      version: '', size: payload.length, sha256: payloadSha, at: new Date().toISOString(),
+    })}\n`);
     const r = await downloadWithProgress({
       urls: [`${base}/payload.bin`],
       dest,
@@ -273,6 +372,35 @@ async function main() {
     assert.equal(r.bytes, payload.length);
     assert.equal(fs.readFileSync(dest).equals(payload), true);
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  await ckA('同版本重打：.part sidecar 版本/哈希不匹配则从 0 重下', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'p3-dl-part-'));
+    const dest = path.join(dir, 'payload.bin');
+    fs.writeFileSync(`${dest}.part`, Buffer.alloc(1000, 0x42));
+    fs.writeFileSync(`${dest}.part.json`, `${JSON.stringify({
+      version: '0.1.0-old', size: payload.length, sha256: '0'.repeat(64), at: new Date().toISOString(),
+    })}\n`);
+    let sawRange = null;
+    const srv = await serve((req, res) => {
+      sawRange = req.headers.range || '';
+      res.writeHead(200, { 'content-length': payload.length, 'content-type': 'application/octet-stream' });
+      res.end(payload);
+    });
+    try {
+      await downloadWithProgress({
+        urls: [`http://127.0.0.1:${srv.port}/payload.bin`],
+        dest,
+        expectedSha256: payloadSha,
+        expectedSize: payload.length,
+        expectedVersion: '0.1.5-test',
+      });
+      assert.equal(sawRange, '');
+      assert.equal(fs.readFileSync(dest).equals(payload), true);
+    } finally {
+      srv.server.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   await ckA('镜像回退：第一个 404，第二个成功', async () => {

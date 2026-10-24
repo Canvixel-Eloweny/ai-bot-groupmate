@@ -4,6 +4,7 @@
  *
  * 目标不是“把仓库全部塞进去”，而是**显式白名单**：
  *   app/（package.json + panel + src + scripts/check-onebot.js + node_modules/ws）
+ *   app/electron/（桌面壳代码 + Electron 44.9.3 win32-x64 完整运行时）
  *   runtime/node/ · tools/ · launcher/ · resources/
  *   README.html · LICENSE · THIRD-PARTY-NOTICES.md · BUILD-INFO.txt
  *
@@ -12,7 +13,9 @@
  *
  * 用法：
  *   node packaging/windows/installer/make-installer-payload.mjs \
- *     --out <buildDir>/stage [--runtime-node <已有 runtime/node>] [--skip-scan]
+ *     --out <buildDir>/stage [--runtime-node <已有 runtime/node>] \
+ *     [--electron-dir <已解压 win32-x64 dist>] [--electron-zip <本地 zip>] \
+ *     [--source-commit <本地源提交>] [--source-worktree clean|dirty] [--skip-scan]
  *
  * `out` 必须不存在（不删除已有目录）。`version.nsh` 与 .nsi 副本写到 buildDir（stage 的父级）。
  */
@@ -29,6 +32,7 @@ import {
   verifyPayloadManifest,
   writeJsonAtomic,
 } from '../tools/lib/install-layout.mjs';
+import { writeBuildInfo, shortCommit } from '../tools/lib/build-info.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..', '..');
@@ -69,12 +73,13 @@ function walk(root) {
 async function main() {
   const out = path.resolve(argOf('--out') || '');
   if (!out) {
-    console.error('用法：node packaging/windows/installer/make-installer-payload.mjs --out <buildDir>/stage [--runtime-node <dir>] [--skip-scan]');
+    console.error('用法：node packaging/windows/installer/make-installer-payload.mjs --out <buildDir>/stage [--runtime-node <dir>] [--electron-dir <dir>|--electron-zip <zip>] [--source-commit <sha>] [--skip-scan]');
     process.exitCode = 2;
     return;
   }
   if (exists(out)) throw new Error(`--out 已存在，拒绝覆盖/删除：${out}`);
   const pkg = readPackageInfo(REPO);
+  const toolchain = JSON.parse(fs.readFileSync(path.join(HERE, 'toolchain.json'), 'utf8'));
   const version = argOf('--version') || pkg.version;
   if (version !== pkg.version) throw new Error(`--version=${version} 与 package.json=${pkg.version} 不一致`);
   const buildDir = path.dirname(out);
@@ -87,6 +92,7 @@ async function main() {
   // ① 用发布面拷贝生成 app（git ls-files 为准），再按显式白名单落进 payload。
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'estrella-payload-'));
   const appFull = path.join(tmp, 'app');
+  let electronMeta = { version: toolchain.electron.version, files: 0, bytes: 0, source: '' };
   try {
     execFileSync(process.execPath, [path.join(REPO, 'scripts', 'make-publish-copy.mjs'), appFull], { stdio: 'inherit' });
     const appOut = path.join(out, 'app');
@@ -109,6 +115,46 @@ async function main() {
       throw new Error('node_modules/ws 没有复制进 payload（机器人会起不来）');
     }
     say(`✓ app/：${walk(appOut).length} 个文件`);
+
+    // ② 桌面壳：代码 + win32-x64 完整运行时，放进 app/electron/。壳必须随版本目录回滚，
+    //    不能放共享的 <InstallRoot>/electron（否则回滚会变成“旧 app + 新壳”）。
+    const electronOut = path.join(appOut, 'electron');
+    const electronArg = argOf('--electron-dir');
+    const electronZip = argOf('--electron-zip');
+    const electronCache = path.join(os.homedir(), '.cache', 'estrella-bot', 'electron', toolchain.electron.version, 'win32-x64');
+    const electronFromRepo = path.join(REPO, 'node_modules', 'electron', 'dist');
+    let electronSrc = electronArg ? path.resolve(electronArg) : '';
+    if (!electronSrc && exists(path.join(electronFromRepo, 'electron.exe'))) electronSrc = electronFromRepo;
+    if (!electronSrc && exists(path.join(electronCache, 'electron.exe'))) electronSrc = electronCache;
+    if (electronSrc) {
+      say(`✓ Electron 运行时来源：${electronSrc}`);
+      copyDir(electronSrc, electronOut);
+    } else if (electronZip) {
+      say(`✓ Electron 运行时来源：${path.resolve(electronZip)}`);
+      execFileSync(process.execPath, [path.join(HERE, 'fetch-electron-runtime.mjs'), '--zip', path.resolve(electronZip), '--out', electronOut], { stdio: 'inherit' });
+    } else {
+      say(`· 本地没有现成 Electron ${toolchain.electron.version} win32-x64，按 toolchain.json 下载…`);
+      execFileSync(process.execPath, [path.join(HERE, 'fetch-electron-runtime.mjs'), '--out', electronOut], { stdio: 'inherit' });
+    }
+    for (const name of ['main.js', 'preload.js', 'error.html', 'package.json']) {
+      copyFile(path.join(REPO, 'electron', name), path.join(electronOut, name));
+    }
+    for (const rel of ['electron.exe', 'version', path.join('resources', 'default_app.asar'), 'main.js', 'package.json']) {
+      if (!exists(path.join(electronOut, rel))) throw new Error(`app/electron 缺 ${rel}：${electronOut}`);
+    }
+    const electronVersionFile = fs.readFileSync(path.join(electronOut, 'version'), 'utf8').trim();
+    if (!/^44\.9\.3(?:$|[.-])/.test(electronVersionFile)) {
+      throw new Error(`app/electron/version 不是 44.9.3：${electronVersionFile}`);
+    }
+    const electronFiles = walk(electronOut);
+    const electronBytes = electronFiles.reduce((n, f) => n + fs.statSync(f).size, 0);
+    electronMeta = {
+      version: electronVersionFile,
+      files: electronFiles.length,
+      bytes: electronBytes,
+      source: electronArg ? 'copied' : electronSrc ? 'cached' : electronZip ? 'copied-zip' : 'downloaded',
+    };
+    say(`✓ app/electron/：${electronFiles.length} 个文件 · ${(electronBytes / 1024 / 1024).toFixed(1)} MiB · Electron ${electronVersionFile}`);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -161,19 +207,43 @@ async function main() {
   if (!exists(path.join(runtimeOut, 'node.exe'))) throw new Error(`runtime/node/node.exe 不在位：${runtimeOut}`);
 
   // ④ 构建信息与 NSIS 常量（version.nsh 放在 buildDir，不进安装 payload）。
-  const commit = spawnSync('git', ['-C', REPO, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  const gitCommit = spawnSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  const gitShort = spawnSync('git', ['-C', REPO, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
   const dirty = spawnSync('git', ['-C', REPO, 'status', '--porcelain'], { encoding: 'utf8' }).stdout.trim() ? 'dirty' : 'clean';
-  const toolchain = JSON.parse(fs.readFileSync(path.join(HERE, 'toolchain.json'), 'utf8'));
-  fs.writeFileSync(path.join(out, 'BUILD-INFO.txt'), [
-    `Estrella Bot installer payload`,
-    `version=${version}`,
-    `appId=${pkg.appId}`,
-    `commit=${commit}`,
-    `worktree=${dirty}`,
-    `builtAt=${new Date().toISOString()}`,
-    `nodeRuntime=${toolchain.node.version} (${runtimeSrc ? 'copied' : 'downloaded'})`,
-    '',
-  ].join('\n'), 'utf8');
+  // 跨血缘溯源：公开仓的提交号 ≠ 本地源提交。发布拷贝根带 PUBLISH-PROVENANCE.json，
+  // CI 构建读它把 sourceCommit 记成**本地**那一笔；本地构建没有该文件时回退当前 HEAD。
+  const provenanceFile = argOf('--provenance') || path.join(REPO, 'PUBLISH-PROVENANCE.json');
+  let provenance = null;
+  if (exists(provenanceFile)) {
+    try {
+      provenance = JSON.parse(fs.readFileSync(provenanceFile, 'utf8'));
+    } catch (e) {
+      throw new Error(`PUBLISH-PROVENANCE.json 解析失败：${e.message}`);
+    }
+    if (provenance.schema !== 1 || !/^[0-9a-f]{40}$/i.test(String(provenance.sourceCommit || ''))) {
+      throw new Error('PUBLISH-PROVENANCE.json 的 schema/sourceCommit 不合法');
+    }
+  }
+  const sourceCommit = argOf('--source-commit') || provenance?.sourceCommit || gitCommit;
+  const sourceWorktree = argOf('--source-worktree') || provenance?.sourceWorktree || dirty;
+  const buildCommit = argOf('--build-commit') || process.env.GITHUB_SHA || gitCommit;
+  const buildRef = argOf('--build-ref') || process.env.GITHUB_REF_NAME || '';
+  writeBuildInfo(path.join(out, 'BUILD-INFO.txt'), {
+    version,
+    appId: pkg.appId,
+    sourceCommit,
+    sourceCommitShort: shortCommit(sourceCommit),
+    sourceWorktree,
+    buildCommit,
+    buildRef,
+    commit: shortCommit(buildCommit) || gitShort,
+    builtAt: new Date().toISOString(),
+    nodeRuntime: `${toolchain.node.version} (${runtimeSrc ? 'copied' : 'downloaded'})`,
+    electronRuntime: `${electronMeta.version} (${electronMeta.source})`,
+    electronFiles: electronMeta.files,
+    electronBytes: electronMeta.bytes,
+    signing: 'none',
+  });
   fs.writeFileSync(path.join(buildDir, 'version.nsh'), [
     `!define APP_ID "${pkg.appId}"`,
     `!define APP_VERSION "${version}"`,
@@ -212,7 +282,7 @@ async function main() {
 
   say('');
   say(`✓ payload 完成：${out}`);
-  say(`  ${files.length} 个文件 · runtime ${toolchain.node.version} · ${dirty}`);
+  say(`  ${files.length} 个文件 · runtime ${toolchain.node.version} · ${sourceWorktree}`);
   say(`  NSIS：${path.join(buildDir, 'Estrella-Bot.nsi')}`);
 }
 

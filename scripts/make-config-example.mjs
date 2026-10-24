@@ -87,6 +87,34 @@ if (!('qwen' in example.llm.keys)) example.llm.keys.qwen = '';
 if (!example.llm.customBrains || typeof example.llm.customBrains !== 'object') example.llm.customBrains = {};
 if (!('activeCustomId' in example.llm)) example.llm.activeCustomId = '';
 
+// ── 2026-10-23（维护者要求）：发布模板**不许带维护者的大脑预设** ─────────────
+// 原话：「以后我们发布一个新的版本给别人用的时候把我们的大脑预设全部清空。」
+// 生成器是「从真机 config.json 抄」的 —— 不显式清，维护者的 customBrains /
+// activeCustomId / presets（模型与地址）/ keys / 活动模型全会进模板，而模板
+// 会随安装库与公开仓发出去。
+// 保留 `keys` 的四家**空格子**（值必须是空串）：面板要据此显示四家服务商；
+// `presets` 清空后 `readPresets()` 会用 `PROVIDER_DEFAULTS` 补齐通用默认 ——
+// 新用户看到的是「四家通用选项 + 自己填 Key」，不是我们的保存值。
+// 契约 §143 与变异 P15 盯着这条，别删。
+const NEUTRAL_LLM = Object.freeze({
+  model: 'deepseek-flash',
+  baseUrl: 'https://api.deepseek.com/v1',
+  fallbackModel: '',
+  fallbackModels: [],
+  thinking: { mode: 'off', level: 'medium' },
+  features: { webSearch: false, vision: false },
+  maxTokens: 1200,
+  temperature: 1,
+  presets: {},
+  customBrains: {},
+  activeCustomId: '',
+  apiKey: '',
+  apiKeyEnv: 'QQBOT_API_KEY',
+  declaredFeatures: {},
+  keys: { local: '', deepseek: '', zhipu: '', qwen: '' },
+});
+Object.assign(example.llm, NEUTRAL_LLM);
+
 // ── 2026-10-16（桌面端形态）：模板里补上 `launch` 段 ─────────────────────────
 // 理由与上面 m-4 / `keys.qwen` 两段**一模一样**：生成器是"从真机 config.json 抄"的，
 // 而真机那份还没被面板写过 `launch` ⇒ 不补就**永远不会出现在模板里**，
@@ -102,8 +130,23 @@ example.launch = { ...DEFAULT_LAUNCH };
 // 值只从 `readCustom({})` 取（唯一默认值来源），不在这里手写。
 const customDefaults = readCustom({});
 example.custom = example.custom && typeof example.custom === 'object' ? example.custom : {};
-for (const key of ['peak', 'allowFriendsPrivate', 'wait', 'image']) {
+for (const key of ['peak', 'allowFriendsPrivate', 'wait', 'image', 'tools', 'skillPrompt']) {
   if (!(key in example.custom)) example.custom[key] = customDefaults[key];
+}
+// `plugins.max` / `plugins.hookTimeoutMs` 是 2026-10-23 新增的可配上限。整个
+// `plugins` 段可能早就存在（旧模板有 `enabled` / `settings`），所以只补缺的那几格。
+if (example.custom.plugins && typeof example.custom.plugins === 'object') {
+  if (!('max' in example.custom.plugins)) {
+    example.custom.plugins.max = customDefaults.plugins.max;
+  }
+  if (!('hookTimeoutMs' in example.custom.plugins)) {
+    example.custom.plugins.hookTimeoutMs = customDefaults.plugins.hookTimeoutMs;
+  }
+}
+// `memory.promptMax` 同理：memory 段旧模板就有（auto/manual），只补缺的那一格。
+if (example.custom.memory && typeof example.custom.memory === 'object'
+  && !('promptMax' in example.custom.memory)) {
+  example.custom.memory.promptMax = customDefaults.memory.promptMax;
 }
 example.custom.trigger = example.custom.trigger && typeof example.custom.trigger === 'object' ? example.custom.trigger : {};
 if (!('patrol' in example.custom.trigger)) example.custom.trigger.patrol = customDefaults.trigger.patrol;

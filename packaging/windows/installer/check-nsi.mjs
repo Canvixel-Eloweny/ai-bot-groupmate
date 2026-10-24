@@ -142,8 +142,18 @@ function main() {
     path.join('launcher', 'run-hidden.vbs'),
     path.join('launcher', 'launch-napcat-hidden.vbs'),
     'payload-manifest.json',
+    path.join('app', 'electron', 'electron.exe'),
+    path.join('app', 'electron', 'package.json'),
+    path.join('app', 'electron', 'main.js'),
+    path.join('app', 'electron', 'resources', 'default_app.asar'),
   ]) {
     if (!fs.existsSync(path.join(stage, rel))) problems.push(`stage 缺 ${rel}`);
+  }
+  const electronVersionFile = path.join(stage, 'app', 'electron', 'version');
+  if (!fs.existsSync(electronVersionFile)) problems.push('stage 缺 app/electron/version');
+  else {
+    const ev = fs.readFileSync(electronVersionFile, 'utf8').trim();
+    if (!/^44\.9\.3(?:$|[.-])/.test(ev)) problems.push(`stage 的 Electron 版本不是 44.9.3：${ev}`);
   }
   const ps1 = path.join(path.dirname(nsi), 'uninstall-stop.ps1');
   if (!fs.existsSync(ps1)) problems.push(`缺 ${ps1}`);

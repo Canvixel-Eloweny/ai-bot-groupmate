@@ -16,7 +16,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   assertUserRootOutsideInstallRoot,
   assertWritableDir,
@@ -28,7 +27,6 @@ import {
   readPackageInfo,
   readJsonFile,
   sha256FileSync,
-  validateCurrent,
   verifyPayloadManifest,
   writeJsonAtomic,
 } from './lib/install-layout.mjs';
@@ -36,7 +34,6 @@ import { stopInstalledApp } from './stop.mjs';
 import { writeRuntimeMarker } from './lib/rollback.mjs';
 import { say, sayErr } from './lib/common.mjs';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
 const IS_WIN = process.platform === 'win32';
 const STABLE_DIRS = ['tools', 'launcher', 'resources'];
 const ROOT_FILES = ['README.html', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'BUILD-INFO.txt'];
@@ -295,6 +292,7 @@ async function main() {
     installRoot,
     userRoot,
     timeoutMs: 30000,
+    includeShell: true,
     log: (m) => say(m),
   });
   if (!stop.ok) throw new Error(`应用没能停干净，拒绝替换 runtime：\n  - ${stop.errors.join('\n  - ')}`);
@@ -349,18 +347,26 @@ async function main() {
     fs.mkdirSync(runtimeRoot, { recursive: true });
     const nodeTarget = path.join(runtimeRoot, 'node');
     const nodePrev = path.join(runtimeRoot, 'node.previous');
+    const nodePrevOld = path.join(runtimeRoot, `node.previous.old-${stamp}`);
     const nodeNew = path.join(runtimeRoot, `node.new-${stamp}`);
-    // 规格 §6.2：旧备份先移除；删不掉（被占用）就中止，别在背后留下两份互相覆盖的备份。
-    if (exists(nodePrev)) {
-      try {
-        fs.rmSync(nodePrev, { recursive: true, force: true });
-      } catch (e) {
-        throw new Error(`旧的 runtime/node.previous 删不掉（可能被占用）：${nodePrev}：${e.message}`);
-      }
-      if (exists(nodePrev)) throw new Error(`旧的 runtime/node.previous 仍存在：${nodePrev}`);
-    }
+    // 先把新 runtime 复制到位，再动旧的 node.previous —— 复制 100 MB+ 期间断电时，
+    // 旧备份必须还在，否则 restoreJournal 只能把旧 runtime 放回 node，下一次回滚就没有 runtime 可换。
     rm(nodeNew);
     copyDir(path.join(stage, 'runtime', 'node'), nodeNew);
+    if (exists(nodePrev)) {
+      // 旧的 node.previous 不能直接删：它是“上一次 runtime”的唯一备份。
+      // 先改名并写进 journal，再让 swapIn 用它当本次的 backup；成功后由 retention 清掉这份改名残留。
+      rm(nodePrevOld);
+      const entry = { target: nodePrev, backup: nodePrevOld, created: false };
+      entries.push(entry);
+      persistJournal();
+      try {
+        fs.renameSync(nodePrev, nodePrevOld);
+      } catch (e) {
+        throw new Error(`旧的 runtime/node.previous 移不开（可能被占用）：${nodePrev}：${e.message}`);
+      }
+      say(`- moved aside runtime/node.previous -> ${path.basename(nodePrevOld)}`);
+    }
     swapIn({
       target: nodeTarget,
       newPath: nodeNew,

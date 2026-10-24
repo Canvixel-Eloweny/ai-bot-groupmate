@@ -48,11 +48,6 @@ function isWinPath(p) {
   return WIN_ABS_RE.test(String(p ?? ''));
 }
 
-/** 按路径形态选 path 实现：Windows 路径在 macOS 上也能被正确解析。 */
-function pathApiFor(...values) {
-  return values.some(isWinPath) ? path.win32 : path;
-}
-
 /**
  * 本文件是不是被 `node <file>` 直接跑的入口。
  * 用 realpath 两边归一：macOS 的 /var 是 /private/var 的软链，临时目录一拍就错。
@@ -292,11 +287,25 @@ export function classifyProcess({ cmd, execPath = '', installRoot, versions = []
   const toks = (String(cmd || '').match(/"[^"]*"|\S+/g) || []).map((s) => s.replace(/^"|"$/g, ''));
   const bin = String(execPath || toks[0] || '').trim();
   const binName = bin.split(/[\\/]/).filter(Boolean).pop() || '';
+  const versionsToTry = (Array.isArray(versions) ? versions : [versions]).filter(Boolean).map(String);
+  if (!versionsToTry.length) return { ours: false, reason: 'no-version' };
+  // Electron 壳：只认本安装根 versions/<ver>/app/electron/electron.exe 的主进程。
+  // 渲染/GPU/Utility 子进程带 --type=，留给主进程的 /T 树杀，单独不认。
+  if (/^electron(?:\.exe)?$/i.test(binName)) {
+    if (toks.some((t) => /^--type=/.test(t))) return { ours: false, reason: 'electron-child' };
+    for (const ver of versionsToTry) {
+      const appDir = p.join(String(installRoot), 'versions', ver, 'app', 'electron');
+      const wantExe = p.join(appDir, win ? 'electron.exe' : 'electron');
+      if (!pathEq(bin, wantExe, win ? 'win32' : 'posix')) continue;
+      if (toks.some((t) => pathEq(t, appDir, win ? 'win32' : 'posix'))) {
+        return { ours: true, reason: 'ok', version: ver, kind: 'shell' };
+      }
+    }
+    return { ours: false, reason: 'electron-entry-not-ours' };
+  }
   if (!/^node(js)?(?:\.exe)?$/i.test(binName)) return { ours: false, reason: 'exec-not-node' };
   const expectedNode = p.join(String(installRoot), 'runtime', 'node', win ? 'node.exe' : 'node');
   if (bin && !pathEq(bin, expectedNode, win ? 'win32' : 'posix')) return { ours: false, reason: 'node-elsewhere' };
-  const versionsToTry = (Array.isArray(versions) ? versions : [versions]).filter(Boolean).map(String);
-  if (!versionsToTry.length) return { ours: false, reason: 'no-version' };
   for (const raw of toks) {
     const t = raw.replace(/^"|"$/g, '');
     if (!t) continue;

@@ -66,10 +66,31 @@ const memCell = (label, path, unit, hi = false) =>
    放在最后是为了不改动已有调用点（前四个参数的位置没变）。 */
 const act = (label, action, style = 'btn-ghost', hint = '', ico = '', icoTo = '') =>
   ({ t: 'button', label, action, style, hint, ico, icoTo });
+/* HUD 信息岛（顶栏）的设置：存浏览器 localStorage，不进 config.json。
+   本页控件只读写它，岛本体在 island.js（window.Island）。 */
+const hudCfg = () => (typeof window !== 'undefined' && window.Island
+  ? window.Island.cfg()
+  : { enabled: [], interval: 7000, width: 360, height: 38, speed: 1 });
+const hudOn = (id) => hudCfg().enabled.indexOf(id) >= 0;
+const hudItem = (id) => (v) => {
+  if (!(typeof window !== 'undefined' && window.Island)) throw new Error('HUD 岛未加载（island.js 未取到），设置没有保存');
+  window.Island.setItem(id, !!v);
+  return null;
+};
+const hudSave = (patch) => (v) => {
+  if (!(typeof window !== 'undefined' && window.Island)) throw new Error('HUD 岛未加载（island.js 未取到），设置没有保存');
+  const out = {};
+  Object.keys(patch).forEach((k) => { out[k] = patch[k](v); });
+  window.Island.set(out);
+  return null;
+};
 
 /* ────────────────────────────────────────────────────────────────────────
    1. 页面骨架
    ──────────────────────────────────────────────────────────────────────── */
+/* 一级顺序 = 使用频次（2026-10-22 B2）：运行 → 发言 → 人格 → 模型 → 记忆 → 维护。
+   ⚠️ 改顺序时同步 `panel/next/verify.mjs` 里按序号点击的断言（或改成按 title 找）——
+   那里有维护 / 插件 / 人格等几处仍按 0-based 序号点，重建顺序会让它们静默点到别的域。 */
 export const GROUPS = [
   /* ══════════════════ ① 运行 ══════════════════ */
   {
@@ -90,13 +111,13 @@ export const GROUPS = [
                  而这页的信息**天然分三态**，三态就该有三种视觉（`data-st`）。
                  数据一个没丢，只是从"文字"变成了"卡片"。 */
               { t: 'statusGrid', items: [
-                { ico: 'bot', label: '机器人',
+                { ico: 'bot', label: '机器人', go: 'run/overview',
                   value: (s) => (j(s, ['bridge', 'running']) ? '在跑' : '没在跑'),
                   sub: (s) => (j(s, ['bridge', 'running'])
                     ? `pid ${j(s, ['bridge', 'pid'], '—')} · ${fmtDur(j(s, ['bridge', 'uptimeMs'], 0))}`
                     : '点「启动机器人」开起来'),
                   st: (s) => (j(s, ['bridge', 'running']) ? 'ok' : 'bad') },
-                { ico: 'layers', label: '实例数',
+                { ico: 'layers', label: '实例数', go: 'run/overview',
                   value: (s) => `${j(s, ['bridge', 'instances'], 0)} 个`,
                   sub: () => '面板只认自己的入口进程',
                   st: (s) => (j(s, ['bridge', 'instances'], 0) > 1 ? 'warn' : 'ok') },
@@ -105,7 +126,7 @@ export const GROUPS = [
                    所以先看 `applicable`：false 时这格说"原生 NapCat"、状态给 ok。
                    ⚠️ 判据在**后端**（`container.applicable`），前端不自己按平台猜 ——
                       "这台机器走没走容器"是事实，不该由页面重算一遍。 */
-                { ico: 'container', label: '容器',
+                { ico: 'container', label: '容器', go: 'run/overview',
                   value: (s) => {
                     if (j(s, ['container', 'applicable']) !== false) return j(s, ['container', 'line'], '') || '—';
                     // P11：Windows 原生形态下这一格实际就是「协议端」。没装时必须说"未安装"，
@@ -121,15 +142,29 @@ export const GROUPS = [
                     if (j(s, ['container', 'applicable']) !== false) return j(s, ['container', 'line']) ? 'ok' : 'bad';
                     return j(s, ['napcat', 'present']) === false ? 'bad' : 'ok';
                   } },
-                { ico: 'monitor', label: '面板',
+                { ico: 'monitor', label: '面板', go: 'sys/panel',
                   value: (s) => `pid ${j(s, ['panel', 'pid'], '—')}`,
                   sub: (s) => `已运行 ${fmtDur(j(s, ['panel', 'uptimeMs'], 0))}`,
                   st: 'ok' },
-                { ico: 'user', label: '登录账号',
+                { ico: 'user', label: '登录账号', go: 'speak/trigger',
                   value: (s) => j(s, ['account', 'nickname'], '未登录'),
                   sub: () => '真 QQ 号只在本机 .env 里',
                   st: (s) => (j(s, ['account', 'nickname']) ? 'ok' : 'warn') },
               ] },
+              /* 协议端**进程级**守护（2026-10-22）：连接看门狗只重连，进程没了它管不了。
+                 ⚠️ 刻意**不塞进 statusGrid**：上面那段注释已经踩过 —— 多一张卡会把
+                    下面的按钮挤出可视区，也会改变卡片高度让倾斜回归的取景坐标漂移。
+                 这里只摆一行状态；手动拉起入口在「排查与运维」里。 */
+              { t: 'note', text: (s) => {
+                const g = j(s, ['protocolGuard'], {});
+                if (!g.configured) return '协议端进程守护：不适用（macOS / 未装原生协议端）。';
+                if (g.gaveUp) return `协议端进程守护：已停手（${g.lastError || '连续拉起失败'}）。`;
+                if (g.lastError) return `协议端进程守护：${g.lastError}。`;
+                const left = g.nextRetryAt ? Math.max(0, Math.ceil((Number(g.nextRetryAt) - Date.now()) / 1000)) : 0;
+                return left
+                  ? `协议端进程守护：下次重试约 ${left} 秒后（已拉起 ${g.attempts || 0} 次）。`
+                  : `协议端进程守护：在盯着（已拉起 ${g.attempts || 0} 次）。`;
+              } },
               /* P11（2026-10-19 维护者回执）：协议端没装时**不许再让用户去 AppData 里放文件**。
                  面板自己去常见目录找（下载/桌面/文档），找不到就打开目标文件夹让用户拖进去。
                  ⚠️ 必须放在「启动链路」与五张状态卡**之间**的空行里，且 `label` 留空：
@@ -151,7 +186,7 @@ export const GROUPS = [
                 { label: (s) => `WS ${j(s, ['ports', 'onebot', 'ws'], '')}`.trim(), get: (s) => j(s, ['ports', 'onebotWs']) },
                 { label: 'WebUI 6099', get: (s) => j(s, ['ports', 'webui']) },
               ] },
-              { t: 'note', text: '睡眠那一行是**只读**的：改作息在「发言与时机 → 睡眠作息」页，手动让它睡 / 叫它醒走的是控制通道（不改配置）。' },
+              { t: 'note', text: '睡眠那一行是**只读**的：改作息在「发言 → 主动与免打扰」的作息表，手动让它睡 / 叫它醒走的是控制通道（不改配置）。' },
               { t: 'sleepLine', label: '作息' },
               { t: 'buttons', label: '让它睡 / 叫它醒', items: [
                 act('让它睡', 'cmd.sleep', 'btn-ghost', '内存态：重启机器人即恢复按作息走', 'moon'),
@@ -177,6 +212,7 @@ export const GROUPS = [
                 act('连接自检', 'check', '', '', 'search'),
                 act('读取群列表', 'groups.load', '', '', 'list'),
                 act('打开 QQ 登录页', 'open.webui', '', '', 'network'),
+                act('拉起协议端', 'protocol.start', '', '进程没了或冷却结束后手动拉起一次（账号掉线时不会拉）', 'play'),
                 act('重启 QQ 容器', 'napcat.restart', '', '', 'reload'),
               ] },
               { t: 'switch', id: 'dbg.log', label: '详细日志',
@@ -210,40 +246,16 @@ export const GROUPS = [
         ],
       },
       {
-        id: 'sessions', label: '会话', title: '会话（现在在跟谁聊）',
-        desc: '数据源是 <code>local-trace.jsonl</code>：有界窗口，反映最近活动。与「存档」故意不合并 —— 合并会在截断时静默丢数据。',
-        cards: [{
-          id: 'sessions', title: '会话列表与明细', span: 12,
-          ctrls: [{ t: 'sesList', from: 'sessions' }, { t: 'sesDetail' }],
-        }],
-      },
-      {
-        id: 'chats', label: '存档', title: '存档（之前聊过什么）',
-        desc: '机器人退出 / 定时归档时写的全量历史。面板**只读** —— "该不该恢复存档"是机器人的判据。',
-        cards: [{
-          id: 'chats', title: '消息存档', span: 12,
-          ctrls: [{ t: 'chatList', from: 'chats' }, { t: 'chatDetail' }],
-        }],
-      },
-      {
-        id: 'trace', label: '对话流', title: '模型对话流',
-        desc: '一条条摆出来：群里说了什么 → 发给模型的完整提示词 → 模型原始输出 → 实际发到群里的分段。本机模型答得不好时不用猜。',
+        id: 'sessions', label: '会话', title: '会话与存档（现在 / 历史）',
+        desc: '数据源是 <code>local-trace.jsonl</code>：有界窗口，反映最近活动；下面的「消息存档」是机器人退出 / 定时归档的全量历史（只读）。两套数据源分开读，不做合并写入 —— 合并会在截断时静默丢数据。',
         cards: [
           {
-            id: 'try', title: '试一句', span: 12,
-            desc: '走真配置、真人格、真模型，只是不碰 QQ。云端会花几分钱，本机免费但慢十几秒。',
-            ctrls: [
-              { t: 'text', id: 'try.text', label: '要它回什么', ph: '例如：小鱼在不，随便聊两句呗', wide: true, volatile: true },
-              { t: 'buttons', label: '', items: [act('试一句', 'try.run', 'btn-primary')] },
-              { t: 'tryOut' },
-            ],
+            id: 'sessions', title: '会话列表与明细', span: 12,
+            ctrls: [{ t: 'sesList', from: 'sessions' }, { t: 'sesDetail' }],
           },
           {
-            id: 'tracelist', title: '最近的经过', span: 12,
-            ctrls: [
-              { t: 'traceList', from: 'trace' },
-              { t: 'buttons', label: '', items: [act('清空记录', 'trace.clear', 'btn-danger')] },
-            ],
+            id: 'chats', title: '消息存档', span: 12,
+            ctrls: [{ t: 'chatList', from: 'chats' }, { t: 'chatDetail' }],
           },
         ],
       },
@@ -263,6 +275,13 @@ export const GROUPS = [
             desc: '只读路由 <code>GET /api/audit</code>。旧页面**不读它** —— 这里第一次把它摆出来。',
             ctrls: [{ t: 'auditList', from: 'audit' }],
           },
+          {
+            id: 'tracelist', title: '最近的经过', span: 12,
+            ctrls: [
+              { t: 'traceList', from: 'trace' },
+              { t: 'buttons', label: '', items: [act('清空记录', 'trace.clear', 'btn-danger')] },
+            ],
+          },
         ],
       },
       {
@@ -270,8 +289,8 @@ export const GROUPS = [
            这一页起的是**真的程序**（scripts/fake-qq.mjs 起假 OneBot + 真 src/index.js），
            只是把 QQ 那一层换成本地假的。会话逻辑不在这页里：斜杠命令由脚本解释，
            面板只转发 stdin 行。 */
-        id: 'fake', label: '假 QQ', title: '假 QQ（不用真 QQ 也能聊）',
-        desc: '真程序 + 假 QQ 传输层：<b>真模型</b>（或勾离线假模型）、真人设、真记忆落盘。定时消息、夜间产出这些"没有界面"的能力，在这一页打一句话就能验。',
+        id: 'fake', label: '假 QQ', title: '调试台（假 QQ / 终端 / 试一句）',
+        desc: '真程序 + 假 QQ 传输层：<b>真模型</b>（或勾离线假模型）、真人设、真记忆落盘。定时消息、夜间产出这些"没有界面"的能力，在这一页打一句话就能验；终端与「试一句」也收在这页。',
         cards: [
           {
             id: 'fake', title: '会话（打字 = 发消息）', span: 12,
@@ -286,20 +305,15 @@ export const GROUPS = [
               { t: 'note', kind: 'warn', text: '⚠️ 真机器人正在跑时<b>不许</b>用真数据起第二个程序（会抢同一份 <code>data\\</code>，把记忆写乱）—— 先停机器人，或勾「沙箱数据」（换成空的一份临时 data）。' },
             ],
           },
-        ],
-      },
-      {
-        /* ══════════════ 终端（2026-10-11）═══════════════════════════════
-           它取代的是那个**前台 cmd 窗口**：以前控制台是一个黑框 —— 关不掉
-           （关了 = 杀进程）、目录删不掉（进程占着文件）。现在：
-             · 面板无窗口后台运行，日志实时推到这一页（SSE，不轮询）
-             · 要停就点「退出控制台」—— 进程真退，目录随即能删
-           ⚠️ 这一页**没有**"在网页里执行任意命令"的输入框：那等于把本机 shell
-              开给浏览器里的任何脚本（DNS Rebinding 之后攻击者就是同源）。
-              需要的动作就是下面这几个按钮，每条都过 token + 跨源闸。 */
-        id: 'term', label: '终端', title: '终端（实时运行日志）',
-        desc: '控制台与协议端的输出都在这里实时滚动。它是**那个黑窗口的替代品** —— 关掉本页不会停掉任何东西，要停控制台请点下面的「退出控制台」。',
-        cards: [
+          {
+            id: 'try', title: '试一句', span: 12,
+            desc: '走真配置、真人格、真模型，只是不碰 QQ。云端会花几分钱，本机免费但慢十几秒。',
+            ctrls: [
+              { t: 'text', id: 'try.text', label: '要它回什么', ph: '例如：小鱼在不，随便聊两句呗', wide: true, volatile: true },
+              { t: 'buttons', label: '', items: [act('试一句', 'try.run', 'btn-primary')] },
+              { t: 'tryOut' },
+            ],
+          },
           {
             id: 'term', title: '实时日志', span: 12,
             desc: '上面三个灯依次是：机器人在不在跑 / 协议端（NapCat）在不在 / 控制台自己。日志是服务端**推**过来的（不是定时刷的），新的一行出来就到。',
@@ -322,9 +336,347 @@ export const GROUPS = [
     ],
   },
 
-  /* ══════════════════ ② 大脑 ══════════════════ */
+
+  /* ══════════════════ ② 发言 ══════════════════ */
   {
-    id: 'brain', label: '大脑',
+    id: 'speak', label: '发言',
+    subs: [
+      {
+        id: 'trigger', label: '触发方式', title: '触发方式、巡逻与跨会话',
+        desc: '什么情况下它才开口。放行 / 拉黑名单写在同一份 config.json 的 <code>allow</code> 里 —— 别的入口看到的也是这一份。',
+        draft: true,
+        cards: [
+          {
+            id: 'trg', title: '被叫到', span: 6,
+            ctrls: [
+              { t: 'switch', id: 't.at', label: '群里必须 @ 才回话', bindSys: 'requireAtInGroup' },
+              { t: 'tags', id: 't.kw', label: '包含这些词就回', bind: 'trigger.keywords', ph: '小鱼, 肥鱼, 在吗',
+                hint: '命中任意一个就会回，不受「必须 @」限制。关键词触发属于"被叫到"，所以<b>不受主动发言总闸影响</b>。' },
+              /* 同意私聊的 QQ 号（2026-10-12 补；2026-10-14 改名并挪到「放行的群号」之前）——
+                 机器人侧一直在按 `allow.private` 判定私聊放行，但**面板上原先没有这一格**：
+                 用户想让它在私聊里回话，只能手工编辑 config.json。
+                 同一个闸缺了半扇门 ⇒ 私聊不回时，用户在界面上看不见也改不了，
+                 只会以为"机器人坏了"。三段链路（下发 → 编辑 → 落盘）已一起补齐。
+                 ⚠️ 改名时**必须**同步 `src/config.js` 里那条"去哪儿填"的报错文案 ——
+                    它的注释写着"面板导航改名时这一行必须跟着改"。 */
+              { t: 'tags', id: 't.priv', label: '同意私聊的 QQ 号', bindSys: 'privateUsers', ph: '100000001',
+                hint: '填入同意私聊的 QQ 号（纯数字、逗号隔开）。填好后，这些人直接私聊它，它就会回话 —— 私聊相当于"直接点名"，<b>不用 @ 也不用关键词</b>。<b>留空 = 谁私聊都不回</b>。' },
+              { t: 'switch', id: 't.fpriv', label: '好友私聊按群友接待', bind: 'allowFriendsPrivate',
+                hint: '开着：机器人<b>加过的 QQ 好友</b>私聊它，即使没填进上面那格，也按群友的方式回话（好友表来自协议端，最多晚 10 分钟生效）。<b>好友不等于管理员</b> —— 叫醒、夜间产出收件人这些仍只认主人号。关掉：只有上面那格的号能私聊它。' },
+              { t: 'tags', id: 't.owner', label: '主人 QQ（叫醒 / 私聊兜底）', bindSys: 'ownerQq', ph: '100000001',
+                hint: '主人的 QQ 号（纯数字、逗号隔开）。加载配置时会<b>自动补进「同意私聊的 QQ 号」</b>，并允许在睡眠期间用私聊叫醒它。<b>留空 = 叫醒路整体关闭</b>（自然起床不受影响）。' },
+              { t: 'tags', id: 't.allow', label: '放行的群号', bindSys: 'groups', ph: '100000001, 987654321',
+                hint: '留空 = 群里它谁都不回。至少填一个要它说话的群（纯数字、逗号隔开）。' },
+            ],
+          },
+          {
+            id: 'deny', title: '拉黑', span: 6, col: 'r',
+            ctrls: [
+              { t: 'tags', id: 't.dg', label: '拉黑的群号', bindSys: 'denyGroups', ph: '这些群里它完全不回话' },
+              { t: 'tags', id: 't.du', label: '拉黑的 QQ 号', bindSys: 'denyUsers', ph: '哪怕被 @ 也不回' },
+              { t: 'note', kind: 'warn', text: '<b>拉黑优先于放行</b> —— 一个群同时出现在两个名单里，结果是<b>不回</b>。另外「必须 @」和关键词触发都拦不住拉黑。' },
+            ],
+          },
+          /* ── 插话冷却（2026-10-17）────────────────────────────────────────
+             为什么它单独占一块玻璃板、并且**只**是一条进度条：
+
+             ① 它此前**根本没有界面**。`trigger.interjectCooldownMs` 从机器人第一版起就在
+                `src/brain.js` 里判（`lastInterjectAt < interjectCooldownMs` ⇒ deny「插话冷却中」），
+                而面板既不下发、也不接受写入 —— 用户想改只能手改 config.json。
+                所以这块板的第一职责是「让它存在」，不是「让它更好看」。
+             ② 用户点名要的是**进度条**，不是输入框：这个量是"两次主动接话之间至少隔多久"，
+                适合用位置表达（越靠右越安静），而一个 5 位数的毫秒输入框两者都给不了。
+             ③ `col: 'r'` —— 落点就是「拉黑」卡下方那块空白（12 列栅格的右半）。
+                不用 `span: 12`：那会把左列「被叫到」顶下去一整行，红框那块反而空着。 */
+          {
+            id: 'cool', title: '插话冷却', span: 6, col: 'r', tone: 'liquid',
+            ctrls: [
+              { t: 'range', id: 't.cool', label: '两次主动插话之间至少隔',
+                bindSys: 'interjectCooldownMs',
+                /* `scale: 60000` = 界面上的**分钟** × 60000 = 盘上的毫秒。
+                   换算只在 app.js 的 valueOf / setValue 里做一次（与 `pct` 同一条纪律）——
+                   控件自己只声明单位，不在渲染函数里乘除。 */
+                scale: 60000, min: 1, max: 300, log: true, unit: '分钟',
+                // 刻线只标三处（5 分钟 / 半小时 / 2 小时）：对数刻度下"5 分钟"落在 28%
+                // 而不是 1/300 —— 没有刻线时这个位置会被读成"滑块坏了"。
+                marks: [5, 30, 120],
+                hint: '两次<b>主动接话</b>之间至少隔这么久。被 @、被关键词叫到<b>不受</b>它限制 —— 冷却只拦它自己起话头。拖到最右（5 小时）≈ 只在你叫它时才说话。' },
+            ],
+          },
+          {
+            id: 'pt', title: '巡逻规则', span: 6,
+            ctrls: [
+              { t: 'switch', id: 'pt.on', label: '群安静后翻积压（巡逻）', bind: 'trigger.patrol.enabled',
+                hint: '关掉就只有「被点名 / 关键词 / 插话 / 定时主动」这四条开口路径。巡逻是唯一会读积压的那条。' },
+              { t: 'number', id: 'pt.min', label: '至少攒几条积压', bind: 'trigger.patrol.minUnread', min: 1, max: 200, step: 1, hint: '默认 5。' },
+              { t: 'number', id: 'pt.silence', label: '群里安静多少分钟后才翻', bind: 'trigger.patrol.silenceMin', min: 0, max: 1440, step: 1, hint: '默认 10 分钟。' },
+              { t: 'number', id: 'pt.gap', label: '同一个群两轮巡逻至少隔多少分钟', bind: 'trigger.patrol.minGapMin', min: 0, max: 1440, step: 1, hint: '默认 20 分钟。' },
+              { t: 'number', id: 'pt.chance', label: '基础概率（%）', bind: 'trigger.patrol.chance', min: 0, max: 100, step: 5, pct: true,
+                hint: '实际掷骰时还会乘热度权重（群越冷越不容易开口）。被 @ / 关键词 / 私聊不受这个数影响。' },
+              { t: 'number', id: 'pt.lines', label: '一轮最多带几条消息', bind: 'trigger.patrol.maxLines', min: 1, max: 60, step: 1,
+                hint: '默认 24。只截巡逻摘要，不改未读计数；太长会挤掉别的背景。' },
+              { t: 'number', id: 'pt.chars', label: '一轮摘要最多多少字', bind: 'trigger.patrol.maxChars', min: 100, max: 6000, step: 100,
+                hint: '默认 1800。按字符截，消息条目仍按上面的条数保留。' },
+              { t: 'note', text: '一轮巡逻 = 一批积压的摘要进提示词，模型可以接一句，也可以 <code>qq_quiet</code> 照常安静。它不是每条都问模型 —— 攒够、安静够才问一次。' },
+            ],
+          },
+          {
+            id: 'ptv', title: '现在的热度与积压', span: 6,
+            ctrls: [
+              { t: 'patrolView' },
+              { t: 'note', text: '「关系温度」是它对某个人在这个群里的热络程度（0–100%）：连着找它聊天会往下掉，安静下来慢慢回升。「群活跃」看最近 30 分钟的消息量。数据每 30 秒刷新一次（机器人没在跑时显示上一次的快照）。' },
+            ],
+          },
+          {
+            id: 'cross', title: '跨会话发言', span: 6,
+            ctrls: [
+              { t: 'switch', id: 'x.on', label: '允许它去别的群发言', bind: 'crossSend.enabled',
+                hint: '开闸后模型才会拿到 get_chats / send_to 两个工具（只在开闸时注册）。出口走独立配额与审计。' },
+              { t: 'note', text: '关着的时候这两个工具<b>根本不注册</b> —— 不是"注册了但拒绝"，所以模型不会以为自己有这个能力。' },
+            ],
+          },
+          {
+            id: 'unread', title: '未读队列', span: 6,
+            ctrls: [{ t: 'unread' }],
+          },
+        ],
+      },
+      {
+        id: 'scheduled', label: '定时消息', title: '定时消息与节假日',
+        desc: '到点自动在那个群发一句。日期与频次两个维度已在 2026-10-02 修通（此前会被归一化静默剥掉）。',
+        draft: true,
+        cards: [
+          {
+            id: 'sc', title: '时刻表', span: 12,
+            ctrls: [
+              { t: 'schedList', path: 'trigger.scheduled', detailed: true },
+              { t: 'note', kind: 'ok',
+                text: '<b>「日期」与「频次」现在真的生效了。</b>修之前 <code>scheduledItems</code> 的白名单里只有 <code>{id, at, text, enabled}</code>，两个维度被静默剥掉 —— 机器人侧 <code>matchesOn(s.on)</code> 恒真、只能按"每天"跑，<b>而回归全绿</b>（D17 的用例把纯函数直接喂字段，没有一条走"经 readCustom 一遍"）。修法是<b>一处</b>（<code>src/custom-config.js</code>），并且契约 §46 已升级成"<b>往返之后仍在</b>"，不再只盯"面板有没有带上"。' },
+            ],
+          },
+          {
+            id: 'cal', title: '节假日表', span: 6,
+            ctrls: [
+              { t: 'holidays' },
+              { t: 'note', kind: 'ok',
+                text: '<b>2026-10-02 修好的一条数据链路。</b>此前 <code>custom.holidays</code> 不在 <code>readCustom</code> 的白名单里，而面板保存走整体替换 —— 于是<b>任何一次保存都会把这张表从 config.json 里抹掉</b>（机器人侧只能退化成按星期几兜底）。前端当时其实"带上了它"，但补救写在了白名单的错的一侧，所以从来没生效。现在它进了白名单，<b>往返实测通过</b>（见 <code>docs/FRONTEND-V2.md</code> §5①）。' },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'waiting', label: '聊天等待与图片', title: '聊天等待与图片 —— 回得更像人，也能发图 / 看图',
+        desc: '回话之前的<b>停顿</b>、同一个人连发几条时<b>攒成一轮</b>、模型慢时先<b>垫一句</b>，以及「正在输入」气泡；'
+          + '下面还有<b>发图</b>与<b>看图</b>两个工具。全部只影响观感与能力，不改变判定（闸门、限流、额度不受影响）。',
+        draft: true,
+        cards: [
+          {
+            id: 'cw', title: '聊天等待', span: 6,
+            ctrls: [
+              { t: 'switch', id: 'cw.on', label: '回之前先停一会儿（拟人停顿）', bind: 'wait.enabled',
+                hint: '关掉 = 判定一过立刻调模型（改造前的行为）。下面几个数都只在它开着时生效。' },
+              { t: 'number', id: 'cw.min', label: '最短停顿（毫秒）', bind: 'wait.minMs', min: 0, max: 10000, step: 100, hint: '默认 400。' },
+              { t: 'number', id: 'cw.max', label: '最长停顿（毫秒）', bind: 'wait.maxMs', min: 0, max: 20000, step: 100, hint: '默认 2500。长消息会按字数往上加，但不会超过这个值。' },
+              { t: 'number', id: 'cw.per', label: '每多一个字再多停（毫秒）', bind: 'wait.perCharMs', min: 0, max: 200, step: 5, hint: '默认 15。' },
+              { t: 'number', id: 'cw.merge', label: '连发合并：安静这么多毫秒才回（0 = 不合并）', bind: 'wait.mergeMs', min: 0, max: 30000, step: 100,
+                hint: '默认 1200。<b>只合并群聊</b>里同一个人连着发的几条；私聊不合并（紧急唤醒要按连发计数）。被合并掉的几句会进背景段，不会丢。' },
+              { t: 'number', id: 'cw.hold', label: '模型慢时先垫一句：超过多少毫秒（0 = 不垫）', bind: 'wait.holdMs', min: 0, max: 120000, step: 500, hint: '默认 6000。' },
+              { t: 'text', id: 'cw.text', label: '垫的那句话（留空 = 不垫）', bind: 'wait.holdText', ph: '例如：我想想…' },
+              { t: 'switch', id: 'cw.typing', label: '私聊里显示「正在输入」', bind: 'wait.typing', hint: '群聊协议端不支持这个状态，只对私聊生效。' },
+            ],
+          },
+          {
+            id: 'img', title: '图片工具', span: 6,
+            ctrls: [
+              { t: 'switch', id: 'img.send', label: '允许它主动发图', bind: 'image.send',
+                hint: '开着时模型多一个 send_image 工具。改完要<b>重启机器人</b>才生效（工具在启动时注册）。' },
+              { t: 'switch', id: 'img.view', label: '允许它按需看图', bind: 'image.view',
+                hint: '开着时模型多一个 view_image 工具（给地址 / 路径 / 消息号）。当前模型必须真的支持 vision。' },
+              { t: 'text', id: 'img.root', label: '本机图片目录', bind: 'image.root', ph: '默认 images-out（相对 data/）',
+                hint: '本机路径只允许这个目录内的文件（符号链接逃逸会被 realpath 拦下）。留空 = 禁用本机路径，远端 http(s) 仍可用。' },
+              { t: 'note', kind: 'warn', text: '图片先<b>下载成本地字节</b>再交给协议端：内网地址、私网 IP、超过 8MB 的一律发不出去，也会在日志里写明原因。' },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'proactive', label: '主动与免打扰', title: '主动、免打扰、峰谷与作息',
+        desc: '"什么时候它自己起话头"以及"什么时候绝对不许出声"。',
+        draft: true,
+        cards: [
+          {
+            id: 'pro', title: '定时主动与插话', span: 6,
+            ctrls: [
+              { t: 'switch', id: 'cfg.proactive', label: '主动发言', volatile: true,
+                hint: '总闸：关掉之后插话 / 定时主动 / 定时消息全都不再发声（关键词触发不受影响）。',
+                read: (s) => j(s, ['custom', 'allowProactive'], true),
+                save: (v) => ({ url: '/api/config', body: { custom: { allowProactive: v } } }) },
+              { t: 'switch', id: 'pro.on', label: '隔一段时间自己起个新话题', bind: 'trigger.proactive.enabled' },
+              { t: 'number', id: 'pro.min', label: '间隔（分钟）', bind: 'trigger.proactive.intervalMin', bounds: 'proactiveIntervalMin',
+                when: (s) => !!j(s, ['custom', 'trigger', 'proactive', 'enabled']) },
+              { t: 'text', id: 'pro.text', label: '想让它说什么', bind: 'trigger.proactive.text',
+                ph: '留空 = 每次由模型自己编一句', when: (s) => !!j(s, ['custom', 'trigger', 'proactive', 'enabled']) },
+              /* ⚠️ `pct: true` 是**必须**的（2026-10-12 修）：这一格画的是 0–100 的百分数，
+                 而盘上 `trigger.interjectChance` 是 0–1 的小数。缺了它，写方向的
+                 `Math.min(1, 15)` 会把**每一次保存都夹成 1**（=100%）—— 症状是
+                 「改了不生效」，而读方向会回显 `0.15`（症状「改了不显示」）。
+                 换算收在 app.js 的 valueOf / setValue 里，控件只负责声明单位。 */
+              { t: 'number', id: 'pr.chance', label: '随机插话概率（%）', bindSys: 'interjectChance', min: 0, max: 100, step: 5, pct: true,
+                hint: '0 = 只有被点名才回。仅在上面的「必须 @」关掉后有效。' },
+              { t: 'number', id: 'pr.hour', label: '单会话每小时最多回复', bindSys: 'perHourPerSession', bounds: 'perHourPerSession',
+                hint: '<b>私聊 / @ / 叫名字 / 命中关键词不受这一格限制</b>（它们仍受 1.5 秒与每分钟 8 条约束）；随机插话与主动发言会吃这个总额。' },
+              { t: 'note', text: '插话还有一层<b>时机</b>判定（活跃期提权 / 冷场降权，D12b）：上面这个概率是基准值，实际掷骰时会乘以因子。因子表在 trace 的 <code>interject</code> 那一格里可见。' },
+            ],
+          },
+          {
+            id: 'quiet', title: '免打扰时段', span: 6,
+            ctrls: [
+              { t: 'number', id: 'q.from', label: '从（点）', bind: 'trigger.quietHours.from', bounds: 'quietFrom' },
+              { t: 'number', id: 'q.to', label: '到（点）', bind: 'trigger.quietHours.to', bounds: 'quietTo' },
+              { t: 'note', text: '按<b>小时</b>算（24 小时制）。两个数字填成<b>一样</b>就等于关掉免打扰。跨零点会自动处理，不用你操心。' },
+              { t: 'note', kind: 'warn', text: '免打扰内：插话、定时主动、定时消息<b>全都不发</b>。但到点的提醒会留在 30 分钟窗口里，出了静默期仍会补发（用户 Q24 裁决）。' },
+            ],
+          },
+          {
+            id: 'pk', title: '高峰时刻表', span: 6,
+            ctrls: [
+              { t: 'switch', id: 'pk.on', label: '启用峰谷闸（高峰时也不主动找话）', bind: 'peak.enabled',
+                hint: '默认开。这是总闸：关掉之后，工作日白天它和平时一样爱接话、也照常起话题 —— 代价是那几个小时最费钱、也最容易被当成刷屏。' },
+              { t: 'switch', id: 'pk.mute', label: '高峰时群里没人叫就不接话', bind: 'peak.muteUnmentioned',
+                hint: '默认开。只解除"群里没被叫到"的沉默；上面的总闸关掉后这一格不再起作用。被 @ / 引用 / 关键词 / 拍一拍都不受这一格影响。' },
+              { t: 'note', text: '时段是写死的两段（<b>工作日</b>才知道：周六周日整天都算谷）。要改时刻就改 <code>src/peak.js</code> 的 <code>PEAK_WINDOWS</code> —— 别在面板上造第二份数字。' },
+            ],
+          },
+          {
+            id: 'sl', title: '作息表', span: 6,
+            ctrls: [
+              { t: 'switch', id: 'sl.on', label: '启用作息', bind: 'sleep.enabled',
+                hint: '关掉 = 从不睡（自然醒永远为真）。关着的时候下面几格只是**先填好**，不会生效。' },
+              { t: 'time', id: 'sl.bed', label: '几点睡', bind: 'sleep.bed' },
+              { t: 'time', id: 'sl.wake', label: '几点自然醒', bind: 'sleep.wake' },
+              { t: 'tags', id: 'sl.words', label: '叫醒关键词', bind: 'sleep.wakeWords', ph: '起床, 醒醒',
+                hint: '只有 <code>owner.qq</code> 里的人说才生效 —— 那一格是顶层配置，旧页面没有控件，<b>也不接受面板写入</b>（不在 /api/config 的入参里）。' },
+              { t: 'text', id: 'sl.gn', label: '睡前道晚安', bind: 'sleep.goodnight', ph: '留空 = 不说' },
+            ],
+          },
+          {
+            id: 'slnow', title: '现在的睡眠状态', span: 6,
+            ctrls: [
+              { t: 'sleepDetail' },
+              { t: 'buttons', label: '手动', items: [
+                act('让它睡', 'cmd.sleep', 'btn-ghost', '内存态，重启即恢复按作息走'),
+                act('叫它醒', 'cmd.wake'),
+              ] },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+
+
+  /* ══════════════════ ③ 人格 ══════════════════ */
+  {
+    id: 'persona', label: '人格',
+    subs: [
+      {
+        id: 'who', label: '人格设定', title: '人格设定与情绪状态',
+        desc: '决定它说话像谁。文件路径相对 <code>persona/</code>：可写 <code>qq-chat.md</code>，也兼容旧的 <code>persona/qq-chat.md</code>；留空则只使用下方结构化人设。改完点页面底部的「保存并生效」。',
+        draft: true,
+        cards: [
+          {
+            id: 'basic', title: '他是谁', span: 6,
+            ctrls: [
+              { t: 'text', id: 'p.name', label: '机器人昵称', bindSys: 'personaName', ph: '例如：小鱼',
+                hint: '键名是**顶层** personaName（不在 custom 里）—— 换到别的页面看到的也是同一个值。' },
+              { t: 'text', id: 'p.age', label: '年龄', bind: 'persona.age', ph: '例如：24' },
+              { t: 'text', id: 'p.role', label: '身份', bind: 'persona.role', ph: '例如：刚毕业的程序员' },
+              { t: 'text', id: 'p.world', label: '时代 / 世界观', bind: 'persona.world',
+                ph: '例如：当代都市 / 修真世界 / 近未来赛博城', hint: '影响他举什么例子、用什么词。' },
+              { t: 'textarea', id: 'p.desire', label: '核心欲望', bind: 'persona.desire', rows: 2, ph: '例如：想让群里的人认可他' },
+              { t: 'textarea', id: 'p.fear', label: '核心恐惧 / 弱点', bind: 'persona.fear', rows: 2, ph: '例如：最怕没人理他' },
+            ],
+          },
+          {
+            id: 'voice', title: '他怎么说话', span: 6,
+            ctrls: [
+              { t: 'text', id: 'p.traits', label: '性格关键词', bind: 'persona.traits', ph: '活泼、爱吐槽、嘴贫但没恶意' },
+              { t: 'textarea', id: 'p.tone', label: '说话方式', bind: 'persona.tone', rows: 2, ph: '短句为主，多用语气词……' },
+              { t: 'text', id: 'p.catch', label: '口头禅', bind: 'persona.catch', ph: '有一说一 / 绷不住了' },
+            ],
+          },
+          {
+            id: 'decide', title: '他怎么决定、现在什么状态', span: 12,
+            ctrls: [
+              { t: 'textarea', id: 'p.logic', label: '行为逻辑', bind: 'persona.logic', rows: 3,
+                ph: '遇事怎么决定、压力下什么反应、底线是什么' },
+              { t: 'text', id: 'p.attitude', label: '对群里人的态度', bind: 'persona.attitude', ph: '对熟人是损友式亲近，对陌生人先观察两句' },
+              { t: 'textarea', id: 'p.status', label: '当前状态', bind: 'persona.status', rows: 2,
+                ph: '现在在哪、想做什么、情绪如何 —— 你随时可以手改' },
+              { t: 'switch', id: 'p.reset', label: '改人设后丢弃它用旧人设说过的话', bind: 'personaResetOnChange',
+                hint: '关掉的话，模型会先照旧口吻说几句，看上去像"人设没改成功"。丢掉的是它自己的发言，你说过的话会留着。' },
+            ],
+          },
+          { id: 'estate', title: '此刻的状态', span: 7, ctrls: [{ t: 'emotionState' }] },
+          { id: 'eset', title: '注入与更新', span: 5, ctrls: [{ t: 'pluginSettings', extId: 'bot-emotion' }] },
+        ],
+      },
+      {
+        id: 'enhance', label: '底层规则', title: '底层规则（增强项与扮演规则）',
+        desc: '上一屏是"这个人是谁"，这里是"演得有多像"。12 项全部<b>可留空</b> —— 空着的不进提示词。名称 / 说明 / 示例 / 分组全部由后端下发。',
+        draft: true,
+        cards: [
+          { id: 'enh', title: '12 项细节', span: 12, ctrls: [{ t: 'enhance' }] },
+          {
+            id: 'pr', title: '12 条', span: 12,
+            ctrls: [
+              { t: 'switch', id: 'pr.on', label: '把扮演规则写进提示词', bind: 'playRules',
+                hint: '关掉之后，模型就没有"不替用户说话 / 不编造 / 关系要渐进"这些约束了 —— 除非你清楚自己在做什么，否则别关。' },
+              { t: 'playRules' },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'reply', label: '回复设置', title: '回复设置与特殊场景',
+        desc: '它一条消息多长、要不要 @ 人、两条之间隔多久。',
+        draft: true,
+        cards: [
+          {
+            id: 'reply', title: '长短与习惯', span: 12,
+            ctrls: [
+              /* ⚠️ 档位进度条（`ticks`）而不是 `seg`：
+                 短→中→长**有顺序**，而 `.seg` 把三档排成等宽按钮 ——
+                 按钮间距表达的是"它们同类"，不表达"谁比谁多"。
+                 横向液面直接画出"现在走到第几档"，不用读文字再排序。
+                 数据来源与 `seg` 完全相同（`customMeta.replyLengths`），
+                 进度条不另存一份。 */
+              { t: 'ticks', id: 'r.len', label: '回复长短', bind: 'replyStyle.length',
+                options: (s) => Object.entries(j(s, ['customMeta', 'replyLengths'], {})).map(([v, o]) => ({ v, l: o.label, title: o.hint })) },
+              { t: 'switch', id: 'r.multi', label: '允许一件事拆成几条发', bind: 'replyStyle.multiMessage',
+                hint: '关掉就不管内容多长都合并成一条长消息。' },
+              /* 分条标记（第 53 轮 · B4）。它以前**只有直接编辑 config.json 才能改** ——
+                 于是它被脱敏器清成空串时，用户既看不见也改不了，只能在群里看到自己被逐字刷屏。
+                 bindSys 走顶层字段，写入路径在 panel/lib/config-route.js（空串会被忽略）。 */
+              { t: 'text', id: 'r.tok', label: '分条标记', bindSys: 'splitToken', ph: '默认 ||',
+                hint: '模型用它把一件事拆成几条发（如「今天天气不错 || 出去走走」）。默认 ||；'
+                  + '清空会被忽略 —— 空标记会让分条正则逐字符匹配，回复会被一个字一个字地发出去。' },
+              { t: 'switch', id: 'r.at', label: '回复时 @ 上说话的人', bind: 'replyStyle.mentionAt' },
+              { t: 'number', id: 'r.cool', label: '连续回复的最小间隔（秒）', bind: 'replyStyle.cooldownSec',
+                bounds: 'cooldownSec',
+                hint: (s) => `0 = 只保留底层的 ${fieldNum(s, 'minIntervalMsSec')} 秒防抖。区间由后端下发（field-schema）。` },
+            ],
+          },
+          { id: 'sc', title: '9 种场景', span: 12, ctrls: [{ t: 'scenes' }] },
+        ],
+      },
+    ],
+  },
+
+
+  /* ══════════════════ ④ 模型 ══════════════════ */
+  {
+    id: 'brain', label: '模型',
     subs: [
       {
         id: 'model', label: '模型与线路', title: '大脑（用哪个模型聊天）',
@@ -421,6 +773,9 @@ export const GROUPS = [
                 save: (v) => (v ? { url: '/api/config', body: { apiKey: v } } : null),
                 hint: (s) => (j(s, ['config', 'hasKey']) ? `已保存：${j(s, ['config', 'keyMasked'], '')}` : '尚未配置（本机模型不需要 Key）') },
               { t: 'modelPick', label: '模型' },
+              { t: 'number', id: 'cfg.maxTokens', label: '最大回复长度（tokens）', bindSys: 'maxTokens',
+                min: 200, max: 8000, step: 100,
+                hint: '这是**上限**，不按上限计费。思考型模型 400 容易被 reasoning 吃满、正文为空；建议 1200 以上。' },
             ],
           },
           {
@@ -443,6 +798,18 @@ export const GROUPS = [
              整张「免费额度」卡删掉，收成「一键切换」卡右下角**一颗按钮** ——
              点一下直接去那家能看额度/余额的官网页面；解释文案全部塞进 `title`。
              理由：它要传达的只有"这家会不会扣钱、额度去哪看"，不值得半屏版面。 */
+          {
+            id: 'ctx', title: '条数与背景', span: 6,
+            ctrls: [
+              { t: 'number', id: 'ctx.turns', label: '带入最近几轮对话', min: 0, max: 40, step: 1, volatile: true,
+                read: (s) => j(s, ['config', 'presets', activePreset(s), 'context', 'recentTurns'], 6),
+                save: (v) => ({ url: '/api/config', body: { context: { recentTurns: Number(v) } } }) },
+              { t: 'number', id: 'ctx.ambient', label: '带入几条群里闲聊当背景', min: 0, max: 60, step: 1, volatile: true,
+                read: (s) => j(s, ['config', 'presets', activePreset(s), 'context', 'ambientMessages'], 8),
+                save: (v) => ({ url: '/api/config', body: { context: { ambientMessages: Number(v) } } }) },
+              { t: 'note', text: '这两格属于<b>当前大脑的预设</b>：切大脑时各自记各自的值（服务端 <code>stashCurrentPreset</code> 负责归档）。' },
+            ],
+          },
         ],
       },
       {
@@ -467,7 +834,7 @@ export const GROUPS = [
           },
           {
             id: 'caps', title: '能力开关', span: 6,
-            desc: '上面两格是<b>模型能力</b>：当前大脑做不到的会灰掉并写明原因（摆在页面上能点却不生效更糟）。「主动发言」与模型无关，是行为层总闸。',
+            desc: '上面两格是<b>模型能力</b>：当前大脑做不到的会灰掉并写明原因（摆在页面上能点却不生效更糟）。',
             ctrls: [
               // 自定义大脑：**只显示勾过的那几项**（下发的 `customVisibleFeatures` 是结论）。
               // 没勾的连开关都不摆 —— 摆出来又关不掉，正是"点了没用"那一类。
@@ -475,11 +842,7 @@ export const GROUPS = [
                 when: (s) => customFeatureVisible(s, 'webSearch') },
               { t: 'featSwitch', feat: 'vision', label: '识图', hint: '群里有人发图时，它能看懂图里说了什么',
                 when: (s) => customFeatureVisible(s, 'vision') },
-              { t: 'switch', id: 'cfg.proactive', label: '主动发言', volatile: true,
-                hint: '总闸：关掉之后插话 / 定时主动 / 定时消息全都不再发声（关键词触发不受影响）。',
-                read: (s) => j(s, ['custom', 'allowProactive'], true),
-                save: (v) => ({ url: '/api/config', body: { custom: { allowProactive: v } } }) },
-              { t: 'note', text: '这四个和「人格 → 能力开关」是<b>同一份配置</b>，改任一处另一处立刻跟上 —— 本页只在一处摆它们，不做两份副本。' },
+              { t: 'note', text: '这两项与模型能力表同源：改任一处另一处立刻跟上 —— 本页只摆一次，不做两份副本。' },
             ],
           },
         ],
@@ -498,8 +861,14 @@ export const GROUPS = [
                 metric('平均每条', (s) => (j(s, ['usage', 'calls'], 0) ? `¥${Number(j(s, ['usage', 'avgCost'], 0)).toFixed(4)}` : '—')),
                 metric('输出 token（含思考）', (s) => fmtNum(j(s, ['usage', 'completion'], 0))),
                 metric('累计条数', (s) => `${fmtNum(j(s, ['usage', 'calls'], 0))}（免费 ${fmtNum(j(s, ['usage', 'freeCalls'], 0))}）`),
+                metric('缓存命中率', (s) => {
+                  const r = Number(j(s, ['usage', 'cacheHitRate'], 0));
+                  return Number.isFinite(r) ? `${(r * 100).toFixed(1)}%` : '—';
+                }),
               ] },
               { t: 'usageBySource', label: '按来源分开算账（D29）' },
+              { t: 'usageByChat', label: '按群 / 私聊分开算账' },
+              { t: 'usageByDay', label: '近 30 天' },
               { t: 'usageTable', label: '最近记录' },
               { t: 'buttons', label: '', items: [
                 act('查余额', 'balance.load'),
@@ -507,143 +876,22 @@ export const GROUPS = [
               ] },
             ],
           },
+          {
+            id: 'deals', title: '抓到的条目', span: 12,
+            ctrls: [{ t: 'apiDeals' }],
+          },
         ],
-      },
-      {
-        id: 'deals', label: '免费额度情报', title: '免费额度情报（旧页面的骨架页）',
-        desc: '插件 <code>AI额度情报</code>（api-deals）定时抓的「哪些模型现在免费 / 有什么限时活动」。旧控制台里这一页写着"已有等价物，只缺一个看得见的地方" —— <b>这里就是那个地方</b>：面板直接读 <code>data/api-deals.json</code>。',
-        cards: [{
-          id: 'deals', title: '抓到的条目', span: 12,
-          ctrls: [{ t: 'apiDeals' }],
-        }],
-      },
-      {
-        id: 'context', label: '上下文预算', title: '上下文预算',
-        desc: '发多少历史给模型、带多少条群里闲聊当背景。这两格属于<b>当前大脑的预设</b>，旧页面没有控件。',
-        cards: [{
-          id: 'ctx', title: '条数与背景', span: 6,
-          ctrls: [
-            { t: 'number', id: 'ctx.turns', label: '带入最近几轮对话', min: 0, max: 40, step: 1, volatile: true,
-              read: (s) => j(s, ['config', 'presets', activePreset(s), 'context', 'recentTurns'], 6),
-              save: (v) => ({ url: '/api/config', body: { context: { recentTurns: Number(v) } } }) },
-            { t: 'number', id: 'ctx.ambient', label: '带入几条群里闲聊当背景', min: 0, max: 60, step: 1, volatile: true,
-              read: (s) => j(s, ['config', 'presets', activePreset(s), 'context', 'ambientMessages'], 8),
-              save: (v) => ({ url: '/api/config', body: { context: { ambientMessages: Number(v) } } }) },
-            { t: 'note', text: '这两格属于<b>当前大脑的预设</b>：切大脑时各自记各自的值（服务端 <code>stashCurrentPreset</code> 负责归档）。' },
-          ],
-        }],
       },
     ],
   },
 
-  /* ══════════════════ ③ 人格 ══════════════════ */
-  {
-    id: 'persona', label: '人格',
-    subs: [
-      {
-        id: 'who', label: '人格设定', title: '人格设定（它是谁）',
-        desc: '决定它说话像谁。留空就用 <code>persona/</code> 里的人设文件，填了就叠加上去。改完点页面底部的「保存并生效」。',
-        draft: true,
-        cards: [
-          {
-            id: 'basic', title: '他是谁', span: 6,
-            ctrls: [
-              { t: 'text', id: 'p.name', label: '机器人昵称', bindSys: 'personaName', ph: '例如：小鱼',
-                hint: '键名是**顶层** personaName（不在 custom 里）—— 换到别的页面看到的也是同一个值。' },
-              { t: 'text', id: 'p.age', label: '年龄', bind: 'persona.age', ph: '例如：24' },
-              { t: 'text', id: 'p.role', label: '身份', bind: 'persona.role', ph: '例如：刚毕业的程序员' },
-              { t: 'text', id: 'p.world', label: '时代 / 世界观', bind: 'persona.world',
-                ph: '例如：当代都市 / 修真世界 / 近未来赛博城', hint: '影响他举什么例子、用什么词。' },
-              { t: 'textarea', id: 'p.desire', label: '核心欲望', bind: 'persona.desire', rows: 2, ph: '例如：想让群里的人认可他' },
-              { t: 'textarea', id: 'p.fear', label: '核心恐惧 / 弱点', bind: 'persona.fear', rows: 2, ph: '例如：最怕没人理他' },
-            ],
-          },
-          {
-            id: 'voice', title: '他怎么说话', span: 6,
-            ctrls: [
-              { t: 'text', id: 'p.traits', label: '性格关键词', bind: 'persona.traits', ph: '活泼、爱吐槽、嘴贫但没恶意' },
-              { t: 'textarea', id: 'p.tone', label: '说话方式', bind: 'persona.tone', rows: 2, ph: '短句为主，多用语气词……' },
-              { t: 'text', id: 'p.catch', label: '口头禅', bind: 'persona.catch', ph: '有一说一 / 绷不住了' },
-            ],
-          },
-          {
-            id: 'decide', title: '他怎么决定、现在什么状态', span: 12,
-            ctrls: [
-              { t: 'textarea', id: 'p.logic', label: '行为逻辑', bind: 'persona.logic', rows: 3,
-                ph: '遇事怎么决定、压力下什么反应、底线是什么' },
-              { t: 'text', id: 'p.attitude', label: '对群里人的态度', bind: 'persona.attitude', ph: '对熟人是损友式亲近，对陌生人先观察两句' },
-              { t: 'textarea', id: 'p.status', label: '当前状态', bind: 'persona.status', rows: 2,
-                ph: '现在在哪、想做什么、情绪如何 —— 你随时可以手改' },
-              { t: 'switch', id: 'p.reset', label: '改人设后丢弃它用旧人设说过的话', bind: 'personaResetOnChange',
-                hint: '关掉的话，模型会先照旧口吻说几句，看上去像"人设没改成功"。丢掉的是它自己的发言，你说过的话会留着。' },
-            ],
-          },
-        ],
-      },
-      {
-        id: 'enhance', label: '增强项', title: '增强项（演得有多像）',
-        desc: '上一屏是"这个人是谁"，这里是"演得有多像"。12 项全部<b>可留空</b> —— 空着的不进提示词。名称 / 说明 / 示例 / 分组全部由后端下发。',
-        draft: true,
-        cards: [{ id: 'enh', title: '12 项细节', span: 12, ctrls: [{ t: 'enhance' }] }],
-      },
-      {
-        id: 'reply', label: '回复设置', title: '回复设置',
-        desc: '它一条消息多长、要不要 @ 人、两条之间隔多久。',
-        draft: true,
-        cards: [{
-          id: 'reply', title: '长短与习惯', span: 12,
-          ctrls: [
-            /* ⚠️ 档位进度条（`ticks`）而不是 `seg`：
-               短→中→长**有顺序**，而 `.seg` 把三档排成等宽按钮 ——
-               按钮间距表达的是"它们同类"，不表达"谁比谁多"。
-               横向液面直接画出"现在走到第几档"，不用读文字再排序。
-               数据来源与 `seg` 完全相同（`customMeta.replyLengths`），
-               进度条不另存一份。 */
-            { t: 'ticks', id: 'r.len', label: '回复长短', bind: 'replyStyle.length',
-              options: (s) => Object.entries(j(s, ['customMeta', 'replyLengths'], {})).map(([v, o]) => ({ v, l: o.label, title: o.hint })) },
-            { t: 'switch', id: 'r.multi', label: '允许一件事拆成几条发', bind: 'replyStyle.multiMessage',
-              hint: '关掉就不管内容多长都合并成一条长消息。' },
-            /* 分条标记（第 53 轮 · B4）。它以前**只有直接编辑 config.json 才能改** ——
-               于是它被脱敏器清成空串时，用户既看不见也改不了，只能在群里看到自己被逐字刷屏。
-               bindSys 走顶层字段，写入路径在 panel/lib/config-route.js（空串会被忽略）。 */
-            { t: 'text', id: 'r.tok', label: '分条标记', bindSys: 'splitToken', ph: '默认 ||',
-              hint: '模型用它把一件事拆成几条发（如「今天天气不错 || 出去走走」）。默认 ||；'
-                + '清空会被忽略 —— 空标记会让分条正则逐字符匹配，回复会被一个字一个字地发出去。' },
-            { t: 'switch', id: 'r.at', label: '回复时 @ 上说话的人', bind: 'replyStyle.mentionAt' },
-            { t: 'number', id: 'r.cool', label: '连续回复的最小间隔（秒）', bind: 'replyStyle.cooldownSec',
-              bounds: 'cooldownSec',
-              hint: (s) => `0 = 只保留底层的 ${fieldNum(s, 'minIntervalMsSec')} 秒防抖。区间由后端下发（field-schema）。` },
-          ],
-        }],
-      },
-      {
-        id: 'scenes', label: '特殊场景', title: '特殊场景',
-        desc: '预置几种情况，填了就会作为行为规则加进提示词。留空 = 不干预，它自由发挥。名称与说明由后端下发。',
-        draft: true,
-        cards: [{ id: 'sc', title: '9 种场景', span: 12, ctrls: [{ t: 'scenes' }] }],
-      },
-      {
-        id: 'rules', label: '扮演规则', title: '扮演规则（底层逻辑）',
-        desc: '这不是人设的一部分，而是"扮演这件事本身的规矩"。清单由后端下发（<code>customMeta.playRules</code>），面板不自存。',
-        draft: true,
-        cards: [{
-          id: 'pr', title: '12 条', span: 12,
-          ctrls: [
-            { t: 'switch', id: 'pr.on', label: '把扮演规则写进提示词', bind: 'playRules',
-              hint: '关掉之后，模型就没有"不替用户说话 / 不编造 / 关系要渐进"这些约束了 —— 除非你清楚自己在做什么，否则别关。' },
-            { t: 'playRules' },
-          ],
-        }],
-      },
-    ],
-  },
 
-  /* ══════════════════ ④ 记忆与知识 ══════════════════ */
+  /* ══════════════════ ⑤ 记忆 ══════════════════ */
   {
-    id: 'know', label: '记忆与知识',
+    id: 'know', label: '记忆',
     subs: [
       {
-        id: 'memory', label: '自我记忆', title: '自我记忆',
+        id: 'memory', label: '自我记忆', title: '自我记忆与导入导出',
         desc: '让它长期记住一些事。手动记忆永远生效；自动记录要打开开关。',
         draft: true,
         cards: [
@@ -657,8 +905,11 @@ export const GROUPS = [
             ctrls: [
               { t: 'switch', id: 'm.auto', label: '开启自动记录', bind: 'memory.auto',
                 hint: '机器人自己判断哪些话值得长期记住。' },
+              { t: 'number', id: 'm.promptMax', label: '每轮最多注入几条', bind: 'memory.promptMax',
+                bounds: 'memoryPromptMax', min: 1, step: 1,
+                hint: '默认 12。只封顶“进提示词”的条数，记忆本身不会丢；改完点底部的「保存并生效」。' },
               { t: 'memList', label: '手动记忆', path: 'memory.manual',
-                note: '只能你自己加。这里的每一条都会一直跟着它 —— 与自动记录的开关无关。改完点底部的「保存并生效」。' },
+                note: '只能你自己加。每一条都会保存；每轮最多带上面设定的条数进提示词 —— 与自动记录的开关无关。改完点底部的「保存并生效」。' },
             ],
           },
           {
@@ -676,41 +927,6 @@ export const GROUPS = [
               ] },
             ],
           },
-        ],
-      },
-      {
-        id: 'skills', label: '知识包与角色卡', title: '知识包与角色卡',
-        desc: '<b>知识包</b>＝某方面的本事，命中触发词才拿出来用；<b>角色卡</b>＝成套的人格，存多张，点「套用到人格设定」就换一套人。',
-        draft: true,
-        cards: [{
-          id: 'sk', title: '技能清单', span: 12,
-          ctrls: [
-            { t: 'skills' },
-            { t: 'buttons', label: '', items: [
-              act('加知识包', 'skill.add.pack'),
-              act('加角色卡', 'skill.add.persona'),
-            ] },
-          ],
-        }],
-      },
-      {
-        id: 'people', label: '群友档案', title: '群友档案（旧「知识库」页的真身）',
-        desc: '插件 <code>群友印象</code>（people-memory）按 QQ 号跨群记的长期印象与好感度。<b>这一页现在读的是真数据</b> —— 面板直接读 <code>data/memory/people/*.json</code>，一档一文件。',
-        cards: [{
-          id: 'ppl', title: '印象与好感度', span: 12,
-          ctrls: [{ t: 'people' }],
-        }],
-      },
-      {
-        id: 'cardgrade', label: '角色卡分级', title: '角色卡分级（十维）',
-        desc: '把「这张卡能不能演一个人」拆成十件可数的事：<b>灰</b> 别上 · <b>绿</b> 只够演样板剧 · <b>蓝</b> 偏了 · <b>紫</b> 齐了但没边界 · <b>金</b> 成品。'
-          + '缺的那一维下面直接给了问法 —— 写一句话就能补进这张卡。门槛与文案由后端下发（<code>src/persona-grade.js</code>，面板不抄第二份）。',
-        draft: true,
-        cards: [{ id: 'cg', title: '卡库', span: 12, ctrls: [{ t: 'cardGrade' }] }],
-      },
-      {
-        id: 'transfer', label: '导入导出', title: '导入 / 导出',
-        cards: [
           {
             id: 'exp', title: '下载', span: 6,
             desc: 'Key / Token <b>任何时候都会被清空</b> —— 不提供"连 Key 都不脱敏"的导出。下面这个开关只决定群号与 QQ 号要不要一起藏起来。',
@@ -722,8 +938,9 @@ export const GROUPS = [
               { t: 'buttons', label: '', items: [
                 act('完整配置', 'export.all'), act('人格', 'export.persona'), act('提示词', 'export.prompt'),
                 act('规则与场景', 'export.rules'), act('记忆', 'export.memory'), act('技能', 'export.skills'),
-                act('运行日志', 'export.log'),
+                act('运行日志', 'export.log'), act('诊断包', 'export.diag', 'btn-ghost', '含崩溃/退出记录与更新日志，自动脱敏'),
               ] },
+              { t: 'kv', rows: (s) => [kv('上次面板退出', () => j(s, ['panel', 'lastExitText'], 0) || '（没有记录）')] },
             ],
           },
           {
@@ -736,63 +953,37 @@ export const GROUPS = [
           },
         ],
       },
-    ],
-  },
-
-  /* ══════════════════ ⑤ 情绪与世界 ══════════════════ */
-  {
-    id: 'emo', label: '情绪与世界',
-    subs: [
       {
-        id: 'emotion', label: '情绪世界', title: '情绪世界',
-        desc: '本体情绪跨群共享：心情 / 精力 / 压力 / 离散情绪。每轮极轻注入一句状态；聊天事件自动加减情绪。<b>这一页现在读的是真数据</b> —— 面板直接读插件落的 <code>data/bot-state.json</code>，所以机器人没在跑也能看。',
+        id: 'skills', label: '知识包与角色卡', title: '知识包与角色卡（含十维分级）',
+        desc: '<b>知识包</b>＝某方面的本事，命中触发词才拿出来用；<b>角色卡</b>＝成套的人格，存多张，点「套用到人格设定」就换一套人。',
         draft: true,
         cards: [
-          { id: 'estate', title: '此刻的状态', span: 7, ctrls: [{ t: 'emotionState' }] },
-          { id: 'eset', title: '注入与更新', span: 5, ctrls: [{ t: 'pluginSettings', extId: 'bot-emotion' }] },
+          {
+            id: 'sk', title: '技能清单', span: 12,
+            ctrls: [
+              { t: 'number', id: 'skill.promptMax', label: '每轮最多注入几条', bind: 'skillPrompt.max',
+                bounds: 'skillPromptMax', min: 1, step: 1,
+                hint: '默认 3。只影响“同时注入”的条数，技能本身不会丢。' },
+              { t: 'number', id: 'skill.promptChars', label: '每轮注入总字数上限', bind: 'skillPrompt.chars',
+                bounds: 'skillPromptChars', min: 200, step: 100,
+                hint: '默认 2000。所有命中技能的背景文字加起来不超过这个数；只影响提示词，不影响保存。' },
+              { t: 'skills' },
+              { t: 'buttons', label: '', items: [
+                act('加知识包', 'skill.add.pack'),
+                act('加角色卡', 'skill.add.persona'),
+              ] },
+            ],
+          },
+          { id: 'cg', title: '卡库', span: 12, ctrls: [{ t: 'cardGrade' }] },
         ],
       },
       {
-        id: 'world', label: '世界日历', title: '世界日历（节假日与提醒）',
-        desc: '给机器人一个"最近发生了什么"的共同背景。真实存在的是 <b>D17 提醒三件套</b>：定时消息的日期维度 + 工作日/休息日 + 30 分钟重试窗。',
-        draft: true,
-        cards: [
-          {
-            id: 'cal', title: '节假日表', span: 6,
-            ctrls: [
-              { t: 'holidays' },
-              { t: 'note', kind: 'ok',
-                text: '<b>2026-10-02 修好的一条数据链路。</b>此前 <code>custom.holidays</code> 不在 <code>readCustom</code> 的白名单里，而面板保存走整体替换 —— 于是<b>任何一次保存都会把这张表从 config.json 里抹掉</b>（机器人侧只能退化成按星期几兜底）。前端当时其实"带上了它"，但补救写在了白名单的错的一侧，所以从来没生效。现在它进了白名单，<b>往返实测通过</b>（见 <code>docs/FRONTEND-V2.md</code> §5①）。' },
-            ],
-          },
-          {
-            id: 'sched', title: '定时消息（提醒）', span: 6,
-            ctrls: [
-              { t: 'schedList', path: 'trigger.scheduled', detailed: true },
-              { t: 'note', kind: 'ok',
-                text: '<b>同样修好了一条。</b><code>date</code>（只在那天发一次）与 <code>on</code>（只工作日 / 只休息日）此前被 <code>scheduledItems</code> 归一化时静默剥掉，机器人侧因此 <code>matchesOn(undefined)</code> 恒真、只能按"每天"跑。现在两个字段都在白名单里，且认不出的日期<b>留空而不回落成每天</b>（写错的日子静默变成每天，比不生效更难查）。' },
-            ],
-          },
-        ],
-      },
-      {
-        id: 'unread', label: '未读与跨会话', title: '未读与跨会话发言',
-        desc: '两件已交付但面板看不见的事：<b>D30 未读模型</b>（谁消费、何时消费）与 <b>D18 跨会话发言</b>（它能去别的群说一句话）。',
-        draft: true,
-        cards: [
-          {
-            id: 'cross', title: '跨会话发言', span: 6,
-            ctrls: [
-              { t: 'switch', id: 'x.on', label: '允许它去别的群发言', bind: 'crossSend.enabled',
-                hint: '开闸后模型才会拿到 get_chats / send_to 两个工具（只在开闸时注册）。出口走独立配额与审计。' },
-              { t: 'note', text: '关着的时候这两个工具<b>根本不注册</b> —— 不是"注册了但拒绝"，所以模型不会以为自己有这个能力。' },
-            ],
-          },
-          {
-            id: 'unread', title: '未读队列', span: 6,
-            ctrls: [{ t: 'unread' }],
-          },
-        ],
+        id: 'people', label: '群友档案', title: '群友档案（旧「知识库」页的真身）',
+        desc: '插件 <code>群友印象</code>（people-memory）按 QQ 号跨群记的长期印象与好感度。<b>这一页现在读的是真数据</b> —— 面板直接读 <code>data/memory/people/*.json</code>，一档一文件。',
+        cards: [{
+          id: 'ppl', title: '印象与好感度', span: 12,
+          ctrls: [{ t: 'people' }],
+        }],
       },
       {
         /* 2026-10-17：这一页原叫「表情与图库」，左边那张是 QQ 收藏表情。
@@ -810,272 +1001,26 @@ export const GROUPS = [
     ],
   },
 
-  /* ══════════════════ ⑥ 发言与时机 ══════════════════ */
+
+  /* ══════════════════ ⑥ 维护 ══════════════════ */
   {
-    id: 'speak', label: '发言与时机',
+    id: 'sys', label: '维护',
     subs: [
       {
-        id: 'trigger', label: '触发方式', title: '触发方式',
-        desc: '什么情况下它才开口。放行 / 拉黑名单写在同一份 config.json 的 <code>allow</code> 里 —— 别的入口看到的也是这一份。',
+        id: 'safety', label: '安全红线', title: '安全设置与联网护栏',
+        desc: '兜底红线。命中就丢<b>那一段</b>回复，不是整条哑掉。',
         draft: true,
         cards: [
           {
-            id: 'trg', title: '被叫到', span: 6,
+            id: 'sf', title: '敏感词与防护', span: 6,
             ctrls: [
-              { t: 'switch', id: 't.at', label: '群里必须 @ 才回话', bindSys: 'requireAtInGroup' },
-              { t: 'tags', id: 't.kw', label: '包含这些词就回', bind: 'trigger.keywords', ph: '小鱼, 肥鱼, 在吗',
-                hint: '命中任意一个就会回，不受「必须 @」限制。关键词触发属于"被叫到"，所以<b>不受主动发言总闸影响</b>。' },
-              /* 同意私聊的 QQ 号（2026-10-12 补；2026-10-14 改名并挪到「放行的群号」之前）——
-                 机器人侧一直在按 `allow.private` 判定私聊放行，但**面板上原先没有这一格**：
-                 用户想让它在私聊里回话，只能手工编辑 config.json。
-                 同一个闸缺了半扇门 ⇒ 私聊不回时，用户在界面上看不见也改不了，
-                 只会以为"机器人坏了"。三段链路（下发 → 编辑 → 落盘）已一起补齐。
-                 ⚠️ 改名时**必须**同步 `src/config.js` 里那条"去哪儿填"的报错文案 ——
-                    它的注释写着"面板导航改名时这一行必须跟着改"。 */
-              { t: 'tags', id: 't.priv', label: '同意私聊的 QQ 号', bindSys: 'privateUsers', ph: '100000001',
-                hint: '填入同意私聊的 QQ 号（纯数字、逗号隔开）。填好后，这些人直接私聊它，它就会回话 —— 私聊相当于"直接点名"，<b>不用 @ 也不用关键词</b>。<b>留空 = 谁私聊都不回</b>。' },
-              { t: 'switch', id: 't.fpriv', label: '好友私聊按群友接待', bind: 'allowFriendsPrivate',
-                hint: '开着：机器人<b>加过的 QQ 好友</b>私聊它，即使没填进上面那格，也按群友的方式回话（好友表来自协议端，最多晚 10 分钟生效）。<b>好友不等于管理员</b> —— 叫醒、夜间产出收件人这些仍只认主人号。关掉：只有上面那格的号能私聊它。' },
-              { t: 'tags', id: 't.owner', label: '主人 QQ（叫醒 / 私聊兜底）', bindSys: 'ownerQq', ph: '100000001',
-                hint: '主人的 QQ 号（纯数字、逗号隔开）。加载配置时会<b>自动补进「同意私聊的 QQ 号」</b>，并允许在睡眠期间用私聊叫醒它。<b>留空 = 叫醒路整体关闭</b>（自然起床不受影响）。' },
-              { t: 'tags', id: 't.allow', label: '放行的群号', bindSys: 'groups', ph: '100000001, 987654321',
-                hint: '留空 = 群里它谁都不回。至少填一个要它说话的群（纯数字、逗号隔开）。' },
+              { t: 'tags', id: 's.banned', label: '敏感词', bind: 'safety.banned', ph: '加群, 私聊我, 微信' },
+              { t: 'switch', id: 's.af', label: '防刷屏', bind: 'safety.antiFlood',
+                hint: (s) => `每条回复最多 ${fieldNum(s, 'antiFloodChunks')} 段（段数由后端下发，改它要动 src/field-schema.js）。` },
+              { t: 'switch', id: 's.fl', label: '过滤链接', bind: 'safety.filterLinks', hint: '自动去掉回复里的网址。' },
+              { t: 'note', text: '还有两道**不在本页**的红线：提示词注入闸门（<code>src/injection.js</code>）与出站凭据闸门（<code>src/egress.js</code>）。它们没有配置项 —— 有开关就等于给自己留了一条关掉它的路。' },
             ],
           },
-          {
-            id: 'deny', title: '拉黑', span: 6, col: 'r',
-            ctrls: [
-              { t: 'tags', id: 't.dg', label: '拉黑的群号', bindSys: 'denyGroups', ph: '这些群里它完全不回话' },
-              { t: 'tags', id: 't.du', label: '拉黑的 QQ 号', bindSys: 'denyUsers', ph: '哪怕被 @ 也不回' },
-              { t: 'note', kind: 'warn', text: '<b>拉黑优先于放行</b> —— 一个群同时出现在两个名单里，结果是<b>不回</b>。另外「必须 @」和关键词触发都拦不住拉黑。' },
-            ],
-          },
-          /* ── 插话冷却（2026-10-17）────────────────────────────────────────
-             为什么它单独占一块玻璃板、并且**只**是一条进度条：
-
-             ① 它此前**根本没有界面**。`trigger.interjectCooldownMs` 从机器人第一版起就在
-                `src/brain.js` 里判（`lastInterjectAt < interjectCooldownMs` ⇒ deny「插话冷却中」），
-                而面板既不下发、也不接受写入 —— 用户想改只能手改 config.json。
-                所以这块板的第一职责是「让它存在」，不是「让它更好看」。
-             ② 用户点名要的是**进度条**，不是输入框：这个量是"两次主动接话之间至少隔多久"，
-                适合用位置表达（越靠右越安静），而一个 5 位数的毫秒输入框两者都给不了。
-             ③ `col: 'r'` —— 落点就是「拉黑」卡下方那块空白（12 列栅格的右半）。
-                不用 `span: 12`：那会把左列「被叫到」顶下去一整行，红框那块反而空着。 */
-          {
-            id: 'cool', title: '插话冷却', span: 6, col: 'r', tone: 'liquid',
-            ctrls: [
-              { t: 'range', id: 't.cool', label: '两次主动插话之间至少隔',
-                bindSys: 'interjectCooldownMs',
-                /* `scale: 60000` = 界面上的**分钟** × 60000 = 盘上的毫秒。
-                   换算只在 app.js 的 valueOf / setValue 里做一次（与 `pct` 同一条纪律）——
-                   控件自己只声明单位，不在渲染函数里乘除。 */
-                scale: 60000, min: 1, max: 300, log: true, unit: '分钟',
-                // 刻线只标三处（5 分钟 / 半小时 / 2 小时）：对数刻度下"5 分钟"落在 28%
-                // 而不是 1/300 —— 没有刻线时这个位置会被读成"滑块坏了"。
-                marks: [5, 30, 120],
-                hint: '两次<b>主动接话</b>之间至少隔这么久。被 @、被关键词叫到<b>不受</b>它限制 —— 冷却只拦它自己起话头。拖到最右（5 小时）≈ 只在你叫它时才说话。' },
-            ],
-          },
-        ],
-      },
-      {
-        id: 'scheduled', label: '定时消息', title: '定时消息',
-        desc: '到点自动在那个群发一句。日期与频次两个维度已在 2026-10-02 修通（此前会被归一化静默剥掉）。',
-        draft: true,
-        cards: [{
-          id: 'sc', title: '时刻表', span: 12,
-          ctrls: [
-            { t: 'schedList', path: 'trigger.scheduled', detailed: true },
-            { t: 'note', kind: 'ok',
-              text: '<b>「日期」与「频次」现在真的生效了。</b>修之前 <code>scheduledItems</code> 的白名单里只有 <code>{id, at, text, enabled}</code>，两个维度被静默剥掉 —— 机器人侧 <code>matchesOn(s.on)</code> 恒真、只能按"每天"跑，<b>而回归全绿</b>（D17 的用例把纯函数直接喂字段，没有一条走"经 readCustom 一遍"）。修法是<b>一处</b>（<code>src/custom-config.js</code>），并且契约 §46 已升级成"<b>往返之后仍在</b>"，不再只盯"面板有没有带上"。' },
-          ],
-        }],
-      },
-      {
-        id: 'peak', label: '峰谷（高峰时段）', title: '峰谷闸 —— 高峰时段不主动搭话',
-        desc: '工作日 <b>09:00–12:00</b> 与 <b>14:00–18:00</b>，群里<b>没人叫它就不出声</b>：不接话、不扫积压、不自己起话题。'
-          + '被 @、引用了它的话、命中触发词、拍一拍都照常回；私聊没有沉默档；定时消息不受影响（那是你点的活）。',
-        draft: true,
-        cards: [{
-          id: 'pk', title: '高峰时刻表', span: 6,
-          ctrls: [
-            { t: 'switch', id: 'pk.on', label: '启用峰谷闸（高峰时也不主动找话）', bind: 'peak.enabled',
-              hint: '默认开。这是总闸：关掉之后，工作日白天它和平时一样爱接话、也照常起话题 —— 代价是那几个小时最费钱、也最容易被当成刷屏。' },
-            { t: 'switch', id: 'pk.mute', label: '高峰时群里没人叫就不接话', bind: 'peak.muteUnmentioned',
-              hint: '默认开。只解除"群里没被叫到"的沉默；上面的总闸关掉后这一格不再起作用。被 @ / 引用 / 关键词 / 拍一拍都不受这一格影响。' },
-            { t: 'note', text: '时段是写死的两段（<b>工作日</b>才知道：周六周日整天都算谷）。要改时刻就改 <code>src/peak.js</code> 的 <code>PEAK_WINDOWS</code> —— 别在面板上造第二份数字。' },
-          ],
-        }],
-      },
-      {
-        id: 'patrol', label: '巡逻与热度', title: '巡逻与热度 —— 它自己翻积压、看谁熟',
-        desc: '群里安静下来之后，它会把这段时间没接的消息<b>攒成一轮</b>交给模型，由它决定接一句还是照常安静。'
-          + '热度是两套 0–1 的权重：<b>按人</b>的关系温度与<b>按群</b>的活跃度，两套都只压不放。',
-        draft: true,
-        cards: [
-          {
-            id: 'pt', title: '巡逻规则', span: 6,
-            ctrls: [
-              { t: 'switch', id: 'pt.on', label: '群安静后翻积压（巡逻）', bind: 'trigger.patrol.enabled',
-                hint: '关掉就只有「被点名 / 关键词 / 插话 / 定时主动」这四条开口路径。巡逻是唯一会读积压的那条。' },
-              { t: 'number', id: 'pt.min', label: '至少攒几条积压', bind: 'trigger.patrol.minUnread', min: 1, max: 200, step: 1, hint: '默认 5。' },
-              { t: 'number', id: 'pt.silence', label: '群里安静多少分钟后才翻', bind: 'trigger.patrol.silenceMin', min: 0, max: 1440, step: 1, hint: '默认 10 分钟。' },
-              { t: 'number', id: 'pt.gap', label: '同一个群两轮巡逻至少隔多少分钟', bind: 'trigger.patrol.minGapMin', min: 0, max: 1440, step: 1, hint: '默认 20 分钟。' },
-              { t: 'number', id: 'pt.chance', label: '基础概率（%）', bind: 'trigger.patrol.chance', min: 0, max: 100, step: 5, pct: true,
-                hint: '实际掷骰时还会乘热度权重（群越冷越不容易开口）。被 @ / 关键词 / 私聊不受这个数影响。' },
-              { t: 'number', id: 'pt.lines', label: '一轮最多带几条消息', bind: 'trigger.patrol.maxLines', min: 1, max: 60, step: 1,
-                hint: '默认 24。只截巡逻摘要，不改未读计数；太长会挤掉别的背景。' },
-              { t: 'number', id: 'pt.chars', label: '一轮摘要最多多少字', bind: 'trigger.patrol.maxChars', min: 100, max: 6000, step: 100,
-                hint: '默认 1800。按字符截，消息条目仍按上面的条数保留。' },
-              { t: 'note', text: '一轮巡逻 = 一批积压的摘要进提示词，模型可以接一句，也可以 <code>qq_quiet</code> 照常安静。它不是每条都问模型 —— 攒够、安静够才问一次。' },
-            ],
-          },
-          {
-            id: 'ptv', title: '现在的热度与积压', span: 6,
-            ctrls: [
-              { t: 'patrolView' },
-              { t: 'note', text: '「关系温度」是它对某个人在这个群里的热络程度（0–100%）：连着找它聊天会往下掉，安静下来慢慢回升。「群活跃」看最近 30 分钟的消息量。数据每 30 秒刷新一次（机器人没在跑时显示上一次的快照）。' },
-            ],
-          },
-        ],
-      },
-      {
-        id: 'waiting', label: '聊天等待与图片', title: '聊天等待与图片 —— 回得更像人，也能发图 / 看图',
-        desc: '回话之前的<b>停顿</b>、同一个人连发几条时<b>攒成一轮</b>、模型慢时先<b>垫一句</b>，以及「正在输入」气泡；'
-          + '下面还有<b>发图</b>与<b>看图</b>两个工具。全部只影响观感与能力，不改变判定（闸门、限流、额度不受影响）。',
-        draft: true,
-        cards: [
-          {
-            id: 'cw', title: '聊天等待', span: 6,
-            ctrls: [
-              { t: 'switch', id: 'cw.on', label: '回之前先停一会儿（拟人停顿）', bind: 'wait.enabled',
-                hint: '关掉 = 判定一过立刻调模型（改造前的行为）。下面几个数都只在它开着时生效。' },
-              { t: 'number', id: 'cw.min', label: '最短停顿（毫秒）', bind: 'wait.minMs', min: 0, max: 10000, step: 100, hint: '默认 400。' },
-              { t: 'number', id: 'cw.max', label: '最长停顿（毫秒）', bind: 'wait.maxMs', min: 0, max: 20000, step: 100, hint: '默认 2500。长消息会按字数往上加，但不会超过这个值。' },
-              { t: 'number', id: 'cw.per', label: '每多一个字再多停（毫秒）', bind: 'wait.perCharMs', min: 0, max: 200, step: 5, hint: '默认 15。' },
-              { t: 'number', id: 'cw.merge', label: '连发合并：安静这么多毫秒才回（0 = 不合并）', bind: 'wait.mergeMs', min: 0, max: 30000, step: 100,
-                hint: '默认 1200。<b>只合并群聊</b>里同一个人连着发的几条；私聊不合并（紧急唤醒要按连发计数）。被合并掉的几句会进背景段，不会丢。' },
-              { t: 'number', id: 'cw.hold', label: '模型慢时先垫一句：超过多少毫秒（0 = 不垫）', bind: 'wait.holdMs', min: 0, max: 120000, step: 500, hint: '默认 6000。' },
-              { t: 'text', id: 'cw.text', label: '垫的那句话（留空 = 不垫）', bind: 'wait.holdText', ph: '例如：我想想…' },
-              { t: 'switch', id: 'cw.typing', label: '私聊里显示「正在输入」', bind: 'wait.typing', hint: '群聊协议端不支持这个状态，只对私聊生效。' },
-            ],
-          },
-          {
-            id: 'img', title: '图片工具', span: 6,
-            ctrls: [
-              { t: 'switch', id: 'img.send', label: '允许它主动发图', bind: 'image.send',
-                hint: '开着时模型多一个 send_image 工具。改完要<b>重启机器人</b>才生效（工具在启动时注册）。' },
-              { t: 'switch', id: 'img.view', label: '允许它按需看图', bind: 'image.view',
-                hint: '开着时模型多一个 view_image 工具（给地址 / 路径 / 消息号）。当前模型必须真的支持 vision。' },
-              { t: 'text', id: 'img.root', label: '本机图片目录', bind: 'image.root', ph: '默认 images-out（相对 data/）',
-                hint: '本机路径只允许这个目录内的文件（符号链接逃逸会被 realpath 拦下）。留空 = 禁用本机路径，远端 http(s) 仍可用。' },
-              { t: 'note', kind: 'warn', text: '图片先<b>下载成本地字节</b>再交给协议端：内网地址、私网 IP、超过 8MB 的一律发不出去，也会在日志里写明原因。' },
-            ],
-          },
-        ],
-      },
-      {
-        id: 'proactive', label: '主动与免打扰', title: '主动发言与免打扰',
-        desc: '"什么时候它自己起话头"以及"什么时候绝对不许出声"。',
-        draft: true,
-        cards: [
-          {
-            id: 'pro', title: '定时主动与插话', span: 6,
-            ctrls: [
-              { t: 'switch', id: 'pro.on', label: '隔一段时间自己起个新话题', bind: 'trigger.proactive.enabled' },
-              { t: 'number', id: 'pro.min', label: '间隔（分钟）', bind: 'trigger.proactive.intervalMin', bounds: 'proactiveIntervalMin',
-                when: (s) => !!j(s, ['custom', 'trigger', 'proactive', 'enabled']) },
-              { t: 'text', id: 'pro.text', label: '想让它说什么', bind: 'trigger.proactive.text',
-                ph: '留空 = 每次由模型自己编一句', when: (s) => !!j(s, ['custom', 'trigger', 'proactive', 'enabled']) },
-              /* ⚠️ `pct: true` 是**必须**的（2026-10-12 修）：这一格画的是 0–100 的百分数，
-                 而盘上 `trigger.interjectChance` 是 0–1 的小数。缺了它，写方向的
-                 `Math.min(1, 15)` 会把**每一次保存都夹成 1**（=100%）—— 症状是
-                 「改了不生效」，而读方向会回显 `0.15`（症状「改了不显示」）。
-                 换算收在 app.js 的 valueOf / setValue 里，控件只负责声明单位。 */
-              { t: 'number', id: 'pr.chance', label: '随机插话概率（%）', bindSys: 'interjectChance', min: 0, max: 100, step: 5, pct: true,
-                hint: '0 = 只有被点名才回。仅在上面的「必须 @」关掉后有效。' },
-              { t: 'number', id: 'pr.hour', label: '单会话每小时最多回复', bindSys: 'perHourPerSession', bounds: 'perHourPerSession',
-                hint: '<b>私聊 / @ / 叫名字 / 命中关键词不受这一格限制</b>（它们仍受 1.5 秒与每分钟 8 条约束）；随机插话与主动发言会吃这个总额。' },
-              { t: 'note', text: '插话还有一层<b>时机</b>判定（活跃期提权 / 冷场降权，D12b）：上面这个概率是基准值，实际掷骰时会乘以因子。因子表在 trace 的 <code>interject</code> 那一格里可见。' },
-            ],
-          },
-          {
-            id: 'quiet', title: '免打扰时段', span: 6,
-            ctrls: [
-              { t: 'number', id: 'q.from', label: '从（点）', bind: 'trigger.quietHours.from', bounds: 'quietFrom' },
-              { t: 'number', id: 'q.to', label: '到（点）', bind: 'trigger.quietHours.to', bounds: 'quietTo' },
-              { t: 'note', text: '按<b>小时</b>算（24 小时制）。两个数字填成<b>一样</b>就等于关掉免打扰。跨零点会自动处理，不用你操心。' },
-              { t: 'note', kind: 'warn', text: '免打扰内：插话、定时主动、定时消息<b>全都不发</b>。但到点的提醒会留在 30 分钟窗口里，出了静默期仍会补发（用户 Q24 裁决）。' },
-            ],
-          },
-        ],
-      },
-      {
-        id: 'sleep', label: '睡眠作息', title: '睡眠 / 作息（D31）',
-        desc: '睡着时<b>零 token</b>，消息留着不读；醒来有两条路：正式关键词（限主人）+ 紧急连发。旧页面这一块<b>只有一行只读提示和两个按钮</b>，作息本身没有控件。',
-        draft: true,
-        cards: [
-          {
-            id: 'sl', title: '作息表', span: 6,
-            ctrls: [
-              { t: 'switch', id: 'sl.on', label: '启用作息', bind: 'sleep.enabled',
-                hint: '关掉 = 从不睡（自然醒永远为真）。关着的时候下面几格只是**先填好**，不会生效。' },
-              { t: 'time', id: 'sl.bed', label: '几点睡', bind: 'sleep.bed' },
-              { t: 'time', id: 'sl.wake', label: '几点自然醒', bind: 'sleep.wake' },
-              { t: 'tags', id: 'sl.words', label: '叫醒关键词', bind: 'sleep.wakeWords', ph: '起床, 醒醒',
-                hint: '只有 <code>owner.qq</code> 里的人说才生效 —— 那一格是顶层配置，旧页面没有控件，<b>也不接受面板写入</b>（不在 /api/config 的入参里）。' },
-              { t: 'text', id: 'sl.gn', label: '睡前道晚安', bind: 'sleep.goodnight', ph: '留空 = 不说' },
-            ],
-          },
-          {
-            id: 'slnow', title: '现在的睡眠状态', span: 6,
-            ctrls: [
-              { t: 'sleepDetail' },
-              { t: 'buttons', label: '手动', items: [
-                act('让它睡', 'cmd.sleep', 'btn-ghost', '内存态，重启即恢复按作息走'),
-                act('叫它醒', 'cmd.wake'),
-              ] },
-            ],
-          },
-        ],
-      },
-    ],
-  },
-
-  /* ══════════════════ ⑦ 插件 ══════════════════ */
-  {
-    id: 'plugin', label: '插件',
-    subs: [
-      {
-        id: 'plugins', label: '插件', title: '插件',
-        desc: '装在 <code>plugins/</code> 与 <code>skills/</code> 里的第三方插件。目录里有<b>不等于</b>会生效 —— 必须在这里勾上，且要重启机器人（不支持热插拔）。',
-        draft: true,
-        cards: [
-          {
-            id: 'plugsum', title: '插件总览与安装', span: 12,
-            ctrls: [
-              { t: 'pluginSummary' },
-              { t: 'importZip', label: '装 ZIP' },
-            ],
-          },
-          {
-            id: 'pluggrid', title: '插件清单与设置', span: 12,
-            /* ⚠️ `bare: true` = **不套外层 .card**（`cardHtml` 走 `bareHtml`）。
-               插件网格自己就是完整的板集合：外面再罩一张 span-12 玻璃板，
-               视觉上就变成「大玻璃板里切了 N 块」—— 而用户要的是每块独立浮着。
-     （这里原本写着"13 块"：那是当时装着的包数，2026-10-17 那 13 个包已全部删除 ——
-       数字会腐烂，写 N 才不会在下一次变成"注释说一件不再成立的事"。）
-               那层外壳不是设计，是容器，所以这里把它整个脱掉。 */
-            bare: true,
-            ctrls: [{ t: 'pluginList' }],
-          },
-        ],
-      },
-      {
-        id: 'net', label: '联网与范围', title: '联网范围与出站护栏',
-        desc: 'D15 的两道护栏：<b>浏览锁定</b>（它只能访问你列出的域名）与<b>图片护栏</b>（一轮最多带几张图出去）。旧页面这两个开关都没有。',
-        draft: true,
-        cards: [
           {
             id: 'lock', title: '浏览锁定', span: 6,
             ctrls: [
@@ -1095,33 +1040,7 @@ export const GROUPS = [
               { t: 'note', text: '图片护栏（一轮最多 2 张图出去）是<b>经验值常量</b>，在 <code>src/brain.js</code> 里，没有配置项 —— 与其做一个没人调的滑块，不如把理由写在这里。' },
             ],
           },
-          {
-            id: 'scope', title: '插件能做什么 / 不能做什么', span: 12,
-            ctrls: [{ t: 'pluginScope' }],
-          },
         ],
-      },
-    ],
-  },
-
-  /* ══════════════════ ⑧ 系统 ══════════════════ */
-  {
-    id: 'sys', label: '系统',
-    subs: [
-      {
-        id: 'safety', label: '安全红线', title: '安全设置',
-        desc: '兜底红线。命中就丢<b>那一段</b>回复，不是整条哑掉。',
-        draft: true,
-        cards: [{
-          id: 'sf', title: '敏感词与防护', span: 6,
-          ctrls: [
-            { t: 'tags', id: 's.banned', label: '敏感词', bind: 'safety.banned', ph: '加群, 私聊我, 微信' },
-            { t: 'switch', id: 's.af', label: '防刷屏', bind: 'safety.antiFlood',
-              hint: (s) => `每条回复最多 ${fieldNum(s, 'antiFloodChunks')} 段（段数由后端下发，改它要动 src/field-schema.js）。` },
-            { t: 'switch', id: 's.fl', label: '过滤链接', bind: 'safety.filterLinks', hint: '自动去掉回复里的网址。' },
-            { t: 'note', text: '还有两道**不在本页**的红线：提示词注入闸门（<code>src/injection.js</code>）与出站凭据闸门（<code>src/egress.js</code>）。它们没有配置项 —— 有开关就等于给自己留了一条关掉它的路。' },
-          ],
-        }],
       },
       {
         id: 'history', label: '配置历史', title: '配置历史与回滚',
@@ -1166,29 +1085,12 @@ export const GROUPS = [
                ⚠️ 文案里的"找不到浏览器自动回落"不是修饰 —— 它是判据的真实行为
                   （src/launch-mode.js，fail-open）。 */
             id: 'startmode', title: '启动方式（桌面端）', span: 6,
-            desc: '双击启动器 / 桌面图标时，控制台以什么形态出现。启动器**只在启动时读一次**这份设置 —— <b>改完下次启动生效</b>。',
+            desc: '外观、启动与关闭行为已移到左下角「设置」。这里只保留最近一次启动的记录，方便排障。',
             ctrls: [
-              { t: 'seg', id: 'l.mode', label: '打开方式', volatile: true,
-                options: [
-                  { v: 'browser', l: '浏览器标签页' },
-                  { v: 'window', l: '独立窗口 · 无地址栏' },
-                ],
-                read: (s) => j(s, ['config', 'launch', 'mode'], 'browser'),
-                savedMsg: '已保存 —— 下次启动生效',
-                hint: '注意：内测版先不要点「独立窗口 · 无地址栏」，还有部分 BUG（首跑可能出一个灰色空窗，要再双击一次）。'
-                  + '独立窗口用系统里已装的 Microsoft Edge / Google Chrome 以「应用窗口」方式打开'
-                  + '（没有地址栏和标签页，任务栏上是单独一个窗口）。两个都没装时自动回落到浏览器标签页。',
-                save: (v) => ({ url: '/api/config', body: { launch: { mode: v } } }) },
-              { t: 'switch', id: 'l.open', label: '启动后自动打开界面', volatile: true,
-                read: (s) => j(s, ['config', 'launch', 'openOnStart'], true),
-                savedMsg: '已保存 —— 下次启动生效',
-                hint: '关掉后，启动器只把控制台放进后台、不弹任何窗口（适合「开机自启、静默驻留」）。'
-                  + '想手动看它：浏览器打开 http://127.0.0.1:8788/ 。',
-                save: (v) => ({ url: '/api/config', body: { launch: { openOnStart: v } } }) },
               { t: 'kv', rows: (s) => {
                 /* 「上次启动」= 启动跟踪里最近一条（三个启动器每次都会写一行）。
-                   没有它的时候，下面那两格设置"到底生效没有"只能靠感觉 ——
-                   这一行让"双击之后实际走了哪条路"当场可见。 */
+                   设置搬到左下角后，这一行仍留在维护页：它回答的是"双击之后实际
+                   走了哪条路"，与"在哪里改设置"不是同一件事。 */
                 const l = j(s, ['config', 'launch', 'last'], null);
                 if (!l) return [kv('上次启动', () => '还没有记录 —— 下次启动后这里会出现')];
                 const ts = String(l.t || '').replace('T', ' ').slice(0, 16) || '—';
@@ -1208,7 +1110,83 @@ export const GROUPS = [
                     : []),
                 ];
               } },
-              { t: 'note', text: '这项设置存进 <code>config.json</code> 的 <code>launch</code> 段，由启动器（Windows 桌面快捷方式 / Mac 图标 / 命令行）在启动时读取 —— 它<b>不影响</b>当前这个已经开着的页面。每次启动的实际形态会记一笔（上面那行「上次启动」，存在 <code>panel/launch-log.jsonl</code>），排障时直接看它。' },
+              { t: 'note', text: '打开方式、开机自启、启动时自动拉起协议端与<b>关闭窗口行为</b>都在左下角 <b>设置 → 启动</b>。这些设置存进 <code>config.json</code> 的 <code>launch</code> 段，由启动器 / 桌面壳在启动时读取 —— 它们<b>不影响</b>当前这个已经开着的页面。每次启动的实际形态仍记在 <code>panel/launch-log.jsonl</code>，上面那行就是最近一条。' },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'plugins', label: '插件', title: '插件',
+        desc: '装在 <code>plugins/</code> 与 <code>skills/</code> 里的第三方插件。目录里有<b>不等于</b>会生效 —— 必须在这里勾上，且要重启机器人（不支持热插拔）。',
+        draft: true,
+        cards: [
+          {
+            id: 'plugsum', title: '插件总览与安装', span: 12,
+            ctrls: [
+              { t: 'pluginSummary' },
+              /* 2026-10-23：上限不再写死 20 / 24。区间由 `src/field-schema.js` 的
+                 `pluginMax` / `toolMax` 提供（`bounds` 读的是服务端下发的 fieldMeta），
+                 这里不抄 1024 / 256 两个数字。 */
+              { t: 'number', id: 'plug.max', label: '最多启用插件数', bind: 'plugins.max', bounds: 'pluginMax', min: 1, step: 1,
+                hint: '默认 256。超出的会显示「超上限·未加载」，不会静默丢弃；改完要重启机器人。' },
+              { t: 'number', id: 'tool.max', label: '最多注册工具数', bind: 'tools.max', bounds: 'toolMax', min: 1, step: 1,
+                hint: '默认 64。工具 schema 会进每一轮请求，别调太大；改完要重启机器人。' },
+              { t: 'number', id: 'plug.hookTimeout', label: '钩子单条超时（毫秒）', bind: 'plugins.hookTimeoutMs',
+                bounds: 'hookTimeoutMs', min: 100, step: 100,
+                hint: '默认 5000。超时的钩子会被放行并记一条警告；改完要重启机器人。' },
+              { t: 'importZip', label: '装 ZIP' },
+            ],
+          },
+          {
+            id: 'pluggrid', title: '插件清单与设置', span: 12,
+            /* ⚠️ `bare: true` = **不套外层 .card**（`cardHtml` 走 `bareHtml`）。
+               插件网格自己就是完整的板集合：外面再罩一张 span-12 玻璃板，
+               视觉上就变成「大玻璃板里切了 N 块」—— 而用户要的是每块独立浮着。
+     （这里原本写着"13 块"：那是当时装着的包数，2026-10-17 那 13 个包已全部删除 ——
+       数字会腐烂，写 N 才不会在下一次变成"注释说一件不再成立的事"。）
+               那层外壳不是设计，是容器，所以这里把它整个脱掉。 */
+            bare: true,
+            ctrls: [{ t: 'pluginList' }],
+          },
+          {
+            id: 'scope', title: '插件能做什么 / 不能做什么', span: 12,
+            ctrls: [{ t: 'pluginScope' }],
+          },
+        ],
+      },
+      {
+        id: 'hud', label: 'HUD调整', title: '顶栏 HUD 信息岛',
+        desc: '调试顶栏状态岛的轮播项、尺寸与节奏。材质固定为玻璃并跟随主题（已去掉 HUD 核）；设置只存在这台机器的浏览器里。',
+        cards: [
+          {
+            id: 'hudItems', title: '轮播信息项', span: 6,
+            ctrls: [
+              { t: 'note', text: '每项改动会立即保存到本机浏览器，重开面板仍生效。至少保留一项；灰圈只在切换时出现，并被岛体圆角裁切。' },
+              { t: 'switch', id: 'hud.i.usage', label: '今日用量', read: () => hudOn('usage'), save: hudItem('usage') },
+              { t: 'switch', id: 'hud.i.bridge', label: '机器人运行', read: () => hudOn('bridge'), save: hudItem('bridge') },
+              { t: 'switch', id: 'hud.i.container', label: '协议端登录', read: () => hudOn('container'), save: hudItem('container') },
+              { t: 'switch', id: 'hud.i.model', label: '本机模型', read: () => hudOn('model'), save: hudItem('model') },
+              { t: 'switch', id: 'hud.i.memory', label: '内存占用', read: () => hudOn('memory'), save: hudItem('memory') },
+              { t: 'switch', id: 'hud.i.panel', label: '面板连接', read: () => hudOn('panel'), save: hudItem('panel') },
+              { t: 'switch', id: 'hud.i.account', label: '账号', read: () => hudOn('account'), save: hudItem('account') },
+              { t: 'range', id: 'hud.interval', label: '轮播间隔', min: 3, max: 15, step: 1,
+                read: () => Math.round(hudCfg().interval / 1000), save: hudSave({ interval: (v) => v * 1000 }) },
+            ],
+          },
+          {
+            id: 'hudLook', title: '尺寸与动效', span: 6,
+            ctrls: [
+              { t: 'range', id: 'hud.w', label: '宽度', min: 200, max: 640, step: 10,
+                read: () => hudCfg().width, save: hudSave({ width: (v) => v }) },
+              { t: 'range', id: 'hud.h', label: '高度', min: 28, max: 48, step: 1,
+                read: () => hudCfg().height, save: hudSave({ height: (v) => v }) },
+              { t: 'range', id: 'hud.speed', label: '动效倍速（%）', min: 50, max: 200, step: 10,
+                read: () => Math.round((hudCfg().speed || 1) * 100), save: hudSave({ speed: (v) => v / 100 }) },
+              { t: 'buttons', label: '', items: [
+                act('重播入场', 'hud.entrance', 'btn-primary', '再看一次展开 + Welcome + 遮罩交接', 'play'),
+                act('恢复默认', 'hud.reset', 'btn-ghost', '清掉本地 HUD 设置并回到默认三项轮播', 'reload'),
+              ] },
+              { t: 'note', text: '数据来自 <code>/api/state</code>；发送条数还没有统计源，所以暂不提供「今日发送」项。' },
             ],
           },
         ],
@@ -1216,6 +1194,44 @@ export const GROUPS = [
     ],
   },
 ];
+
+/* 导航用的短标签：一级 2 字、二级 2–4 字。
+   完整名称仍保留在 label / title 里；页面头与面包屑继续用全名。
+   2026-10-22 导航改版：把二级栏收进一级下方后，长标签会把窄条撑开。 */
+const NAV_SHORT = {
+  run: {
+    group: '运行',
+    subs: { overview: '总览', sessions: '会话', logs: '日志', fake: '假QQ' },
+  },
+  speak: {
+    group: '发言',
+    subs: { trigger: '触发', scheduled: '定时', waiting: '等待', proactive: '安静' },
+  },
+  persona: {
+    group: '人格',
+    subs: { who: '设定', enhance: '规则', reply: '回复' },
+  },
+  brain: {
+    group: '模型',
+    subs: { model: '模型', thinking: '思考', usage: '用量' },
+  },
+  know: {
+    group: '记忆',
+    subs: { memory: '自我', skills: '知识包', people: '群友', faces: '图库' },
+  },
+  sys: {
+    group: '维护',
+    subs: { safety: '安全', history: '历史', panel: '维护', plugins: '插件' },
+  },
+};
+for (const g of GROUPS) {
+  const m = NAV_SHORT[g.id];
+  if (!m) continue;
+  g.short = m.group;
+  for (const su of g.subs) {
+    if (m.subs[su.id]) su.short = m.subs[su.id];
+  }
+}
 
 /* ────────────────────────────────────────────────────────────────────────
    2. 只读展示用到的取值函数
@@ -1423,7 +1439,7 @@ export const CTRL_KINDS = [
      · `quotaBtn`   —— 「一键切换」卡右下角的**一颗**「免费额度 ↗」按钮
                        （同一天先说"底部一条"，第二次又说"不要单独成块"⇒ 收成按钮） */
   'brainTags', 'quotaBtn',
-  'usageBySource', 'usageTable',
+  'usageBySource', 'usageByChat', 'usageByDay', 'usageTable',
   'enhance', 'scenes', 'playRules', 'skills', 'cardGrade', 'memOverview', 'memList', 'memRecords', 'autoMemList',
   'patrolView',
   'schedList', 'holidays', 'emotionState', 'pluginSummary', 'pluginList', 'pluginSettings', 'pluginScope',

@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import {
   APP, NODE_EXE, NAPCAT_ZIP, CONFIG_JSON, CONFIG_EXAMPLE, USER_ROOT,
   ROOT, IS_WIN, MIN_NODE, exists, portOpen, readJson, findQQExe,
@@ -33,6 +34,17 @@ function gte(a, b) {
 
 const LEVEL = { ok: 'ok', warn: 'warn', err: 'err' };
 const item = (level, name, detail, fix = '') => ({ level, name, detail, fix });
+
+// 发现模块按当前程序根懒加载：工具层顶层 tools/ 与 app/ 的相对层级在安装包里与开发树不同。
+const requireApp = createRequire(path.join(APP, 'package.json'));
+let discoveryCache = null;
+function panelDiscovery() {
+  if (!discoveryCache) discoveryCache = requireApp(path.join(APP, 'src', 'panel-discovery.cjs'));
+  return discoveryCache;
+}
+function discoveryOrNull() {
+  try { return panelDiscovery(); } catch { return null; }
+}
 
 // QQ 客户端的定位**只有一处实现**：`findQQExe()`（lib/common.mjs）。
 // ⚠️ 它读的是与 `app\napcat\launcher-user.bat` **同一条注册表项** ——
@@ -207,13 +219,23 @@ export async function collectEnv() {
     [3001, '协议端 WebSocket', '先不管；2-START.bat 会自动拉起 NapCat'],
     [3000, '协议端 HTTP', '先不管；由 NapCat 提供'],
     [6099, 'NapCat WebUI', '用于扫码登录，详见 README.html'],
-    [8788, '控制台面板', '在跑就说明控制台已经起来了'],
   ];
   const lines = [];
   for (const [p, label] of ports) {
     // eslint-disable-next-line no-await-in-loop
     const open = await portOpen(p);
     lines.push(`${p} ${open ? '占用中' : '空闲'}（${label}）`);
+  }
+  // P3-1：控制台面板的端口由系统分配，实际值只在发现文件里；8788 不再是它的判据。
+  const d = discoveryOrNull();
+  const panelInfo = d ? d.readDiscovery(USER_ROOT) : null;
+  if (panelInfo && d.isLive(panelInfo)) {
+    const open = await portOpen(panelInfo.port);
+    lines.push(`${panelInfo.port} ${open ? '占用中' : '空闲'}（控制台面板 · 系统分配）`);
+  } else {
+    const legacyPort = d ? d.LEGACY_PANEL_PORT : 8788;
+    const legacyOpen = await portOpen(legacyPort);
+    lines.push(`控制台面板未运行（无发现文件${legacyOpen ? `；${legacyPort} 被占用，可能是旧版面板` : ''}）`);
   }
   out.push(item(LEVEL.ok, '端口状态', lines.join(' · ')));
 

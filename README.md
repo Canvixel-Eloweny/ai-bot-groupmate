@@ -28,7 +28,7 @@ OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build
 
 <p>
   <a href="./README.md#3-four-brain-presets"><img alt="AI" src="https://img.shields.io/badge/AI-OpenAI--compatible-6f42c1?style=for-the-badge"></a>
-  <a href="./CHANGELOG.md"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.2-e05d44?style=for-the-badge"></a>
+  <a href="./CHANGELOG.md"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.4-e05d44?style=for-the-badge"></a>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -44,7 +44,9 @@ OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build
 
 ## Quick start
 
-Two supported routes. Both end at the same console, on `127.0.0.1:8788`.
+Two supported routes. Both end at the same console. The Windows desktop build lets the OS
+assign the local port: the launcher prints the URL and the panel writes it to
+`USER_ROOT/panel/.panel.json`. Development runs still default to `127.0.0.1:8788`.
 
 **macOS / Linux — Docker** (the recommended route on macOS). NapCat runs in a container, so **your own
 QQ client is never touched**:
@@ -76,7 +78,7 @@ QQ alt ──► NapCat (Docker, OneBot v11) ──► bridge src/index.js ─�
                                             ├─ cloud  : Zhipu GLM (only one with web search + vision)
                                             └─ cloud  : Qwen (free grant per model, 90 days)
                       ┌─────────────────────┴─────────────────────┐
-                      │  console panel/server.js (:8788, 127.0.0.1) │
+                      │ console panel/server.js (127.0.0.1, OS port) │
                       │  ├─ frontend panel/next/ (static, polls /api/state every 3s)
                       │  └─ starts/stops the bridge, 4 brain presets, custom workspace
                       └───────────────────────────────────────────┘
@@ -300,7 +302,7 @@ estrella-bot/
                                #   Third-party packages you drop into these directories are NOT
                                #   committed (see the per-package exceptions in .gitignore).
   panel/
-    server.js                  # :8788 — every API plus route dispatch
+    server.js                  # 127.0.0.1, OS-assigned port — every API plus route dispatch
     next/                      # current frontend: zero-build static assets + schema.js control table
     lib/                       # backend layered ESM (path/state layer → config/page/plugin → model/process)
   scripts/

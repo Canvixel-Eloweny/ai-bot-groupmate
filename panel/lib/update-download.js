@@ -12,10 +12,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { stripBom } from '../../src/plugin-manifest.js';
 
 export const IDLE_TIMEOUT_MS = 30_000;
 
-function sha256File(file) {
+export function sha256File(file) {
   return new Promise((resolve, reject) => {
     const hash = createHash('sha256');
     const stream = fs.createReadStream(file);
@@ -94,11 +95,18 @@ export async function fetchCapped(url, {
  * @param {(url:string)=>{ok:boolean,reason?:string}} [opt.validateUrl]
  * @returns {Promise<{url:string,bytes:number,sha256:string}>}
  */
+export function diskBudgetOk({ freeBytes, size, reserveBytes = 64 * 1024 * 1024 } = {}) {
+  if (!Number.isFinite(freeBytes) || freeBytes <= 0) return false;
+  if (!Number.isFinite(size) || size <= 0) return false;
+  return freeBytes >= size * 2 + reserveBytes;
+}
+
 export async function downloadWithProgress({
   urls,
   dest,
   expectedSha256 = '',
   expectedSize = 0,
+  expectedVersion = '',
   signal,
   onProgress,
   validateUrl,
@@ -106,16 +114,47 @@ export async function downloadWithProgress({
   if (!Array.isArray(urls) || urls.length === 0) throw new Error('没有可用的下载地址');
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   const part = `${dest}.part`;
+  const partMeta = `${part}.json`;
+  const metaOf = () => ({
+    version: String(expectedVersion || ''),
+    size: Number(expectedSize) || 0,
+    sha256: String(expectedSha256 || ''),
+    at: new Date().toISOString(),
+  });
+
+  // 半包的“归属”必须一起校验：同版本重打后，旧 .part 会被当成新包的前缀续上，
+  // 直到最后 sha 不符才整份重下（一次 200 MB 的白下载）。
+  if (fs.existsSync(part)) {
+    let saved = null;
+    try { saved = JSON.parse(stripBom(fs.readFileSync(partMeta, 'utf8'))); } catch { saved = null; }
+    const want = metaOf();
+    const same = saved
+      && Number(saved.size) === want.size
+      && String(saved.sha256 || '') === want.sha256
+      && (!want.version || String(saved.version || '') === want.version);
+    if (!same) {
+      try { fs.rmSync(part, { force: true }); } catch { /* ignore */ }
+      try { fs.rmSync(partMeta, { force: true }); } catch { /* ignore */ }
+    }
+  } else {
+    try { fs.rmSync(partMeta, { force: true }); } catch { /* ignore */ }
+  }
+  try { fs.writeFileSync(partMeta, `${JSON.stringify(metaOf())}\n`); } catch { /* 写不进去只影响续传，不阻断下载 */ }
+
   const errors = [];
+  const dropPart = () => {
+    try { fs.rmSync(part, { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(partMeta, { force: true }); } catch { /* ignore */ }
+  };
 
   for (const url of urls) {
     for (let round = 0; round < 2; round += 1) {
       if (round === 1) {
-        try { fs.rmSync(part, { force: true }); } catch { /* 下一轮用 'w' 截断也能盖掉 */ }
+        dropPart();
       }
       let startAt = round === 0 && fs.existsSync(part) ? fs.statSync(part).size : 0;
       if (expectedSize && startAt > expectedSize) {
-        try { fs.rmSync(part, { force: true }); } catch { /* ignore */ }
+        dropPart();
         startAt = 0;
       }
 
@@ -147,14 +186,14 @@ export async function downloadWithProgress({
           const cr = res.headers.get('content-range') || '';
           const m = /^bytes (\d+)-(\d+)\/(\d+|\*)$/.exec(cr);
           if (!m || Number(m[1]) !== startAt) {
-            try { fs.rmSync(part, { force: true }); } catch { /* ignore */ }
+            dropPart();
             errors.push(`${url} → Content-Range 与续传位置不符`);
             break;
           }
           start = startAt;
         } else if (startAt > 0) {
           // 服务端忽略了 Range：从头写，别把两段拼成坏文件。
-          try { fs.rmSync(part, { force: true }); } catch { /* ignore */ }
+          dropPart();
         }
 
         const totalHeader = Number(res.headers.get('content-length') || 0);
@@ -205,10 +244,11 @@ export async function downloadWithProgress({
           break;
         }
         fs.renameSync(part, dest);
+        try { fs.rmSync(partMeta, { force: true }); } catch { /* ignore */ }
         return { url, bytes: got, sha256 };
       } catch (e) {
         if (signal?.aborted || e?.code === 'ABORTED') {
-          try { fs.rmSync(part, { force: true }); } catch { /* ignore */ }
+          dropPart();
           throw abortError(signal?.reason, '下载已取消');
         }
         errors.push(`${url} → ${e && e.message ? e.message : e}`);

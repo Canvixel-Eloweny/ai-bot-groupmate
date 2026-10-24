@@ -38,6 +38,18 @@ execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'make-publish-copy.mj
   stdio: 'inherit',
 });
 
+// ①b 把发布来源从 app/ 移到 ④ 包根：它是构建溯源，不是程序文件，
+//     留在 app/ 里会被当成产品内容；包根那份由 make-portable-build-info.mjs 读取。
+const PROV_SRC = path.join(APP, 'PUBLISH-PROVENANCE.json');
+const PROV_DST = path.join(path.resolve(PKG), 'PUBLISH-PROVENANCE.json');
+if (fs.existsSync(PROV_SRC)) {
+  fs.copyFileSync(PROV_SRC, PROV_DST);
+  fs.rmSync(PROV_SRC);
+  console.log('①b 已把 PUBLISH-PROVENANCE.json 移到 ④ 包根');
+} else {
+  console.log('⚠️ ①b app/PUBLISH-PROVENANCE.json 不存在 —— ④ 将无法机器核对源提交');
+}
+
 // ② 剔除包内重复的构建素材（顶层 tools/ 才是分发给用户的那份）
 if (fs.existsSync(PRUNE)) {
   const n = fs.readdirSync(PRUNE, { recursive: true, withFileTypes: true })

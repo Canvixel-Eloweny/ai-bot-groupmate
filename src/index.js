@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { loadConfig } from './config.js';
 import { CONFIG_FILE, USER_ROOT, PANEL_STATE_DIR, DATA_DIR, panelFile, ensureUserDirs } from './user-root.js';
 import { OneBotClient, flattenMessage, textSegment, atSegment, replySegment, imageSegment, triggerTextOf } from './onebot.js';
@@ -26,20 +25,24 @@ import { peakSkipReason, peakQuietForProactive, readPeak } from './peak.js';
 import { friendIdsOf, FRIENDS_RECHECK_MS, FRIENDS_TTL_MS } from './friends.js';
 // 热度（按人关系温度 + 群活跃度）与巡逻（攒一批积压再问一轮）。
 import {
-  heatWeightOf, newHeatEntry, normalizeHeatEntry, noteHeatTurn, chatHeatOf, heatBandOf,
+  heatWeightOf, newHeatEntry, normalizeHeatEntry, noteHeatTurn, chatHeatOf, heatBandOf, heatLine,
+  feedbackHeatOf, noteFeedbackHeat,
 } from './heat.js';
 import { patrolTuningOf, patrolPlanOf, patrolEventOf } from './patrol.js';
 // 夜间产出：定时消息的「让模型现写」。
 import { isNightly, nightlyTargetOf, nightlyMessages, transcriptOf, NIGHTLY_MAX_TOKENS } from './nightly.js';
+// 日流水：当天群聊的机械素材（一行一条，不过模型），夜间产出优先读它。
+import { appendDayLog, dayLogTextRecent } from './day-log.js';
 // 聊天等待：停顿 / 连发合并 / 慢任务垫话。判据全在 waiting.js。
 import { humanDelayMs, waitTuningOf } from './waiting.js';
 // 图片两件套：判据（地址归类/MIME/上限）在 images.js；网络与文件读取只在这里。
-import { classifyImageArg, imageMimeOf, imageFileOf, IMAGE_MAX_BYTES, VIEW_IMAGE_PROMPT } from './images.js';
+import { classifyImageArg, imageMimeOf, imageFileOf, IMAGE_MAX_BYTES, VIEW_IMAGE_PROMPT, VISION_MIN_MAX_TOKENS } from './images.js';
 import { safeFetch } from './safe-fetch.js';
-// B33：内部标记（历史里那四句系统批注）的**唯一出处**在这儿 —— 本文件的四处
-// `remember(...)` 与 `sayToGroup` 的出口都从它取。理由与出口闸门同一句话：
-// 文案与判据各写两份，改了文案忘了改词干 = 闸门**静默失效**（真机已经泄过一次）。
-import { INTERNAL_MARKS, stripInternalMarks } from './internal-marks.js';
+// B33：内部标记（历史里那四句系统批注）的**唯一出处**在这儿 —— 本文件的
+// `remember(...)` 只取 `INTERNAL_MARKS` 写入；剥离在 `brain.js` / `proactive.js`
+// 的出口完成。理由与出口闸门同一句话：文案与判据各写两份，改了文案忘了改词干
+// = 闸门**静默失效**（真机已经泄过一次）。
+import { INTERNAL_MARKS } from './internal-marks.js';
 // 说话风格画像（ATI-2）：采集侧在这里，提示词侧在 brain.js，判据住在 style-profile。
 // ⚠️ `flushProfiles` 是**退出路径**上的一次补写（与 `flushArchive` 并排，见 `shutdown()`）：
 //    它和存档一样有 30 秒防抖窗口，不补就等于"最后 30 秒的统计白采了"。
@@ -69,10 +72,10 @@ import {
 // ⚠️ 它**不在 llm.js 里**：历史该砍谁只有上层知道，在 llm 层猜必然猜错。
 import { shrinkHistory } from './context-budget.js';
 import { sendDelayFor } from './pace.js';
-// 未读模型（D30 · Wave 4）：判据全在 unread.js（零依赖叶子，纯函数、`now` 入参），
-// 这里只做**两处接线** —— `decide()` **之前**记一条、**之后**按 id 消费一条。
-// ⚠️ 叶子**没有**"无参清空"形态：消费必须给 id 列表（这就是"禁 markAllRead"的落点）。
-import { unreadEntryOf, pushUnread, pendingOf, consume } from './unread.js';
+// 未读模型（D30 · Wave 4）：判据全在 unread.js（零依赖叶子，纯函数、`now` 入参）。
+// H-10 起这里不再直接引用叶子：`noteUnread()` / `consumeUnread()` 的接线在
+// `bridge-io.js`，本文件只从那儿 import 回来。
+
 
 // 自己发出去的消息 id（M-4 · 2026-10-04 审查轮）：让「引用了我的话」真的算「被叫到」。
 // ⚠️ 唯一写入点 = 发送成功之后那处 `noteSelfSent`；唯一读取点 = `decide()` 之前那处
@@ -95,7 +98,7 @@ let selfSentIds = [];
 // ⚠️ 渲染器**注入**进去（`renderNode`）：段 → 文本的唯一实现是 `flattenMessage`，
 //    这里不许再写第二份（本项目头号禁忌）。
 import {
-  readForward, forwardSegmentsOf, forwardResIdOf, forwardNodesOf, nodeSegmentsOf, renderForwardText,
+  forwardSegmentsOf, forwardResIdOf, forwardNodesOf, nodeSegmentsOf, renderForwardText,
 } from './forward-expand.js';
 // 跨会话发言（D18 · 报告 E8）：判据（目标裁决 / 文本收敛 / 可见会话列表 / 渲染）全在
 // cross-send.js（零依赖叶子、纯函数、`now` 与 `sessionOf` 入参）。
@@ -113,18 +116,16 @@ import {
   // [W1] 独占提交 / 独占替换 —— 关掉"读→判→写"之间的 TOCTOU 窗口
   linkExclusiveSync, reclaimExclusiveSync,
 } from './atomic-write.js';
-import { shouldClearStale } from './ephemeral.js';
-import { setRuntimeSecrets, maskSecrets } from './egress.js';
+import { setRuntimeSecrets } from './egress.js';
 import { createSessionControl, abortOutcome } from './session-control.js';
 // 进程侧实例互斥锁 + 启动/崩溃留档（D19 · 报告 E19/E20）。判据全在 bridge-lock.js
 // （零依赖叶子，IO / alive / isOurs 全部入参），这里只做**两处接线**：启动占锁、退出释放。
 import {
   LOCK_HEARTBEAT_MS, LOCK_REFUSE_EXIT_CODE, JOURNAL_MAX_LINES,
-  acquireLock, releaseLock, heartbeatLock, journalLineOf, pidAliveOf,
+  acquireLock, releaseLock, heartbeatLock, pidAliveOf,
 } from './bridge-lock.js';
-// 「这个 pid 是不是本项目的机器人」——**判据一份都不重写**：直接用面板侧那三条
-// （exec 是 node / argv 收尾是入口 / cwd 是本仓），这里只补"把这三个值取出来"的探测。
-import { isOurBridge, parsePgrepLine, firstPathOf } from './bridge-proc.js';
+// 「这个 pid 是不是本项目的机器人」的探测已随 H-10 搬进 `bridge-io.js`
+// （`probeIsOurBridge()`），本文件不再直接引用 bridge-proc 的解析器。
 // 面板 ↔ 机器人控制通道（D6b · 用户 Q7 裁决①「命令文件轮询」）。判据全在
 // control-channel.js（零依赖叶子），这里只做**唯一接线点**：一次轮询 →
 // 复用 D6 那两个具名动作（与 SIGUSR1/2 走的是同一份实现）。
@@ -133,12 +134,13 @@ import {
   archiveOf, restoreInto, readArchive, writeArchive, DEFAULT_MAX_AGE_MS,
 } from './session-archive.js';
 import { newTraceId, imageRefsOf } from './trace-id.js';
-import { recordSample, sampleOf } from './trace-stats.js';
 import scoped from './logger.js';
-import { loadExtensions, createExtensionHost, extensionRoots, HOST_STATE } from './plugin-host.js';
+import { createExtensionHost, extensionRoots, HOST_STATE } from './plugin-host.js';
 import { createToolRegistry } from './tool-registry.js';
 import { createToolLoop } from './tool-loop.js';
 import { createHookBus } from './hook-bus.js';
+// 钩子载荷的唯一投影点（2026-10-23）。三个钩子点共用一份，避免字段各拼一套而漂。
+import { incomingMessagePayload, contextPayload, llmMessagesPayload } from './hook-payload.js';
 import { createSendGuard } from './send-guard.js';
 import { scopedOnebot, scopedSender } from './ext-scope.js';
 // notice 事件的标准化与合成（D9b · 报告 E7）。判据全在 src/notice.js（零依赖叶子），
@@ -154,17 +156,17 @@ import {
   REMINDER_WINDOW_MS,
   dueMsOf, keyOf, phaseOf, matchesOn, dayKindAt, pruneReminderState,
 } from './reminder.js';
-// 本地日期键（`dayKeyOf`）与节假日表都从同一个零依赖叶子取 —— 第 13 轮 H-11：
-// 日期键的唯一实现现在住在这里（`holidays.js`），`trace-stats` 不再自己导出一份。
-import { normalizeHolidays, dayKeyOf } from './holidays.js';
+// 节假日表从零依赖叶子取 —— 第 13 轮 H-11：日期键的唯一实现也住在
+// `holidays.js`（本文件不再直接引用 `dayKeyOf`，消费在 `trace-stats` / 面板侧）。
+import { normalizeHolidays } from './holidays.js';
 
 // ── H-10 第 22 轮：写盘口那一族**整块搬出**（`src/bridge-io.js`）────────────
 // 落盘常量（thinking / trace / journal）随实现一起走；这里只 import 回来。
 // ⚠️ 判据的取源改指新家（`check-wb` 里那些 `read('../src/index.js')` 的段）。
 import {
-  THINKING_FILE, TRACE_FILE, TRACE_MAX, JOURNAL_FILE,
-  journal, promptText, noteCacheSample, writeTrace, writeSkip, writeJudgeCard,
-  noteUnread, consumeUnread, runQuiet, probeIsOurBridge, alive, truncate,
+  JOURNAL_FILE,
+  journal, promptText, writeTrace, writeSkip, writeJudgeCard,
+  noteUnread, consumeUnread, probeIsOurBridge, alive, truncate,
   markThinking, clearStaleThinking,
 } from './bridge-io.js';
 
@@ -186,7 +188,7 @@ const EFFECTIVE_INTERVAL_MS = Number(process.env.QQBOT_EFFECTIVE_MS) || 20000;
 // 「正在生成回复」的标记文件。本机模型一条要十几秒，
 // 面板靠它显示进度，否则用户只能干等，以为机器人坏了。
 //
-// ⚠️ 与上面 `EFFECTIVE_FILE` / 下面 `TRACE_FILE` 同一条理由，**必须**能指走
+// ⚠️ 与上面 `EFFECTIVE_FILE` / `bridge-io.js` 的 `TRACE_FILE` 同一条理由，**必须**能指走
 //    （2026-10-01 代码审查补 · 本文件里**最后一条**没有 env 覆盖的落盘常量）。
 //    根因：`test/smoke.js` 是 `spawn(node, ['src/index.js'], { cwd: 程序根 })` ——
 //    **cwd 就是真实仓库**，而收尾是 `child.kill('SIGKILL')`。没有这条覆盖时：
@@ -585,7 +587,9 @@ async function main() {
    *    是有断言钉着的（smoke T100 + T101），因为它的反面（多带一个空 `tools`
    *    字段、或多打一枪）都属于"改了主链路却不报错"那一类。
    */
-  const toolRegistry = createToolRegistry();
+  // 工具上限从配置来（`custom.tools.max`，默认 64）。不再写死 24 ——
+  // 超限时 `register()` 返回原因，插件宿主把它记进 `toolErrors` 并在面板显示。
+  const toolRegistry = createToolRegistry({ max: cfg.custom?.tools?.max });
 
   /**
    * ── D18 · 跨会话发言：两个**宿主工具**的注册 ──────────────────────────────
@@ -744,7 +748,7 @@ async function main() {
         role: 'user',
         content: [{ type: 'text', text: VIEW_IMAGE_PROMPT }, { type: 'image_url', image_url: { url: dataUrl } }],
       }],
-      { temperature: 0.2, maxTokens: 400, thinking: { mode: 'off' } }
+      { temperature: 0.2, maxTokens: VISION_MIN_MAX_TOKENS, thinking: { mode: 'off' } }
     );
     if (usage) recordUsage({ ...usage, chat: String(ctx.chatKey ?? ''), source: USAGE_SOURCES.agent });
     const said = String(text ?? '').trim();
@@ -829,7 +833,9 @@ async function main() {
    * ⚠️ 没有钩子时 `sendGuard.check()` 直接短路放行 —— 所以**一个包都没启用时，
    *    主发送路径是零行为改变**（有断言钉着，见 smoke T115）。
    */
-  const hookBus = createHookBus({ log });
+  // 单条钩子超时来自配置（2026-10-23）：hookBus 只在启动时建一次，
+  // 改 config 后需要重启机器人才会生效（面板 hint 已写明）。
+  const hookBus = createHookBus({ log, timeoutMs: cfg.custom?.plugins?.hookTimeoutMs });
   const sendGuard = createSendGuard({ bus: hookBus, log });
 
   /**
@@ -1405,6 +1411,29 @@ async function main() {
     const forwardStat = forward.stat;
     const parsed = flattenMessage(evt.message, selfId, { forwardText: forward.text });
 
+    // ── 2026-10-22 · 引用消息的正文与图片 ────────────────────────────────────
+    // `parsed.replyTo` 只是"被引用消息的 id"，正文在另一条消息里。旧实现从不取它：
+    // 引用一张图问"这是啥"，它连那句话都看不到；引用一段文字问"他什么意思"也一样瞎。
+    // 这里补一次 get_msg：引用正文拼进这一轮正文（带引用作者），图片并进识图列表。
+    // ⚠️ 整段 try/catch：取不到（撤回/超时/协议端不支持）就当没有引用，绝不带崩正常回复。
+    if (parsed.replyTo) {
+      try {
+        const q = await bot.call('get_msg', { message_id: Number(parsed.replyTo) }, 5000);
+        const qd = (q && q.data) ? q.data : q;
+        const qMsg = qd && (qd.message ?? (qd.data && qd.data.message));
+        if (qMsg) {
+          const qp = flattenMessage(qMsg, selfId, { probe: false });
+          const who = (qd.sender && (qd.sender.card || qd.sender.nickname)) || '';
+          const quoted = String(qp.text || '').slice(0, 500);
+          if (quoted) parsed.text = `[引用${who ? ` ${who}` : ''}：${quoted}] ${parsed.text}`;
+          if (Array.isArray(qp.images) && qp.images.length) {
+            const mine = Array.isArray(parsed.images) ? parsed.images : [];
+            parsed.images = [...qp.images, ...mine].slice(0, 3);
+          }
+        }
+      } catch { /* 引用取不到不影响正常回复 */ }
+    }
+
     const scene = evt.message_type === 'group' ? 'group' : 'private';
     const id = scene === 'group' ? evt.group_id : evt.user_id;
     // 过不了黑白名单的消息**不建会话对象**（P1 修复）：它们永远不会有回复，
@@ -1428,6 +1457,12 @@ async function main() {
     const activeCard = allowed ? brain.syncCard(session, evt) : null;
 
     const sender = evt.sender?.card || evt.sender?.nickname || `用户${evt.user_id}`;
+
+    // ── 日流水（2026-10-22）：被放行的真实入站消息落一行，供夜间产出当素材。
+    //    拍一拍/巡逻合成事件不是"话"，不记。写不进去由 appendDayLog 自己吞掉。
+    if (allowed && !evt.isPoke && !evt.isPatrol) {
+      appendDayLog(DATA_DIR, session.key, { who: sender, text: parsed.text }, Date.now());
+    }
     // ⚠️ `!evt.isPoke`：拍一拍合成的那条**不进背景段**（D9b）。
     //    背景段的用途是"让模型知道刚才群里谁在说什么"；一次拍一拍不是"话"，
     //    记进去等于往上下文里塞一句自己没见过的动作，更容易诱发复读。
@@ -1480,6 +1515,17 @@ async function main() {
         mentionedSelf: parsed.mentionedSelf,
         now: Date.now(),
       });
+    }
+
+    // ── 扩展包钩子：after-incoming-message（2026-10-23 · 回迁维护者补丁）────
+    // 位置就是语义：**放行之后、决策之前**。没被回复的消息也要记账 ——
+    // 好感度 / 心情这类包看的是"群里说过什么"，不是"机器人回了什么"。
+    // 只通知、不否决：emit 返回的 `vetoed` 在此**不消费**（否决只在 before-tool）。
+    // ⚠️ 拍到 / 未放行的不发：前者不是"话"，后者连会话都没建（`session` 为 null）。
+    if (allowed && !evt.isPoke) {
+      await hookBus.emit('after-incoming-message', incomingMessagePayload({
+        chatKey: session.key, scene, evt, parsed, sender, now: Date.now(),
+      }));
     }
 
     // 这一轮的唯一把手（B10a · O-TRACE）。放在决策**之前**：跳过的那一轮同样要带上它，
@@ -1564,7 +1610,10 @@ async function main() {
       return;
     }
     // 热度权重（按人关系温度）：冷的时候少冒头，交给 decide() 乘进概率。
-    const heatWeight = session ? heatWeightOf(heatEntryOf(session.key, evt.user_id)) : 1;
+    // 同一份 entry 也用来生成提示词里的【关系温度】状态行 —— 只算一次，两处共读。
+    const heatEntry = session ? heatEntryOf(session.key, evt.user_id) : null;
+    const heatWeight = heatWeightOf(heatEntry);
+    const heatLineText = heatEntry ? heatLine(heatEntry) : '';
     const decision = brain.decide(session, evt, parsed, {
       repliedToMe,
       heatWeight,
@@ -1593,6 +1642,8 @@ async function main() {
     }
 
     if (!decision.respond) {
+      // 巡逻轮「看过但没出声」：群级反馈热降一档（@ / 私聊不走这条）。
+      if (evt.isPatrol && session) noteFeedbackTurn(session.key, false);
       // B10a · O-SKIP：以前只有 log.debug（默认级别 info，**根本不输出**），
       // 于是"它为什么不理我"没有任何地方可查。现在落盘 + 打 info 级日志。
       writeSkip({
@@ -1644,6 +1695,8 @@ async function main() {
     // 巡逻记账：只有真的回了才写"这批话被看过了"（掷骰没中 / 连不上模型都不走这里）。
     if (decision.kind === 'patrol' && session) {
       heatState.patrol[session.key] = Date.now();
+      // 真回话 → 群级反馈热回满（沉默轮已在 skip 分支降过一档）。
+      noteFeedbackTurn(session.key, true);
       saveHeatState(true);
     }
 
@@ -1680,9 +1733,11 @@ async function main() {
     // ── 扩展包钩子：before-context（第 47 轮 B12e-3）──
     // 与参考实现 orchestrator.js:763 同名同位（触发消息到手、上下文未建）。
     // 「本体情绪」靠它读入站文本的情绪暗示。空钩点时 emit 直接短路，零开销。
-    await hookBus.emit('before-context', {
-      triggerEntries: [{ text: String(parsed.text ?? ''), atMe: Boolean(parsed.mentionedSelf) }],
-    });
+    // 载荷补 `chatKey` 与发送者身份（2026-10-23）：插件要按会话 / 按 QQ 记账，
+    // 只给一句 text 时它只能拿显示名当身份（改名即失忆）。纯新增字段，老插件不受影响。
+    await hookBus.emit('before-context', contextPayload({
+      chatKey: session.key, evt, parsed, sender, now: Date.now(),
+    }));
 
     // 用 WithMeta 入口：C-BUDGET 砍掉了什么必须落进 trace，否则"它怎么突然忘了"
     // 无从排查 —— 静默失效的定义就是不报错，唯一解法是把"丢了什么"变成可查数据。
@@ -1712,6 +1767,7 @@ async function main() {
       sleep: sleepSnap,
       catchUp: !!evt.isCatchUp,
       patrol: !!evt.isPatrol,
+      heatLine: heatLineText,
       // 扩展包指引（2026-10-15）：由**已加载**的包声明（清单 prompt.sections）收集而来。
       // 与 tier / sleep / catchUp 同一条纪律 —— 每轮才变的东西由调用方注入，
       // brain 不在那一层读全局快照。没有扩展包时是空数组 ⇒ 提示词逐字不变。
@@ -1722,7 +1778,8 @@ async function main() {
     // ── 扩展包钩子：before-llm-messages（第 47 轮 B12e-3，orchestrator.js:857）──
     // 钩子可以直接改 messages（「本体情绪」往首条 system 追加状态行）。
     // 之后的 trace 记的是**改完之后**的 prompt —— 注入了什么如实可见。
-    await hookBus.emit('before-llm-messages', { messages });
+    // `messages` 必须**原引用**交给钩子（它们要能原地改），`chatKey` 同样纯新增。
+    await hookBus.emit('before-llm-messages', llmMessagesPayload({ messages, chatKey: session.key }));
 
     // 工具 ctx（第 47 轮 B12e-3）：生态约定 execute(ctx, args) 的第一个参数。
     // 字段对照参考实现 orchestrator.js:888 —— 只放**真实在用的包需要**的，
@@ -2385,7 +2442,9 @@ async function main() {
         // ⚠️ 同 `memory.js` 那条判断：**小额额度 + 开着思考 = content 恒为空**
         //    （这 80 个 token 会被 reasoning 吃满）。这里要的只是一句随口抛的开场白，
         //    用不着思维链，所以显式关掉。
-        { temperature: 1, maxTokens: 80, thinking: { mode: 'off' } }
+        // 2026-10-22：与 memory.js 同一条根因 —— 关不掉思考的模型会把 80 个 token
+        // 全吃在 reasoning 上，主动搭话恒为空。抬到 800（上限不按上限计费）。
+        { temperature: 1, maxTokens: 800, thinking: { mode: 'off' } }
       );
       // ⚠️ D8：这一笔**故意不带会话键** —— 一次生成的文案要发给 plan 里的
       //    多个群，把它记到其中任意一个群的账上都是错的（那个群的 perChat
@@ -2398,13 +2457,17 @@ async function main() {
 
   /**
    * 夜间产出：把一条 scheduled 条目变成"让模型现写一份东西"。
-   * 素材只取**白名单群最近的历史**（每群最后 40 条）—— 写的是"这段时间群里在聊什么"，
-   * 不是"它记得什么"。已知上限：历史条目没有时间戳，"今天"实际等于"最近这些"。
+   * 素材优先取**当天日流水**（带时间、按群分文件）；没有才回退白名单群最近 40 条历史。
+   * 写的是"这段时间群里在聊什么"，不是"它记得什么"。
    */
   async function composeNightly(s) {
     const name = cfg.persona?.name || '机器人';
     const lines = [];
     for (const g of (cfg.allow.groups || []).filter(Boolean)) {
+      // 优先用当天日流水（带时间、按群分文件）；没有才回退旧"最近 40 条历史"。
+      const key = store.key('group', String(g));
+      const raw = dayLogTextRecent(DATA_DIR, key);
+      if (raw) { lines.push(raw); continue; }
       const sess = store.get('group', String(g));
       for (const m of (sess?.history || []).slice(-40)) {
         lines.push(`${m.role === 'assistant' ? name : '群友'}：${m.content}`);
@@ -2637,9 +2700,11 @@ async function main() {
   }
 
   // ── 热度账本 + 巡逻快照（Win-v0.1.2 移植）────────────────────────────
-  // 形状：`{ heat: { "<scene:id>": { "<qq>": {w, at, decayedAt, chain} } }, patrol: { "<scene:id>": 上次巡逻时刻 } }`。
-  // 判据（回升 / 扣温 / 冷却权重 / 群活跃度）全在 `src/heat.js`，这里只负责存与取。
-  let heatState = { heat: {}, patrol: {} };
+  // 形状：`{ heat: { "<scene:id>": { "<qq>": {w, at, decayedAt, chain} } },
+  //          patrol: { "<scene:id>": 上次巡逻时刻 },
+  //          feedback: { "<scene:id>": 群级反馈热 0.2–1 } }`。
+  // 判据（回升 / 扣温 / 冷却权重 / 群活跃度 / 看过没出声）全在 `src/heat.js`，这里只负责存与取。
+  let heatState = { heat: {}, patrol: {}, feedback: {} };
   let heatSavedAt = 0;
   /** 近段消息时间戳（群活跃度的原料）：只进内存，重启即空（活跃度本来就看"最近"）。 */
   const recentByChat = new Map();
@@ -2650,9 +2715,10 @@ async function main() {
       heatState = {
         heat: parsed && typeof parsed.heat === 'object' && parsed.heat ? parsed.heat : {},
         patrol: parsed && typeof parsed.patrol === 'object' && parsed.patrol ? parsed.patrol : {},
+        feedback: parsed && typeof parsed.feedback === 'object' && parsed.feedback ? parsed.feedback : {},
       };
     } catch {
-      heatState = { heat: {}, patrol: {} };
+      heatState = { heat: {}, patrol: {}, feedback: {} };
     }
   }
 
@@ -2681,6 +2747,18 @@ async function main() {
   function chatHeatFor(sessionKey, now = Date.now()) {
     const list = recentByChat.get(String(sessionKey || '')) || [];
     return chatHeatOf(list, now);
+  }
+
+  /** 群级反馈热（0.2–1）：巡逻看过积压但没出声就降，回话回满。 */
+  function feedbackHeatFor(sessionKey) {
+    return feedbackHeatOf(heatState.feedback[String(sessionKey || '')]);
+  }
+
+  function noteFeedbackTurn(sessionKey, spoke) {
+    const key = String(sessionKey || '');
+    if (!key) return;
+    heatState.feedback[key] = noteFeedbackHeat(heatState.feedback[key], spoke);
+    saveHeatState();
   }
 
   /** 记一条"这个群刚才有人说话"（群活跃度的原料）。 */
@@ -2756,7 +2834,10 @@ async function main() {
     if (peakQuietForProactive(nowMs, readPeak(cfg.custom?.peak))) return 0;
 
     const plan = patrolPlanOf({
-      chats, now: nowMs, tuning, heatOf: (chat) => chatHeatFor(chat.key, nowMs),
+      chats, now: nowMs, tuning,
+      // 活跃度 × 群级反馈热：最近几次巡逻「看过没出声」的群会逐步降温（地板 0.2），
+      // 真回话就回满。只影响积压触发；@ / 私聊 / 超时不看它。
+      heatOf: (chat) => chatHeatFor(chat.key, nowMs) * feedbackHeatFor(chat.key),
     });
     let fired = 0;
     for (const item of plan.picked) {

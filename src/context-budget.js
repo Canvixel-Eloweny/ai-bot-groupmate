@@ -235,6 +235,79 @@ export function fitHistory(items, budget = DEFAULT_BUDGET) {
 }
 
 /**
+ * 锚定历史窗口的粒度（2026-10-23 · 回迁维护者补丁）。
+ *
+ * `fitHistory` 每轮都可能从最老的丢一条 ⇒ 窗口第一格每轮都换 ⇒ 请求前缀每轮都变
+ * ⇒ 服务商的前缀缓存**每轮失效**（缓存只认「从头开始逐字相同」的最长前缀）。
+ * 这里把起点按 `step` 条一批地跳：两次跳之间窗口是**纯追加**，前缀稳定。
+ *
+ * `countFactor` 是"窗口最多比最近轮次多留几个 batch"的上限保护（当前实现最多
+ * 多留 `step-1` 条，天然在这个上限内）；保留这个字段是为了与维护者的补丁
+ * （与 token-guard 的自检）逐字对齐，不要因为"看起来没用到"就删掉。
+ */
+export const HIST_ANCHOR = Object.freeze({ step: 6, countFactor: 2 });
+
+/**
+ * 锚定式历史窗口。**纯函数**，与 `fitHistory` 同形返回。
+ *
+ * 不变量（每一条都有 smoke 断言）：
+ *   ① **最近 `recentTurns` 条永不因锚点被丢**（字符预算再紧也不动它们）；
+ *   ② 起点尽量落在 `step` 的整数倍上；两次锚点之间追加 1..step-1 条，起点不变；
+ *   ③ 字符预算不足时从最老开始丢；丢掉多少如实记进 `dropped`；
+ *   ④ `dropped` 与 `fitHistory` 同形（`{id,label,lines,chars}`），trace 拼接不用改。
+ *
+ * ⚠️ **不要把窗口算成 `recentTurns * countFactor`**：`remember()` 的 HIGH 就是
+ *    `recentTurns * 2`，那样算窗口永远等于整段历史，本函数变成空操作 ——
+ *    门禁会绿、行为一点没变（本批最危险的假绿形状）。
+ *
+ * @param {Array<object>} items
+ * @param {object} budget `DEFAULT_BUDGET` 形状（只用 `enabled` / `historyChars`）
+ * @param {{recentTurns?:number, step?:number}} opts
+ * @returns {{items:Array, dropped:Array, anchor:{start:number,size:number,step:number,keep:number}}}
+ */
+export function anchorHistory(items, budget = DEFAULT_BUDGET, { recentTurns = 0, step = HIST_ANCHOR.step } = {}) {
+  const b = typeof budget === 'object' && budget ? budget : DEFAULT_BUDGET;
+  const list = [...(items || [])];
+  const n = list.length;
+  const batch = Math.max(1, Math.trunc(Number(step)) || HIST_ANCHOR.step);
+  const keep = Math.max(1, Math.min(n || 1, Math.trunc(Number(recentTurns)) || 1));
+  const maxStart = Math.max(0, n - keep);
+  const sizeOf = (arr) => arr.reduce((m, x) => m + messageSize(x), 0);
+  const dropped = [];
+  if (b.enabled === false) {
+    return { items: list, dropped, anchor: { start: 0, size: n, step: batch, keep } };
+  }
+
+  // ① 字符预算：从最老开始丢，但**绝不动最近 keep 条**（不变量 ①）。
+  let charStart = 0;
+  let total = sizeOf(list);
+  while (charStart < maxStart && total > b.historyChars) {
+    const gone = list[charStart];
+    total -= messageSize(gone);
+    charStart += 1;
+  }
+
+  // ② 锚定：条数窗口本身也要收（否则字符预算宽松时它带着整段历史，等于没锚）。
+  //    起点 = min(条数起点, 字符起点) 之后按 batch 取整：
+  //      · 字符没逼着丢 → **向下取整**，窗口落在 [keep, keep+batch-1]；
+  //      · 字符逼着丢   → **向上取整**（宁可少带，也不超预算），但不越过 maxStart。
+  const countStart = maxStart;
+  const desired = Math.max(countStart, charStart);
+  const anchored = desired > countStart
+    ? Math.min(Math.ceil(desired / batch) * batch, maxStart)
+    : Math.floor(countStart / batch) * batch;
+  for (const gone of list.slice(0, anchored)) {
+    dropped.push({ id: 'history', label: '历史', chars: String(gone?.content ?? '').length });
+  }
+
+  return {
+    items: list.slice(anchored),
+    dropped: fold(dropped),
+    anchor: { start: anchored, size: n - anchored, step: batch, keep },
+  };
+}
+
+/**
  * 上下文超长时的**收缩重试**（D8 · 报告 E3 的"语义降级层"）。**纯函数**。
  *
  * 什么时候用：服务端回了 400 且响应正文点名"上下文过长"。

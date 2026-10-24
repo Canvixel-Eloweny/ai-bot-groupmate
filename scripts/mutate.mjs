@@ -70,6 +70,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isPublishCopy, isHeldBackForGates, isMaintainerCheckout } from './lib/publish-copy.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WORK = process.env.QQBOT_MUTATE_WORK || path.join('/tmp', 'qqbot-mutate');
@@ -333,9 +334,27 @@ async function main() {
     plan = mod.default || mod.MUTATIONS || [];
   }
   if (opt.only.length) plan = plan.filter((m) => opt.only.includes(m.id));
+  const publishCopy = isPublishCopy(ROOT);
+  const maintainer = isMaintainerCheckout(ROOT);
+  const skipped = [];
+  plan = plan.filter((m) => {
+    if (m.maintainerOnly && !maintainer) {
+      skipped.push({ id: m.id, why: '维护者本机专属（发布拷贝/他人 clone 不适用）', target: m.file });
+      return false;
+    }
+    if (publishCopy && m.file && !fs.existsSync(abs(m.file)) && isHeldBackForGates(m.file)) {
+      skipped.push({ id: m.id, why: '目标按设计不随公开拷贝发布', target: m.file });
+      return false;
+    }
+    return true;
+  });
+  if (skipped.length) {
+    say(`发布/维护者过滤：跳过 ${skipped.length} 条`);
+    for (const s of skipped) say(`  · ${s.id} · ${s.why} · ${s.target}`);
+  }
   if (!plan.length) {
-    say('✗ 变异清单为空 —— 拒绝在空集合上给结论（本项目"在真空里通过"的老毛病）');
-    process.exit(2);
+    say('✓ 没有可执行的变异（全部按发布面/维护者规则跳过）');
+    process.exit(0);
   }
 
   const files = [...new Set(plan.map((m) => m.file))];

@@ -198,6 +198,11 @@ if (DEST === ROOT || ROOT.startsWith(`${DEST}${path.sep}`)) {
   console.error(`✗ 目标目录不能是本仓库本身或它的上级：${DEST}`);
   process.exit(2);
 }
+// 源提交必须在任何目标文件落盘**之前**取：目标若在仓库内，建目录本身就会让
+// `git status` 变 dirty，从而把"源是脏的"写成一次自伤。
+const SOURCE_COMMIT = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+const SOURCE_WORKTREE = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' }).trim()
+  ? 'dirty' : 'clean';
 
 // ── 取追踪清单 ──
 // ⚠️ 必须 `-z`：中文/特殊字符路径默认会被 git 用 C 风格转义加引号包起来
@@ -290,6 +295,19 @@ for (const [rel, text] of Object.entries(STUBS)) {
 //      `make-publish-copy.mjs` + 桌面那份交接件，不需要脚本里再留一条旁路。
 // ⚠️ 连带：`.gitignore` 的 EXCLUDE 里那条 `docs/HANDOFF.md` **保留**（§34 逐条钉着，
 //    且它是"按设计持有真值"的第二道闸，与"文件存不存在"是两件事）。
+
+// ── 跨血缘溯源：把「这份拷贝来自哪一笔本地提交」留在发布根 ──────────────────
+// 公开仓由 Git Data API 追加提交，commit hash 与本地开发史不同；CI 构建读这份文件
+// 才能把 BUILD-INFO 的 sourceCommit 记成真正的源提交，而不是公开仓那一笔。
+// ⚠️ 不写进 app/：`make-app.mjs` 会把它移到 ④ 包根；安装器 payload 的白名单也不收它。
+fs.writeFileSync(path.join(DEST, 'PUBLISH-PROVENANCE.json'), `${JSON.stringify({
+  schema: 1,
+  sourceCommit: SOURCE_COMMIT,
+  sourceCommitShort: SOURCE_COMMIT.slice(0, 7),
+  sourceWorktree: SOURCE_WORKTREE,
+  generatedAt: new Date().toISOString(),
+}, null, 2)}\n`, 'utf8');
+console.log(`  来源：PUBLISH-PROVENANCE.json（${SOURCE_COMMIT.slice(0, 7)} · ${SOURCE_WORKTREE}）`);
 
 // ── 复扫：**扫到 0 才算完成** ──
 // 判据：不许因为"我照清单做了"就当它干净 —— 必须对**产物**逐个文件核。

@@ -9,13 +9,10 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn, execFile, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-// 模型能力档案与「自定义工作台」的配置结构 —— 与机器人进程共用同一份，
+// 「自定义工作台」的配置结构 —— 与机器人进程共用同一份，
 // 面板绝不自己再写一份默认值/判定规则（写两份必然漂移，这是本项目反复踩过的坑）
-import { ZHIPU_MODEL_META, capabilitiesOf, resolveFeatures, FEATURE_LABEL, THINK } from '../src/model-caps.js';
 import {
-  readCustom, patchCustom, SIMILAR_THRESHOLD, SCENES, REPLY_LENGTHS, PLAY_RULES,
-  ENHANCE, ENHANCE_KEYS, ENHANCE_GROUPS,
-  SKILL_IN_PROMPT, MANUAL_MEMORY_IN_PROMPT, similarity,
+  readCustom, patchCustom, SIMILAR_THRESHOLD, similarity,
 } from '../src/custom-config.js';
 // 本地对话流的读盘口（第 16 轮 · H-10 第二半搬出，层号 L1 · 只依赖 paths.js）。
 // ⚠️ `TRACE_SHOWN`（卡片显示几条）与 `TRACE_AGGREGATE`（会话聚合几条）**是两个数**：
@@ -23,19 +20,13 @@ import {
 import { readTrace, TRACE_SHOWN, TRACE_AGGREGATE } from './lib/trace-io.js';
 import {
   listAutoMemory, clearAutoMemory, writeAutoMemory, readRecords, reviewRecordById, recallForPrompt,
-  AUTO_MEMORY_FILE as AUTO_MEMORY_PATH,
 } from '../src/memory.js';
 // 结构化记忆的**判据表**（状态中文名 / 该显示哪些按钮 / 淡忘程度）。
 // 面板只做渲染，一个中文名与一个上限数字都不自存 —— 全项目唯一来源是那个零依赖叶子。
 import {
-  RECORD_STATUS, RECORD_STATUS_LABELS, REVIEW_ACTIONS, REVIEW_ACTIONS_FOR,
-  SAMPLES_TO_CONFIRM, SAMPLES_FOR_STABLE, PROMPT_BUDGET_CHARS,
-  kindShort, activationOf, looksInferred, RECALL_MAX,
+  RECORD_STATUS_LABELS, REVIEW_ACTIONS,
+  kindShort, activationOf, looksInferred,
 } from '../src/memory-record.js';
-// 入库注入闸门（B9 · INJ-GATE）。与机器人进程共用同一份模式表 ——
-// 面板是**另一条写入路径**，两边各写一份规则的话，迟早出现"机器人拦得住、面板直接存进去"。
-import { looksInjected } from '../src/injection.js';
-import { GATE_ERROR_KIND, isBlocking } from '../src/gate-scan.js';
 // 面板写路由的鉴权判定（B9c · AUTH-PANEL）。判定本身是纯函数、在 src/panel-auth.js 里，
 // 这里只做**唯一的那次接线**：解析 token → 拦写路由 → 把 token 交给页面。
 import { authDecision, presentedToken, newToken, injectPanelToken, TOKEN_ENV } from '../src/panel-auth.js';
@@ -56,8 +47,8 @@ import {
   POWERSHELL, winRowsOf, winProcFromRow, encodePwshCommand,
 } from '../src/bridge-proc.js';
 // D19 · 机器人进程侧的实例锁。**只读**：判据（"锁长什么样"）用 `src/bridge-lock.js`
-// 的 `parseLock`，退出码也从那儿取 —— 面板不许再写一份"锁的格式"或再抄一个 3。
-import { parseLock, LOCK_REFUSE_EXIT_CODE } from '../src/bridge-lock.js';
+// 的 `parseLock` —— 面板不许再写一份"锁的格式"。
+import { parseLock } from '../src/bridge-lock.js';
 // ⚠️ `writeJsonAtomic` / `appendHistory` / `historyEntryOf` 的导入随 `writeConfig` 一起搬去了
 //    `lib/config-io.js`；`CONFIG_FILE`（与 `configPath()` 同一语义）、`DOCKER_CANDIDATES`、
 //    `MAX_LOG` 三个曾是**只出现在 import 行、正文零引用**的僵尸导入，已清掉
@@ -66,10 +57,12 @@ import { parseLock, LOCK_REFUSE_EXIT_CODE } from '../src/bridge-lock.js';
 //    与其在函数里再硬编码一遍同一段路径，不如把 paths.js 的常量接回来 —— 路径只推导一次。
 import { readHistory, configAt, popHistory } from '../src/config-history.js';
 import { thinkingIsLive } from '../src/ephemeral.js';
-import { sweepStaleTemps, truncateLinesAtomic } from '../src/atomic-write.js';
+import { sweepStaleTemps } from '../src/atomic-write.js';
 // 窗口记忆（2026-10-16）：窗口几何的**值域判据**与落点只有 `src/launch-mode.js` 一份 ——
 // 面板只做"收下 → 过判据 → 写盘"，不许在这里再写一遍范围检查（两份必然漂移）。
-import { normalizeWinState, windowStatePath, launchLogPath, readLaunchLog } from '../src/launch-mode.js';
+import {
+  normalizeWinState, windowStatePath, launchLogPath, readLaunchLog, launchOfConfig,
+} from '../src/launch-mode.js';
 // 当月账本的「今天」判据：与机器人侧共用 `dayKeyOf` 一份，不在本地再拼一个
 // （本地那份月份/日不补零，9 月会算出 `2026-9-1`，与 src 侧的 `2026-09-01`
 //   对不上 —— 注释自称同口径，实现却已经漂了）。
@@ -83,14 +76,14 @@ import { dayKeyOf } from '../src/holidays.js';
 import {
   PROGRAM_ROOT, INSTALL_ROOT, USER_ROOT, PANEL_STATE_DIR, MODE, NAPCAT_DIR, DATA_DIR, UPDATE_DIR, ensureUserDirs,
   PORT, SANDBOX, NODE, BACKEND_SOURCES,
-  APP_ID, APP_VERSION,
+  APP_ID, APP_VERSION, APP_HOMEPAGE,
   IS_WIN,
   HOME, QWEN_SERVER, QWENCHAT_SERVER, MLX_PY,
   NAPCAT_WEBUI_PORT,
-  DOCKER, DOCKER_APP,
+  DOCKER,
   CONFIG_FILE,
-  EFFECTIVE_FILE, THINKING_FILE, HISTORY_FILE, AUDIT_FILE, TOKEN_FILE,
-  TRACE_FILE, ARCHIVE_FILE, USAGE_DIR, USAGE_FILE_RE, PIDFILE, BRIDGE_LOG, LOCAL_LOG, PANEL_LOG,
+  EFFECTIVE_FILE, THINKING_FILE, HISTORY_FILE, TOKEN_FILE,
+  TRACE_FILE, USAGE_DIR, USAGE_FILE_RE, PIDFILE, BRIDGE_LOG, LOCAL_LOG, PANEL_LOG,
   BRIDGE_LOCK_FILE,
   DEBUG_FLAG,
 } from './lib/paths.js';
@@ -109,23 +102,21 @@ import { fakeSnapshot, fakeStart, fakeSend, fakeStop, fakeDispose } from './lib/
 //    路由这里不摆第二张"允许的路径"表 —— 两张表会漂，而多一条路径是**静默**多一个入口。
 import { readNextAsset, NEXT_ENTRY, assetNameForRootPath, PANEL_CSP } from './lib/next-page.js';
 import { extensionsOf } from './lib/extensions.js';
-// 插件写的数据 → 面板能看的样子（2026-10-02）：情绪 / 群友档案 / 图库 / 额度情报。
-// 四个读盘口收在那一个 L1 叶子里，这里只做一次调用 —— 路由里不出现任何数据文件名。
-import { readBotData } from './lib/bot-data.js';
 // 会话 / 存档的聚合判据（P1 分区重构）。**纯函数在 lib 里**，这里只做读盘 + 传参 ——
 // 判据不落在路由里，"列表怎么算"才能被断言直接喂（本项目对判据的一贯要求）。
 import { sessionsFromTrace, sessionRecordsOf, chatsFromArchive, chatDetailOf } from './lib/sessions.js';
-// 控制通道（D6b · Q7 裁决①「命令文件轮询」）。下发命令 / 读回结果 / 中文名表
-// 三件事的面板侧实现都在 lib 里，这里只做读盘渲染 + 一条写路由 —— 判据一处都不重写。
-import { CONTROL_LABELS, controlStateOf, issueCommand, clearCommand } from './lib/control.js';
-import { applySettingsPatch } from '../src/plugin-settings.js';
-// H-03（2026-10-05 · 第 10 轮 · 开源前审查）：人格文件的**路径包含性判据**复用唯一实现。
-// 它是零依赖叶子（`panel/lib/ext-install.js` 早已在用它），面板侧不许再写第二份 `..` 判断
-// —— 两份判断迟早一边放行一边拒绝（本项目在 `normalizeThinking` 上真实踩过）。
-import { isSafeRelPath } from '../src/plugin-manifest.js';
+// 控制通道（D6b · Q7 裁决①「命令文件轮询」）。下发命令 / 读回结果
+// 两件事的面板侧实现都在 lib 里，这里只做读盘渲染 + 一条写路由 —— 判据一处都不重写。
+import { issueCommand, clearCommand } from './lib/control.js';
 // H-09（同上）：面板的全局异常兜底要把异常正文写进日志，而 `/api/logs` **不鉴权** ——
 // 所以出口前必须过脱敏，且必须用唯一那份实现（与 `src/logger.js` 出口同一张特征表）。
 import { maskSecrets } from '../src/egress.js';
+import { readLastExit, writeLastExit, lastExitText, appendPanelEvent } from './lib/last-exit.js';
+import { buildDiagnosticsBundle, buildDiagnosticsZip } from './lib/diagnostics.js';
+// P3-1：实际监听端口的发现文件（`USER_ROOT/panel/.panel.json`）。
+// 面板是**唯一写入方**；启动器 / Electron 壳 / 停止链 / 诊断只读。模块用 CJS 是为了同一份
+// 实现也能被 Electron 主进程 require（那边不是 ESM）。
+import panelDiscovery from '../src/panel-discovery.cjs';
 import { state, logDropped, pushLog, clearLogs, onLog } from './lib/runtime-state.js';
 // D21：`readBodyBuffer` 是"原样收字节"的读法（ZIP 上传用）—— 与 `readBody` 同模块，
 // 但**不动** `readBody` 的 JSON 语义与 1e6 上限（全部写路由共用它，改它等于改全局）。
@@ -136,14 +127,16 @@ import { sendJson, readBody, readBodyBuffer } from './lib/http-io.js';
 //    「重启协议端」点了没反应。详见那片叶子文件头的记录。
 import {
   nativePresent, nativeLogFile, readNativeWebuiToken, readNativeWebuiPort, panelLocalQr,
-  startNativeNapcat, restartNativeNapcat,
+  startNativeNapcat, restartNativeNapcat, stopNativeNapcat,
 } from './lib/napcat-native.js';
+import { resolveLoginQqIn } from '../src/napcat-login.js';
+import { createProtocolGuard } from './lib/protocol-guard.js';
 // ── `config.json` 的唯一所有者（B11b-2 · AR-SERVERSPLIT）────────────────────
 // 读配置 / 写配置 / 记配置历史这三件事只有这一处实现。搬了实现就要**把契约也搬过去**
 // （`check-wb` 的 3i / 3k 现在扫的是 `lib/config-io.js`），否则契约会变成永远绿的摆设。
 import { readConfig, writeConfig } from './lib/config-io.js';
 // ── 模型元数据与判定（B11b-2 · AR-SERVERSPLIT）──────────────────────────────
-// 只 import 主文件真的用得到的那 24 个 —— 模块里另有 15 个是它的内部实现细节
+// 只 import 主文件真的用得到的那些 —— 模块里另有 15 个是它的内部实现细节
 // （`ZHIPU_SELECTABLE` / `PROVIDER_DEFAULTS` / `mergeDeep` …），
 // 导出一堆没人读的名字，只是把"依赖面"这个信息糊掉。
 // ⚠️ `LOCAL_MODEL_PORT` / `QWENCHAT_PORT` 随这一节一起搬走了，主文件不再需要它们。
@@ -151,7 +144,7 @@ import {
   LOCAL_MODELS, LOCAL_CHANNELS, LOCAL_MODEL_SUPPORTED, LOCAL_MODEL_UNSUPPORTED_WHY,
   localChannelOf, localChannelUrl, localKeyOf,
   localModelExists, resolveLocalKey, mergeModelList, modelProviderMismatch,
-  ZHIPU_DEFAULT_CHAIN, MAX_CHAIN_LEN, CLOUD_PRESETS, BUILTIN_MODELS, PRESET_KEYS,
+  CLOUD_PRESETS, BUILTIN_MODELS, PRESET_KEYS,
   MODEL_LABELS,
   normalizeThinking, buildModelCaps, readPresets, stashCurrentPreset, readZhipuPackages,
   // 2026-10-17：降级链必须属于**当前这家**（自定义大脑与切换两条路都要用它）
@@ -166,7 +159,7 @@ import { makeUsageReport } from './lib/usage-report.js';
 
 import { makeStateCollector } from './lib/state-collector.js';
 import { maybeSyncModelCatalog } from './lib/model-sync.js';
-import { makeExportBundle } from './lib/export-bundle.js';
+import { makeExportBundle, EXPORT_SCOPES } from './lib/export-bundle.js';
 // 「保存配置」这条路由的逻辑（第 18 轮搬出 · L3）。四个判据由主文件注入，理由见下方接线处。
 import { makeConfigRoute } from './lib/config-route.js';
 // ── 网络地址判定（B11c · AR-DATADRIVEN）──────────────────────────────────────
@@ -188,12 +181,6 @@ import { quotaOf, quotaPlanOf, QUOTA_KIND } from '../src/free-quota.js';
 import {
   CUSTOM_FEATURE_KEYS, customBrainsOf, materializeBrain, newBrainId, normalizeCustomBrain,
 } from '../src/custom-brain.js';
-// ── 数值类设置的默认值 / 上下限（第 42 轮 B12b · SCHEMA-LITE）─────────────────
-// 面板上「只保留底层的 1.5 秒防抖」「默认 23 点到 8 点」「最多 2 段」这些**数字**
-// 与 `<input min max>` 的区间都从这里下发，前端一个都不自存 ——
-// 与 `MODEL_LABELS` / `featureLabels` / `similarThreshold` 同款做法。
-// 唯一真相源是 `src/field-schema.js`（机器人侧读的是同一份）。
-import { fieldMeta } from '../src/field-schema.js';
 // ── D29：账务的**来源枚举**（唯一一份）─────────────────────────────────────
 // 面板读账本时要按来源分桶（主回复 / 记忆判定 / 主动话题）。桶名必须来自
 // `src/usage.js` 的 `USAGE_SOURCES`，不能在面板侧再抄一份字面量 ——
@@ -213,7 +200,7 @@ import { extensionRoots } from '../src/plugin-host.js';
 import {
   sh, shBuffer, killTree, pidAlive, waitFor,
   portOpen, httpGet, httpJson, wsProbe,
-  ensureDocker, cachedMemory, cachedDockerUp, invalidateDockerCache, cachedDockerPs,
+  ensureDocker, cachedDockerUp, invalidateDockerCache,
 } from './lib/proc.js';
 
 // `PANEL_FILE` 与上面那批**放在一起是为了对照**：它同样是"我这个文件在哪"，
@@ -283,7 +270,7 @@ const WRITE_ROUTES = new Set([
   '/api/bridge/command',
   '/api/local-model/start', '/api/local-model/stop',
   '/api/onekey/start', '/api/onekey/stop',
-  '/api/stop-all', '/api/napcat/restart', '/api/panel/restart',
+  '/api/stop-all', '/api/protocol/start', '/api/napcat/restart', '/api/panel/restart',
   // P11（2026-10-19）：协议端没装时，面板自己去找 / 打开目录 ——
   // 前者会往 userdata\napcat 里**写文件**（复用安装器的放置逻辑），后者会拉起进程。
   '/api/napcat/import-auto', '/api/napcat/open-folder',
@@ -332,14 +319,35 @@ function isWriteRequest(p, method) {
  *
  * ⇒ 物理上只绑回环，逻辑上还要**认 Host**。
  *
- * ⚠️ **这一道挡不住 Rebinding**：重绑之后 Host 就是 `127.0.0.1:8788`，完全合法。
+ * ⚠️ **这一道挡不住 Rebinding**：重绑之后 Host 就是 `127.0.0.1:<实际端口>`，完全合法。
  *    真正能区分"用户自己的控制台页面"与"重绑过来的页面"的是 **Origin / Sec-Fetch-Site**
  *    —— 那一道见 `sameSiteWrite()`。两道是互补的，缺任何一道这条链都还是通的。
  *
- * ⚠️ 端口用 `\d+` 而不是写死 8788：面板端口可被 `QQBOT_PANEL_PORT` 覆盖（三件套之一）。
+ * ⚠️ 端口必须**等于本次实际监听的端口**（P3-1 · 2026-10-24）：只判「回环 + 任意数字端口」
+ *    会让同机另一个回环服务也过 Host 闸。产品形态默认监听 0（系统分配），实际端口只有
+ *    在 listen 之后才知道，所以这里不能再用静态正则。
  * ⚠️ Host 缺失一律拒（fail-closed）：HTTP/1.1 必带 Host，缺它只可能是异常客户端。
  */
-const LOOPBACK_HOST_RE = /^(?:127\.0\.0\.1|localhost|\[::1\]):\d+$/;
+const PANEL_LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+/** 本次**实际**监听的端口；listen 成功前为 0（此时所有 Host 一律拒）。 */
+let ACTUAL_PORT = 0;
+
+function isLoopbackName(name) {
+  return PANEL_LOOPBACK_HOSTS.has(String(name || '').toLowerCase());
+}
+
+/** Host 必须是回环名 + **本次实际端口**；缺端口、错端口、任意端口都不算。 */
+function isLoopbackHost(raw) {
+  if (!raw || !ACTUAL_PORT) return false;
+  let u;
+  try { u = new URL(`http://${raw}`); } catch { return false; }
+  return isLoopbackName(u.hostname) && Number(u.port) === ACTUAL_PORT;
+}
+
+/** Origin 的判据与 Host 同源：回环名 + 本次实际端口。 */
+function isLoopbackOrigin(u) {
+  return isLoopbackName(u.hostname) && Number(u.port) === ACTUAL_PORT;
+}
 
 /**
  * ── 模型接口地址能不能收（2026-10-05 开源前审查 · S-08）───────────────────
@@ -411,7 +419,7 @@ function sameSiteWrite(headers = {}) {
   if (typeof origin === 'string' && origin) {
     let u;
     try { u = new URL(origin); } catch { return false; }
-    return LOOPBACK_HOST_RE.test(u.host);
+    return isLoopbackOrigin(u);
   }
   const site = headers['sec-fetch-site'] ?? headers['Sec-Fetch-Site'];
   if (typeof site === 'string' && site) return site === 'same-origin';
@@ -456,6 +464,37 @@ const ONEBOT_READY_DEADLINE_MS = 60000;
  * 现在由 §96⑧b 盯着这里，配 `win-53.mjs` 的 M11–M13 三条变异。
  */
 const onebotProbePorts = () => onebotEndpointOf(readConfig()?.onebot);
+
+/**
+ * 协议端**进程级**守护（2026-10-22 · 群友改版回执）。
+ *
+ * `src/onebot.js` 的看门狗只管连接：心跳停摆就重连。可如果 NapCat 进程整个没了，
+ * 重连永远失败，机器人会一直哑着。这里补的是"进程不在了就按冷却拉回来"。
+ *
+ * ⚠️ 只在 Windows 且已安装原生协议端时启用；macOS / Docker 那条链一行都不碰。
+ * ⚠️ 停止链必须先 `stop()` 再停协议端，否则下一拍会把它拉回来（"关不掉"）。
+ */
+// 启动偏好只读一次：autoProtocol 决定启动时是否拉起协议端与守护（面板重启后生效）。
+const LAUNCH_PREFS = launchOfConfig(readConfig());
+const protocolGuard = createProtocolGuard({
+  probeAlive: IS_WIN && nativePresent()
+    ? async () => {
+      const { wsPort } = onebotProbePorts();
+      try {
+        // 未登录时 WS 端口还没开，但 WebUI(6099) 已经起来了 —— 只看 WS 会把
+        // "正在等扫码"误判成"进程死了"，于是再起一个 NapCat（抢端口/掉登录态）。
+        const [ws, webui] = await Promise.all([portOpen(wsPort), portOpen(NAPCAT_WEBUI_PORT)]);
+        return ws || webui;
+      } catch { return null; }
+    }
+    : null,
+  launch: IS_WIN && nativePresent()
+    ? async () => startNativeNapcat({ qq: knownLoginQq().qq })
+    : null,
+  readOnebotState: () => (readEffective()?.onebotHealth?.botOffline === true ? 'offline' : ''),
+  log: (m) => pushLog(m),
+});
+if (IS_WIN && nativePresent() && LAUNCH_PREFS.autoProtocol !== false) protocolGuard.start();
 /** 「重启机器人」两次动作之间的沉降：等进程真的没了，再去起下一个。 */
 const BRIDGE_SETTLE_MS = 1200;
 /** 报错正文回显给页面的长度：够看清卡在哪一步，又不至于把整份 docker 输出塞进响应。 */
@@ -582,6 +621,7 @@ function denyUnauthorized(res, p, verdict) {
  *  `/api/state` 就会下发 `panel.stale = true`，页面据此出黄条 + 一键重启。
  */
 const BOOT = { pid: process.pid, at: Date.now(), codeMtime: newestCodeMtime() };
+let lastExitWritten = false;
 
 /** 文件修改时间（毫秒）。取不到就返回 0 —— 自检本身绝不能成为新的故障点。 */
 function fileMtimeMs(file) {
@@ -616,6 +656,7 @@ function newestCodeMtime() {
  */
 function panelInfo() {
   const now = newestCodeMtime();
+  const lastExit = readLastExit(path.join(PANEL_STATE_DIR, '.last-exit.json'));
   return {
     pid: BOOT.pid,
     bootedAt: BOOT.at,
@@ -623,6 +664,8 @@ function panelInfo() {
     codeMtime: Math.round(BOOT.codeMtime),
     codeMtimeNow: Math.round(now),
     stale: BOOT.codeMtime > 0 && now > 0 && now - BOOT.codeMtime > 1,
+    lastExit: lastExit || null,
+    lastExitText: lastExitText(lastExit),
   };
 }
 
@@ -670,6 +713,18 @@ function readEffective() {
   }
   const alive = pidAlive(raw?.pid);
   return { ...raw, alive };
+}
+
+/**
+ * 自启要拿去快速登录的 QQ 号。判据只有一份（`src/napcat-login.js`），
+ * 这里只负责告诉它 NapCat 的 config 在哪；读不到就走二维码。
+ */
+function knownLoginQq() {
+  try {
+    return resolveLoginQqIn(path.join(NAPCAT_DIR, 'config'));
+  } catch {
+    return { qq: '', from: '' };
+  }
 }
 
 /**
@@ -2088,7 +2143,15 @@ async function apiState(req, res, url) {
   // 不能只在启动时 pushLog 一句 —— 用户装好后不重启面板也要立刻看到状态翻转。
   return sendJson(res, {
     ...(await collectState()),
+    // 关于页只显示有来源的字段：版本/运行时来自本进程，仓库地址来自 package.json。
+    appMeta: {
+      version: APP_VERSION,
+      runtime: process.version,
+      platform: process.platform,
+      repo: APP_HOMEPAGE,
+    },
     napcat: { present: nativePresent(), dir: NAPCAT_DIR, win32: IS_WIN },
+    protocolGuard: protocolGuard.stateOf(),
     update: UPDATE.snapshot(),
   });
 }
@@ -2802,7 +2865,7 @@ async function closeConsoleWindowIfOurs() {
       { windowsHide: true, timeout: 8000, encoding: 'utf8' });
     cmd = String(ps.stdout || '').trim();
   } catch { cmd = ''; }
-  if (!cmd.includes('--app=') || !cmd.includes(String(PORT))) {
+  if (!cmd.includes('--app=') || !cmd.includes(String(ACTUAL_PORT || PORT))) {
     return { ok: false, reason: `pid ${pid} 的命令行不像我们开的控制台窗口，不杀` };
   }
   spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 8000 });
@@ -2813,6 +2876,12 @@ async function closeConsoleWindowIfOurs() {
 async function exitPanelNow() {
   const r = await closeConsoleWindowIfOurs();
   if (r && r.reason) console.log(`· 关控制台窗口：${r.reason}`);
+  if (!lastExitWritten) {
+    writeLastExit(path.join(PANEL_STATE_DIR, '.last-exit.json'), {
+      code: 0, reason: 'onekey-stop', pid: BOOT.pid, uptimeMs: Date.now() - BOOT.at,
+    });
+    lastExitWritten = true;
+  }
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), BRIDGE_SETTLE_MS);
 }
@@ -2825,10 +2894,18 @@ async function apiOnekeyStop(req, res, url) {
 
   say('■ 开始结束本次运行');
 
+  // ⚠️ 顺序：先停守护，再停协议端。反了的话协议端刚被收掉、守护下一拍又把它拉回来
+  //    ⇒ 用户点了「结束本次运行」，协议端十几秒后自己回来（"关不掉"）。
+  await protocolGuard.stop();
+  say('· 协议端守护已停（否则它会把刚停掉的协议端再拉回来）');
+
   // 机器人、本机模型、QQ 容器三件事互不依赖，以前是一件一件等 ——
   // 光 docker stop 那一步就要 10~30 秒，串起来用户只能盯着进度条。
   // 现在容器先发出去停，同时收机器人和模型，最后只等容器那一步。
-  const dockerUpFirst = await cachedDockerUp();
+  // ⚠️ 平台分派（2026-10-22 · 群友改版回执）：Windows 便携/安装版的协议端是**原生 NapCat**，
+  //    Docker 根本没在跑。以前这里只 `cachedDockerUp()`，为假就整段跳过 ⇒ 点「结束本次运行」
+  //    协议端一个进程都不动，界面却报「已回到启动前的干净状态」。判据仍只有一处（paths.js 的 IS_WIN）。
+  const dockerUpFirst = IS_WIN ? false : await cachedDockerUp();
   // `-t 10` = 给容器 10 秒优雅退出的时间，超时才强杀。**显式写出来**而不是吃 docker
   // 的默认值：NapCat 要靠这段时间把登录态落盘，默认值以后要是变了就是无声的坑。
   // 后面的 20000 是 node 侧的兜底超时（10 秒优雅期 + 启动开销 + 余量）——
@@ -2855,7 +2932,18 @@ async function apiOnekeyStop(req, res, url) {
   const l = await stopAnyLocalModel(say);
   say(l ? '✔ 本机模型已停止，内存已释放' : '· 本机模型本来就没在运行');
 
-  if (dockerUpFirst) {
+  let napcatStop = null;
+  if (IS_WIN) {
+    // 原生协议端：收掉 QQ.exe 那一族（判据与实现都在 napcat-native.js）。
+    // 文案与启动侧对齐：用户问的是"我的协议端停了没有"，不是"Docker 在不在"。
+    say('· Windows 走原生 NapCat（不用 Docker）：容器这一步跳过');
+    const { wsPort } = onebotProbePorts();
+    napcatStop = await stopNativeNapcat(killTree, { wsPort });
+    say(napcatStop.ok ? `✔ ${napcatStop.msg}` : `· ${napcatStop.msg}`);
+    if (napcatStop.ok && /已停止/.test(napcatStop.msg)) {
+      say('· 协议端那个窗口会停在自己按任意键上，关掉它即可');
+    }
+  } else if (dockerUpFirst) {
     say('… 正在停止 QQ 容器');
     const r = await containerStop;
     say(r.ok ? '✔ QQ 容器已停止' : `· 容器停止：${(r.stderr || '').slice(0, 150) || '已经停了'}`);
@@ -2877,10 +2965,23 @@ async function apiOnekeyStop(req, res, url) {
 
   try { fs.unlinkSync(EFFECTIVE_FILE); } catch { /* 本来就没有 */ }
   invalidateDockerCache();
-  say('✔ 已回到启动前的干净状态');
-  const exitPanel = body.exitPanel !== false;
+  // ⚠️ 收尾这句必须看协议端有没有收掉：`stopNativeNapcat` 失败时它是**唯一**还把
+  //    "协议端没停"说出来的地方。照旧报"已回到干净状态"= 用户看到全都结束了、QQ 还在跑。
+  const napcatLeft = !!napcatStop && !napcatStop.ok && !/没找到/.test(napcatStop.msg);
+  say(napcatLeft
+    ? '· 除协议端之外的清理都已完成 —— 协议端还在跑（原因见上面那行）'
+    : '✔ 已回到启动前的干净状态');
+  // 协议端没停掉时**不退面板**：退了用户连重试的地方都没有，只能去双击 bat。
+  const exitPanel = body.exitPanel !== false && !napcatLeft;
   if (exitPanel) say('· 面板自身与它开的控制台窗口也一起收（约半秒后本进程退出，页面会显示"已退出"）');
-  sendJson(res, { ok: true, steps, msg: exitPanel ? '已全部结束，面板即将退出' : '已全部结束，内存已释放', panelExiting: exitPanel });
+  sendJson(res, {
+    ok: !napcatLeft,
+    steps,
+    msg: napcatLeft
+      ? '机器人和本机模型已停，但协议端没停掉 —— 面板先留着'
+      : (exitPanel ? '已全部结束，面板即将退出' : '已全部结束，内存已释放'),
+    panelExiting: exitPanel,
+  });
   if (exitPanel) setTimeout(() => { void exitPanelNow(); }, PANEL_EXIT_SETTLE_MS);
   return;
 }
@@ -3085,7 +3186,10 @@ async function apiExtensionsInstall(req, res, url) {
   }
   // 装完立刻刷一次扩展快照（模块内有 10 秒 TTL 缓存）—— 不为它新开一个 force 接口。
   const cfgNow = readConfig() || {};
-  extensionsOf(cfgNow.custom?.plugins?.enabled || [], { force: true });
+  extensionsOf(cfgNow.custom?.plugins?.enabled || [], {
+    force: true,
+    maxPlugins: cfgNow.custom?.plugins?.max,
+  });
   pushLog(`· 插件已安装：${r.dir} → ${r.root}/（${r.files} 个文件${r.replaced ? '，已覆盖旧版' : ''}；未自动启用）`);
   return sendJson(res, {
     ok: true, id: r.id, kind: r.kind, dir: r.dir, files: r.files, replaced: r.replaced,
@@ -3101,7 +3205,75 @@ async function apiCustomExport(req, res, url) {
   // mask=0 时保留群号（自己留档用）。默认脱敏到底，因为导出文件多半是要发出去的。
   const mask = url.searchParams.get('mask') !== '0';
   const cfg = readConfig() || {};
-  const bundle = buildExport(cfg, what, mask);
+  if (what === 'diag') {
+    const listOf = (v) => (Array.isArray(v) ? v : []);
+    const knownIds = {
+      qqIds: [
+        cfg?.account?.userId, cfg?.onebot?.selfId,
+        ...listOf(cfg?.allow?.users), ...listOf(cfg?.deny?.users),
+      ].filter(Boolean).map(String),
+      groupIds: [
+        ...listOf(cfg?.allow?.groups), ...listOf(cfg?.deny?.groups),
+      ].filter(Boolean).map(String),
+    };
+    const bundle = buildDiagnosticsBundle({
+      userRoot: USER_ROOT,
+      installRoot: INSTALL_ROOT,
+      programRoot: PROGRAM_ROOT,
+      maskSecrets,
+      knownIds,
+    });
+    const buf = buildDiagnosticsZip(bundle);
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const name = `estrella-diag-${stamp}.zip`;
+    pushLog(`· 已导出诊断包（${Object.keys(bundle.files).length} 个文件${bundle.redactions.length ? `，${bundle.redactions.length} 处二次脱敏` : ''}）`);
+    res.writeHead(200, {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${name}"`,
+      'Content-Length': buf.length,
+    });
+    return res.end(buf);
+  }
+  // 按范围导出（P2）：用户只传 scope id，文件名仍是本文件的常量表；
+  // dry=1 只回每个范围的真实字节数，不生成附件。
+  const scopeIds = String(url.searchParams.get('scopes') || '')
+    .split(',').map((x) => x.trim()).filter(Boolean);
+  const scopeMap = new Map(EXPORT_SCOPES.map((s) => [s.id, s]));
+  const badScopes = scopeIds.filter((id) => !scopeMap.has(id));
+  const isDry = url.searchParams.get('dry') === '1';
+  // dry 不要求先选范围：它要告诉前端"有哪些范围可选"。
+  if (what === 'selected' && !isDry && (!scopeIds.length || badScopes.length)) {
+    return sendJson(res, {
+      ok: false,
+      error: `导出范围只接受 ${EXPORT_SCOPES.map((s) => s.id).join(' / ')}`
+        + `${badScopes.length ? `（认不出 ${badScopes.join(',')}）` : '（至少选一项）'}`,
+    }, 400);
+  }
+  if (isDry) {
+    const all = buildExport(cfg, 'all', mask);
+    const rows = EXPORT_SCOPES.map((s) => {
+      const files = s.files.filter((f) => Object.prototype.hasOwnProperty.call(all.files, f));
+      const bytes = files.reduce((n, f) => n + Buffer.byteLength(String(all.files[f]), 'utf8'), 0);
+      return { id: s.id, label: s.label, files, bytes };
+    });
+    return sendJson(res, {
+      ok: true,
+      dry: true,
+      scopes: rows,
+      totalBytes: rows.reduce((n, r) => n + r.bytes, 0),
+      mask,
+      generatedAt: new Date().toISOString(),
+    });
+  }
+
+  let bundle = buildExport(cfg, what === 'selected' ? 'all' : what, mask);
+  if (what === 'selected') {
+    const allow = new Set(scopeIds.flatMap((id) => scopeMap.get(id).files));
+    bundle = {
+      ...bundle,
+      files: Object.fromEntries(Object.entries(bundle.files).filter(([name]) => allow.has(name))),
+    };
+  }
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
   const base = `qq-bot-${what === 'all' ? '完整配置' : what}-${stamp}`;
 
@@ -3240,9 +3412,12 @@ async function apiDebug(req, res, url) {
 
 async function apiStopAll(req, res, url) {
   pushLog('… 全部停止');
+  // 同「结束本次运行」：先停守护，再停协议端。
+  await protocolGuard.stop();
   // 同样是并发：容器停得慢（10~30 秒），先发出去，同时收机器人和本机模型。
   // 原来这里直接 docker stop，Docker 没起来时会白等一整轮超时。
-  const dockerUp = await cachedDockerUp();
+  // 平台分派（2026-10-22）：Windows 原生 NapCat 不在容器里，Docker 为假不代表无事可做。
+  const dockerUp = IS_WIN ? false : await cachedDockerUp();
   const stopContainer = dockerUp
     ? sh(DOCKER, ['stop', '-t', '10', 'napcat'], 20000)
     : Promise.resolve(null);
@@ -3250,6 +3425,23 @@ async function apiStopAll(req, res, url) {
   await stopBridge();
   // 两条本地通道都收（哪条在跑就收哪条），别留下一条偷偷占着内存
   await stopAnyLocalModel(null);
+
+  if (IS_WIN) {
+    const { wsPort } = onebotProbePorts();
+    const n = await stopNativeNapcat(killTree, { wsPort });
+    invalidateDockerCache();
+    pushLog(n.ok ? `✔ ${n.msg}` : `· ${n.msg}`);
+    // "没找到在跑的协议端"不是失败；只有真的收不掉才留面板（用户还要重试）。
+    const left = !n.ok && !/没找到/.test(n.msg);
+    if (!left) setTimeout(() => shutdown('stop-all'), PANEL_EXIT_SETTLE_MS);
+    return sendJson(res, {
+      ok: !left,
+      quit: !left,
+      msg: left
+        ? '机器人和本机模型已停，但协议端没停掉 —— 控制台先留着'
+        : '机器人、本机模型、协议端都停了，控制台也在关闭',
+    });
+  }
 
   if (!dockerUp) {
     invalidateDockerCache();
@@ -3280,7 +3472,13 @@ async function autoStartNapcatIfInstalled() {
   }
   const { wsPort } = onebotProbePorts();
   if (await portOpen(wsPort)) { pushLog(`· 协议端已经在运行（${wsPort} 有应答）—— 没有重复拉起`); return; }
-  const r = startNativeNapcat({});
+  const login = knownLoginQq();
+  if (login.qq) pushLog(`· 快速登录：${login.qq}（来源：${login.from}）—— 登录态有效时不弹二维码`);
+  else pushLog('· 没拿到已登录的 QQ 号 —— 走二维码登录（首次或换号时正常）');
+  const r = startNativeNapcat({ qq: login.qq });
+  // 自启已经发起过一次拉起（无论成败）⇒ 允许守护后续按冷却重试；
+  // 首次安装仍不替用户开窗口（自启本身只在已装且 Windows 时跑）。
+  protocolGuard.noteAttempt();
   pushLog(r.ok ? `✔ ${r.msg}` : `✗ ${r.msg}`);
 }
 
@@ -3340,6 +3538,24 @@ async function apiNapcatOpenFolder(req, res, url) {
     return sendJson(res, { ok: true, dir: NAPCAT_DIR });
   } catch (e) {
     return sendJson(res, { ok: false, msg: `打不开文件夹：${e.message}` }, 500);
+  }
+}
+
+/**
+ * 手动拉起协议端。与守护定时器共用 `runStep`（**唯一实现**），`force` 只越过
+ * 「从没起来过 / 冷却中 / 超过上限」，永不越过「账号掉线 / 协议端还活着」。
+ */
+async function apiProtocolStart(req, res, url) {
+  try {
+    const r = await protocolGuard.runStep({ force: true });
+    const launched = r.act === 'spawn' && r.ok !== false;
+    const msg = launched
+      ? '已发起拉起协议端（它登录好了才会开端口，最多等 90 秒）'
+      : `没有拉起：${r.reason}`;
+    pushLog(`… 手动拉起协议端：${msg}`);
+    return sendJson(res, { ok: launched, msg });
+  } catch (e) {
+    return sendJson(res, { ok: false, msg: `拉起协议端出错：${e && e.message ? e.message : e}` }, 500);
   }
 }
 
@@ -3526,7 +3742,7 @@ function broadcastUpdate(payload) {
 
 const UPDATE = createUpdater({
   onUpdate: (snapshot) => broadcastUpdate(snapshot),
-  requestShutdown: () => shutdown(),
+  requestShutdown: () => shutdown('update-install'),
 });
 
 /**
@@ -3653,7 +3869,7 @@ async function apiPanelWindow(req, res, url) {
 async function apiPanelQuit(req, res, url) {
   pushLog('■ 正在退出控制台（页面点了「退出控制台」）—— 机器人不受影响');
   sendJson(res, { ok: true, msg: '控制台正在退出，约 1 秒后页面不再响应' });
-  setTimeout(shutdown, 400);
+  setTimeout(() => shutdown('quit'), 400);
   return undefined;
 }
 
@@ -3803,6 +4019,7 @@ const API_ROUTES = [
   { path: '/api/usage/reset', method: 'POST', handler: apiUsageReset },
   { path: '/api/debug', method: 'POST', handler: apiDebug },
   { path: '/api/stop-all', method: 'POST', handler: apiStopAll },
+  { path: '/api/protocol/start', method: 'POST', handler: apiProtocolStart },
   { path: '/api/napcat/restart', method: 'POST', handler: apiNapcatRestart },
   // P11：协议端没装时的两条自助路（自动查找导入 / 打开目录）。
   { path: '/api/napcat/import-auto', method: 'POST', handler: apiNapcatImportAuto },
@@ -3826,7 +4043,7 @@ const API_ROUTES = [
   { path: '/api/fake-qq/stop', method: 'POST', handler: apiFakeStop },
 ];
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
+  const url = new URL(req.url, `http://127.0.0.1:${ACTUAL_PORT || PORT}`);
   const p = url.pathname;
 
   // 审计挂在这**一个**地方（B9 · AU-AUDIT）：写路由的成与败都记下来。
@@ -3844,9 +4061,9 @@ const server = http.createServer(async (req, res) => {
   // 位置：挂在**审计之后、鉴权之前** —— 与鉴权同一条纪律：被拒的那一次也要留痕
   // （"有人用奇怪的 Host 探过这个端口"本身就是事后要查的事）。
   //
-  // ⚠️ 这一道**挡不住** Rebinding（重绑之后 Host 就是 `127.0.0.1:8788`，完全合法）；
+  // ⚠️ 这一道**挡不住** Rebinding（重绑之后 Host 就是 `127.0.0.1:<实际端口>`，完全合法）；
   //    那一半由下面鉴权段里的 `sameSiteWrite()` 负责。两道互补，缺一链就还是通的。
-  if (!LOOPBACK_HOST_RE.test(String(req.headers.host || ''))) {
+  if (!isLoopbackHost(String(req.headers.host || ''))) {
     audit.done(403);
     return sendJson(res, { ok: false, error: 'bad host', reason: 'host-not-loopback' }, 403);
   }
@@ -3953,10 +4170,42 @@ server.on('error', (e) => {
   } else {
     console.error(e.message);
   }
+  writeLastExit(path.join(PANEL_STATE_DIR, '.last-exit.json'), {
+    code: 1, reason: e.code === 'EADDRINUSE' ? 'addr-in-use' : `listen-${e.code || 'error'}`,
+    pid: BOOT.pid, uptimeMs: Date.now() - BOOT.at,
+  });
+  lastExitWritten = true;
   process.exit(1);
 });
 
 server.listen(PORT, '127.0.0.1', async () => {
+  // P3-1：系统分配端口之后，**实际端口**只能从 listen 的地址里拿。
+  // 发现文件必须在任何其它启动工作之前写：启动器正在轮询它，晚一步就是"面板起来了但窗不开"。
+  const addr = server.address();
+  ACTUAL_PORT = addr && typeof addr === 'object' ? Number(addr.port) : 0;
+  try {
+    panelDiscovery.writeDiscovery(USER_ROOT, {
+      pid: process.pid,
+      port: ACTUAL_PORT,
+      appId: APP_ID,
+      version: APP_VERSION,
+      mode: MODE,
+      startedAt: new Date(BOOT.at).toISOString(),
+    });
+  } catch (e) {
+    // 写不出发现文件 = 启动器/壳永远找不到这个端口。宁可当场退出并留痕，也不留一台"活着但打不开"的面板。
+    console.error(`✗ 面板端口发现文件写不进去：${e && e.message ? e.message : e}`);
+    if (!lastExitWritten) {
+      writeLastExit(path.join(PANEL_STATE_DIR, '.last-exit.json'), {
+        code: 1, reason: 'discovery-write-failed', pid: BOOT.pid, uptimeMs: Date.now() - BOOT.at,
+      });
+      lastExitWritten = true;
+    }
+    process.exit(1);
+  }
+
+  // 新面板已经把旧面板接回来了；重启看门狗的使命结束，删掉 intent 免得下次退出时误杀。
+  try { fs.rmSync(path.join(PANEL_STATE_DIR, '.restart.json'), { force: true }); } catch { /* 没有就算了 */ }
   // 第 58 轮 · **预热 Windows 进程快照**。
   // 真机实测：`powershell` 光启动就约 1030 ms，而窗口刚起来时用户正好会点开页面 ⇒
   // 不预热的话那一次 `/api/state` 要把整条冷路径走完，观感就是"面板卡住了"。
@@ -3976,7 +4225,12 @@ server.listen(PORT, '127.0.0.1', async () => {
   pushLog('控制台已启动');
   UPDATE.start();
   // P10：安装形态（桌面图标那条链）启动时把协议端顺手带起来，见函数头注释。
-  if (IS_WIN && MODE === 'installed' && !SANDBOX) void autoStartNapcatIfInstalled();
+  // 设置里关掉 autoProtocol 时连守护一起跳过 —— 否则手动启动后进程一死，
+  // 守护又会把它拉回来，与「不自动拉起」自相矛盾。
+  if (IS_WIN && MODE === 'installed' && !SANDBOX) {
+    if (LAUNCH_PREFS.autoProtocol === false) pushLog('· 协议端自动拉起已关闭（设置里关的）—— 只手动启动，守护也不会自动重启');
+    else void autoStartNapcatIfInstalled();
+  }
   /* 官方模型目录对账（2026-10-17 · 2026-10-19 P10 修）：启动这一下跑一次 —— DeepSeek 之类改了版本/地址，
      会在这里被对齐，并把一条事件留给页面弹右下角提示。
      ⚠️ `maybeSyncModelCatalog()` 是**同步且永不抛**的叶子（model-sync.js 头部写着）——
@@ -3989,7 +4243,7 @@ server.listen(PORT, '127.0.0.1', async () => {
         等于每次跑一遍回归就改一次用户配置 —— 那类副作用以前踩过（见 sandbox.sh 顶部的注释）。 */
   if (!SANDBOX) setImmediate(() => maybeSyncModelCatalog());
   console.log(`\n  Estrella Bot Console 已启动`);
-  console.log(`  → http://127.0.0.1:${PORT}\n`);
+  console.log(`  → http://127.0.0.1:${ACTUAL_PORT}（本次实际端口，已写入 panel/.panel.json）\n`);
   console.log('  这个窗口保持开着即可，关掉窗口 = 控制台停止');
   console.log('  （机器人是独立进程，关掉控制台不会停掉机器人）\n');
 
@@ -4048,6 +4302,9 @@ function restartPanel() {
 
   restarting = true;
   const log = PANEL_LOG;
+  // P3-1：重启必须**沿用实际端口**。否则看门狗起的新进程会再分配一个端口，而页面还停在
+  // 旧 origin 上 —— 表现就是"点了重启，页面再也连不上"，且新端口没人知道。
+  const restartEnv = { ...process.env, QQBOT_PANEL_PORT: String(ACTUAL_PORT || PORT || 0) };
   // ── 看门狗命令：两个平台是两种 shell（2026-10-08）─────────────────────────
   // ⚠️ Windows 上没有 `/bin/sh`，也没有 `kill -0` / `exec` / `>>` 这套写法。
   //    那一支用 PowerShell：`Wait-Process` 等旧进程退、`Set-Location` 换目录、
@@ -4059,12 +4316,20 @@ function restartPanel() {
       const ps = `Wait-Process -Id ${BOOT.pid} -ErrorAction SilentlyContinue; `
         + `Set-Location -LiteralPath ${psQuote(PROGRAM_ROOT)}; `
         + `& ${psQuote(NODE)} ${psQuote(PANEL_FILE)} *>> ${psQuote(log)}`;
-      spawn(POWERSHELL, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePwshCommand(ps)], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      const child = spawn(POWERSHELL, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePwshCommand(ps)], { detached: true, stdio: 'ignore', windowsHide: true, env: restartEnv });
+      child.unref();
+      try {
+        fs.writeFileSync(path.join(PANEL_STATE_DIR, '.restart.json'), `${JSON.stringify({ watchdogPid: child.pid, oldPanelPid: BOOT.pid, at: new Date().toISOString() })}\n`);
+      } catch { /* 看门狗标记写不进去不阻断重启 */ }
     } else {
       const cmd = `while kill -0 ${BOOT.pid} 2>/dev/null; do sleep 0.2; done; `
         + `cd ${JSON.stringify(PROGRAM_ROOT)} && exec ${JSON.stringify(NODE)} ${JSON.stringify(PANEL_FILE)} `
         + `>> ${JSON.stringify(log)} 2>&1`;
-      spawn('/bin/sh', ['-c', cmd], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      const child = spawn('/bin/sh', ['-c', cmd], { detached: true, stdio: 'ignore', windowsHide: true, env: restartEnv });
+      child.unref();
+      try {
+        fs.writeFileSync(path.join(PANEL_STATE_DIR, '.restart.json'), `${JSON.stringify({ watchdogPid: child.pid, oldPanelPid: BOOT.pid, at: new Date().toISOString() })}\n`);
+      } catch { /* 同上 */ }
     }
   } catch (e) {
     restarting = false;
@@ -4072,12 +4337,22 @@ function restartPanel() {
   }
   pushLog('控制台正在重启（加载新代码）…');
   // 先让响应发出去再退出 —— 立刻 process.exit 的话浏览器只会看到"连接被掐断"
-  setTimeout(shutdown, PANEL_EXIT_SETTLE_MS);
+  setTimeout(() => shutdown('restart'), PANEL_EXIT_SETTLE_MS);
   return { ok: true, restarted: true, msg: '面板正在重启，约 2 秒后自动回来', oldPid: BOOT.pid };
 }
 
-function shutdown() {
+function shutdown(reason = 'quit') {
+  if (!lastExitWritten) {
+    writeLastExit(path.join(PANEL_STATE_DIR, '.last-exit.json'), {
+      code: 0, reason, pid: BOOT.pid, uptimeMs: Date.now() - BOOT.at,
+    });
+    lastExitWritten = true;
+  }
   PANEL_SHUTTING_DOWN = true;
+  // P3-1：只清**自己的**发现文件（pid 必须匹配）。重启时空窗由新进程 listen 后重新写。
+  try { panelDiscovery.clearDiscovery(USER_ROOT, process.pid); } catch { /* 退出路径不许再抛 */ }
+  // 面板退出也要停守护；否则它会在进程退出前最后一拍把协议端拉起来（留下孤儿）。
+  void protocolGuard.stop();
   try { UPDATE.stop(); } catch { /* 退出路径不许再抛 */ }
   // 假 QQ 是面板起的子进程 —— 面板退了她也活不成（它会攥着临时锁，变成孤儿）。
   try { fakeDispose(); } catch { /* 退出路径不许再抛 */ }
@@ -4086,8 +4361,16 @@ function shutdown() {
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), PANEL_EXIT_GRACE_MS);
 }
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => shutdown('sigint'));
+process.on('SIGTERM', () => shutdown('sigterm'));
+process.on('exit', (code) => {
+  // 强杀/异常退出也要收掉自己的发现文件；不匹配的（已经是新面板写的）不碰。
+  try { panelDiscovery.clearDiscovery(USER_ROOT, process.pid); } catch { /* 退出路径不许再抛 */ }
+  if (lastExitWritten) return;
+  writeLastExit(path.join(PANEL_STATE_DIR, '.last-exit.json'), {
+    code, reason: 'process-exit', pid: BOOT.pid, uptimeMs: Date.now() - BOOT.at,
+  });
+});
 
 /* ══════════════ 全局异常兜底（2026-10-05 · 第 10 轮 · 开源前审查 H-09）══════════════
  * 机器人侧 `src/index.js` 早就有 `uncaughtException` / `unhandledRejection`
@@ -4116,6 +4399,9 @@ process.on('SIGTERM', shutdown);
 const fatalFold = { key: '', n: 0 };
 function onPanelFatal(kind, e) {
   const body = maskSecrets(String((e && (e.stack || e.message)) || e)).slice(0, 800);
+  appendPanelEvent(path.join(PANEL_STATE_DIR, 'crashes', 'panel-events.jsonl'), {
+    kind: 'panel-uncaught', reason: kind, message: body,
+  });
   const key = `${kind}｜${body}`;
   if (key === fatalFold.key) { fatalFold.n += 1; return; }
   const again = fatalFold.n > 1 ? `（上一条同类连续出现了 ${fatalFold.n} 次）` : '';

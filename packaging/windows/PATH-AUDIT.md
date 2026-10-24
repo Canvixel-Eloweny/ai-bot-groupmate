@@ -223,7 +223,7 @@ git -c core.quotePath=false ls-files docs | grep -v '^docs/archive/' | wc -l   #
 | 单实例锁 | `panel/lib/paths.js:158-160`；`src/index.js:462` | `<ROOT>/panel/.bridge.lock` | `<USER_ROOT>/panel/.bridge.lock`（跨版本唯一） |
 | 进程认领 | `src/bridge-proc.js:151-159` | 只认 `<root>/src/index.js` 绝对入口 | 同时认 current 与 previous 的 `PROGRAM_ROOT`，避免升级后把上一版机器人判成“不是我们的” |
 | 快捷方式 | `packaging/windows/tools/make-shortcut.mjs:74-80` | `WorkingDirectory=ROOT`，指向 `launch-hidden.vbs` | 安装器重建；`WorkingDirectory=INSTALL_ROOT` |
-| 面板端口 | `panel/lib/paths.js:46` | 8788（`QQBOT_PANEL_PORT` 覆盖） | 不变 |
+| 面板端口 | `panel/lib/paths.js` `requestedPanelPort()` | 8788（`QQBOT_PANEL_PORT` 覆盖） | 产品形态默认 0（系统分配）；实际端口写 `USER_ROOT/panel/.panel.json`，dev 仍 8788 |
 | 面板 API | `panel/server.js` 路由表 | `/api/state`、`/api/config`、`/api/panel/quit`、`/api/audit` 等 | P3 新增 update 路由，必须同步 `API_ROUTES` + `WRITE_ROUTES` + §81 |
 
 ---

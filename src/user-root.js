@@ -170,6 +170,41 @@ export const userFile = (rel = '') => path.join(ROOTS.userRoot, rel);
 /** 面板运行态路径（USER_ROOT/panel）。 */
 export const panelFile = (name = '') => path.join(ROOTS.panelStateDir, name);
 
+/**
+ * 人格文件的候选绝对路径（P1 路径回归修复 · 2026-10-22）。
+ *
+ * 为什么不是一行 `path.resolve(PERSONA_DIR, relFile)`：
+ *   `config.example.json` / README / 既有 `config.json` 都把 `persona.file` 写成
+ *   `persona/qq-chat.md`，而 `PERSONA_DIR` 已经指向 `<userRoot>/persona`
+ *   ⇒ 旧实现会拼成 `<userRoot>/persona/persona/qq-chat.md`，文件明明存在也读不到
+ *   （dryrun 实测：`人格文件不存在，将使用空人格`）。
+ *
+ * 这里同时接受两种历史写法：
+ *   · `qq-chat.md`          → `<personaDir>/qq-chat.md`
+ *   · `persona/qq-chat.md`  → 先试 `<personaDir>/qq-chat.md`，再试 `<personaDir>/persona/qq-chat.md`
+ * 第二种的“再试”保留给真的把文件放在 `persona/persona/` 下的旧布局；两种都存在时以直接路径为准。
+ *
+ * ⚠️ 安全性（绝对路径 / `..` / 盘符 / NUL）不在这里判：调用方必须先过
+ *    `isSafeRelPath`。本函数只负责**候选与存在性**，避免把同一份安全判据抄第二遍。
+ */
+export function personaFileCandidates(relFile, { personaDir = ROOTS.personaDir } = {}) {
+  const raw = String(relFile ?? '').trim();
+  if (!raw) return [];
+  const out = [];
+  const legacy = raw.replace(/^persona[\\/]+/i, '');
+  if (legacy && legacy !== raw) out.push(path.resolve(personaDir, legacy));
+  out.push(path.resolve(personaDir, raw));
+  return [...new Set(out)];
+}
+
+/** 返回第一个真实存在的人格文件；一个都不存在时返回 `''`（调用方负责告警）。 */
+export function resolvePersonaFile(relFile, { personaDir = ROOTS.personaDir, exists = fs.existsSync } = {}) {
+  for (const file of personaFileCandidates(relFile, { personaDir })) {
+    if (exists(file)) return file;
+  }
+  return '';
+}
+
 /** 建启动必需的三层 + 图片工具的本机目录；napcat 由协议端安装流程自己建。 */
 export function ensureUserDirs({ roots = ROOTS, fsApi = fs } = {}) {
   for (const dir of [roots.userRoot, roots.panelStateDir, roots.dataDir, path.join(roots.dataDir, 'images-out')]) {

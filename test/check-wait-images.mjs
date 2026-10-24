@@ -102,7 +102,9 @@ ok('收尾处一定收气泡（stopTyping 在 finally 里）',
   /if \(holdTimer\) \{ clearTimeout\(holdTimer\); holdTimer = null; \}\n      stopTyping\(\);/.test(idx));
 ok('两个工具都注册了', /id: 'send_image'/.test(idx) && /id: 'view_image'/.test(idx));
 ok('发图先下载再以 base64 交给协议端', /imageFileOf\(got\.bytes\)/.test(idx) && /safeFetch\(src\.value/.test(idx));
-ok('看图小额旁路显式关思考', /maxTokens: 400, thinking: \{ mode: 'off' \}/.test(idx));
+// 2026-10-23：旁路从写死的 400 改成统一的识图额度下限（700），但仍必须显式关思考 ——
+// 额度抬上去不等于思考不会吃额度；两条一起判，别把其中一条当成另一条。
+ok('看图旁路用统一额度下限并显式关思考', /maxTokens: VISION_MIN_MAX_TOKENS, thinking: \{ mode: 'off' \}/.test(idx));
 ok('看图前先判模型看不看得见（与入站看图同源）',
   /supportsVision\(cfg\.llm\?\.model, cfg\.llm\?\.provider, cfg\.llm\?\.declaredFeatures\)/.test(idx)
   && /if \(!canSee\) \{/.test(idx));
