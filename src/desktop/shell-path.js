@@ -9,21 +9,25 @@
 
 import path from 'node:path';
 
+// 按**被测平台**选路径实现，而不是按宿主平台：`platform` 参数存在的意义就是
+// 让 Windows 上也能验 POSIX 夹具（反之亦然）。生产里 platform === 宿主，行为不变。
+const pathFor = (platform) => (platform === 'win32' ? path.win32 : path.posix);
+
 export function desktopDirFor({ programRoot, env = {}, platform = process.platform } = {}) {
-  if (env && env.QQBOT_DESKTOP_DIR) return path.resolve(String(env.QQBOT_DESKTOP_DIR));
+  const p = pathFor(platform);
+  if (env && env.QQBOT_DESKTOP_DIR) return p.resolve(String(env.QQBOT_DESKTOP_DIR));
   if (!programRoot) throw new Error('desktopDirFor: 缺少 programRoot');
-  const p = platform === 'win32' ? path.win32 : path;
   return p.join(String(programRoot), 'electron');
 }
 
 function electronExeFor({ programRoot, env = {}, platform = process.platform } = {}) {
-  if (env && env.QQBOT_ELECTRON_EXE) return path.resolve(String(env.QQBOT_ELECTRON_EXE));
-  const p = platform === 'win32' ? path.win32 : path;
+  const p = pathFor(platform);
+  if (env && env.QQBOT_ELECTRON_EXE) return p.resolve(String(env.QQBOT_ELECTRON_EXE));
   return p.join(desktopDirFor({ programRoot, env, platform }), platform === 'win32' ? 'electron.exe' : 'electron');
 }
 
 export function shellPaths({ programRoot, env = {}, platform = process.platform } = {}) {
-  const p = platform === 'win32' ? path.win32 : path;
+  const p = pathFor(platform);
   const desktopDir = desktopDirFor({ programRoot, env, platform });
   return {
     desktopDir,

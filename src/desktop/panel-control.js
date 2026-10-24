@@ -69,16 +69,18 @@ export function buildPanelSpawnSpec({
     else delete childEnv.QQBOT_PANEL_PORT;
   }
 
+  // 与 shell-path 同一条纪律：按被测平台选 path 实现，Windows 上也能验 POSIX 夹具。
+  const p = platform === 'win32' ? path.win32 : path.posix;
   const command = installRoot
-    ? path.join(String(installRoot), 'runtime', 'node', platform === 'win32' ? 'node.exe' : 'node')
+    ? p.join(String(installRoot), 'runtime', 'node', platform === 'win32' ? 'node.exe' : 'node')
     : (childEnv.QQBOT_NODE || 'node');
   return {
     command,
-    args: [path.join(String(programRoot), 'panel', 'server.js')],
+    args: [p.join(String(programRoot), 'panel', 'server.js')],
     cwd: String(programRoot),
     env: childEnv,
-    panelFile: path.join(String(programRoot), 'panel', 'server.js'),
-    logFile: path.join(String(userRoot), 'panel', 'panel.log'),
+    panelFile: p.join(String(programRoot), 'panel', 'server.js'),
+    logFile: p.join(String(userRoot), 'panel', 'panel.log'),
   };
 }
 

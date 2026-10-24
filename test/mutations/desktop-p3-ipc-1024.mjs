@@ -166,10 +166,10 @@ export default [
     id: 'IPC12',
     note: '半死恢复用 Electron 自己当运行时 —— §156② 必须变红（后端跑不起来）',
     file: CONTROL,
-    anchor: /path\.join\(String\(installRoot\), 'runtime', 'node', platform === 'win32' \? 'node\.exe' : 'node'\)/g,
+    anchor: /p\.join\(String\(installRoot\), 'runtime', 'node', platform === 'win32' \? 'node\.exe' : 'node'\)/g,
     count: 1,
     apply: (s) => s.replace(
-      "path.join(String(installRoot), 'runtime', 'node', platform === 'win32' ? 'node.exe' : 'node')",
+      "p.join(String(installRoot), 'runtime', 'node', platform === 'win32' ? 'node.exe' : 'node')",
       'process.execPath',
     ),
     layer: 'check-wb',
