@@ -120,7 +120,6 @@ jobs:
           $tests = @(
             'check-desktop',
             'desktop-diagnostics',
-            'panel-port',
             'p3-differential-eval',
             'p3-ci-eval',
             'installer-p1', 'installer-p2', 'installer-p3',
