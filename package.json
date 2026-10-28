@@ -39,6 +39,6 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "electron": "44.9.3"
+    "electron": "45.0.0"
   }
 }
