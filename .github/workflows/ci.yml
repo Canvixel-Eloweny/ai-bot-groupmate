@@ -212,7 +212,7 @@ jobs:
         env:
           NODE_OPTIONS: ''
       - name: 上传未签名构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: estrella-bot-setup-${{ github.sha }}
           path: |
