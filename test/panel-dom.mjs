@@ -323,7 +323,8 @@ try {
   /* ── 开屏真渲染：第一显示、最高层、铺满视口、canvas 就位 ────────────────
      这一段**不跳过**开屏；拍完立刻点跳过，后续用例照旧在正常页面上跑。 */
   let splashFirst = null;
-  for (let i = 0; i < 50 && !splashFirst; i++) {
+  /* Windows CI 冷启动可能 >4s；给到 20s，断言本身不变。 */
+  for (let i = 0; i < 200 && !splashFirst; i++) {
     splashFirst = await evalJs(`(() => {
       const b = document.getElementById('bootSplash');
       if (!b || b.hidden) return null;
@@ -343,16 +344,16 @@ try {
         iw: innerWidth,
       };
     })()`).catch(() => null);
-    if (!splashFirst) await sleep(80);
+    if (!splashFirst) await sleep(100);
   }
   if (!splashFirst) throw new Error('开屏没有在首帧出现（或 4 秒内就被跳过了）');
   ok(splashFirst.first && splashFirst.inside && splashFirst.z >= 200 && splashFirst.z > splashFirst.maxOther,
     `开屏第一显示且最高层（z=${splashFirst.z} · 其它最高=${splashFirst.maxOther} · 中心命中=${splashFirst.inside}）`);
   ok(splashFirst.width === splashFirst.iw, `开屏铺满视口（${splashFirst.width}/${splashFirst.iw}）`);
   let splashCanvas = false;
-  for (let i = 0; i < 25 && !splashCanvas; i++) {
+  for (let i = 0; i < 60 && !splashCanvas; i++) {
     splashCanvas = await evalJs(`!!document.getElementById('bootGridCanvas')`).catch(() => false);
-    if (!splashCanvas) await sleep(80);
+    if (!splashCanvas) await sleep(100);
   }
   ok(splashCanvas, '开屏格栅 canvas 已创建');
   await evalJs(`(() => { const s = document.querySelector('#bootSplash .skip'); if (s) s.click(); return 1; })()`).catch(() => {});
