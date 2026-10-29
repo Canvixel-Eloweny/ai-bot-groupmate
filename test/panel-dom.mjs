@@ -326,13 +326,8 @@ try {
   });
   await send('Page.navigate', { url: `${BASE}/?__splashTest=1` });
 
-  /* Windows Edge 冷启动时 HTML 先到、样式表/脚本后到；不等 load 就抓元素会拿到未样式化状态。
-     这里只等就绪，不改变后面的任何断言。 */
-  let splashLoaded = false;
-  for (let i = 0; i < 300 && !splashLoaded; i++) {
-    splashLoaded = await evalJs(`document.readyState === 'complete'`).catch(() => false);
-    if (!splashLoaded) await sleep(100);
-  }
+  /* 不等 load：开屏在样式表就绪的同一帧就开始，等 load 会把它等过去（Windows 实测 display:none）。
+     轮询条件里要求 position:fixed —— 既不会抓到未样式化的 HTML，也不会错过开屏。 */
 
   /* ── 开屏真渲染：第一显示、最高层、铺满视口、canvas 就位 ────────────────
      这一段**不跳过**开屏；拍完立刻点跳过，后续用例照旧在正常页面上跑。 */
