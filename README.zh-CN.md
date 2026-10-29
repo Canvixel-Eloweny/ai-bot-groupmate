@@ -28,7 +28,7 @@ OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建�
 
 <p>
   <a href="./README.zh-CN.md#3-四套大脑预设与切换"><img alt="AI" src="https://img.shields.io/badge/AI-OpenAI--compatible-6f42c1?style=for-the-badge"></a>
-  <a href="./CHANGELOG.md"><img alt="版本" src="https://img.shields.io/badge/release-v0.1.4-e05d44?style=for-the-badge"></a>
+  <a href="./docs/release/CHANGELOG.md"><img alt="版本" src="https://img.shields.io/badge/release-v0.1.4-e05d44?style=for-the-badge"></a>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="最后提交" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -64,7 +64,7 @@ npm start                      # 跑机器人
 
 有两样东西永远要你自己准备：一个 **OneBot v11 协议端**（实际用 NapCatQQ）和一个**模型**
 （本机跑，或一个 API Key）。逐步操作、以及每一步失败怎么办，见
-[`USER-GUIDE.zh-CN.md`](./USER-GUIDE.zh-CN.md)。
+[`USER-GUIDE.zh-CN.md`](./docs/guides/USER-GUIDE.zh-CN.md)。
 
 ---
 
@@ -87,11 +87,11 @@ QQ 小号 ──► NapCat(Docker, OneBot v11) ──► 桥接进程 src/index.
 
 > **`Estrella Bot` 是这个软件的名字。** 标题里那个曾用名**只保留这一处**，作用是让已有的链接、
 > 书签与搜索结果仍然能落到这里 —— 除此之外全文不再使用它。项目最初叫 `qq-bot`，此后改过两次名
->（2026-09-17，然后 2026-10-11），完整沿革记在 [`CHANGELOG.md`](./CHANGELOG.md)。
+>（2026-09-17，然后 2026-10-11），完整沿革记在 [`CHANGELOG.md`](./docs/release/CHANGELOG.md)。
 > 本仓库在 GitHub 上的 slug 保持 `ai-bot-groupmate` 不变（2026-10-07 由 `ai-group-chat` 换过来）——
 > slug 用便于检索的描述性英文，展示名与它有意分开。启动器为 `Estrella-Bot.app`。
 >
-> **只想把它跑起来？** 直接看 **[用户使用说明](./USER-GUIDE.zh-CN.md)** —— 安装 → 登录 → 配置 → 启动，
+> **只想把它跑起来？** 直接看 **[用户使用说明](./docs/guides/USER-GUIDE.zh-CN.md)** —— 安装 → 登录 → 配置 → 启动，
 > 写给不想先读源码的人。
 
 ---
@@ -116,7 +116,7 @@ npm run verify          # 上面三项串起来跑一遍（README 里的断言�
 > 要数字请直接看 `npm run verify` 的**实测输出**。
 > ⚠️ 两个口径别混：`check-wb` 报的是**段数**（不是"输出行数 / ✓ 条数"）；
 > 而脚本最后会打印一行汇总（`── 全部通过 ──`），所以「✓ 条数」恒比「输出行数」少 1。
-> （历史尸体与每次口径变化见 `CHANGELOG.md` 与 git log。）
+> （历史尸体与每次口径变化见 `docs/release/CHANGELOG.md` 与 git log。）
 
 > 门禁数字**只增不减**（删断言要么是退役了被断言的对象，要么就是在丢覆盖）——
 > 也正因为它只增不减，手写的数字才一定会腐烂：**命令不会**。
@@ -132,7 +132,7 @@ npm run verify          # 上面三项串起来跑一遍（README 里的断言�
 NapCat 的 **Linux arm64 支持是当前的**（版本覆盖到 build 52892），容器自带配套 Linux QQ，
 **完全绕开 macOS 的 QQ 版本匹配问题，你本机的 QQ 一个字节都不用动。**
 
-👉 **完整安装步骤见 [`INSTALL-DOCKER.md`](./INSTALL-DOCKER.md)**
+👉 **完整安装步骤见 [`INSTALL-DOCKER.md`](./docs/guides/INSTALL-DOCKER.md)**
 
 ```bash
 bash scripts/bootstrap.sh     # 检查环境 → 起容器 → 打印 WebUI 登录地址
@@ -168,7 +168,7 @@ macOS 之所以要容器，纯粹是因为它的版本白名单停在半年前�
 OneBot 的 WS / HTTP 仍在 **3001 / 3000** —— 与桥接默认端口**逐字相同**，
 所以**桥接与控制台一行都不用改**。
 
-👉 **完整安装步骤见 [`USER-GUIDE.zh-CN.md` · 第 9 节](./USER-GUIDE.zh-CN.md#9-windows-用户)**
+👉 **完整安装步骤见 [`USER-GUIDE.zh-CN.md` · 第 9 节](./docs/guides/USER-GUIDE.zh-CN.md#9-windows-用户)**
 
 ```bat
 npm install
@@ -349,7 +349,7 @@ node src/index.js
 ```
 estrella-bot/
   README.md
-  INSTALL-DOCKER.md            # ← 容器路线安装手册（含回滚）
+  docs/guides/INSTALL-DOCKER.md # ← 容器路线安装手册（含回滚）
   Estrella-Bot.app             # ← 双击启动：拉 Docker/容器 + 开控制台页面
   config.json                  # 你的实际配置（已预填，gitignore）
   config.example.json          # 配置模板（scripts/make-config-example.mjs 从真实配置生成并脱敏）
@@ -492,11 +492,11 @@ estrella-bot/
 
 | 文件 | 讲什么 |
 |---|---|
-| [`CONTRIBUTING.md`](./CONTRIBUTING.md) | 怎么跑四层门禁、提交信息怎么写、哪些改动不会被合 |
-| [`SECURITY.md`](./SECURITY.md) | **漏洞怎么私密上报**（别开公开 issue）；以及本项目**已知的设计边界**（哪些"看起来像漏洞"其实是有意为之） |
-| [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) | 交流的基本约定 |
-| [`CHANGELOG.md`](./CHANGELOG.md) | 每个批次改了什么、为什么改 |
-| [`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md) | 借鉴了谁的思想、边界画在哪儿（它同时是**本仓库不构成许可传染**的凭据） |
+| [`CONTRIBUTING.md`](./.github/CONTRIBUTING.md) | 怎么跑四层门禁、提交信息怎么写、哪些改动不会被合 |
+| [`SECURITY.md`](./.github/SECURITY.md) | **漏洞怎么私密上报**（别开公开 issue）；以及本项目**已知的设计边界**（哪些"看起来像漏洞"其实是有意为之） |
+| [`CODE_OF_CONDUCT.md`](./.github/CODE_OF_CONDUCT.md) | 交流的基本约定 |
+| [`CHANGELOG.md`](./docs/release/CHANGELOG.md) | 每个批次改了什么、为什么改 |
+| [`THIRD-PARTY-NOTICES.md`](./docs/legal/THIRD-PARTY-NOTICES.md) | 借鉴了谁的思想、边界画在哪儿（它同时是**本仓库不构成许可传染**的凭据） |
 | 维护者自查 | 发布前会跑一遍 `npm run publish:audit`（只读、按阻断项给退出码）。⚠️ 它与去标识对照表**都只住在维护者仓库里**，不随公开仓库发布 —— 你 clone 下来没有这条命令，这是有意的 |
 
 ⚠️ 一条**改代码之前必须知道**的：本项目的门禁是**四层**（`check-wb` 静态契约、
@@ -512,7 +512,7 @@ estrella-bot/
 | 渠道 | 用途 |
 |---|---|
 | [Issues](../../issues) | **首选**。提问、报缺陷、提需求都走这里 —— 公开讨论的结论能被下一个遇到同样问题的人搜到，私信不能 |
-| 安全漏洞 | **不要开公开 issue**。私密上报的入口，以及本项目「看起来像漏洞、其实是有意为之」的边界清单，都在上一节那张表里的 `SECURITY.md` |
+| 安全漏洞 | **不要开公开 issue**。私密上报的入口，以及本项目「看起来像漏洞、其实是有意为之」的边界清单，都在上一节那张表里的 `.github/SECURITY.md` |
 
 两处例外，请先处理后再说：
 
@@ -525,8 +525,8 @@ estrella-bot/
 
 | 项 | 值 |
 |---|---|
-| 本项目的许可 | **Apache-2.0**（全文见 [`LICENSE`](./LICENSE)，署名通知见 [`NOTICE`](./NOTICE)） |
-| 第三方声明 | 见 [`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md) |
+| 本项目的许可 | **Apache-2.0**（全文见 [`LICENSE`](./LICENSE)，署名通知见 [`NOTICE`](./docs/legal/NOTICE)） |
+| 第三方声明 | 见 [`THIRD-PARTY-NOTICES.md`](./docs/legal/THIRD-PARTY-NOTICES.md) |
 | 运行时依赖 | 只有 `ws`（MIT）。零构建、无其他第三方运行时依赖 |
 | 发布前审计 | `npm run publish:audit`（只读、按阻断项给退出码）。⚠️ 该脚本与它读的去标识对照表**都只住在维护者的仓库里**，不随公开仓库发布 —— 别人 clone 下来并没有这条命令 |
 
@@ -546,4 +546,4 @@ estrella-bot/
 `plugins/` 与 `skills/` **默认不随仓附带扩展包**：原先自带的 13 个（确定性型 5 个 + LLM 型 8 个）
 已于 2026-10-17 全部删除。宿主仍支持你自己往这两个目录里放包；第三方包**不入库**（见 `.gitignore` 的逐条点名）。
 启用哪些由 `config.json` 的 `custom.plugins.enabled` 决定 —— ⚠️ **不支持热插拔**，改了白名单必须重启机器人才生效（面板会当场提示）。
-不随本仓库分发的还有：`napcat/`（协议端）与扩展包运行期写出的数据目录，原因见 `THIRD-PARTY-NOTICES.md` §3。
+不随本仓库分发的还有：`napcat/`（协议端）与扩展包运行期写出的数据目录，原因见 `docs/legal/THIRD-PARTY-NOTICES.md` §3。

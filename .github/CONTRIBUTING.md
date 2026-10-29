@@ -33,7 +33,7 @@
 
 ```bash
 npm install
-npm start                      # 启动机器人（需要 protocol 端，见 INSTALL-DOCKER.md）
+npm start                      # 启动机器人（需要 protocol 端，见 docs/guides/INSTALL-DOCKER.md）
 
 # 四层门禁（改动后必须全绿）
 node scripts/check-wb.mjs              # L1 静态契约
@@ -63,7 +63,7 @@ NODE_OPTIONS= node scripts/mutate.mjs --only <清单名>
 
 本项目以 **Apache-2.0** 发布。除非你明确另行声明，你提交的贡献按 Apache-2.0 第 5 条授权给本项目
 （inbound=outbound，无需另签 CLA）。提交即表示你确认自己有权这样授权。
-来源与借鉴声明见 `THIRD-PARTY-NOTICES.md`。
+来源与借鉴声明见 `docs/legal/THIRD-PARTY-NOTICES.md`。
 
 ## 六、你的署名是被保留的
 

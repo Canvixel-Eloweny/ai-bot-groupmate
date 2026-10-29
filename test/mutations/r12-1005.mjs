@@ -28,7 +28,7 @@ const SB = 'test/sandbox.sh';
 const SRV = 'panel/server.js';
 const LSH = 'Estrella-Bot.app/Contents/Resources/launcher.sh';
 const GA = '.gitattributes';
-const COC = 'CODE_OF_CONDUCT.md';
+const COC = '.github/CODE_OF_CONDUCT.md';
 
 // ── M1：L-08 —— heredoc 正文里的反引号（会被 shell 当**命令替换**执行掉）─────────
 const SB_BODY = /它排在 verify-presets 之前/;

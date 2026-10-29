@@ -1,7 +1,7 @@
 # 架构说明（面向外部读者）
 
 > 这份文档回答一个问题：**这个仓库的结构为什么长这样**。
-> 面向维护者的纪律写在 `CONTRIBUTING.md`；进度台账是**内部件，不随公开仓库发布**。
+> 面向维护者的纪律写在 `.github/CONTRIBUTING.md`；进度台账是**内部件，不随公开仓库发布**。
 
 ## 1. 它是什么
 
@@ -73,8 +73,8 @@ OneBot 事件
 
 ## 6. 插件
 
-`skills/` 与 `plugins/` 放**用户自己安装的第三方包**（不随仓库分发，见 `THIRD-PARTY-NOTICES.md`）。
+`skills/` 与 `plugins/` 放**用户自己安装的第三方包**（不随仓库分发，见 `docs/legal/THIRD-PARTY-NOTICES.md`）。
 宿主提供 `api`（`registerTool` / `config` / `log` / `fetch` …）与四个生命周期函数
 （`setup` / `activate` / `deactivate` / `dispose`）。
 
-⚠️ **它们不是沙箱** —— 包在进程内加载，能直接 `import fs`。见 `SECURITY.md`。
+⚠️ **它们不是沙箱** —— 包在进程内加载，能直接 `import fs`。见 `.github/SECURITY.md`。

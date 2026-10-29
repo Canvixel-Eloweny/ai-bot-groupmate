@@ -856,8 +856,8 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
     // H-06：对外可见的治理文件里，不许再有 RFC 2606 保留占位域（那类就是死链）。
     const DEAD_URL = /https?:\/\/[^\s"']*example\.(?:invalid|com|org|net)/;
     const cfgYml = fs.readFileSync(new URL('../.github/ISSUE_TEMPLATE/config.yml', import.meta.url), 'utf8');
-    const secMd = fs.readFileSync(new URL('../SECURITY.md', import.meta.url), 'utf8');
-    for (const [rel, t] of [['.github/ISSUE_TEMPLATE/config.yml', cfgYml], ['SECURITY.md', secMd]]) {
+    const secMd = fs.readFileSync(new URL('../.github/SECURITY.md', import.meta.url), 'utf8');
+    for (const [rel, t] of [['.github/ISSUE_TEMPLATE/config.yml', cfgYml], ['.github/SECURITY.md', secMd]]) {
       if (DEAD_URL.test(t)) {
         bad++; n++;
         console.log(`✗ ${rel} 里还有保留占位域地址 —— 那是死链；"漏洞上报"的入口不能是不可达的（H-06）`);
@@ -877,7 +877,7 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
     // ⚠️ 2026-10-07：`NOTICE` 也进了这份名单 —— 它是 Apache §4(d) 里"要随再分发一起转交"的那份，
     //    README 与 THIRD-PARTY-NOTICES 都指向它；少一条链接 = 别人根本不知道要带它走。
     const rdM1 = fs.readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-    const GOV = ['CONTRIBUTING.md', 'SECURITY.md', 'CODE_OF_CONDUCT.md', 'CHANGELOG.md', 'THIRD-PARTY-NOTICES.md', 'NOTICE'];
+    const GOV = ['.github/CONTRIBUTING.md', '.github/SECURITY.md', '.github/CODE_OF_CONDUCT.md', 'docs/release/CHANGELOG.md', 'docs/legal/THIRD-PARTY-NOTICES.md', 'docs/legal/NOTICE'];
     const missingGov = GOV.filter((f) => !rdM1.includes(f));
     if (missingGov.length) {
       bad++; n++;
@@ -4437,8 +4437,8 @@ const LIB_SRC_ALLOW = [
   // Apache §4(d)：作品里带了 NOTICE，再分发者**必须**一并转交。所以这份文件是"要被带走的"，
   // 而它被删掉 / 被清空**不会有任何报错**（与 ① 的 LICENSE 同族）；README 与
   // THIRD-PARTY-NOTICES 都指向它 ⇒ 先变成死链的是那两处。
-  const noticeTxt = readText('NOTICE');
-  if (!noticeTxt) problems.push('仓库根没有 NOTICE —— Apache-2.0 下它是"再分发时必须随附"的那份（README/声明都指向它）');
+  const noticeTxt = readText('docs/legal/NOTICE');
+  if (!noticeTxt) problems.push('docs/legal/ 没有 NOTICE —— Apache-2.0 下它是"再分发时必须随附"的那份（README/声明都指向它）');
   else if (!/Copyright \d{4} \S/.test(noticeTxt)) {
     problems.push('NOTICE 里没有版权行（`Copyright <年份> <权利人>`）—— 署名通知里没有署名');
   }
@@ -4453,8 +4453,8 @@ const LIB_SRC_ALLOW = [
     problems.push(`package.json 的 license = ${JSON.stringify(pkg.license)} —— 与 LICENSE 文件不一致（应为 Apache-2.0）`);
   }
   // ③ 第三方声明必须交代四件事（少一件就等于没交代）
-  const notices = readText('THIRD-PARTY-NOTICES.md');
-  if (!notices) problems.push('仓库根没有 THIRD-PARTY-NOTICES.md —— 借用了别人的设计却没有任何书面交代');
+  const notices = readText('docs/legal/THIRD-PARTY-NOTICES.md');
+  if (!notices) problems.push('docs/legal/ 没有 THIRD-PARTY-NOTICES.md —— 借用了别人的设计却没有任何书面交代');
   else {
     for (const [label, re] of [
       ['qq-bridge', /qq-bridge/],
@@ -13025,8 +13025,8 @@ const LIB_SRC_ALLOW = [
 // `SECURITY.md` 相同的私密通道（口径一致性本身就是判据）。
 {
   const problems = [];
-  const coc = (() => { try { return fs.readFileSync(path.join(REPO, 'CODE_OF_CONDUCT.md'), 'utf8'); } catch { return ''; } })();
-  const sec = (() => { try { return fs.readFileSync(path.join(REPO, 'SECURITY.md'), 'utf8'); } catch { return ''; } })();
+  const coc = (() => { try { return fs.readFileSync(path.join(REPO, '.github', 'CODE_OF_CONDUCT.md'), 'utf8'); } catch { return ''; } })();
+  const sec = (() => { try { return fs.readFileSync(path.join(REPO, '.github', 'SECURITY.md'), 'utf8'); } catch { return ''; } })();
 
   if (!coc) {
     problems.push('CODE_OF_CONDUCT.md 不在位 —— L-03 的判据没有对象');

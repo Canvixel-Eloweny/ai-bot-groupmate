@@ -195,14 +195,14 @@ const M13 = {
   note: '把 SECURITY.md 里那条**可执行的上报路径**换成一句空话 —— 文件还在、章节还在，',
   anchor: SEC_ENTRY,
   count: 1,
-  file: 'SECURITY.md',
+  file: '.github/SECURITY.md',
   apply: (s) => s.replace(SEC_ENTRY, '联系维护者'),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };
 
 // ── M14：README 不再引用 SECURITY.md（M-01）────────────────────────────────
-const RD_SEC = /\[`SECURITY\.md`\]\(\.\/SECURITY\.md\)/;
+const RD_SEC = /\[`SECURITY\.md`\]\(\.\/\.github\/SECURITY\.md\)/;
 const M14 = {
   id: 'M14',
   note: '把 README「参与本项目」里对 SECURITY.md 的引用换成不带文件名的散文 ——',

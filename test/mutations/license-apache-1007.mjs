@@ -50,7 +50,7 @@ export default [
   },
   {
     id: 'M3',
-    file: 'NOTICE',
+    file: 'docs/legal/NOTICE',
     anchor: /Copyright 2026 Canvixel-Eloweny/,
     count: 1,
     apply: () => '',
@@ -60,7 +60,7 @@ export default [
   },
   {
     id: 'M4',
-    file: 'NOTICE',
+    file: 'docs/legal/NOTICE',
     anchor: /Copyright 2026 Canvixel-Eloweny/,
     count: 1,
     apply: (src) => src.replace(/Copyright 2026 Canvixel-Eloweny/, 'Somebody, probably'),
@@ -70,7 +70,7 @@ export default [
   },
   {
     id: 'M5',
-    file: 'THIRD-PARTY-NOTICES.md',
+    file: 'docs/legal/THIRD-PARTY-NOTICES.md',
     anchor: /随本仓库分发的扩展包\*\*共 0 个\*\*/,
     count: 1,
     apply: (src) => src.replace('随本仓库分发的扩展包**共 0 个**', '随本仓库分发的扩展包**共 1 个**'),

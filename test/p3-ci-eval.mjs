@@ -45,7 +45,7 @@ ok('shortCommit：全哈希取 7 位，短哈希原样', () => {
 ok('stage → ④ 映射：README/许可/启动器/Electron 壳与运行时', () => {
   assert.equal(stageTarget('README.html').to, 'README-installed.html');
   assert.equal(stageTarget('LICENSE').to, 'app/LICENSE');
-  assert.equal(stageTarget('THIRD-PARTY-NOTICES.md').to, 'app/THIRD-PARTY-NOTICES.md');
+  assert.equal(stageTarget('THIRD-PARTY-NOTICES.md').to, 'app/docs/legal/THIRD-PARTY-NOTICES.md');
   assert.equal(stageTarget('launcher/Estrella-Bot.vbs').to, 'Estrella-Bot.vbs');
   assert.equal(stageTarget('app/electron/main.js').kind, 'mapped');
   assert.equal(stageTarget('app/electron/electron.exe').kind, 'stage-only');

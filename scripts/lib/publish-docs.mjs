@@ -26,6 +26,12 @@ export const DOCS_KEEP = [
   'docs/FRONTEND-V2.md',         // 现役面板前端的结构与约定
   'docs/MOTION-BRIEF.md',        // 动效委托模板
   'docs/MOTION-METHODOLOGY.md',  // 动效方法论与踩坑（面板 README 反复引用它）
+  'docs/legal/NOTICE',           // Apache §4(d) 署名通知；再分发时必须随附（README 指向它）
+  'docs/legal/THIRD-PARTY-NOTICES.md', // 第三方来源与许可登记处（README/PR 模板引用）
+  'docs/release/CHANGELOG.md',   // 对外版本沿革；README 徽章与发布说明引用
+  'docs/guides/USER-GUIDE.md',       // 用户使用说明（英文默认）
+  'docs/guides/USER-GUIDE.zh-CN.md', // 用户使用说明（中文权威版）
+  'docs/guides/INSTALL-DOCKER.md',   // 容器路线安装手册（含回滚）
 ];
 
 /**
@@ -89,6 +95,9 @@ export const HOLD_BACK_ROOT = [
   // 少了它，仓内那 10 条 selftest 断言就只能在真 GitHub 上跑（写操作），自检价值直接归零。
   // 判据同上两条：只服务本机那条发布链、对外无使用价值。
   'scripts/mock-github-server.mjs',
+  // Qoder Repo Wiki 的预检配置：只约束本机 AI 生成 wiki 的口径，对外无意义，
+  // 也不是产品运行时代码；留在公开仓根只会多一个无用的隐藏目录。
+  '.qoder/',
 ];
 
 /** 顶层资产是否**不随公开拷贝发布**（前缀匹配，与 `make-publish-copy.mjs` 的同名语义一致）。 */

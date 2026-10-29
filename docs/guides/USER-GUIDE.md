@@ -2,7 +2,7 @@
 
 > **This guide is for people who just want it working.** Start to finish, follow along and you're done.
 > For how the project is designed, how the code is layered, and what the gates are, read
-> [`README.md`](./README.md) instead.
+> [`README.md`](../../README.md) instead.
 >
 > The Chinese edition lives in [`USER-GUIDE.zh-CN.md`](./USER-GUIDE.zh-CN.md)
 > and is the authoritative one when the two differ.
@@ -496,9 +496,9 @@ rm -rf data/ panel/*.jsonl panel/session-archive.json   # clear memory and archi
 
 | Looking for | Go to |
 |---|---|
-| How the project is designed, known limits | [`README.md`](./README.md) |
+| How the project is designed, known limits | [`README.md`](../../README.md) |
 | The full container-route install manual (with rollback) | [`INSTALL-DOCKER.md`](./INSTALL-DOCKER.md) |
-| Contributing / changing code | [`CONTRIBUTING.md`](./CONTRIBUTING.md) |
-| What changed in each release | [`CHANGELOG.md`](./CHANGELOG.md) |
-| License and credits | [`LICENSE`](./LICENSE) · [`NOTICE`](./NOTICE) |
+| Contributing / changing code | [`CONTRIBUTING.md`](../../.github/CONTRIBUTING.md) |
+| What changed in each release | [`CHANGELOG.md`](../release/CHANGELOG.md) |
+| License and credits | [`LICENSE`](../../LICENSE) · [`NOTICE`](../legal/NOTICE) |
 | Questions / bugs | GitHub Issues — for bugs, please include the output of `npm run verify` |

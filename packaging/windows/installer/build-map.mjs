@@ -14,7 +14,8 @@ export const STAGE_ONLY_ROOT = new Set(['BUILD-INFO.txt', 'payload-manifest.json
 export function stageTarget(rel) {
   const p = String(rel);
   if (p === 'README.html') return { to: 'README-installed.html', kind: 'mapped' };
-  if (p === 'LICENSE' || p === 'THIRD-PARTY-NOTICES.md') return { to: `app/${p}`, kind: 'mapped' };
+  if (p === 'LICENSE') return { to: 'app/LICENSE', kind: 'mapped' };
+  if (p === 'THIRD-PARTY-NOTICES.md') return { to: 'app/docs/legal/THIRD-PARTY-NOTICES.md', kind: 'mapped' };
   if (p === 'resources/estrella-bot.ico') return { to: 'estrella-bot.ico', kind: 'mapped' };
   if (p === 'resources/update-pubkey.pem') return { kind: 'stage-only' };
   if (STAGE_ONLY_ROOT.has(p)) return { kind: 'stage-only' };
@@ -40,9 +41,7 @@ export const PORTABLE_ALLOW_ROOT = new Set([
 
 /** ④ app/ 根上允许存在、但 stage 只带其中一部分的文件。 */
 export const PORTABLE_ALLOW_APP_ROOT = new Set([
-  'CHANGELOG.md', 'CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'Estrella-Bot.bat',
-  'INSTALL-DOCKER.md', 'NOTICE', 'README.md', 'README.zh-CN.md', 'SECURITY.md',
-  'USER-GUIDE.md', 'USER-GUIDE.zh-CN.md', 'docker-compose.yml',
+  'Estrella-Bot.bat', 'README.md', 'README.zh-CN.md', 'docker-compose.yml',
 ]);
 
 /** ④ 里按设计比 stage 多出来的子树（stage 只带白名单中的少量文件）。 */

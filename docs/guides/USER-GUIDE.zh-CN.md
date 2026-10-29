@@ -1,7 +1,7 @@
 # 用户使用说明
 
 > **这份是给"想把它跑起来"的人看的。** 从零开始，照着做就能用。
-> 想看项目怎么设计的、代码怎么分层、门禁都有哪些，去看 [`README.zh-CN.md`](./README.zh-CN.md)。
+> 想看项目怎么设计的、代码怎么分层、门禁都有哪些，去看 [`README.zh-CN.md`](../../README.zh-CN.md)。
 >
 > 英文版在 [`USER-GUIDE.md`](./USER-GUIDE.md)；**两版不一致时以本文件为准**。
 
@@ -476,9 +476,9 @@ rm -rf data/ panel/*.jsonl panel/session-archive.json   # 清掉记忆与存档
 
 | 想找什么 | 去哪 |
 |---|---|
-| 项目怎么设计的、有哪些限制 | [`README.zh-CN.md`](./README.zh-CN.md) |
+| 项目怎么设计的、有哪些限制 | [`README.zh-CN.md`](../../README.zh-CN.md) |
 | 容器路线的完整安装手册（含回滚） | [`INSTALL-DOCKER.md`](./INSTALL-DOCKER.md) |
-| 想改代码 / 提 PR | [`CONTRIBUTING.md`](./CONTRIBUTING.md) |
-| 每个版本改了什么 | [`CHANGELOG.md`](./CHANGELOG.md) |
-| 许可与出处 | [`LICENSE`](./LICENSE) · [`NOTICE`](./NOTICE) |
+| 想改代码 / 提 PR | [`CONTRIBUTING.md`](../../.github/CONTRIBUTING.md) |
+| 每个版本改了什么 | [`CHANGELOG.md`](../release/CHANGELOG.md) |
+| 许可与出处 | [`LICENSE`](../../LICENSE) · [`NOTICE`](../legal/NOTICE) |
 | 提问 / 报缺陷 | GitHub Issues —— 报缺陷时请附上 `npm run verify` 的输出 |

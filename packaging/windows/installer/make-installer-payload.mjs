@@ -172,7 +172,7 @@ async function main() {
   // 群友照着找不到东西（2026-10-19 截图）。安装形态必须拷 README-installed.html。
   copyFile(path.join(REPO, 'packaging', 'windows', 'launcher', 'README-installed.html'), path.join(out, 'README.html'));
   copyFile(path.join(REPO, 'LICENSE'), path.join(out, 'LICENSE'));
-  copyFile(path.join(REPO, 'THIRD-PARTY-NOTICES.md'), path.join(out, 'THIRD-PARTY-NOTICES.md'));
+  copyFile(path.join(REPO, 'docs', 'legal', 'THIRD-PARTY-NOTICES.md'), path.join(out, 'THIRD-PARTY-NOTICES.md'));
   fs.mkdirSync(path.join(out, 'resources'), { recursive: true });
   copyFile(path.join(REPO, 'packaging', 'windows', 'launcher', 'estrella-bot.ico'), path.join(out, 'resources', 'estrella-bot.ico'));
 
