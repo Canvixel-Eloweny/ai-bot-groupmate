@@ -320,6 +320,14 @@ try {
   });
   await send('Page.navigate', { url: `${BASE}/?__splashTest=1` });
 
+  /* Windows Edge 冷启动时 HTML 先到、样式表/脚本后到；不等 load 就抓元素会拿到未样式化状态。
+     这里只等就绪，不改变后面的任何断言。 */
+  let splashLoaded = false;
+  for (let i = 0; i < 300 && !splashLoaded; i++) {
+    splashLoaded = await evalJs(`document.readyState === 'complete'`).catch(() => false);
+    if (!splashLoaded) await sleep(100);
+  }
+
   /* ── 开屏真渲染：第一显示、最高层、铺满视口、canvas 就位 ────────────────
      这一段**不跳过**开屏；拍完立刻点跳过，后续用例照旧在正常页面上跑。 */
   let splashFirst = null;
@@ -330,6 +338,7 @@ try {
       if (!b || b.hidden) return null;
       const cs = getComputedStyle(b);
       if (cs.display === 'none' || cs.visibility === 'hidden') return null;
+      if (cs.position !== 'fixed') return null;
       const el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
       const others = [...document.querySelectorAll('.topbar, #navrow, .toast, .busy, .settings-layer, #cfRoot, .fx-wipe, .psn-help-tip, .psn-art-modal, .ov-tip')]
         .map((x) => getComputedStyle(x))
