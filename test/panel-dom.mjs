@@ -245,7 +245,13 @@ const browser = spawn(BROWSER, [
   // "sandbox initialization failed"，连 about:blank 都渲染不出来
   // （表现是 spawn 之后 CDP 端口一直不通，而错误在浏览器自己的 stderr 里）。
   '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
-  '--headless', `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${profile}`,
+  ...(process.platform === 'win32'
+    // Windows CI 实测：旧 `--headless` 会把页面当后台窗口节流，样式/脚本与 rAF 不落地。
+    // 只在 Windows 换现代 headless 并关掉后台节流/遮挡检测；Mac 保持已通过的旧参数。
+    ? ['--headless=new', '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
+      '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion']
+    : ['--headless']),
+  `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${profile}`,
   '--window-size=1440,1100', '--hide-scrollbars', '--no-first-run',
   'about:blank',
 ], { stdio: 'ignore', detached: true });
