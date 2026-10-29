@@ -320,6 +320,12 @@ try {
   await send('Runtime.enable');
   await send('Page.addScriptToEvaluateOnNewDocument', {
     source: `window.__errs = [];
+      /* Windows headless Edge 把页面判成 hidden（Page Visibility），开屏会一直等可见。
+         只在这个测试文档里伪装可见；真实用户页面本来就是可见的。 */
+      try {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+      } catch (e) {}
       if (!location.search.includes('__splashTest')) { try { sessionStorage.setItem('boot-splash-played', '1'); } catch (e) {} }
       addEventListener('error', (e) => window.__errs.push(String((e && e.message) || e)));
       addEventListener('unhandledrejection', (e) => window.__errs.push('unhandled: ' + String(e && e.reason)));`,
