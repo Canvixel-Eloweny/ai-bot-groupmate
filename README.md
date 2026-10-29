@@ -34,9 +34,9 @@ OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build
 
 <hr>
 
-<p><sub><b>Console preview</b> · 控制台预览画面 — the same console in light and dark</sub></p>
+<p><sub><b>Console preview</b> · 控制台预览画面 — run overview, persona, glass lab and persona studio</sub></p>
 
-<p><img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-themes-v2.jpg" alt="The console in light theme and dark theme, side by side" width="880"></p>
+<p><img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-preview-v3.jpg" alt="The console: run overview, persona, glass lab and persona studio" width="880"></p>
 
 <hr>
 

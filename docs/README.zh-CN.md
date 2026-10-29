@@ -34,9 +34,9 @@ OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建�
 
 <hr>
 
-<p><sub><b>控制台预览画面</b> · Console preview —— 同一个控制台的浅色 / 深色两套主题</sub></p>
+<p><sub><b>控制台预览画面</b> · Console preview —— 运行总览、人格、玻璃实验室与人设工厂</sub></p>
 
-<p><img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-themes-v2.jpg" alt="控制台的浅色主题与深色主题，左右并排" width="880"></p>
+<p><img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/panel-preview-v3.jpg" alt="控制台：运行总览、人格、玻璃实验室与人设工厂" width="880"></p>
 
 <hr>
 
