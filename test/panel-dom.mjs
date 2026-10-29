@@ -361,7 +361,23 @@ try {
     })()`).catch(() => null);
     if (!splashFirst) await sleep(100);
   }
-  if (!splashFirst) throw new Error('开屏没有在首帧出现（或 4 秒内就被跳过了）');
+  if (!splashFirst) {
+    const diag = await evalJs(`(() => {
+      const b = document.getElementById('bootSplash');
+      const cs = b ? getComputedStyle(b) : null;
+      return {
+        url: location.href, ready: document.readyState, title: document.title,
+        bodyFirst: document.body && document.body.firstElementChild && document.body.firstElementChild.id,
+        splash: b ? { hidden: b.hidden, pos: cs.position, z: cs.zIndex, disp: cs.display, vis: cs.visibility, opacity: cs.opacity } : null,
+        sheets: [...document.styleSheets].map((s) => s.href).slice(0, 8),
+        scripts: [...document.scripts].map((s) => s.src).slice(0, 8),
+        errs: (window.__errs || []).slice(-5),
+        text: (document.body && document.body.innerText || '').slice(0, 120),
+      };
+    })()`).catch((e) => ({ diagError: String(e) }));
+    console.log('SPLASH-DIAG', JSON.stringify(diag));
+    throw new Error('开屏没有在首帧出现（或 4 秒内就被跳过了）');
+  }
   ok(splashFirst.first && splashFirst.inside && splashFirst.z >= 200 && splashFirst.z > splashFirst.maxOther,
     `开屏第一显示且最高层（z=${splashFirst.z} · 其它最高=${splashFirst.maxOther} · 中心命中=${splashFirst.inside}）`);
   ok(splashFirst.width === splashFirst.iw, `开屏铺满视口（${splashFirst.width}/${splashFirst.iw}）`);
