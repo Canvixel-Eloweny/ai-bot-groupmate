@@ -45,11 +45,11 @@
 /**
  * 支持的钩子点。名单与生态通行的那套钩子点
  * 触发的 5 个点**逐一对应**（第 47 轮 B12e-3 拿真实样本核过，不是照规格猜）：
- *   before-context        orchestrator.js:763   组消息之后、建上下文之前（本体情绪靠它读入站情绪）
+ *   before-context        orchestrator.js:763   组消息之后、建上下文之前（扩展包可读入站状态）
  *   before-llm-messages   orchestrator.js:857   消息已建好、发给模型之前（可改 messages）
  *   before-tool           orchestrator.js:1121  工具调用前（可否决；本项目发送闸也走这里）
  *   after-tool            orchestrator.js:1132  工具调用后
- *   after-response        orchestrator.js:997   本轮回复结束之后（本体情绪靠它更新状态）
+ *   after-response        orchestrator.js:997   本轮回复结束之后（扩展包可结算副作用）
  *
  * **不在这个表里的钩子名会被拒绝并告警**（不静默忽略）——
  * 静默忽略的表现是"扩展包的钩子写错了名字，它永远是死的，而日志里什么都没有"。

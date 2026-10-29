@@ -10,8 +10,10 @@
  *            .ctrls[]  卡片里的控件 / 读数 / 按钮
  *
  *  ── 想加一个页面？ ──────────────────────────────────────────────────────
- *  在某个 `subs` 里插一项，`id/label/title/cards` 四样写全即可。
- *  想删一个页面？删掉那一项。**不需要改 app.js、不需要改 CSS。**
+ *  在某个 `subs` 里插一项，`id/label/title` 写全，再二选一：
+ *    · 普通页：给 `cards`（控件树）；
+ *    · 全幅工具页：给 `frame`（NEXT_ASSETS 里登记过的 HTML 资产名）。
+ *  普通页加/删**不需要改 app.js、不需要改 CSS**；`frame` 页由 app.js 的专用分支承载。
  *
  *  ── 想加一个控件？ ──────────────────────────────────────────────────────
  *  在 `ctrls` 里插一项并写明 `t`（类型）。可选类型见文件末尾的 `CTRL_KINDS`。
@@ -67,28 +69,50 @@ const memCell = (label, path, unit, hi = false) =>
 const act = (label, action, style = 'btn-ghost', hint = '', ico = '', icoTo = '') =>
   ({ t: 'button', label, action, style, hint, ico, icoTo });
 /* HUD 信息岛（顶栏）的设置：存浏览器 localStorage，不进 config.json。
-   本页控件只读写它，岛本体在 island.js（window.Island）。 */
-const hudCfg = () => (typeof window !== 'undefined' && window.Island
-  ? window.Island.cfg()
-  : { enabled: [], interval: 7000, width: 360, height: 38, speed: 1 });
-const hudOn = (id) => hudCfg().enabled.indexOf(id) >= 0;
-const hudItem = (id) => (v) => {
-  if (!(typeof window !== 'undefined' && window.Island)) throw new Error('HUD 岛未加载（island.js 未取到），设置没有保存');
-  window.Island.setItem(id, !!v);
-  return null;
-};
-const hudSave = (patch) => (v) => {
+   本页控件只读写它，岛本体在 island.js（window.Island）。
+   ⚠️ 默认值只有 island.js 一份；这里没有 Island 时只给一个"读不到"的壳，
+      不复制第二套默认值（复制就会与岛本体慢慢漂开）。 */
+const HUD_LOST = { enabled: [], order: [], interval: 7000, width: 380, height: 38, speed: 1, ratios: { radiusB: .32 }, material: 'auto', accent: 'theme', font: 'sans', contentScale: 1, typeScale: 1, switchMode: 'full', pauseHover: true, reduced: false, detail: 'auto' };
+const hudCfg = () => (typeof window !== 'undefined' && window.Island ? window.Island.cfg() : HUD_LOST);
+const hudPut = (key, map) => (v) => {
   if (!(typeof window !== 'undefined' && window.Island)) throw new Error('HUD 岛未加载（island.js 未取到），设置没有保存');
   const out = {};
-  Object.keys(patch).forEach((k) => { out[k] = patch[k](v); });
+  out[key] = map ? map(v) : v;
   window.Island.set(out);
   return null;
 };
+const hudRatio = (key) => hudPut('ratios', (v) => ({ [key]: Number(v) / 100 }));
+const hudRatioRead = (key) => () => Math.round(Number((hudCfg().ratios || {})[key] || 0) * 100);
+const hudDebug = () => (typeof window !== 'undefined' && window.Island
+  ? window.Island.debug()
+  : { frozen: false, seekMs: 0, timelineMs: 0 });
+const hudFreeze = (v) => {
+  if (!(typeof window !== 'undefined' && window.Island)) throw new Error('HUD 岛未加载（island.js 未取到），设置没有保存');
+  window.Island.freeze(!!v);
+  return null;
+};
+const hudSeek = (v) => {
+  if (!(typeof window !== 'undefined' && window.Island)) throw new Error('HUD 岛未加载（island.js 未取到），设置没有保存');
+  window.Island.seek(Number(v));
+  return null;
+};
+const hudT = (key) => () => Number(hudCfg()[key] || 0);
+/* 高级几何：范围与原型 LAB 逐个对齐（百分比位置 → 岛内 0–1 比例）。 */
+const HUD_RATIO_CTRLS = [
+  ['plate', '图标盘', 50, 85], ['glyph', '图标', 25, 60], ['primary', '主数字', 35, 60],
+  ['secondary', '副数字', 20, 36], ['right', '右值', 28, 50], ['ring', '进度环', 55, 95],
+  ['title', '标题', 30, 60], ['tag', 'Tagline', 12, 26], ['pad', '左内边距', 25, 55],
+  ['gap', '图标间隙', 10, 35], ['radiusB', '标题圆角', 24, 45],
+].map(([k, label, min, max]) => ({
+  t: 'range', id: `hud.ratio.${k}`, label, min, max, step: 1,
+  fmt: (v) => (v / 100).toFixed(2) + '×',
+  read: hudRatioRead(k), save: hudRatio(k),
+}));
 
 /* ────────────────────────────────────────────────────────────────────────
    1. 页面骨架
    ──────────────────────────────────────────────────────────────────────── */
-/* 一级顺序 = 使用频次（2026-10-22 B2）：运行 → 发言 → 人格 → 模型 → 记忆 → 维护。
+/* 一级顺序 = 使用频次（2026-10-28 IA）：运行 → 发言 → 记忆 → 人格 → 模型 → 维护 → 工厂。
    ⚠️ 改顺序时同步 `panel/next/verify.mjs` 里按序号点击的断言（或改成按 title 找）——
    那里有维护 / 插件 / 人格等几处仍按 0-based 序号点，重建顺序会让它们静默点到别的域。 */
 export const GROUPS = [
@@ -98,18 +122,20 @@ export const GROUPS = [
     subs: [
       {
         id: 'overview', label: '总览', title: '运行总览',
-        desc: '机器人在不在跑、容器登没登录、内存够不够 —— 以及所有"出问题时才点"的动作。',
+        desc: '机器人在不在跑、今天说了多少、花了多少 —— 一眼看清；要修的时候再展开下面。',
         cards: [
           {
-            id: 'status', title: '运行状态', span: 8,
-            desc: '从下往上：Docker → 容器 → 协议端 → 机器人。哪一步断了，这里会停在哪一步。',
+            id: 'chain', title: '启动链路', span: 3,
+            ctrls: [{ t: 'steps', label: '', source: (s) => s.__steps || [] }],
+          },
+          { id: 'dash', bare: true, span: 6, ctrls: [{ t: 'overviewDash' }] },
+          { id: 'side', bare: true, span: 3, ctrls: [{ t: 'overviewSide' }] },
+          {
+            id: 'details', title: '运行详情与高级操作', span: 12, fold: true,
+            desc: '状态卡、协议端端口、作息、自检、详细日志与健康占用都在这里；默认收起，展开状态在轮询后保持。',
             ctrls: [
-              { t: 'steps', label: '启动链路', source: (s) => s.__steps || [] },
-              /* ⚠️ 原来是 6 行 `kv`（等权两列文本）。改成状态卡组 + 端口三态：
-                 原来那 6 行把「进程 / 实例数 / 容器 / 端口 / 面板 / 账号」
-                 压成等权文本，读者得**逐行读字**才找得到坏的那个。
-                 而这页的信息**天然分三态**，三态就该有三种视觉（`data-st`）。
-                 数据一个没丢，只是从"文字"变成了"卡片"。 */
+              /* 运行状态卡组：把「进程 / 实例数 / 容器 / 面板 / 账号」从等权文本
+                 变成有状态色的卡片，坏的那格自己会变红。 */
               { t: 'statusGrid', items: [
                 { ico: 'bot', label: '机器人', go: 'run/overview',
                   value: (s) => (j(s, ['bridge', 'running']) ? '在跑' : '没在跑'),
@@ -121,16 +147,9 @@ export const GROUPS = [
                   value: (s) => `${j(s, ['bridge', 'instances'], 0)} 个`,
                   sub: () => '面板只认自己的入口进程',
                   st: (s) => (j(s, ['bridge', 'instances'], 0) > 1 ? 'warn' : 'ok') },
-                /* ⚠️ 第 53 轮（B2）：Windows 便携版走**原生 NapCat**、不装 Docker ⇒
-                   "容器没跑"在那边是一句**假警报**（用户会去查一个根本不存在的容器）。
-                   所以先看 `applicable`：false 时这格说"原生 NapCat"、状态给 ok。
-                   ⚠️ 判据在**后端**（`container.applicable`），前端不自己按平台猜 ——
-                      "这台机器走没走容器"是事实，不该由页面重算一遍。 */
                 { ico: 'container', label: '容器', go: 'run/overview',
                   value: (s) => {
                     if (j(s, ['container', 'applicable']) !== false) return j(s, ['container', 'line'], '') || '—';
-                    // P11：Windows 原生形态下这一格实际就是「协议端」。没装时必须说"未安装"，
-                    // 不能拿"原生 NapCat"当成正常状态（群友就是被这格骗过：面板一片绿，二维码却取不到）。
                     return j(s, ['napcat', 'present']) === false ? '协议端未安装' : '原生 NapCat';
                   },
                   sub: (s) => (j(s, ['container', 'applicable']) === false
@@ -151,10 +170,7 @@ export const GROUPS = [
                   sub: () => '真 QQ 号只在本机 .env 里',
                   st: (s) => (j(s, ['account', 'nickname']) ? 'ok' : 'warn') },
               ] },
-              /* 协议端**进程级**守护（2026-10-22）：连接看门狗只重连，进程没了它管不了。
-                 ⚠️ 刻意**不塞进 statusGrid**：上面那段注释已经踩过 —— 多一张卡会把
-                    下面的按钮挤出可视区，也会改变卡片高度让倾斜回归的取景坐标漂移。
-                 这里只摆一行状态；手动拉起入口在「排查与运维」里。 */
+              /* 协议端进程级守护：连接看门狗只重连，进程没了它管不了。 */
               { t: 'note', text: (s) => {
                 const g = j(s, ['protocolGuard'], {});
                 if (!g.configured) return '协议端进程守护：不适用（macOS / 未装原生协议端）。';
@@ -165,22 +181,10 @@ export const GROUPS = [
                   ? `协议端进程守护：下次重试约 ${left} 秒后（已拉起 ${g.attempts || 0} 次）。`
                   : `协议端进程守护：在盯着（已拉起 ${g.attempts || 0} 次）。`;
               } },
-              /* P11（2026-10-19 维护者回执）：协议端没装时**不许再让用户去 AppData 里放文件**。
-                 面板自己去常见目录找（下载/桌面/文档），找不到就打开目标文件夹让用户拖进去。
-                 ⚠️ 必须放在「启动链路」与五张状态卡**之间**的空行里，且 `label` 留空：
-                   塞进 statusGrid 的 items 会被当成第六张卡，按钮掉到窗口可视区外
-                   （2026-10-19 VM 截图：用户只能看到卡片标题、点不到按钮）。
-                 只在 Windows 且确实没装时出现 —— 装好后这两颗按钮自动消失。 */
               { t: 'buttons', label: '', when: (s) => j(s, ['napcat', 'present']) === false && j(s, ['napcat', 'win32']) === true, items: [
                 act('自动查找并安装', 'napcat.importAuto', 'btn-primary', '扫描「下载 / 桌面 / 文档」里已解压的 NapCat 并复制进来（只复制，原件不动）', 'search'),
                 act('打开协议端文件夹', 'napcat.openFolder', 'btn-ghost', '打开后把 NapCat.Shell 里的文件拖进去即可，页面每 3 秒自动检测'),
               ] },
-              /* 端口**拆成三格**而不是拼成一行 `HTTP 通 · WS 通 · WebUI 通` ——
-                 三条各自独立（HTTP 通但 WS 断是真实故障），
-                 拼一行时坏的那个要被逐字读出来，拆开它自己会变红。
-                 ⚠️ 第 53 轮（B2）：名字里带上**探的是哪个端口** ——
-                 端口现在跟着配置的 `onebot.wsUrl` 走，而"端口对不上"的表现就是"断"，
-                 把号摆在名字里，用户一眼能核对（原生 NapCat 的端口是自己配的）。 */
               { t: 'ports', label: '协议端端口', items: [
                 { label: (s) => `HTTP ${j(s, ['ports', 'onebot', 'http'], '')}`.trim(), get: (s) => j(s, ['ports', 'onebotHttp']) },
                 { label: (s) => `WS ${j(s, ['ports', 'onebot', 'ws'], '')}`.trim(), get: (s) => j(s, ['ports', 'onebotWs']) },
@@ -192,10 +196,6 @@ export const GROUPS = [
                 act('让它睡', 'cmd.sleep', 'btn-ghost', '内存态：重启机器人即恢复按作息走', 'moon'),
                 act('叫它醒', 'cmd.wake', '', '', 'sun'),
               ] },
-              /* ⚠️ 启动/停止这一对用**图标变形**：
-                 状态变时 play ��� stop 连贯地化过去，而不是突然换一张图。
-                 `icoTo` 由状态算出 ⇒ 同一个按钮，两种形态。
-                 （行内开关那些没配图标 —— 液态效果已经在那里了，再加图标会过载。） */
               { t: 'buttons', label: '进程', items: [
                 act('启动机器人', 'bridge.start', 'btn-primary', '', 'play',
                     (s) => (j(s, ['bridge', 'running']) ? 'stop' : 'play')),
@@ -222,12 +222,6 @@ export const GROUPS = [
               { t: 'buttons', label: '危险', items: [
                 act('一键全停', 'stopall', 'btn-danger', '机器人 + 本机模型 + QQ 容器一起停（Docker Desktop 保留）'),
               ] },
-            ],
-          },
-          {
-            id: 'health', title: '健康与占用', span: 4,
-            desc: '内存吃紧时本机模型 + Docker 会很挤 —— 与其被系统悄悄杀掉，不如提前看见。',
-            ctrls: [
               { t: 'metrics', items: [
                 memCell('内存占用率', ['memory', 'pressure'], '%', true),
                 memCell('空闲内存', ['memory', 'freeGB'], ' GB'),
@@ -246,8 +240,8 @@ export const GROUPS = [
         ],
       },
       {
-        id: 'sessions', label: '会话', title: '会话与存档（现在 / 历史）',
-        desc: '数据源是 <code>local-trace.jsonl</code>：有界窗口，反映最近活动；下面的「消息存档」是机器人退出 / 定时归档的全量历史（只读）。两套数据源分开读，不做合并写入 —— 合并会在截断时静默丢数据。',
+        id: 'sessions', label: '会话与日志', title: '会话与日志',
+        desc: '数据源是 <code>local-trace.jsonl</code>（有界窗口，反映最近活动）与退出 / 定时归档的<b>消息存档</b>（只读）；日志是面板内存里的环形缓冲（封顶 600 行），审计是 <code>audit.jsonl</code>（谁在什么时候改了什么）。两套会话数据源分开读，不做合并写入 —— 合并会在截断时静默丢数据。',
         cards: [
           {
             id: 'sessions', title: '会话列表与明细', span: 12,
@@ -257,12 +251,6 @@ export const GROUPS = [
             id: 'chats', title: '消息存档', span: 12,
             ctrls: [{ t: 'chatList', from: 'chats' }, { t: 'chatDetail' }],
           },
-        ],
-      },
-      {
-        id: 'logs', label: '日志与审计', title: '日志与审计留档',
-        desc: '日志是面板内存里的环形缓冲（封顶 600 行）；审计是 <code>audit.jsonl</code>（谁在什么时候改了什么）。',
-        cards: [
           {
             id: 'logs', title: '运行日志', span: 6,
             ctrls: [
@@ -284,6 +272,14 @@ export const GROUPS = [
           },
         ],
       },
+    ],
+  },
+
+
+  /* ══════════════════ ② 发言 ══════════════════ */
+  {
+    id: 'speak', label: '发言',
+    subs: [
       {
         /* ══════════════ 假 QQ（2026-10-21 · Win-v0.1.2 移植）══════════════
            这一页起的是**真的程序**（scripts/fake-qq.mjs 起假 OneBot + 真 src/index.js），
@@ -333,14 +329,6 @@ export const GROUPS = [
           },
         ],
       },
-    ],
-  },
-
-
-  /* ══════════════════ ② 发言 ══════════════════ */
-  {
-    id: 'speak', label: '发言',
-    subs: [
       {
         id: 'trigger', label: '触发方式', title: '触发方式、巡逻与跨会话',
         desc: '什么情况下它才开口。放行 / 拉黑名单写在同一份 config.json 的 <code>allow</code> 里 —— 别的入口看到的也是这一份。',
@@ -465,13 +453,12 @@ export const GROUPS = [
         ],
       },
       {
-        id: 'waiting', label: '聊天等待与图片', title: '聊天等待与图片 —— 回得更像人，也能发图 / 看图',
-        desc: '回话之前的<b>停顿</b>、同一个人连发几条时<b>攒成一轮</b>、模型慢时先<b>垫一句</b>，以及「正在输入」气泡；'
-          + '下面还有<b>发图</b>与<b>看图</b>两个工具。全部只影响观感与能力，不改变判定（闸门、限流、额度不受影响）。',
+        id: 'waiting', label: '聊天等待', title: '聊天等待 —— 回得更像人',
+        desc: '回话之前的<b>停顿</b>、同一个人连发几条时<b>攒成一轮</b>、模型慢时先<b>垫一句</b>，以及「正在输入」气泡。只影响观感与能力，不改变判定（闸门、限流、额度不受影响）。',
         draft: true,
         cards: [
           {
-            id: 'cw', title: '聊天等待', span: 6,
+            id: 'cw', title: '聊天等待', span: 12,
             ctrls: [
               { t: 'switch', id: 'cw.on', label: '回之前先停一会儿（拟人停顿）', bind: 'wait.enabled',
                 hint: '关掉 = 判定一过立刻调模型（改造前的行为）。下面几个数都只在它开着时生效。' },
@@ -485,8 +472,15 @@ export const GROUPS = [
               { t: 'switch', id: 'cw.typing', label: '私聊里显示「正在输入」', bind: 'wait.typing', hint: '群聊协议端不支持这个状态，只对私聊生效。' },
             ],
           },
+        ],
+      },
+      {
+        id: 'imaging', label: '识图与发图', title: '识图与发图 —— 能发图 / 能看图',
+        desc: '主动<b>发图</b>与按需<b>看图</b>两个工具；图片先下载成本地字节再交给协议端。只影响能力，不改变判定（闸门、限流、额度不受影响）。',
+        draft: true,
+        cards: [
           {
-            id: 'img', title: '图片工具', span: 6,
+            id: 'img', title: '图片工具', span: 12,
             ctrls: [
               { t: 'switch', id: 'img.send', label: '允许它主动发图', bind: 'image.send',
                 hint: '开着时模型多一个 send_image 工具。改完要<b>重启机器人</b>才生效（工具在启动时注册）。' },
@@ -555,7 +549,7 @@ export const GROUPS = [
               { t: 'time', id: 'sl.bed', label: '几点睡', bind: 'sleep.bed' },
               { t: 'time', id: 'sl.wake', label: '几点自然醒', bind: 'sleep.wake' },
               { t: 'tags', id: 'sl.words', label: '叫醒关键词', bind: 'sleep.wakeWords', ph: '起床, 醒醒',
-                hint: '只有 <code>owner.qq</code> 里的人说才生效 —— 那一格是顶层配置，旧页面没有控件，<b>也不接受面板写入</b>（不在 /api/config 的入参里）。' },
+                hint: '只有 <code>owner.qq</code> 里的人说才生效 —— 这一格会随保存写入顶层 <code>owner.qq</code>（面板已支持）。' },
               { t: 'text', id: 'sl.gn', label: '睡前道晚安', bind: 'sleep.goodnight', ph: '留空 = 不说' },
             ],
           },
@@ -575,106 +569,177 @@ export const GROUPS = [
   },
 
 
-  /* ══════════════════ ③ 人格 ══════════════════ */
+  /* ══════════════════ ③ 记忆 ══════════════════ */
   {
-    id: 'persona', label: '人格',
+    id: 'know', label: '记忆',
     subs: [
       {
-        id: 'who', label: '人格设定', title: '人格设定与情绪状态',
-        desc: '决定它说话像谁。文件路径相对 <code>persona/</code>：可写 <code>qq-chat.md</code>，也兼容旧的 <code>persona/qq-chat.md</code>；留空则只使用下方结构化人设。改完点页面底部的「保存并生效」。',
+        id: 'memory', label: '自我记忆', title: '自我记忆与导入导出',
+        desc: '让它长期记住一些事。手动记忆永远生效；自动记录要打开开关。',
         draft: true,
         cards: [
           {
-            id: 'basic', title: '他是谁', span: 6,
+            id: 'overview', title: '它现在记得什么', span: 12,
+            desc: '这一栏列出的，是<b>这一轮真的会进提示词</b>的记忆 —— 手动记忆里开着开关的，加上结构化记忆里「已确认」的。',
+            ctrls: [{ t: 'memOverview' }],
+          },
+          {
+            id: 'manual', title: '手动管理', span: 6,
             ctrls: [
-              { t: 'text', id: 'p.name', label: '机器人昵称', bindSys: 'personaName', ph: '例如：小鱼',
-                hint: '键名是**顶层** personaName（不在 custom 里）—— 换到别的页面看到的也是同一个值。' },
-              { t: 'text', id: 'p.age', label: '年龄', bind: 'persona.age', ph: '例如：24' },
-              { t: 'text', id: 'p.role', label: '身份', bind: 'persona.role', ph: '例如：刚毕业的程序员' },
-              { t: 'text', id: 'p.world', label: '时代 / 世界观', bind: 'persona.world',
-                ph: '例如：当代都市 / 修真世界 / 近未来赛博城', hint: '影响他举什么例子、用什么词。' },
-              { t: 'textarea', id: 'p.desire', label: '核心欲望', bind: 'persona.desire', rows: 2, ph: '例如：想让群里的人认可他' },
-              { t: 'textarea', id: 'p.fear', label: '核心恐惧 / 弱点', bind: 'persona.fear', rows: 2, ph: '例如：最怕没人理他' },
+              { t: 'switch', id: 'm.auto', label: '开启自动记录', bind: 'memory.auto',
+                hint: '机器人自己判断哪些话值得长期记住。' },
+              { t: 'number', id: 'm.promptMax', label: '每轮最多注入几条', bind: 'memory.promptMax',
+                bounds: 'memoryPromptMax', min: 1, step: 1,
+                hint: '默认 12。只封顶“进提示词”的条数，记忆本身不会丢；改完点底部的「保存并生效」。' },
+              { t: 'memList', label: '手动记忆', path: 'memory.manual',
+                note: '只能你自己加。每一条都会保存；每轮最多带上面设定的条数进提示词 —— 与自动记录的开关无关。改完点底部的「保存并生效」。' },
             ],
           },
           {
-            id: 'voice', title: '他怎么说话', span: 6,
+            id: 'records', title: '结构化记忆', span: 6,
+            desc: '机器人自己从群里提炼、且带来源的记忆。每条要被独立观察到几次才会进提示词。点下面的按钮<b>立即生效</b>。',
+            ctrls: [{ t: 'memRecords' }],
+          },
+          {
+            id: 'auto', title: '自动记录 · 历史存量', span: 12,
+            desc: '早期（第 5 轮之前）攒下来的记录，现在<b>只读、不再新增</b>。留着是为了让你看得见历史；新的记忆都进上面的「结构化记忆」。',
             ctrls: [
-              { t: 'text', id: 'p.traits', label: '性格关键词', bind: 'persona.traits', ph: '活泼、爱吐槽、嘴贫但没恶意' },
-              { t: 'textarea', id: 'p.tone', label: '说话方式', bind: 'persona.tone', rows: 2, ph: '短句为主，多用语气词……' },
-              { t: 'text', id: 'p.catch', label: '口头禅', bind: 'persona.catch', ph: '有一说一 / 绷不住了' },
+              { t: 'autoMemList' },
+              { t: 'buttons', label: '', items: [
+                act('清空这份历史存量', 'mem.auto.clear', 'btn-danger', '手动记忆与结构化记忆不受影响'),
+              ] },
             ],
           },
           {
-            id: 'decide', title: '他怎么决定、现在什么状态', span: 12,
+            id: 'exp', title: '下载', span: 6,
+            desc: 'Key / Token <b>任何时候都会被清空</b> —— 不提供"连 Key 都不脱敏"的导出。下面这个开关只决定群号与 QQ 号要不要一起藏起来。',
             ctrls: [
-              { t: 'textarea', id: 'p.logic', label: '行为逻辑', bind: 'persona.logic', rows: 3,
-                ph: '遇事怎么决定、压力下什么反应、底线是什么' },
-              { t: 'text', id: 'p.attitude', label: '对群里人的态度', bind: 'persona.attitude', ph: '对熟人是损友式亲近，对陌生人先观察两句' },
-              { t: 'textarea', id: 'p.status', label: '当前状态', bind: 'persona.status', rows: 2,
-                ph: '现在在哪、想做什么、情绪如何 —— 你随时可以手改' },
-              { t: 'switch', id: 'p.reset', label: '改人设后丢弃它用旧人设说过的话', bind: 'personaResetOnChange',
-                hint: '关掉的话，模型会先照旧口吻说几句，看上去像"人设没改成功"。丢掉的是它自己的发言，你说过的话会留着。' },
+              { t: 'seg', id: 'ex.fmt', label: '格式', volatile: true,
+                options: [{ v: 'json', l: 'JSON' }, { v: 'txt', l: 'TXT' }, { v: 'zip', l: 'ZIP' }], read: () => 'json' },
+              { t: 'switch', id: 'ex.mask', label: '连群号也一起隐藏', volatile: true, read: () => true,
+                hint: '发给别人用；关掉则是自己留档。' },
+              { t: 'buttons', label: '', items: [
+                act('完整配置', 'export.all'), act('人格', 'export.persona'), act('提示词', 'export.prompt'),
+                act('规则与场景', 'export.rules'), act('记忆', 'export.memory'), act('技能', 'export.skills'),
+                act('运行日志', 'export.log'), act('诊断包', 'export.diag', 'btn-ghost', '含崩溃/退出记录与更新日志，自动脱敏'),
+              ] },
+              { t: 'kv', rows: (s) => [kv('上次面板退出', () => j(s, ['panel', 'lastExitText'], 0) || '（没有记录）')] },
             ],
           },
-          { id: 'estate', title: '此刻的状态', span: 7, ctrls: [{ t: 'emotionState' }] },
-          { id: 'eset', title: '注入与更新', span: 5, ctrls: [{ t: 'pluginSettings', extId: 'bot-emotion' }] },
+          {
+            id: 'imp', title: '导入', span: 6,
+            desc: '导入的是<b>工作台这一块</b>（人格、技能、回复、触发、场景、记忆、安全），不会动模型和 Key。<b>导入前先给你看变更清单</b>。',
+            ctrls: [
+              { t: 'importFile' },
+              { t: 'note', text: '确认清单由 <code>POST /api/custom/preview</code> 算：字段级差异 + 技能/记忆/定时的增删改 + 「同一件事记两遍」的冲突提醒 + <b>本次不会碰的字段</b>（让你敢点确认）。' },
+            ],
+          },
         ],
       },
       {
-        id: 'enhance', label: '底层规则', title: '底层规则（增强项与扮演规则）',
-        desc: '上一屏是"这个人是谁"，这里是"演得有多像"。12 项全部<b>可留空</b> —— 空着的不进提示词。名称 / 说明 / 示例 / 分组全部由后端下发。',
+        id: 'skills', label: '知识包与角色卡', title: '知识包与角色卡（含十维分级）',
+        desc: '<b>知识包</b>＝某方面的本事，命中触发词才拿出来用；<b>角色卡</b>＝成套的人格，存多张，点「套用到人格设定」就换一套人。',
         draft: true,
         cards: [
-          { id: 'enh', title: '12 项细节', span: 12, ctrls: [{ t: 'enhance' }] },
           {
-            id: 'pr', title: '12 条', span: 12,
+            id: 'sk', title: '技能清单', span: 12,
             ctrls: [
-              { t: 'switch', id: 'pr.on', label: '把扮演规则写进提示词', bind: 'playRules',
-                hint: '关掉之后，模型就没有"不替用户说话 / 不编造 / 关系要渐进"这些约束了 —— 除非你清楚自己在做什么，否则别关。' },
-              { t: 'playRules' },
+              { t: 'number', id: 'skill.promptMax', label: '每轮最多注入几条', bind: 'skillPrompt.max',
+                bounds: 'skillPromptMax', min: 1, step: 1,
+                hint: '默认 3。只影响“同时注入”的条数，技能本身不会丢。' },
+              { t: 'number', id: 'skill.promptChars', label: '每轮注入总字数上限', bind: 'skillPrompt.chars',
+                bounds: 'skillPromptChars', min: 200, step: 100,
+                hint: '默认 2000。所有命中技能的背景文字加起来不超过这个数；只影响提示词，不影响保存。' },
+              { t: 'skills' },
+              { t: 'buttons', label: '', items: [
+                act('加知识包', 'skill.add.pack'),
+                act('加角色卡', 'skill.add.persona'),
+              ] },
             ],
           },
+          { id: 'cg', title: '卡库', span: 12, ctrls: [{ t: 'cardGrade' }] },
         ],
       },
       {
-        id: 'reply', label: '回复设置', title: '回复设置与特殊场景',
-        desc: '它一条消息多长、要不要 @ 人、两条之间隔多久。',
+        id: 'people', label: '群友档案', title: '群友档案（旧「知识库」页的真身）',
+        desc: '插件 <code>群友印象</code>（people-memory）按 QQ 号跨群记的长期印象与好感度。<b>这一页现在读的是真数据</b> —— 面板直接读 <code>data/memory/people/*.json</code>，一档一文件。',
+        cards: [{
+          id: 'ppl', title: '印象与好感度', span: 12,
+          ctrls: [{ t: 'people' }],
+        }],
+      },
+      {
+        /* 2026-10-17：这一页原叫「表情与图库」，左边那张是 QQ 收藏表情。
+           收藏表情随「发 QQ 表情」能力一起下线（它本来就是同一套决策链的二级分支），
+           于是这一页只剩图库 —— 名字跟着改，免得点进来找不到表情。
+           ⚠️ 子页 id 保留 `faces`：没有深链路由依赖它，但改 id 会让"我从哪一页来的"
+              这类排查对不上旧截图；label 才是给人看的。 */
+        id: 'faces', label: '图库', title: '图库',
+        desc: '可发送的图片库（需自行安装 <code>自定义图库</code> 插件；默认未安装）。',
         draft: true,
         cards: [
-          {
-            id: 'reply', title: '长短与习惯', span: 12,
-            ctrls: [
-              /* ⚠️ 档位进度条（`ticks`）而不是 `seg`：
-                 短→中→长**有顺序**，而 `.seg` 把三档排成等宽按钮 ——
-                 按钮间距表达的是"它们同类"，不表达"谁比谁多"。
-                 横向液面直接画出"现在走到第几档"，不用读文字再排序。
-                 数据来源与 `seg` 完全相同（`customMeta.replyLengths`），
-                 进度条不另存一份。 */
-              { t: 'ticks', id: 'r.len', label: '回复长短', bind: 'replyStyle.length',
-                options: (s) => Object.entries(j(s, ['customMeta', 'replyLengths'], {})).map(([v, o]) => ({ v, l: o.label, title: o.hint })) },
-              { t: 'switch', id: 'r.multi', label: '允许一件事拆成几条发', bind: 'replyStyle.multiMessage',
-                hint: '关掉就不管内容多长都合并成一条长消息。' },
-              /* 分条标记（第 53 轮 · B4）。它以前**只有直接编辑 config.json 才能改** ——
-                 于是它被脱敏器清成空串时，用户既看不见也改不了，只能在群里看到自己被逐字刷屏。
-                 bindSys 走顶层字段，写入路径在 panel/lib/config-route.js（空串会被忽略）。 */
-              { t: 'text', id: 'r.tok', label: '分条标记', bindSys: 'splitToken', ph: '默认 ||',
-                hint: '模型用它把一件事拆成几条发（如「今天天气不错 || 出去走走」）。默认 ||；'
-                  + '清空会被忽略 —— 空标记会让分条正则逐字符匹配，回复会被一个字一个字地发出去。' },
-              { t: 'switch', id: 'r.at', label: '回复时 @ 上说话的人', bind: 'replyStyle.mentionAt' },
-              { t: 'number', id: 'r.cool', label: '连续回复的最小间隔（秒）', bind: 'replyStyle.cooldownSec',
-                bounds: 'cooldownSec',
-                hint: (s) => `0 = 只保留底层的 ${fieldNum(s, 'minIntervalMsSec')} 秒防抖。区间由后端下发（field-schema）。` },
-            ],
-          },
-          { id: 'sc', title: '9 种场景', span: 12, ctrls: [{ t: 'scenes' }] },
+          { id: 'img', title: '自定义图库', span: 12, ctrls: [{ t: 'gallery' }, { t: 'pluginSettings', extId: 'image-lib' }] },
         ],
       },
     ],
   },
 
 
-  /* ══════════════════ ④ 模型 ══════════════════ */
+  /* ══════════════════ ④ 人格 ══════════════════
+     2026-10-25 六页改版：总览 / 人设 / MBTI / 增强项 / 心情值 / 系统提示词。
+     页面主体由 app.js 的 psn* 渲染器整块产出（bare 通道），因为这一域是
+     **一组带图表的可视化页面**，不是"卡片 + 控件"的平铺列表。
+     ⚠️ 每个控件仍然登记进 S.reg 走统一写口 —— 看起来是手写 HTML，保存路径没变。 */
+  {
+    id: 'persona', label: '人格',
+    subs: [
+      {
+        id: 'overview', label: '总览', title: '人设总览',
+        desc: '四层设定汇成一条实时提示词；越靠前，优先级越高。',
+        layer: '人设系统',
+        draft: true,
+        cards: [{ id: 'psn-overview', bare: true, ctrls: [{ t: 'psnOverview' }] }],
+      },
+      {
+        id: 'profile', label: '人设', title: '人格定义',
+        desc: '它是谁。优先级最高；冲突时以此为准。',
+        layer: '① 定义层',
+        draft: true,
+        cards: [{ id: 'psn-profile', bare: true, ctrls: [{ t: 'psnProfile' }] }],
+      },
+      {
+        id: 'mbti', label: 'MBTI', title: 'MBTI 人格辅助',
+        desc: '四轴辅助表达；不覆盖人设。',
+        layer: '② 辅助层',
+        draft: true,
+        cards: [{ id: 'psn-mbti', bare: true, ctrls: [{ t: 'psnMbti' }] }],
+      },
+      {
+        id: 'enhance', label: '增强项', title: '增强项',
+        desc: '12 项可选细节；留空不进提示词。',
+        layer: '③ 细节层',
+        draft: true,
+        cards: [{ id: 'psn-enhance', bare: true, ctrls: [{ t: 'psnEnhance' }] }],
+      },
+      {
+        id: 'mood', label: '心情值', title: '心情值',
+        desc: '每轮更新；只影响这一轮语气。',
+        layer: '④ 实时层',
+        draft: true,
+        cards: [{ id: 'psn-mood', bare: true, ctrls: [{ t: 'psnMood' }] }],
+      },
+      {
+        id: 'prompt', label: '系统提示词', title: '系统提示词',
+        desc: '每轮重建；四层汇成一段话。',
+        layer: '⑤ 汇总',
+        draft: true,
+        cards: [{ id: 'psn-prompt', bare: true, ctrls: [{ t: 'psnPrompt' }] }],
+      },
+    ],
+  },
+
+
+  /* ══════════════════ ⑤ 模型 ══════════════════ */
   {
     id: 'brain', label: '模型',
     subs: [
@@ -886,122 +951,6 @@ export const GROUPS = [
   },
 
 
-  /* ══════════════════ ⑤ 记忆 ══════════════════ */
-  {
-    id: 'know', label: '记忆',
-    subs: [
-      {
-        id: 'memory', label: '自我记忆', title: '自我记忆与导入导出',
-        desc: '让它长期记住一些事。手动记忆永远生效；自动记录要打开开关。',
-        draft: true,
-        cards: [
-          {
-            id: 'overview', title: '它现在记得什么', span: 12,
-            desc: '这一栏列出的，是<b>这一轮真的会进提示词</b>的记忆 —— 手动记忆里开着开关的，加上结构化记忆里「已确认」的。',
-            ctrls: [{ t: 'memOverview' }],
-          },
-          {
-            id: 'manual', title: '手动管理', span: 6,
-            ctrls: [
-              { t: 'switch', id: 'm.auto', label: '开启自动记录', bind: 'memory.auto',
-                hint: '机器人自己判断哪些话值得长期记住。' },
-              { t: 'number', id: 'm.promptMax', label: '每轮最多注入几条', bind: 'memory.promptMax',
-                bounds: 'memoryPromptMax', min: 1, step: 1,
-                hint: '默认 12。只封顶“进提示词”的条数，记忆本身不会丢；改完点底部的「保存并生效」。' },
-              { t: 'memList', label: '手动记忆', path: 'memory.manual',
-                note: '只能你自己加。每一条都会保存；每轮最多带上面设定的条数进提示词 —— 与自动记录的开关无关。改完点底部的「保存并生效」。' },
-            ],
-          },
-          {
-            id: 'records', title: '结构化记忆', span: 6,
-            desc: '机器人自己从群里提炼、且带来源的记忆。每条要被独立观察到几次才会进提示词。点下面的按钮<b>立即生效</b>。',
-            ctrls: [{ t: 'memRecords' }],
-          },
-          {
-            id: 'auto', title: '自动记录 · 历史存量', span: 12,
-            desc: '早期（第 5 轮之前）攒下来的记录，现在<b>只读、不再新增</b>。留着是为了让你看得见历史；新的记忆都进上面的「结构化记忆」。',
-            ctrls: [
-              { t: 'autoMemList' },
-              { t: 'buttons', label: '', items: [
-                act('清空这份历史存量', 'mem.auto.clear', 'btn-danger', '手动记忆与结构化记忆不受影响'),
-              ] },
-            ],
-          },
-          {
-            id: 'exp', title: '下载', span: 6,
-            desc: 'Key / Token <b>任何时候都会被清空</b> —— 不提供"连 Key 都不脱敏"的导出。下面这个开关只决定群号与 QQ 号要不要一起藏起来。',
-            ctrls: [
-              { t: 'seg', id: 'ex.fmt', label: '格式', volatile: true,
-                options: [{ v: 'json', l: 'JSON' }, { v: 'txt', l: 'TXT' }, { v: 'zip', l: 'ZIP' }], read: () => 'json' },
-              { t: 'switch', id: 'ex.mask', label: '连群号也一起隐藏', volatile: true, read: () => true,
-                hint: '发给别人用；关掉则是自己留档。' },
-              { t: 'buttons', label: '', items: [
-                act('完整配置', 'export.all'), act('人格', 'export.persona'), act('提示词', 'export.prompt'),
-                act('规则与场景', 'export.rules'), act('记忆', 'export.memory'), act('技能', 'export.skills'),
-                act('运行日志', 'export.log'), act('诊断包', 'export.diag', 'btn-ghost', '含崩溃/退出记录与更新日志，自动脱敏'),
-              ] },
-              { t: 'kv', rows: (s) => [kv('上次面板退出', () => j(s, ['panel', 'lastExitText'], 0) || '（没有记录）')] },
-            ],
-          },
-          {
-            id: 'imp', title: '导入', span: 6,
-            desc: '导入的是<b>工作台这一块</b>（人格、技能、回复、触发、场景、记忆、安全），不会动模型和 Key。<b>导入前先给你看变更清单</b>。',
-            ctrls: [
-              { t: 'importFile' },
-              { t: 'note', text: '确认清单由 <code>POST /api/custom/preview</code> 算：字段级差异 + 技能/记忆/定时的增删改 + 「同一件事记两遍」的冲突提醒 + <b>本次不会碰的字段</b>（让你敢点确认）。' },
-            ],
-          },
-        ],
-      },
-      {
-        id: 'skills', label: '知识包与角色卡', title: '知识包与角色卡（含十维分级）',
-        desc: '<b>知识包</b>＝某方面的本事，命中触发词才拿出来用；<b>角色卡</b>＝成套的人格，存多张，点「套用到人格设定」就换一套人。',
-        draft: true,
-        cards: [
-          {
-            id: 'sk', title: '技能清单', span: 12,
-            ctrls: [
-              { t: 'number', id: 'skill.promptMax', label: '每轮最多注入几条', bind: 'skillPrompt.max',
-                bounds: 'skillPromptMax', min: 1, step: 1,
-                hint: '默认 3。只影响“同时注入”的条数，技能本身不会丢。' },
-              { t: 'number', id: 'skill.promptChars', label: '每轮注入总字数上限', bind: 'skillPrompt.chars',
-                bounds: 'skillPromptChars', min: 200, step: 100,
-                hint: '默认 2000。所有命中技能的背景文字加起来不超过这个数；只影响提示词，不影响保存。' },
-              { t: 'skills' },
-              { t: 'buttons', label: '', items: [
-                act('加知识包', 'skill.add.pack'),
-                act('加角色卡', 'skill.add.persona'),
-              ] },
-            ],
-          },
-          { id: 'cg', title: '卡库', span: 12, ctrls: [{ t: 'cardGrade' }] },
-        ],
-      },
-      {
-        id: 'people', label: '群友档案', title: '群友档案（旧「知识库」页的真身）',
-        desc: '插件 <code>群友印象</code>（people-memory）按 QQ 号跨群记的长期印象与好感度。<b>这一页现在读的是真数据</b> —— 面板直接读 <code>data/memory/people/*.json</code>，一档一文件。',
-        cards: [{
-          id: 'ppl', title: '印象与好感度', span: 12,
-          ctrls: [{ t: 'people' }],
-        }],
-      },
-      {
-        /* 2026-10-17：这一页原叫「表情与图库」，左边那张是 QQ 收藏表情。
-           收藏表情随「发 QQ 表情」能力一起下线（它本来就是同一套决策链的二级分支），
-           于是这一页只剩图库 —— 名字跟着改，免得点进来找不到表情。
-           ⚠️ 子页 id 保留 `faces`：没有深链路由依赖它，但改 id 会让"我从哪一页来的"
-              这类排查对不上旧截图；label 才是给人看的。 */
-        id: 'faces', label: '图库', title: '图库',
-        desc: '可发送的图片库（需自行安装 <code>自定义图库</code> 插件；默认未安装）。',
-        draft: true,
-        cards: [
-          { id: 'img', title: '自定义图库', span: 12, ctrls: [{ t: 'gallery' }, { t: 'pluginSettings', extId: 'image-lib' }] },
-        ],
-      },
-    ],
-  },
-
-
   /* ══════════════════ ⑥ 维护 ══════════════════ */
   {
     id: 'sys', label: '维护',
@@ -1116,8 +1065,173 @@ export const GROUPS = [
         ],
       },
       {
-        id: 'plugins', label: '插件', title: '插件',
-        desc: '装在 <code>plugins/</code> 与 <code>skills/</code> 里的第三方插件。目录里有<b>不等于</b>会生效 —— 必须在这里勾上，且要重启机器人（不支持热插拔）。',
+        id: 'hud', label: 'HUD调整', title: '顶栏 HUD 信息岛',
+        desc: '状态岛的轮播项、两行读数、材质、强调色、字体、几何与切换时间轴。全部设置只写本机浏览器（localStorage），不经过 config.json。',
+        cards: [
+          {
+            id: 'hudItems', title: '轮播信息项', span: 12,
+            ctrls: [
+              { t: 'note', text: '勾选决定哪些项参与轮播，↑↓ 决定轮播顺序。改动立即保存到本机浏览器，重开面板仍生效。' },
+              { t: 'hudItems' },
+              { t: 'buttons', label: '批量选择', items: [
+                act('默认三项', 'hud.defaultThree', 'btn-ghost', '今日用量 / 机器人 / 内存'),
+                act('全选', 'hud.all', 'btn-ghost', '13 项全部参与轮播'),
+                act('全不选', 'hud.none', 'btn-ghost', '停止自动轮播，岛仍显示当前项'),
+              ] },
+            ],
+          },
+          {
+            id: 'hudMotion', title: '轮播节奏', span: 6,
+            ctrls: [
+              { t: 'range', id: 'hud.interval', label: '轮播间隔', min: 2000, max: 15000, step: 500,
+                fmt: (v) => (v / 1000).toFixed(1) + 's',
+                read: () => hudCfg().interval, save: hudPut('interval', (v) => Number(v)) },
+              { t: 'range', id: 'hud.speed', label: '动效倍速', min: 50, max: 200, step: 10,
+                fmt: (v) => (v / 100).toFixed(1) + '×',
+                read: () => Math.round((hudCfg().speed || 1) * 100), save: hudPut('speed', (v) => Number(v) / 100) },
+              { t: 'seg', id: 'hud.mode', label: '切换方式',
+                options: [{ v: 'full', l: '完整回收' }, { v: 'handoff', l: '中途接力' }, { v: 'quick', l: '快速淡入' }],
+                read: () => hudCfg().switchMode, save: hudPut('switchMode') },
+              { t: 'switch', id: 'hud.pauseHover', label: '悬停 / 聚焦时暂停轮播',
+                read: () => !!hudCfg().pauseHover, save: hudPut('pauseHover') },
+              { t: 'switch', id: 'hud.reduced', label: '减弱动效（停止自动轮播）',
+                hint: '同时尊重系统的 prefers-reduced-motion；打开后不再播放位移与灰圈。',
+                read: () => !!hudCfg().reduced, save: hudPut('reduced') },
+            ],
+          },
+          {
+            id: 'hudHalo', title: '灰圈与密度', span: 6,
+            ctrls: [
+              { t: 'range', id: 'hud.haloStrength', label: '灰圈强度', min: 0, max: 60, step: 1,
+                fmt: (v) => v + '%',
+                read: () => Math.round(Number(hudCfg().haloStrength || 0) * 100), save: hudPut('haloStrength', (v) => Number(v) / 100) },
+              { t: 'range', id: 'hud.haloScale', label: '灰圈直径', min: 80, max: 130, step: 1,
+                fmt: (v) => (v / 100).toFixed(2) + '×',
+                read: () => Math.round(Number(hudCfg().haloScale || 1) * 100), save: hudPut('haloScale', (v) => Number(v) / 100) },
+              { t: 'range', id: 'hud.haloLayers', label: '灰圈层数', min: 1, max: 3, step: 1,
+                fmt: (v) => v + ' 层',
+                read: () => Number(hudCfg().haloLayers || 3), save: hudPut('haloLayers', (v) => Number(v)) },
+              { t: 'seg', id: 'hud.detail', label: '读数密度',
+                options: [{ v: 'auto', l: '自动' }, { v: 'full', l: '完整' }, { v: 'compact', l: '紧凑' }, { v: 'minimal', l: '极简' }],
+                read: () => hudCfg().detail, save: hudPut('detail') },
+            ],
+          },
+          {
+            id: 'hudTimeline', title: '切换时间轴', span: 12,
+            ctrls: [
+              { t: 'note', text: '7 个滑块都是**相对原型 T 表的偏移**：0 = 原型基准，正值放慢该相位、负值提前。总时长 = 基准 + 偏移并 clamp 在 900–2400ms。「圆角提前」允许负值。' },
+              { t: 'range', id: 'hud.rewindMs', label: '回收偏移', min: -160, max: 160, step: 10,
+                fmt: (v) => (v > 0 ? '+' : '') + v + 'ms', read: hudT('rewindMs'), save: hudPut('rewindMs', (v) => Number(v)) },
+              { t: 'range', id: 'hud.seedMs', label: '种子偏移', min: -120, max: 120, step: 10,
+                fmt: (v) => (v > 0 ? '+' : '') + v + 'ms', read: hudT('seedMs'), save: hudPut('seedMs', (v) => Number(v)) },
+              { t: 'range', id: 'hud.slide1Ms', label: '第一段偏移', min: -160, max: 160, step: 10,
+                fmt: (v) => (v > 0 ? '+' : '') + v + 'ms', read: hudT('slide1Ms'), save: hudPut('slide1Ms', (v) => Number(v)) },
+              { t: 'range', id: 'hud.titleHoldMs', label: '标题保持偏移', min: -240, max: 240, step: 10,
+                fmt: (v) => (v > 0 ? '+' : '') + v + 'ms', read: hudT('titleHoldMs'), save: hudPut('titleHoldMs', (v) => Number(v)) },
+              { t: 'range', id: 'hud.slide2Ms', label: '第二段偏移', min: -200, max: 200, step: 10,
+                fmt: (v) => (v > 0 ? '+' : '') + v + 'ms', read: hudT('slide2Ms'), save: hudPut('slide2Ms', (v) => Number(v)) },
+              { t: 'range', id: 'hud.dataInMs', label: '数据入场偏移', min: -160, max: 160, step: 10,
+                fmt: (v) => (v > 0 ? '+' : '') + v + 'ms', read: hudT('dataInMs'), save: hudPut('dataInMs', (v) => Number(v)) },
+              { t: 'range', id: 'hud.radiusLead', label: '圆角提前', min: -80, max: 80, step: 5,
+                fmt: (v) => (v > 0 ? '+' : '') + v + 'ms', read: hudT('radiusLead'), save: hudPut('radiusLead', (v) => Number(v)) },
+            ],
+          },
+          {
+            id: 'hudLook', title: '材质与强调色', span: 6,
+            ctrls: [
+              { t: 'seg', id: 'hud.material', label: '材质',
+                options: [{ v: 'auto', l: '自动' }, { v: 'glass', l: '玻璃' }, { v: 'white', l: 'HUD 白' }, { v: 'black', l: 'HUD 黑' }],
+                read: () => hudCfg().material, save: hudPut('material') },
+              { t: 'seg', id: 'hud.accent', label: '强调色',
+                options: [{ v: 'theme', l: '主题' }, { v: 'cyan', l: '青' }, { v: 'orange', l: '橙' }, { v: 'purple', l: '紫' }],
+                read: () => hudCfg().accent, save: hudPut('accent') },
+              { t: 'seg', id: 'hud.font', label: 'HUD 字体',
+                options: [{ v: 'sans', l: '无衬线' }, { v: 'serif', l: '衬线' }],
+                read: () => hudCfg().font, save: hudPut('font') },
+              { t: 'note', text: '自动 = 玻璃并跟随深浅主题；HUD 白 / 黑固定底色。强调色「主题」= 浅色青 / 深色橙。字体只作用于信息岛，不改整页。' },
+            ],
+          },
+          {
+            id: 'hudGeo', title: '几何', span: 6,
+            ctrls: [
+              { t: 'buttons', label: '预设', items: [
+                act('迷你 260×30', 'hud.preset.mini', 'btn-ghost'),
+                act('紧凑 320×34', 'hud.preset.compact', 'btn-ghost'),
+                act('标准 380×38', 'hud.preset.standard', 'btn-ghost'),
+                act('440×44', 'hud.preset.reference', 'btn-ghost'),
+                act('大 520×48', 'hud.preset.large', 'btn-ghost'),
+              ] },
+              { t: 'range', id: 'hud.w', label: '最大宽度', min: 200, max: 640, step: 10,
+                fmt: (v) => v + 'px', read: () => hudCfg().width, save: hudPut('width', (v) => Number(v)) },
+              { t: 'range', id: 'hud.h', label: '高度', min: 28, max: 48, step: 1,
+                fmt: (v) => v + 'px', read: () => hudCfg().height, save: hudPut('height', (v) => Number(v)) },
+              { t: 'range', id: 'hud.contentScale', label: '内容缩放', min: 80, max: 120, step: 1,
+                fmt: (v) => (v / 100).toFixed(2) + '×',
+                read: () => Math.round(Number(hudCfg().contentScale || 1) * 100), save: hudPut('contentScale', (v) => Number(v) / 100) },
+              { t: 'range', id: 'hud.typeScale', label: '文字缩放', min: 85, max: 115, step: 1,
+                fmt: (v) => (v / 100).toFixed(2) + '×',
+                read: () => Math.round(Number(hudCfg().typeScale || 1) * 100), save: hudPut('typeScale', (v) => Number(v) / 100) },
+              { t: 'note', text: '宽是上限：顶栏空间不够时自动收窄；收窄到 300px 以下会隐藏右栏与进度环。' },
+            ],
+          },
+          {
+            id: 'hudRatios', title: '高级几何（比例）', span: 12,
+            ctrls: [
+              { t: 'note', text: '比例都相对岛高；改完即时生效。极端组合可能让读数变挤，下面的「调试」卡可以直接看实际宽度与密度。' },
+              ...HUD_RATIO_CTRLS,
+            ],
+          },
+          {
+            id: 'hudDebug', title: '调试与导出', span: 12,
+            ctrls: [
+              { t: 'buttons', label: '重播', items: [
+                act('重播切换', 'hud.replaySwitch', 'btn-primary', '按当前切换方式再切一次', 'play'),
+                act('重播出生', 'hud.birth', 'btn-ghost', '岛体从圆点长出来（原型 birth）', 'play'),
+                act('重播入场', 'hud.entrance', 'btn-ghost', '展开 + Welcome + 遮罩交接', 'play'),
+                act('下一条', 'hud.next', 'btn-ghost', '手动切到轮播的下一项', 'reload'),
+              ] },
+              { t: 'switch', id: 'hud.freeze', label: '冻结时间轴（逐帧检查）',
+                read: () => !!hudDebug().frozen, save: hudFreeze },
+              { t: 'range', id: 'hud.seek', label: '时间轴位置', min: 0, max: 2400, step: 10,
+                fmt: (v) => v + 'ms', read: () => hudDebug().seekMs, save: hudSeek },
+              { t: 'buttons', label: '配置', items: [
+                act('导出配置 JSON', 'hud.export', 'btn-ghost', '下载本机 HUD 设置', 'list'),
+                act('恢复默认', 'hud.reset', 'btn-ghost', '清掉本地 HUD 设置并回到默认三项', 'reload'),
+              ] },
+              { t: 'hudMetrics' },
+              { t: 'note', text: '13 项都来自 <code>/api/state</code>。发送条数没有真实统计源，因此不提供「今日发送」——不拿模型调用数冒充发送条数。' },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  /* ══════════════════ ⑦ 工厂 ══════════════════
+     独立工具域：一页就是一件完整工具，不拆卡片。
+     五个二级页 = 三份常驻 iframe（视觉 / 人设 / 插件）+ 插件管理 / Skill 两个普通卡片页；
+     前三页由 `#page[data-frame]` 选择当前帧，后两页走普通渲染。
+     `factory-frame.js` 负责帧的预热、显隐与 0.22s 切换入场。 */
+  {
+    id: 'factory', label: '工厂',
+    subs: [
+      {
+        id: 'visual', label: '视觉工厂', title: '视觉工厂',
+        desc: '液态玻璃的四类材质、12 款配方与逐槽位调试；工具独立运行，参数存在本机浏览器里。',
+        frame: 'visual-factory.html',
+      },
+      {
+        id: 'persona', label: '人设工厂', title: '人设工厂',
+        desc: '六章向导搭人格、增强与场景；可预览、复制提示词，或直接写入控制台配置。',
+        frame: 'persona-factory.html',
+      },
+      {
+        id: 'plugin', label: '插件工厂', title: '插件工厂',
+        desc: '查看本机扩展能力的运行面；导入 ZIP 或整个文件夹，也可以按模板创建插件 / Skill。',
+        frame: 'plugin-factory.html',
+      },
+      {
+        id: 'plugins', label: '插件管理', title: '插件管理',
+        desc: '装在 <code>plugins/</code> 里的确定性扩展。目录里有<b>不等于</b>会生效 —— 必须在这里勾上，且要重启机器人（不支持热插拔）。Skill 在旁边的「Skill」页。',
         draft: true,
         cards: [
           {
@@ -1127,14 +1241,14 @@ export const GROUPS = [
               /* 2026-10-23：上限不再写死 20 / 24。区间由 `src/field-schema.js` 的
                  `pluginMax` / `toolMax` 提供（`bounds` 读的是服务端下发的 fieldMeta），
                  这里不抄 1024 / 256 两个数字。 */
-              { t: 'number', id: 'plug.max', label: '最多启用插件数', bind: 'plugins.max', bounds: 'pluginMax', min: 1, step: 1,
-                hint: '默认 256。超出的会显示「超上限·未加载」，不会静默丢弃；改完要重启机器人。' },
+              { t: 'number', id: 'plug.max', label: '扩展总数上限（插件 + Skill）', bind: 'extensions.max', bounds: 'pluginMax', min: 1, step: 1,
+                hint: '默认 256。插件与 Skill 共用一个上限；超出的会显示「超上限·未加载」，不会静默丢弃；改完要重启机器人。' },
               { t: 'number', id: 'tool.max', label: '最多注册工具数', bind: 'tools.max', bounds: 'toolMax', min: 1, step: 1,
                 hint: '默认 64。工具 schema 会进每一轮请求，别调太大；改完要重启机器人。' },
-              { t: 'number', id: 'plug.hookTimeout', label: '钩子单条超时（毫秒）', bind: 'plugins.hookTimeoutMs',
+              { t: 'number', id: 'plug.hookTimeout', label: '钩子单条超时（毫秒）', bind: 'extensions.hookTimeoutMs',
                 bounds: 'hookTimeoutMs', min: 100, step: 100,
                 hint: '默认 5000。超时的钩子会被放行并记一条警告；改完要重启机器人。' },
-              { t: 'importZip', label: '装 ZIP' },
+              { t: 'importZip', kind: 'plugin', label: '装插件 ZIP' },
             ],
           },
           {
@@ -1155,39 +1269,30 @@ export const GROUPS = [
         ],
       },
       {
-        id: 'hud', label: 'HUD调整', title: '顶栏 HUD 信息岛',
-        desc: '调试顶栏状态岛的轮播项、尺寸与节奏。材质固定为玻璃并跟随主题（已去掉 HUD 核）；设置只存在这台机器的浏览器里。',
+        id: 'skill', label: 'Skill', title: 'Skill（LLM 型扩展）',
+        desc: '装在 <code>skills/</code> 里的 LLM 型扩展：注册工具 + 可选提示词，<b>用不用由模型判断</b>。与「知识包/角色卡」是两份数据；目录里有也不等于会生效，勾上后要重启机器人。',
+        draft: true,
         cards: [
           {
-            id: 'hudItems', title: '轮播信息项', span: 6,
+            id: 'skillsum', title: 'Skill 总览与安装', span: 12,
             ctrls: [
-              { t: 'note', text: '每项改动会立即保存到本机浏览器，重开面板仍生效。至少保留一项；灰圈只在切换时出现，并被岛体圆角裁切。' },
-              { t: 'switch', id: 'hud.i.usage', label: '今日用量', read: () => hudOn('usage'), save: hudItem('usage') },
-              { t: 'switch', id: 'hud.i.bridge', label: '机器人运行', read: () => hudOn('bridge'), save: hudItem('bridge') },
-              { t: 'switch', id: 'hud.i.container', label: '协议端登录', read: () => hudOn('container'), save: hudItem('container') },
-              { t: 'switch', id: 'hud.i.model', label: '本机模型', read: () => hudOn('model'), save: hudItem('model') },
-              { t: 'switch', id: 'hud.i.memory', label: '内存占用', read: () => hudOn('memory'), save: hudItem('memory') },
-              { t: 'switch', id: 'hud.i.panel', label: '面板连接', read: () => hudOn('panel'), save: hudItem('panel') },
-              { t: 'switch', id: 'hud.i.account', label: '账号', read: () => hudOn('account'), save: hudItem('account') },
-              { t: 'range', id: 'hud.interval', label: '轮播间隔', min: 3, max: 15, step: 1,
-                read: () => Math.round(hudCfg().interval / 1000), save: hudSave({ interval: (v) => v * 1000 }) },
+              { t: 'skillSummary' },
+              { t: 'importZip', kind: 'skill', label: '装 Skill ZIP' },
+              { t: 'note', text: 'Skill 只增加模型可选的工具与提示词，<b>不保证执行</b>。需要“条件满足必跑”的请做插件；纯提示词 Skill 仍需 <code>index.js</code>，内容写 <code>export {}</code> 即可。' },
             ],
           },
           {
-            id: 'hudLook', title: '尺寸与动效', span: 6,
-            ctrls: [
-              { t: 'range', id: 'hud.w', label: '宽度', min: 200, max: 640, step: 10,
-                read: () => hudCfg().width, save: hudSave({ width: (v) => v }) },
-              { t: 'range', id: 'hud.h', label: '高度', min: 28, max: 48, step: 1,
-                read: () => hudCfg().height, save: hudSave({ height: (v) => v }) },
-              { t: 'range', id: 'hud.speed', label: '动效倍速（%）', min: 50, max: 200, step: 10,
-                read: () => Math.round((hudCfg().speed || 1) * 100), save: hudSave({ speed: (v) => v / 100 }) },
-              { t: 'buttons', label: '', items: [
-                act('重播入场', 'hud.entrance', 'btn-primary', '再看一次展开 + Welcome + 遮罩交接', 'play'),
-                act('恢复默认', 'hud.reset', 'btn-ghost', '清掉本地 HUD 设置并回到默认三项轮播', 'reload'),
-              ] },
-              { t: 'note', text: '数据来自 <code>/api/state</code>；发送条数还没有统计源，所以暂不提供「今日发送」项。' },
-            ],
+            id: 'skillgrid', title: 'Skill 清单与设置', span: 12,
+            bare: true,
+            ctrls: [{ t: 'skillList' }],
+          },
+          {
+            id: 'skillpreview', title: '模型可见预览', span: 12,
+            ctrls: [{ t: 'skillPromptPreview' }],
+          },
+          {
+            id: 'skillscope', title: 'Skill 与插件 / 知识包的区别', span: 12,
+            ctrls: [{ t: 'skillScope' }],
           },
         ],
       },
@@ -1201,16 +1306,14 @@ export const GROUPS = [
 const NAV_SHORT = {
   run: {
     group: '运行',
-    subs: { overview: '总览', sessions: '会话', logs: '日志', fake: '假QQ' },
+    subs: { overview: '总览', sessions: '会话日志' },
   },
   speak: {
     group: '发言',
-    subs: { trigger: '触发', scheduled: '定时', waiting: '等待', proactive: '安静' },
+    subs: { fake: '假QQ', trigger: '触发', scheduled: '定时', waiting: '等待', imaging: '识图', proactive: '安静' },
   },
-  persona: {
-    group: '人格',
-    subs: { who: '设定', enhance: '规则', reply: '回复' },
-  },
+  // persona 故意不在这里登记：六页用 schema 的全称（增强项/心情值/系统提示词），
+  // 与桌面原型一致；其他域继续用短标签。
   brain: {
     group: '模型',
     subs: { model: '模型', thinking: '思考', usage: '用量' },
@@ -1221,7 +1324,11 @@ const NAV_SHORT = {
   },
   sys: {
     group: '维护',
-    subs: { safety: '安全', history: '历史', panel: '维护', plugins: '插件' },
+    subs: { safety: '安全', history: '历史', panel: '维护' },
+  },
+  factory: {
+    group: '工厂',
+    subs: { visual: '视觉工厂', persona: '人设工厂', plugin: '插件工厂', plugins: '插件管理', skill: 'Skill' },
   },
 };
 for (const g of GROUPS) {
@@ -1413,7 +1520,9 @@ export const CTRL_KINDS = [
   /* `statusGrid` / `ports`：运行总览页重排加的（2026-10-02）——
      把等权 kv 行换成有状态色的卡片，坏的那格自己会变红。 */
   'statusGrid', 'ports',
-  'text', 'textarea', 'password', 'number', 'time', 'select', 'seg', 'tags',
+  /* 运行总览三栏（2026-10-27）：中间仪表盘与右栏操作/图表是自包含区域。 */
+  'overviewDash', 'overviewSide',
+  'text', 'password', 'number', 'time', 'select', 'seg', 'tags',
   /* `ticks`：**有序档位**的横向进度条（2026-10-21 由竖向刻度改来）。
      与 `seg` 同一套数据契约（同一个 `options` / 同一个 `valueOf`/`setValue`），
      差别只在呈现：液面覆盖到第几段，所以顺序与当前档位**一眼可见**。
@@ -1440,9 +1549,14 @@ export const CTRL_KINDS = [
                        （同一天先说"底部一条"，第二次又说"不要单独成块"⇒ 收成按钮） */
   'brainTags', 'quotaBtn',
   'usageBySource', 'usageByChat', 'usageByDay', 'usageTable',
-  'enhance', 'scenes', 'playRules', 'skills', 'cardGrade', 'memOverview', 'memList', 'memRecords', 'autoMemList',
+  'scenes', 'skills', 'cardGrade', 'memOverview', 'memList', 'memRecords', 'autoMemList',
   'patrolView',
-  'schedList', 'holidays', 'emotionState', 'pluginSummary', 'pluginList', 'pluginSettings', 'pluginScope',
+  /* 人设域六页（2026-10-25）：整页渲染器（bare 通道）。
+     ⚠️ 它们不是"控件"，而是 Self-contained 的页面主体；内部字段仍逐个登记进
+        `S.reg` 走统一写口，保存/丢弃/草稿计数与普通控件完全一样。 */
+  'psnOverview', 'psnProfile', 'psnMbti', 'psnEnhance', 'psnMood', 'psnPrompt',
+  'schedList', 'holidays', 'pluginSummary', 'pluginList', 'pluginSettings', 'pluginScope',
+  'skillSummary', 'skillList', 'skillPromptPreview', 'skillScope',
   'people', 'unread', 'gallery', 'apiDeals',
   'sesList', 'sesDetail', 'chatList', 'chatDetail', 'traceList', 'logList', 'auditList',
   /* `termView`：网页内置终端（2026-10-11）—— 取代那个关不掉的前台 cmd 窗口。
@@ -1451,4 +1565,7 @@ export const CTRL_KINDS = [
   'termView', 'fakeView',
   'update',
   'tryOut', 'importFile', 'importZip', 'protoInfo',
+  /* HUD 调整页（2026-10-25）：轮播项表与实时读数都由 island.js 的
+     cfg()/items()/debug() 供数，页面不另存一份 HUD 默认值。 */
+  'hudItems', 'hudMetrics',
 ];

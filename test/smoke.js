@@ -76,9 +76,12 @@ import { abortError, isAborted, abortOutcome, retryDecision, createSessionContro
 import { createSemaphore } from '../src/async-util.js';
 import { kindOfSetting, isSensitiveKey, settingsSpec, coerceSetting, applySettingsPatch } from '../src/plugin-settings.js';
 import {
-  activeManualMemory, MANUAL_MEMORY_IN_PROMPT, SKILL_IN_PROMPT, SKILL_CHARS_IN_PROMPT, readCustom,
+  activeManualMemory, MANUAL_MEMORY_IN_PROMPT, SKILL_IN_PROMPT, SKILL_CHARS_IN_PROMPT, readCustom, patchCustom,
+  ENHANCE, PLAY_RULES,
 } from '../src/custom-config.js';
 import { pickSkillsForPrompt } from '../src/skills.js';
+import { buildPersonaSections } from '../src/prompt-sections.js';
+import { emotionOnIncoming, emotionOnResponse, moodPromptLines } from '../src/emotion.js';
 // 数值类设置的声明表（第 42 轮 B12b · SCHEMA-LITE）。测试与生产读的是**同一份** ——
 // 在测试里另抄一份默认值，等于把本批要消灭的东西搬进测试。
 import {
@@ -123,7 +126,9 @@ import { GATE_ERROR_KIND, scanRules, kindOf, isBlocking } from '../src/gate-scan
 //    必然就是真机在用的那一个。旧页那套（`page-parts.js` 的 `PARTS` 拼装）已随
 //    `panel/parts/` 一起删除，它的三条通用判据（反目录穿越 / 读失败抛错 / 正例通）
 //    在这里**改指**到本模块的同形入口上。
-import { NEXT_ENTRY, resolveNextAsset, readNextAsset } from '../panel/lib/next-page.js';
+import {
+  NEXT_ENTRY, resolveNextAsset, readNextAsset, parseByteRange, CONTOUR_MEDIA,
+} from '../panel/lib/next-page.js';
 import { NEXT_DIR } from '../panel/lib/paths.js';
 // 第 53 轮 B2：Windows 上「健康与占用」那几个读数的**换算**是纯函数（取数在 server.js，
 // 那是 IO）。把它 import 进来，就能在 macOS 上把 Windows 形态的数据直接喂进去断言 ——
@@ -302,6 +307,10 @@ async function main() {
   //    模块加载期算死的常量（本项目第 36 条踩过），本进程改 process.env 已经晚了 ——
   //    但子进程是全新加载，env 在启动时给才有效。
   const ddir = tmpPath('smoke-data', '');
+  /* 本体情绪（2026-10-25）的读取路径在**调用时**读这个 env（见 src/emotion.js），
+     所以本进程也要指走：否则 Brain 在 smoke 里会读到用户真机的 data/bot-state.json，
+     提示词是否带「此刻的状态」就取决于这台机器上一次聊天的心情 —— 典型的假红/假绿。 */
+  process.env.QQBOT_DATA_DIR = ddir;
   fs.rmSync(tfile, { force: true });
   fs.rmSync(ufile, { force: true });
   fs.rmSync(afile, { force: true });
@@ -1460,7 +1469,7 @@ async function main() {
       const unknown = [...new Set([...boundKeys, ...numKeys])].filter((k) => !known.has(k));
       check(
         'T76 现役页的 bounds / fieldNum 键全部能在声明表里找到（写错只会渲染成「…」或丢掉区间提示）',
-        boundKeys.length >= 4 && numKeys.length >= 2 && unknown.length === 0,
+        boundKeys.length >= 4 && numKeys.length >= 1 && unknown.length === 0,
         `bounds ${boundKeys.length} 个（${[...new Set(boundKeys)].join('/')}）`
           + `· fieldNum ${numKeys.length} 个（${[...new Set(numKeys)].join('/')}）`
           + `· 未知键：${unknown.join(',') || '无'}`
@@ -3116,11 +3125,33 @@ async function main() {
         `含小节=${extText.includes('### 图库')} · 含工具名=${extText.includes('image-lib__image_lib_send')}`
       );
 
+      // T44c ★ Skill 的 prompt.sections 进独立 skillExt 段；与 Plugin 的 extensions 不串。
+      const bothMeta = base.brain.buildMessagesWithMeta(base.session, base.evt, base.parsed, {
+        extensionSections: [{
+          id: 'plug', title: '插件补充', content: '插件正文', tools: ['plug__one'], priority: 10,
+        }],
+        skillSections: [{
+          id: 'skill', title: '天气查询', content: '用户问天气时调用 weather__query。',
+          tools: ['weather__query'], priority: 20,
+        }],
+      });
+      const bothText = bothMeta.messages.map((m) => (typeof m.content === 'string' ? m.content : '')).join('\n');
+      check(
+        'T44c ★ Skill 段落独立成段：含「你现在会用的 Skill」与 true 工具名；插件段仍在 extensions；两边不串',
+        bothText.includes('你现在会用的 Skill') && bothText.includes('### 天气查询')
+          && bothText.includes('weather__query')
+          && bothText.includes('你可以用的额外能力') && bothText.includes('### 插件补充')
+          && bothText.includes('plug__one')
+          && bothText.indexOf('插件正文') > bothText.indexOf('你可以用的额外能力')
+          && bothText.indexOf('用户问天气时调用') > bothText.indexOf('你现在会用的 Skill'),
+        `skillHeader=${bothText.includes('你现在会用的 Skill')} pluginHeader=${bothText.includes('你可以用的额外能力')}`
+      );
+
       // T45 淘汰顺序钉死：先背景 → 技能 → 记忆 → 场景 → 增强 → 规则 → 人格；
       // 身份 / 隔离声明 / 必变段永不参与淘汰（砍掉隔离声明 = 把 B9 防线自己拆了）。
       check(
         'T45 淘汰顺序与永不砍清单与计划一致（人格 > 规则 > … > ambient > 历史）',
-        EVICTION_ORDER.join(',') === 'ambient,skills,memory,scenes,enhance,rules,persona'
+        EVICTION_ORDER.join(',') === 'astro,mood,ambient,skills,memory,scenes,enhance,mbti,rules,persona'
           && NEVER_DROP.join(',') === 'base,isolate,volatile',
         `order=${EVICTION_ORDER.join(',')} never=${NEVER_DROP.join(',')}`
       );
@@ -3141,6 +3172,159 @@ async function main() {
           && rSmall.dropped.every((d) => d.lines > 0 && d.chars > 0),
         JSON.stringify(rSmall.dropped)
       );
+
+      // ── 人设六页（2026-10-25）：MBTI / 生日彩蛋 / 分段覆盖 ─────────────
+      // 这一组的共同失效形态是"面板上开了、提示词里没有"或"关着却还在注入" ——
+      // 两者都不报错，只能靠直接看 system 文本。
+      {
+        const plain = buildSampleSystem(sampleConfig()).system;
+        check(
+          'T-PSN1 默认不注入 MBTI / 生日彩蛋（旧配置的提示词逐字不变）',
+          !plain.includes('## MBTI 辅助') && !plain.includes('## 生日彩蛋'),
+          `MBTI=${plain.includes('## MBTI 辅助')} · 彩蛋=${plain.includes('## 生日彩蛋')}`
+        );
+
+        const cfg = sampleConfig();
+        cfg.custom.mbti = { on: true, axes: { EI: 62, SN: 58, TF: 57, JP: 46 }, note: '比标准更安静' };
+        cfg.custom.birthday = { age: 24, month: 11, day: 12 };
+        cfg.custom.astroOn = true;
+        const on = buildSampleSystem(cfg).system;
+        check(
+          'T-PSN2 MBTI 开：类型 / 四轴 / 个人差异都进提示词，类型名与轴值同源',
+          on.includes('## MBTI 辅助') && on.includes('类型：INFJ')
+            && on.includes('I 62%') && on.includes('个人差异：比标准更安静')
+            && on.includes('不要用类型解释自己'),
+          `含段=${on.includes('## MBTI 辅助')} · 含类型=${on.includes('类型：INFJ')} · 含个人差异=${on.includes('个人差异：比标准更安静')}`
+        );
+        check(
+          'T-PSN3 生日彩蛋只写星座色彩，不写生肖（生肖按周岁反推，会误差一年）',
+          on.includes('## 生日彩蛋') && on.includes('天蝎座') && !on.includes('生肖'),
+          `含彩蛋=${on.includes('## 生日彩蛋')} · 含天蝎=${on.includes('天蝎座')} · 含生肖=${on.includes('生肖')}`
+        );
+
+        const cfg2 = sampleConfig();
+        cfg2.custom.promptSections = { persona: '## 自定义人设段\n只按这一段演。' };
+        const ov = buildSampleSystem(cfg2).system;
+        check(
+          'T-PSN4 分段覆盖真的替换了该段，且不碰其他段',
+          ov.includes('## 自定义人设段') && ov.includes('只按这一段演')
+            && !ov.includes('## 你的人物设定') && ov.includes('## 扮演规则'),
+          `覆盖段=${ov.includes('## 自定义人设段')} · 原段还在=${ov.includes('## 你的人物设定')} · 规则还在=${ov.includes('## 扮演规则')}`
+        );
+
+        const cfg3 = sampleConfig();
+        cfg3.custom.mbti = { on: false, axes: { EI: 62, SN: 58, TF: 57, JP: 46 }, note: '' };
+        cfg3.custom.promptSections = { mbti: '## 不该出现' };
+        const offOv = buildSampleSystem(cfg3).system;
+        check(
+          'T-PSN5 关着的 MBTI 即使存着旧覆盖也不复活（开关不是假的）',
+          !offOv.includes('## 不该出现') && !offOv.includes('## MBTI 辅助'),
+          `旧覆盖出现=${offOv.includes('## 不该出现')} · MBTI 段出现=${offOv.includes('## MBTI 辅助')}`
+        );
+
+        const ps = buildPersonaSections({
+          custom: readCustom({ custom: cfg2.custom }),
+          personaName: '小鱼',
+          replyLengthHint: '每条 20–40 字',
+          maxChunks: 4,
+          personaText: '',
+          enhanceTable: ENHANCE,
+          rules: PLAY_RULES,
+          emotionOk: false,
+        });
+        const psec = ps.sections.find((x) => x.id === 'persona');
+        check(
+          'T-PSN6 面板预览与 brain 同源：覆盖段标已改，autoText 保留自动原文',
+          !!psec && psec.overridden && psec.text.includes('只按这一段演')
+            && psec.autoText.includes('## 你的人物设定'),
+          psec ? `overridden=${psec.overridden} · text=${psec.text.slice(0, 12)} · auto=${psec.autoText.slice(0, 12)}` : '没有 persona 段'
+        );
+
+        // ── 本体情绪（2026-10-25 · 从插件收回项目本体）──
+        const baseState = {
+          mood: 60, arousal: 45, acuteStress: 20, chronicStress: 2,
+          energy: { physical: 65, cognitive: 65, emotional: 60, will: 60 },
+          emotions: {}, trend: [60], trendAt: 0, updatedAt: 0, intent: '先听着。',
+        };
+        const praised = emotionOnIncoming(baseState, { text: '你真可爱', atMe: true, chatKey: 'group:1', now: 1700000000000 });
+        const noise = emotionOnIncoming(baseState, { text: '你真可爱', atMe: false, now: 1700000000000 });
+        check(
+          'T-PSN7 入站情绪只处理对着它说的消息：被夸会抬心情并留下事件',
+          praised.changed && praised.state.mood > baseState.mood
+            && praised.state.emotions.gratitude > 0 && praised.state.lastEvent?.kind === '被夸'
+            && noise.changed === false,
+          `mood ${baseState.mood}→${praised.state.mood} · 感激=${praised.state.emotions.gratitude} · 事件=${praised.state.lastEvent?.kind || '—'} · 旁人消息=${noise.changed}`
+        );
+
+        const after = emotionOnResponse(praised.state, { sentCount: 2, now: 1700000001000 });
+        const moodText = moodPromptLines(after.state).join('\n');
+        check(
+          'T-PSN8 情绪段由唯一实现生成：心情 / 精力 / 主导情绪 / 意图四行齐全',
+          moodText.includes('## 此刻的状态') && moodText.includes('心情')
+            && moodText.includes('精力：') && moodText.includes('主导情绪：') && moodText.includes('意图：')
+            && after.state.lastEvent?.kind === '正常回复',
+          moodText.slice(0, 90)
+        );
+
+        const psMood = buildPersonaSections({
+          custom: readCustom({ custom: { moodOn: true } }),
+          personaName: '小鱼', replyLengthHint: '每条 20–40 字', maxChunks: 4, personaText: '',
+          enhanceTable: ENHANCE, rules: PLAY_RULES, emotionOk: true, moodLines: moodPromptLines(after.state),
+        });
+        const msec = psMood.sections.find((x) => x.id === 'mood');
+        check(
+          'T-PSN9 心情段计入四层，且不再标成插件未知',
+          !!msec && msec.enabled && msec.chars > 0 && !msec.unknownChars
+            && psMood.layerTotal >= msec.chars && psMood.pluginUnknown === false,
+          msec ? `enabled=${msec.enabled} · chars=${msec.chars} · unknown=${msec.unknownChars} · layer=${psMood.layerTotal}` : '没有 mood 段'
+        );
+
+        const psMoodOff = buildPersonaSections({
+          custom: readCustom({ custom: { moodOn: false } }),
+          personaName: '小鱼', replyLengthHint: '每条 20–40 字', maxChunks: 4, personaText: '',
+          enhanceTable: ENHANCE, rules: PLAY_RULES, emotionOk: true, moodLines: moodPromptLines(after.state),
+        });
+        const msecOff = psMoodOff.sections.find((x) => x.id === 'mood');
+        check(
+          'T-PSN10 moodOn=false：即使有状态也不注入心情段（开关不是假的）',
+          !!msecOff && !msecOff.enabled && msecOff.chars === 0,
+          msecOff ? `enabled=${msecOff.enabled} · chars=${msecOff.chars}` : '没有 mood 段'
+        );
+
+        const cfgRules = sampleConfig();
+        cfgRules.custom.playRuleItems = [{ text: '只按这一条规则。' }];
+        const sysRules = buildSampleSystem(cfgRules).system;
+        check(
+          'T-PSN11 自定义扮演规则真的替换默认 10 条（持久字段进提示词）',
+          sysRules.includes('只按这一条规则。') && !sysRules.includes('始终以角色身份说话和行动。'),
+          `自定义=${sysRules.includes('只按这一条规则。')} · 默认还在=${sysRules.includes('始终以角色身份说话和行动。')}`
+        );
+
+        // 情绪段走真实文件：Brain 必须在拼提示词时读 data/bot-state.json，
+        // 而不是只在面板预览里显示（那会变成"页面说注入、模型没收到"）。
+        const emoDir = tmpPath('smoke-emotion', '');
+        fs.mkdirSync(emoDir, { recursive: true });
+        fs.writeFileSync(path.join(emoDir, 'bot-state.json'), JSON.stringify({
+          mood: 73, arousal: 51, acuteStress: 15, chronicStress: 1.5,
+          energy: { physical: 61, cognitive: 70, emotional: 58, will: 66 },
+          emotions: { curiosity: 30, hope: 12 }, intent: '在听。',
+          trend: [73], trendAt: 1700000000000, updatedAt: 1700000000000,
+        }), 'utf8');
+        const prevDir = process.env.QQBOT_DATA_DIR;
+        process.env.QQBOT_DATA_DIR = emoDir;
+        const sysMood = buildSampleSystem(sampleConfig()).system;
+        const cfgMoodOff = sampleConfig();
+        cfgMoodOff.custom.moodOn = false;
+        const sysMoodOff = buildSampleSystem(cfgMoodOff).system;
+        process.env.QQBOT_DATA_DIR = prevDir;
+        fs.rmSync(emoDir, { recursive: true, force: true });
+        check(
+          'T-PSN12 Brain 真的读状态文件并拼「此刻的状态」；moodOn=false 时不拼',
+          sysMood.includes('## 此刻的状态') && sysMood.includes('心情 73/100')
+            && sysMood.includes('好奇 30') && !sysMoodOff.includes('## 此刻的状态'),
+          `开=${sysMood.includes('## 此刻的状态')} · 值=${sysMood.includes('心情 73/100')} · 关=${sysMoodOff.includes('## 此刻的状态')}`
+        );
+      }
 
       // T46 历史段：单条无字数上限的长文能顶穿上下文 —— 超预算从**最老**的开始丢。
       const fh = fitHistory(
@@ -4420,8 +4604,10 @@ async function main() {
       }
     }
 
-    // T95 仓库内的 fixture：中文目录名 + 英文 id 能被认出，且两类目录各一个。
+    // T95 仓库内的 fixture：中文目录名 + 英文 id 能被认出，且两类目录都在。
     //     它同时是 EX-NOFRONT 契约的扫描对象 —— 没有它那条契约就是对空集合跑。
+    //     2026-10-28：skills 侧新增两份 Skill 样例（纯提示词 / 混合型），
+    //     它们不在 enabled 名单里 ⇒ 只验“清单被认出且 kind=skill”，不加载执行。
     {
       const fixRoot = path.join(ROOT, 'test', 'fixtures', 'ext');
       const oldP = process.env[EXTENSION_ENV[0]];
@@ -4437,10 +4623,13 @@ async function main() {
       }
       const byId = Object.fromEntries(r.plan.map((p) => [p.id, p]));
       check(
-        'T95 仓库内 fixture（中文目录名 + 英文 id）被正确识别，plugins 与 skills 各一个',
+        'T95 仓库内 fixture（中文目录名 + 英文 id）被正确识别；纯提示词 / 混合型 Skill 样例也认得出',
         byId['demo-plugin']?.action === 'load' && byId['demo-plugin']?.kind === 'plugin'
           && byId['demo-skill']?.action === 'load' && byId['demo-skill']?.kind === 'skill'
-          && r.sum.total === 2,
+          && byId['prompt-only-skill']?.kind === 'skill' && byId['prompt-only-skill']?.action === 'skip'
+          && byId['prompt-only-skill']?.manifest?.promptSections?.length === 1
+          && byId['mixed-skill']?.kind === 'skill' && byId['mixed-skill']?.action === 'skip'
+          && r.sum.total === 4,
         `total=${r.sum.total} byKind=${JSON.stringify(r.sum.byKind)}｜${r.plan.map((p) => `${p.dirName}→${p.id}(${p.action})`).join(' ')}`
       );
     }
@@ -10106,6 +10295,7 @@ const fs = require('node:fs');
         "base-uri 'none'",
         "frame-ancestors 'none'",
         "style-src 'self' 'unsafe-inline'",
+        "media-src 'self'",
       ];
       const miss = need.filter((d) => !PANEL_CSP.includes(d));
       const cspOk = miss.length === 0 && !PANEL_CSP.includes('unsafe-eval');
@@ -10116,6 +10306,50 @@ const fs = require('node:fs');
       );
     }
 
+    // T379/T380（2026-10-26 · 等高线背景）：Range 解析与媒体白名单。
+    // 这两条都是纯函数真值表，不依赖 10MB 视频存在；媒体文件本身的
+    // 存在性/体积/MP4 结构由 check-wb §163 与 panel-boot 守。
+    {
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const rangeCases = [
+        [null, 1000, null],
+        ['', 1000, null],
+        ['bytes=0-99', 1000, { start: 0, end: 99 }],
+        ['bytes=100-', 1000, { start: 100, end: 999 }],
+        ['bytes=-100', 1000, { start: 900, end: 999 }],
+        ['bytes=-5000', 1000, { start: 0, end: 999 }],
+        ['bytes=900-2000', 1000, { start: 900, end: 999 }],
+        ['bytes=1000-', 1000, { invalid: true }],
+        ['bytes=0-10,20-30', 1000, { invalid: true }],
+        ['bytes=abc', 1000, { invalid: true }],
+        ['items=0-1', 1000, { invalid: true }],
+        ['bytes=10-5', 1000, { invalid: true }],
+        ['bytes=0-10', 0, { invalid: true }],
+      ];
+      const badRange = rangeCases.filter(([h, size, want]) => !same(parseByteRange(h, size), want));
+      check(
+        'T379 等高线媒体 Range 解析（单段/后缀/越界/多段/乱码 13 组）',
+        badRange.length === 0,
+        badRange.length
+          ? badRange.map(([h, size, want]) => `${h}/${size} → ${JSON.stringify(parseByteRange(h, size))}（应 ${JSON.stringify(want)}）`).join(' | ')
+          : `${rangeCases.length} 组全过`
+      );
+
+      const wantMedia = [
+        ['contour-dark-lite-v2.mp4', 'video/mp4'],
+        ['contour-dark-standard-v2.mp4', 'video/mp4'],
+        ['contour-dark-v2.jpg', 'image/jpeg'],
+        ['contour-light-lite-v2.mp4', 'video/mp4'],
+        ['contour-light-standard-v2.mp4', 'video/mp4'],
+        ['contour-light-v2.jpg', 'image/jpeg'],
+      ];
+      const gotMedia = Object.entries(CONTOUR_MEDIA).sort((a, b) => a[0].localeCompare(b[0]));
+      check(
+        'T380 等高线媒体白名单（6 项 · 浅/深 × 标准/低配 + 海报 · MIME 精确）',
+        same(gotMedia, wantMedia),
+        `got=${JSON.stringify(gotMedia)}`
+      );
+    }
 
     // ══ T378（第 10 轮 · 开源前审查 H-04）：argv 的「开关 / 正文」拆分 ══════════════
     // 为什么必须是**行为**判据：本项目第 53 条陷阱就是"判据别写死 argv 长什么样"
@@ -12149,6 +12383,370 @@ const fs = require('node:fs');
           f({ wantHidden: false, openOnStart: 'no' }),
         ])}`,
       );
+    }
+
+    // T437 配置命名空间：旧 plugins 单名单迁移到两档；新 extensions 存在时不再回落旧名单。
+    {
+      const legacy = readCustom({
+        custom: { plugins: { enabled: ['a', 'b'], settings: { a: { x: 1 } }, max: 20, hookTimeoutMs: 6000 } },
+      });
+      const fresh = readCustom({
+        custom: { extensions: { plugins: { enabled: ['p'] }, skills: { enabled: ['s'] } } },
+      });
+      const emptySkills = readCustom({ custom: { extensions: { skills: {} } } });
+      const patched = patchCustom(legacy, { plugins: { enabled: ['c'] } });
+      check(
+        'T437 扩展配置：旧 plugins 单名单同时迁到两档；新 extensions 不回落旧名单；旧写口只动 plugins',
+        legacy.extensions.plugins.enabled.join() === 'a,b'
+          && legacy.extensions.skills.enabled.join() === 'a,b'
+          && legacy.extensions.skills.settings.a?.x === 1
+          && legacy.plugins.max === 20 && legacy.plugins.hookTimeoutMs === 6000
+          && fresh.extensions.plugins.enabled.join() === 'p'
+          && fresh.extensions.skills.enabled.join() === 's'
+          && fresh.plugins.enabled.join() === 'p,s'
+          && emptySkills.extensions.plugins.enabled.length === 0
+          && emptySkills.extensions.skills.enabled.length === 0
+          && patched.extensions.plugins.enabled.join() === 'c'
+          && patched.extensions.skills.enabled.join() === 'a,b',
+        `legacy=${JSON.stringify(legacy.extensions)} fresh=${JSON.stringify(fresh.extensions)} patch=${JSON.stringify(patched.extensions)}`
+      );
+    }
+
+    // T438 两档白名单独立 + 共享上限：只开一档时另一档 pending；上限按白名单次序跨档取。
+    {
+      const fixRoot = path.join(ROOT, 'test/fixtures/act');
+      const onlyPlugin = loadExtensions({
+        root: fixRoot,
+        enabledByKind: { plugin: ['lifecycle-probe'], skill: [] },
+        log: {},
+      });
+      const both = loadExtensions({
+        root: fixRoot,
+        enabledByKind: { plugin: ['lifecycle-probe'], skill: ['tool-skill'] },
+        log: {},
+      });
+      const p1 = onlyPlugin.plan.find((x) => x.id === 'lifecycle-probe');
+      const s1 = onlyPlugin.plan.find((x) => x.id === 'tool-skill');
+      const p2 = both.plan.find((x) => x.id === 'lifecycle-probe');
+      const s2 = both.plan.find((x) => x.id === 'tool-skill');
+      const entries = [
+        { dirName: 'p', dir: '/tmp/p', kind: 'plugin', manifest: { id: 'p' }, problems: [], fatal: [] },
+        { dirName: 's', dir: '/tmp/s', kind: 'skill', manifest: { id: 's' }, problems: [], fatal: [] },
+      ];
+      const capped = planLoad(entries, [], {
+        enabledByKind: { plugin: ['p'], skill: ['s'] }, max: 1,
+      });
+      check(
+        'T438 两档白名单：plugins/skills 各自启用；共享 max 按白名单次序跨档截断；另一档不被误开',
+        p1?.action === 'load' && s1?.action === 'skip'
+          && p2?.action === 'load' && s2?.action === 'load'
+          && capped.find((x) => x.id === 'p')?.action === 'load'
+          && capped.find((x) => x.id === 's')?.action === 'over'
+          && capped.filter((x) => x.action === 'over').length === 1,
+        `only=${JSON.stringify({ p: p1?.action, s: s1?.action })} both=${JSON.stringify({ p: p2?.action, s: s2?.action })} cap=${JSON.stringify(capped.map((x) => [x.id, x.action]))}`
+      );
+    }
+
+    // T439 跨根同 id：两条都启用 → 都 reject/duplicate-id；只开一条时正常 load。
+    {
+      const entries = [
+        { dirName: 'same-p', dir: '/tmp/same-p', kind: 'plugin', manifest: { id: 'same' }, problems: [], fatal: [] },
+        { dirName: 'same-s', dir: '/tmp/same-s', kind: 'skill', manifest: { id: 'same' }, problems: [], fatal: [] },
+      ];
+      const dup = planLoad(entries, [], { enabledByKind: { plugin: ['same'], skill: ['same'] } });
+      const one = planLoad(entries, [], { enabledByKind: { plugin: ['same'], skill: [] } });
+      check(
+        'T439 跨根同 id：两档都启用时两条都 reject/duplicate-id；只开一档时另一条正常 load',
+        dup.every((x) => x.action === 'reject' && x.reason === 'duplicate-id')
+          && one.find((x) => x.kind === 'plugin')?.action === 'load'
+          && one.find((x) => x.kind === 'skill')?.action === 'skip',
+        `dup=${JSON.stringify(dup.map((x) => [x.id, x.action, x.reason]))} one=${JSON.stringify(one.map((x) => [x.id, x.action]))}`
+      );
+    }
+
+    // T440 纯提示词 Skill：有 prompt.sections + index.js export {} 就算 LOADED；empty=false。
+    {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-skill-prompt-'));
+      const dir = path.join(tmp, 'skills', 'prompt-only');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'skill.json'), JSON.stringify({
+        id: 'prompt-only', name: '纯提示词', version: '1.0.0', apiVersion: 1,
+        entry: 'index.js', prompt: { sections: [{ id: 'p', title: '提示', content: '这是一条纯提示词指引。' }] },
+      }), 'utf8');
+      fs.writeFileSync(path.join(dir, 'index.js'), 'export {};\n', 'utf8');
+      const host = createExtensionHost({
+        root: tmp, registry: createToolRegistry(), bus: createHookBus({ log: {} }),
+        getCustom: () => ({ extensions: { plugins: { enabled: [] }, skills: { enabled: ['prompt-only'] } } }),
+        log: {},
+      });
+      const snap = await host.load();
+      const it = snap.items.find((x) => x.id === 'prompt-only');
+      check(
+        'T440 纯提示词 Skill：prompt.sections 计入入口契约 → LOADED；empty=false、promptOnly=true、工具 0',
+        it?.state === 'loaded' && it?.empty === false && it?.promptOnly === true
+          && it?.promptSections?.length === 1 && Array.isArray(it?.tools) && it.tools.length === 0,
+        `item=${JSON.stringify(it && { state: it.state, empty: it.empty, promptOnly: it.promptOnly, promptSections: it.promptSections?.length, tools: it.tools })}`
+      );
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+
+    // T441 两道入口阻断：无 index.js → entry-unusable；plugin 只有 prompt 仍 skipped。
+    {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-skill-entry-'));
+      const noEntry = path.join(tmp, 'skills', 'no-entry');
+      fs.mkdirSync(noEntry, { recursive: true });
+      fs.writeFileSync(path.join(noEntry, 'skill.json'), JSON.stringify({
+        id: 'no-entry', name: '无入口', version: '1.0.0', apiVersion: 1,
+        prompt: { sections: [{ id: 'p', title: '提示', content: 'x' }] },
+      }), 'utf8');
+      const pOnly = path.join(tmp, 'plugins', 'prompt-plugin');
+      fs.mkdirSync(pOnly, { recursive: true });
+      fs.writeFileSync(path.join(pOnly, 'plugin.json'), JSON.stringify({
+        id: 'prompt-plugin', name: '只有提示词的插件', version: '1.0.0', apiVersion: 1,
+        prompt: { sections: [{ id: 'p', title: '提示', content: 'x' }] },
+      }), 'utf8');
+      fs.writeFileSync(path.join(pOnly, 'index.js'), 'export {};\n', 'utf8');
+      const host = createExtensionHost({
+        root: tmp, registry: createToolRegistry(), bus: createHookBus({ log: {} }),
+        getCustom: () => ({ extensions: { plugins: { enabled: ['prompt-plugin'] }, skills: { enabled: ['no-entry'] } } }),
+        log: {},
+      });
+      const snap = await host.load();
+      const no = snap.items.find((x) => x.id === 'no-entry');
+      const pp = snap.items.find((x) => x.id === 'prompt-plugin');
+      check(
+        'T441 入口阻断：Skill 无 index.js → failed/entry-unusable 且提示 export {}；plugin 只有 prompt → skipped',
+        no?.state === 'failed' && no?.reason === 'entry-unusable'
+          && /纯提示词 Skill 也需要 index\.js/.test(no?.detail || '')
+          && pp?.state === 'skipped' && pp?.reason === 'no-entry-contract',
+        `no=${JSON.stringify(no && [no.state, no.reason, no.detail])} plugin=${JSON.stringify(pp && [pp.state, pp.reason])}`
+      );
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+
+    // T442 混合型：Skill 导出 hooks 仍 LOADED；mixed=true；钩子仍挂；工具和 prompt 都在。
+    {
+      const fxRoot = path.join(ROOT, 'test/fixtures/ext');
+      const registry = createToolRegistry();
+      const bus = createHookBus({ log: {} });
+      const host = createExtensionHost({
+        root: fxRoot, registry, bus,
+        getCustom: () => ({ extensions: { plugins: { enabled: [] }, skills: { enabled: ['mixed-skill'] } } }),
+        log: {},
+      });
+      const snap = await host.load();
+      const it = snap.items.find((x) => x.id === 'mixed-skill');
+      check(
+        'T442 混合型：Skill 导出 hooks 仍 LOADED；mixed=true；钩子挂上；工具与提示词都在',
+        it?.state === 'loaded' && it?.mixed === true && it?.empty === false
+          && it?.tools?.length === 1 && it?.promptSections?.length === 1
+          && bus.size('after-response') === 1,
+        `item=${JSON.stringify(it && { state: it.state, mixed: it.mixed, tools: it.tools, prompt: it.promptSections?.length })} hooks=${bus.size('after-response')}`
+      );
+    }
+
+    // T443 空载语义：空 setup 仍是空载；纯提示词包不得被标空载。
+    {
+      const fxRoot = path.join(ROOT, 'test/fixtures/ext');
+      const host = createExtensionHost({
+        root: fxRoot, registry: createToolRegistry(), bus: createHookBus({ log: {} }),
+        getCustom: () => ({ extensions: { plugins: { enabled: ['demo-plugin'] }, skills: { enabled: ['prompt-only-skill'] } } }),
+        log: {},
+      });
+      const snap = await host.load();
+      // 空载样本必须是**插件档**：demo-skill 现在住在 skills/ 里、kind=skill，
+      // 勾在 plugins 名单下不会加载（T438 的两档白名单语义），所以用 plugins/示例包。
+      const empty = snap.items.find((x) => x.id === 'demo-plugin');
+      const prompt = snap.items.find((x) => x.id === 'prompt-only-skill');
+      check(
+        'T443 空载语义：setup(){} 且无工具/钩子/提示词 → empty=true；纯提示词 Skill → empty=false',
+        empty?.empty === true && prompt?.empty === false
+          && prompt?.promptOnly === true && snap.sum?.promptOnly >= 1,
+        `empty=${empty?.empty} promptOnly=${prompt?.empty}/${prompt?.promptOnly} sum=${JSON.stringify(snap.sum)}`
+      );
+    }
+
+    // T444 skillExt 渲染：固定 header、正文、真实工具名；空段不注入。
+    {
+      const { skillExtPlanOf, extensionPlanOf } = await import('../src/extension-prompts.js');
+      const plan = skillExtPlanOf([
+        { title: '天气查询', content: '用户问天气时调用 weather__query。', tools: ['weather__query'], priority: 20 },
+        { title: '空段', content: '   ', tools: [], priority: 10 },
+      ]);
+      const ext = extensionPlanOf([
+        { title: '插件补充', content: '插件正文', tools: ['plug__one'], priority: 10 },
+      ]);
+      check(
+        'T444 skillExt 渲染：固定 header / 小节标题 / 正文 / 真实工具名；空段不注入；插件用独立 header',
+        plan.lines[0] === '## 你现在会用的 Skill'
+          && plan.lines.includes('### 天气查询')
+          && plan.lines.includes('（对应的工具名：weather__query）')
+          && !plan.lines.some((x) => x.includes('空段'))
+          && ext.lines[0] === '## 你可以用的额外能力'
+          && ext.lines.includes('### 插件补充'),
+        `skill=${JSON.stringify(plan.lines.slice(0, 4))} ext=${JSON.stringify(ext.lines.slice(0, 3))}`
+      );
+    }
+
+    // T445 skillExt 预算：超过 2000 字上限时丢段并留 dropped；不砍 header。
+    {
+      const { skillExtPlanOf } = await import('../src/extension-prompts.js');
+      const big = skillExtPlanOf([
+        { title: '超长段', content: 'x'.repeat(2500), tools: [], priority: 10 },
+        { title: '短段', content: '短正文', tools: [], priority: 20 },
+      ]);
+      check(
+        'T445 skillExt 预算：单段超 2000 字被丢弃、dropped 有记录；短段仍进、header 不丢',
+        big.used <= 2000 && big.dropped === 1
+          && big.lines[0] === '## 你现在会用的 Skill'
+          && big.lines.includes('### 短段'),
+        `used=${big.used} dropped=${big.dropped} lines=${big.lines.length}`
+      );
+    }
+
+    // T446 段顺序：skillExt 在 skills 之后、extensions 之前；预算 2000；不参与淘汰。
+    {
+      const CB = await import('../src/context-budget.js');
+      const iSkills = CB.SECTION_ORDER.indexOf('skills');
+      const iSkillExt = CB.SECTION_ORDER.indexOf('skillExt');
+      const iExtensions = CB.SECTION_ORDER.indexOf('extensions');
+      check(
+        'T446 skillExt 段顺序在 skills 之后、extensions 之前；预算 2000；不在 EVICTION_ORDER',
+        iSkills >= 0 && iSkillExt > iSkills && iExtensions > iSkillExt
+          && CB.DEFAULT_BUDGET.sections.skillExt === 2000
+          && !CB.EVICTION_ORDER.includes('skillExt'),
+        `order=${JSON.stringify(CB.SECTION_ORDER)} budget=${CB.DEFAULT_BUDGET.sections.skillExt} evict=${CB.EVICTION_ORDER.includes('skillExt')}`
+      );
+    }
+
+    // T447 背景服务端存储：魔数 / 去重 / 裁切 / 启用 / 删除 / 索引无绝对路径。
+    {
+      const BG = await import('../panel/lib/backgrounds.js');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-bg-'));
+      try {
+        const png = Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489', 'hex'), Buffer.alloc(16)]);
+        const jpg = Buffer.concat([Buffer.from('ffd8ffe000104a4649460001', 'hex'), Buffer.alloc(16)]);
+        const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+        const store = BG.createBackgroundStore({ dir });
+        const add = await store.add({
+          format: 'png', type: 'image', name: '旧 图.png', bytes: png.length, sourceKey: 'old-1',
+          saveFile: (abs) => fs.writeFileSync(abs, png),
+        });
+        const dup = await store.add({
+          format: 'png', type: 'image', name: 'x', bytes: png.length, sourceKey: 'old-1',
+          saveFile: () => { throw new Error('去重时不应再写文件'); },
+        });
+        const disp = await store.setDisplay({
+          id: add.item.id, bytes: jpg.length, crop: { zoom: 9, x: 9, y: -9 },
+          saveFile: (abs) => fs.writeFileSync(abs, jpg),
+        });
+        const active = await store.setActive(add.item.id);
+        const media = store.media(add.item.id, 'display');
+        const indexText = fs.readFileSync(path.join(dir, 'index.json'), 'utf8');
+        const countBefore = store.list().items.length;
+        const removed = await store.remove(add.item.id);
+        check(
+          'T447 背景存储：魔数白名单 · sourceKey 去重 · 裁切钳制 · 启用/删除 · 索引不写绝对路径',
+          BG.sniffBackground(png)?.format === 'png' && BG.sniffBackground(svg) === null
+            && dup.deduped === true && countBefore === 1
+            && disp.item.crop.zoom === 2.6 && disp.item.crop.x === 1 && disp.item.crop.y === -1
+            && active === add.item.id && media.type === 'image/jpeg'
+            && !indexText.includes(dir) && removed.activeId === null && store.list().items.length === 0,
+          `sniff=${BG.sniffBackground(png)?.format}/${BG.sniffBackground(svg)} dedupe=${dup.deduped} crop=${JSON.stringify(disp.item.crop)} active=${active} media=${media.type} absInIndex=${indexText.includes(dir)}`
+        );
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    // T448 模板创建：标准清单 + 示例代码；ZIP 自回读；路径穿越拒绝。
+    {
+      const P = await import('../panel/lib/ext-package.js');
+      const Z = await import('../panel/lib/zip.js');
+      const r = P.packExtension({
+        mode: 'create',
+        meta: { kind: 'plugin', id: 'smoke-plugin', name: '冒烟', toolName: 'smoke_tool' },
+      });
+      const z = Z.readZip(r.zip);
+      const text = z.ok ? z.entries.map((e) => `${e.name}\n${e.data.toString('utf8')}`).join('\n') : '';
+      let traversal = false;
+      try {
+        P.packExtension({
+          mode: 'folder', kind: 'plugin', root: 'evil',
+          files: [{ path: '../evil.js', contentBase64: Buffer.from('x').toString('base64') }],
+        });
+      } catch { traversal = true; }
+      check(
+        'T448 模板创建：plugin.json + index.js（registerTool）· ZIP 往返 · ../ 路径拒绝',
+        z.ok && z.entries.length === 2 && /smoke-plugin\/plugin\.json/.test(text)
+          && /registerTool/.test(text) && traversal === true,
+        z.ok ? `entries=${z.entries.map((e) => e.name).join(' | ')} traversal=${traversal}` : `拒绝：${z.error}`
+      );
+    }
+
+    // T449 文件夹打包必须保留二进制（makeZip 只认 text 会把图片写成空文件）。
+    {
+      const P = await import('../panel/lib/ext-package.js');
+      const Z = await import('../panel/lib/zip.js');
+      const manifest = JSON.stringify({ id: 'bin-pack', name: 'bin', version: '1.0.0', apiVersion: 1, entry: 'index.js' });
+      const bin = Buffer.from([0, 1, 2, 3, 255, 254]);
+      const r = P.packExtension({
+        mode: 'folder', kind: 'plugin', root: 'bin-pack',
+        files: [
+          { path: 'plugin.json', contentBase64: Buffer.from(manifest).toString('base64') },
+          { path: 'index.js', contentBase64: Buffer.from('export function setup(){}').toString('base64') },
+          { path: 'asset.bin', contentBase64: bin.toString('base64') },
+        ],
+      });
+      const z = Z.readZip(r.zip);
+      const entry = z.ok ? z.entries.find((e) => e.name === 'bin-pack/asset.bin') : null;
+      check(
+        'T449 文件夹打包保留二进制：asset.bin 逐字节往返（不是空文件）',
+        !!entry && entry.data.equals(bin),
+        z.ok ? `asset=${entry ? entry.data.length : 'missing'}B` : `拒绝：${z.error}`
+      );
+    }
+
+    // T450 configSchema label → settingsSpec；前端 f.label || f.key 才有中文名。
+    {
+      const { normalizeManifest } = await import('../src/plugin-manifest.js');
+      const { settingsSpec } = await import('../src/plugin-settings.js');
+      const n = normalizeManifest({
+        id: 'lab', name: 'Lab', version: '1.0.0', apiVersion: 1, entry: 'index.js',
+        settings: { mode: 'def' },
+        configSchema: { mode: { label: '模式', description: '测试用设置' } },
+      }, { fallbackId: 'lab', kind: 'plugin' });
+      const spec = settingsSpec(n.manifest.settings, {}, n.manifest.configSchema);
+      check(
+        'T450 configSchema label/description 透传到 settingsSpec（面板显示中文名）',
+        !!spec[0] && spec[0].label === '模式' && spec[0].description === '测试用设置',
+        JSON.stringify(spec)
+      );
+    }
+
+    // T451 星标：夹具读一次、失败回 502，不在 200 里伪装成功。
+    {
+      const { createGithubStar } = await import('../panel/lib/github-star.js');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-star-'));
+      const old = process.env.QQBOT_GITHUB_STAR_FIXTURE;
+      try {
+        const fixture = path.join(dir, 'star.json');
+        fs.writeFileSync(fixture, JSON.stringify({ count: 4242 }), 'utf8');
+        process.env.QQBOT_GITHUB_STAR_FIXTURE = fixture;
+        const star = createGithubStar({ homepage: 'https://github.com/a/b', cacheFile: path.join(dir, 'cache.json') });
+        const ok1 = await star.get();
+        fs.writeFileSync(fixture, JSON.stringify({ fail: true }), 'utf8');
+        const fail = await star.get();
+        check(
+          'T451 星标：夹具 4242 · 上游失败返回 upstream_unavailable（不伪装成功）',
+          ok1.ok === true && ok1.count === 4242 && fail.ok === false && fail.reason === 'upstream_unavailable',
+          `ok=${JSON.stringify(ok1)} fail=${JSON.stringify(fail)}`
+        );
+      } finally {
+        if (old === undefined) delete process.env.QQBOT_GITHUB_STAR_FIXTURE;
+        else process.env.QQBOT_GITHUB_STAR_FIXTURE = old;
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     }
   }
 

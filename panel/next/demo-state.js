@@ -56,10 +56,10 @@ export const DEMO = {
     version: 2, persona,
     enhance: { values: '', decide: '', stress: '', emotion: '', habits: '', speech: '',
       lines: '', secrets: '', limits: '', relation: '', growth: '', meters: '' },
-    personaResetOnChange: true, playRules: true,
+    personaResetOnChange: true, playRules: true, playRuleItems: null, moodOn: true,
     skills: [{ id: 'k1', kind: 'pack', name: '（演示）梗百科', enabled: true, scope: { type: 'global', id: '' },
       triggers: ['梗'], background: '示例背景', examples: [] }],
-    plugins: { enabled: ['bot-emotion'], settings: {} },
+    plugins: { enabled: [], settings: {} },
     replyStyle: { length: 'normal', mentionAt: false, cooldownSec: 0, multiMessage: true },
     trigger: {
       keywords: ['小鱼', '肥鱼'],
@@ -168,17 +168,9 @@ export const DEMO = {
   modelLabels: { 'glm-4.6v': 'GLM-4.6V', 'glm-4.5-air': 'GLM-4.5-Air' },
   extensions: {
     ok: true,
-    sum: { total: 13, load: 5, skip: 8, reject: 0, byReason: {}, byKind: { plugin: 5, skill: 8 } },
-    roots: [{ name: 'plugins', missing: false, count: 5 }, { name: 'skills', missing: false, count: 8 }],
+    sum: { total: 12, load: 4, skip: 8, reject: 0, byReason: {}, byKind: { plugin: 4, skill: 8 } },
+    roots: [{ name: 'plugins', missing: false, count: 4 }, { name: 'skills', missing: false, count: 8 }],
     items: [
-      { id: 'bot-emotion', dirName: '本体情绪', name: '本体情绪', version: '1.0.0', kind: 'plugin',
-        action: 'load', reason: 'enabled', detail: '已启用', problems: [], netSelf: false,
-        settings: { injectPrompt: true, autoUpdate: true, injectPriority: 25 },
-        settingsSpec: [
-          { key: 'injectPrompt', kind: 'bool', sensitive: false, def: true, value: true },
-          { key: 'autoUpdate', kind: 'bool', sensitive: false, def: true, value: true },
-          { key: 'injectPriority', kind: 'number', sensitive: false, def: 25, value: 25 },
-        ] },
       { id: 'echo-guard', dirName: '复读拦截', name: '复读拦截', version: '1.0.0', kind: 'plugin',
         action: 'skip', reason: 'not-enabled', detail: '未在 config 的白名单里启用', problems: [], netSelf: false,
         settings: { windowMin: 20, minLen: 6, maxPerRun: 6 },

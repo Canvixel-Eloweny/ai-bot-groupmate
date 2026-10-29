@@ -64,6 +64,7 @@ let tray = null;
 let desktop = null;
 let isQuitting = false;
 let pendingShow = false;
+let windowReady = false;
 let saveTimer = null;
 let trayDegraded = false;
 let trayFailed = false;
@@ -788,8 +789,12 @@ function startTrayHealthGuard() {
   trayHealthTimer.unref?.();
 }
 
-function showWindow() {
+function showWindow(force = false) {
   if (!win || win.isDestroyed()) { pendingShow = true; return; }
+  /* 页面还没首绘就 show 会先露底色（用户看到的就是"白窗/空窗闪一下"）。
+     二实例、托盘、通知点击都可能早于 ready-to-show；先排队，等首绘后再显示。
+     4 秒兜底是唯一例外（force）：底色已与开屏同色，宁可出窗口也不留"点了没反应"。 */
+  if (!windowReady && !force) { pendingShow = true; return; }
   trayHidden = false;
   if (win.isMinimized()) win.restore();
   win.show();
@@ -893,21 +898,18 @@ function createWindow() {
     saved || desktop.windowBounds.defaultBounds(displays[0] ? displays[0].workArea : null),
     displays,
   );
-  const isWin = process.platform === 'win32';
   const dark = nativeTheme.shouldUseDarkColors;
-  const overlay = dark
-    ? { color: '#0b1226', symbolColor: '#e8eefc' }
-    : { color: '#f5f7fc', symbolColor: '#1b2a4a' };
+  windowReady = false;
   win = new BrowserWindow({
     ...bounds,
     minWidth: desktop.windowBounds.MIN_WIDTH,
     minHeight: desktop.windowBounds.MIN_HEIGHT,
     show: false,
     title: 'Estrella Bot',
-    backgroundColor: dark ? '#0b1226' : '#f5f7fc',
-    ...(isWin
-      ? { titleBarStyle: 'hidden', titleBarOverlay: { height: 40, ...overlay } }
-      : { titleBarStyle: 'hiddenInset' }),
+    backgroundColor: dark ? '#050812' : '#dfeeff',
+    /* 原生窗口框：Windows 用系统标题栏（最小化/最大化/关闭都在自己的条里），macOS 用标准标题栏。
+       不再用 titleBarStyle:'hidden' + titleBarOverlay —— 那会把系统按钮叠进网页顶栏。 */
+    frame: true,
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
@@ -915,6 +917,9 @@ function createWindow() {
       webviewTag: false,
       webSecurity: true,
       allowRunningInsecureContent: false,
+      /* 隐藏窗口也要按真实时钟跑开屏：否则 rAF/定时器被节流，窗口一显示就是中间态。 */
+      backgroundThrottling: false,
+      paintWhenInitiallyHidden: true,
       devTools: !INSTALL_ROOT,
       preload: path.join(__dirname, 'preload.js'),
     },
@@ -925,16 +930,29 @@ function createWindow() {
   })))}`);
   // 隐藏窗口在某些会话里不触发首绘 ⇒ ready-to-show 永远不来（真机安装版实测）。
   // 这不是“再点一次就好”的小毛病：第一次双击必须出窗口。4 秒兜底只在应显示时补。
-  const showFallback = setTimeout(() => {
+  const showFallback = setTimeout(async () => {
     if (!win || win.isDestroyed() || isQuitting) return;
     const decision = desktop.shellState.decideStartVisibility({ hidden: HIDDEN, trayUsable: trayUsableNow() });
-    if ((decision === 'show' || pendingShow) && !win.isVisible()) {
-      log('fallback show (ready-to-show timeout)');
-      showWindow();
-    }
+    if (!((decision === 'show' || pendingShow) && !win.isVisible())) return;
+    log('fallback show (ready-to-show timeout)');
+    /* 先让渲染进程产出一帧再 show：VM 首装/杀毒扫描时 ready-to-show 可能晚到十几秒，
+       直接 show 会先露出 backgroundColor（表现为“空窗/白窗闪一下”）。
+       最多等 800ms，渲染进程真卡死时仍要出窗口。 */
+    try {
+      await Promise.race([
+        win.webContents.executeJavaScript(
+          'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))',
+          true,
+        ),
+        new Promise((r) => setTimeout(r, 800)),
+      ]);
+    } catch { /* 页面还没就绪：仍然尝试 show，至少不是永久无窗口 */ }
+    if (!win || win.isDestroyed() || isQuitting) return;
+    if ((decision === 'show' || pendingShow) && !win.isVisible()) showWindow(true);
   }, 4000);
   win.once('ready-to-show', () => {
     clearTimeout(showFallback);
+    windowReady = true;
     if (saved && saved.maximized) win.maximize();
     const decision = desktop.shellState.decideStartVisibility({ hidden: HIDDEN, trayUsable: trayUsableNow() });
     if (decision === 'hidden') trayHidden = true;
@@ -946,6 +964,11 @@ function createWindow() {
         if (win && !win.isDestroyed() && !win.isVisible()) showWindow();
       }, 600);
     }
+    /* 开屏期需要满速 rAF；窗口稳定显示后恢复后台节流，避免常驻托盘时空转。 */
+    setTimeout(() => {
+      if (!win || win.isDestroyed()) return;
+      try { win.webContents.setBackgroundThrottling(true); } catch { /* 老版本无此 API */ }
+    }, 12000);
     log(`start decision=${decision} visible=${win.isVisible()}`);
     if (SMOKE_NOTIFY) {
       setTimeout(() => {
@@ -1038,7 +1061,7 @@ function createWindow() {
     win.minimize();
     try { win.setSkipTaskbar(false); } catch { /* 老版本无此 API */ }
   });
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => { win = null; windowReady = false; });
   for (const ev of ['resize', 'move', 'maximize', 'unmaximize']) win.on(ev, scheduleSave);
 
   screen.on('display-removed', reflowWindow);
@@ -1165,6 +1188,9 @@ function main() {
     session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
       callback(permission === 'clipboard-sanitized-write');
     });
+    /* Windows/Linux：去掉 Electron 默认 File/Edit/View/Window 菜单，只留系统标题栏；
+       macOS 保留标准应用菜单（系统惯例）。 */
+    if (process.platform !== 'darwin') Menu.setApplicationMenu(null);
     createWindow();
     createTray();
     startTrayHealthGuard();

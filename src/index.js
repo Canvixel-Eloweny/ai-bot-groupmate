@@ -57,6 +57,7 @@ import { observeAndStore, flushProfiles } from './style-profile.js';
 // 用量账本：记录（一直有）+ **判档**（D8 新增，见文件内 `usageGateOf`）。
 // 判据（纯函数）住在 src/usage.js，这里只做**一处接线**与一次入参传递。
 import { recordUsage, usageGateOf, USAGE_SOURCES } from './usage.js';
+import { recordSentRound } from './sent-stats.js';
 // D31-1 · 睡眠（判据全在 `sleep.js`，零依赖叶子、`now` 入参）：计划 → 状态 → 迁移留痕。
 // D31-2 加了第二条叫醒路：判据（连发窗口 / 叫醒词 / 身份 / 收尾）也全在那个叶子里，
 // 这里只做**接线** —— 唯一门禁点之前一次"要不要叫醒"、唯一判定点里一次"到点收尾"。
@@ -139,6 +140,12 @@ import { createExtensionHost, extensionRoots, HOST_STATE } from './plugin-host.j
 import { createToolRegistry } from './tool-registry.js';
 import { createToolLoop } from './tool-loop.js';
 import { createHookBus } from './hook-bus.js';
+// 本体情绪（2026-10-25）：原 `plugins/本体情绪` 已收回项目本体。
+// 这里只做三个真实时刻的接线；状态形状、增减与提示词文本全在 emotion.js。
+import {
+  ensureEmotionState, readEmotionState, saveEmotionState,
+  emotionOnIncoming, emotionOnResponse,
+} from './emotion.js';
 // 钩子载荷的唯一投影点（2026-10-23）。三个钩子点共用一份，避免字段各拼一套而漂。
 import { incomingMessagePayload, contextPayload, llmMessagesPayload } from './hook-payload.js';
 import { createSendGuard } from './send-guard.js';
@@ -229,10 +236,10 @@ const REMINDER_FILE = process.env.QQBOT_REMINDER_FILE
 // ── D31-1 · 睡眠的运行时状态（**不进 config.json**）────────────────────────
 //
 // 为什么单独一个文件、而不是并进 `data/bot-state.json`：
-//   那份文件是**扩展包**在读写（`plugins/本体情绪/lib/state.js`，自己 tmp+rename，
-//   不走 `writeJsonAtomic`），而 `plugins/` 在 `.gitignore` 里（无版本、无回滚）。
-//   `src/` 再往同一个文件里插一段 = **两个写入方互相覆盖**（D11a 的教训）。
-//   所以 `src/` 自己管一份：谁写、谁读、形状由自己定，边界清楚。
+//   情绪状态（`src/emotion.js`）是**跨群共享的一份数值**，面板也在读；
+//   睡眠状态是**按计划重算的运行态**，两者生命周期不同。合进同一份会让
+//   "睡一觉"重写整份情绪（反过来也是），还把两个判据绑在一起。
+//   所以 `src/` 各管一份：谁写、谁读、形状由自己定，边界清楚。
 //
 // 路径由 `DATA_DIR` 推出（**目录级三件套已齐**：`.gitignore` 的 `/data/`、
 // `test/sandbox.sh --exclude '/data/'`、`QQBOT_DATA_DIR` —— 见 `src/config.js`）。
@@ -395,12 +402,13 @@ let onebotHealthSnap = null;
  *    写裸 id 等于让它去调一个不存在的工具。
  * ⚠️ 排序按 `priority` 升序、同优先级按收集顺序 —— 顺序稳定，提示词前缀才可复现（缓存才命得中）。
  */
-function extensionSectionsOf() {
+function extensionSectionsOf(kind = null) {
   const items = extSnapshot?.items;
   if (!Array.isArray(items)) return [];
   const out = [];
   for (const it of items) {
     if (!it || it.state !== HOST_STATE.LOADED) continue;
+    if (kind && (it.kind === 'skill' ? 'skill' : 'plugin') !== kind) continue;
     const tools = Array.isArray(it.tools) ? it.tools : [];
     for (const s of (Array.isArray(it.promptSections) ? it.promptSections : [])) {
       out.push({ ...s, tools });
@@ -463,6 +471,32 @@ function armRuntimeSecrets(cfg) {
   ]);
 }
 
+/**
+ * 本体情绪的两次写盘。失败只记日志，绝不阻断聊天 ——
+ * 情绪是语气底色，不是主链路的前置条件。
+ */
+function noteEmotionIncoming({ text, atMe, chatKey }) {
+  try {
+    const cur = readEmotionState() || ensureEmotionState();
+    const r = emotionOnIncoming(cur, { text, atMe, chatKey, now: Date.now() });
+    if (r.changed) saveEmotionState(r.state);
+  } catch (e) {
+    log.warn(`情绪状态更新失败（入站）：${e?.message || e}`);
+  }
+}
+
+function noteEmotionOutcome({ sentCount, error, toolErrors, aborted, chatKey }) {
+  try {
+    const cur = readEmotionState() || ensureEmotionState();
+    const r = emotionOnResponse(cur, {
+      sentCount, error, toolErrors, aborted, chatKey, now: Date.now(),
+    });
+    if (r.changed) saveEmotionState(r.state);
+  } catch (e) {
+    log.warn(`情绪状态更新失败（出站）：${e?.message || e}`);
+  }
+}
+
 async function main() {
   let cfg = loadConfig(process.env.QQBOT_CONFIG);
   armRuntimeSecrets(cfg);
@@ -474,6 +508,13 @@ async function main() {
     ensureUserDirs();
   } catch (e) {
     log.warn(`用户数据目录创建失败（落盘可能降级）：${e?.message || e}`);
+  }
+  // 心情值页不再依赖任何插件：启动时把中性基线写进 data/bot-state.json。
+  // 已有状态不会被覆盖（ensureEmotionState 只在文件缺失时创建）。
+  try {
+    ensureEmotionState();
+  } catch (e) {
+    log.warn(`情绪状态初始化失败（心情值页可能显示未建立）：${e?.message || e}`);
   }
 
   // ── D19 · 先占锁，再干别的 ─────────────────────────────────────────────
@@ -541,6 +582,16 @@ async function main() {
   const brain = new Brain(cfg, store);
   const llm = new LlmClient(cfg.llm);
   const bot = new OneBotClient(cfg.onebot);
+  // 每条真正发出去的消息记一笔（面板「今日发言」的唯一来源）。
+  // 挂在这里而不是主回复循环：主动出站、工具发图、插件 sender 也都走 sendMsg。
+  {
+    const sendMsgRaw = bot.sendMsg.bind(bot);
+    bot.sendMsg = async (scene, id, segments) => {
+      const result = await sendMsgRaw(scene, id, segments);
+      recordSentRound({ n: 1, chatKey: `${scene}:${id}` });
+      return result;
+    };
+  }
   // ⚠️ 驱动只包 `call` 与后端表，不接管连接/心跳 —— 那两件事仍归 OneBotClient，
   // 面板读到的 healthSnapshot 也仍来自同一个客户端（不产生第二个真相源）。
   const onebot = createOneBotDriver({ client: bot, backend: cfg.onebot.backend });
@@ -835,7 +886,10 @@ async function main() {
    */
   // 单条钩子超时来自配置（2026-10-23）：hookBus 只在启动时建一次，
   // 改 config 后需要重启机器人才会生效（面板 hint 已写明）。
-  const hookBus = createHookBus({ log, timeoutMs: cfg.custom?.plugins?.hookTimeoutMs });
+  const hookBus = createHookBus({
+    log,
+    timeoutMs: cfg.custom?.extensions?.hookTimeoutMs ?? cfg.custom?.plugins?.hookTimeoutMs,
+  });
   const sendGuard = createSendGuard({ bus: hookBus, log });
 
   /**
@@ -1732,12 +1786,20 @@ async function main() {
 
     // ── 扩展包钩子：before-context（第 47 轮 B12e-3）──
     // 与参考实现 orchestrator.js:763 同名同位（触发消息到手、上下文未建）。
-    // 「本体情绪」靠它读入站文本的情绪暗示。空钩点时 emit 直接短路，零开销。
+    // 扩展包可借它读入站上下文；空钩点时 emit 直接短路，零开销。
     // 载荷补 `chatKey` 与发送者身份（2026-10-23）：插件要按会话 / 按 QQ 记账，
     // 只给一句 text 时它只能拿显示名当身份（改名即失忆）。纯新增字段，老插件不受影响。
     await hookBus.emit('before-context', contextPayload({
       chatKey: session.key, evt, parsed, sender, now: Date.now(),
     }));
+
+    // 本体情绪（项目内建）：在拼提示词之前先吃进这条消息的情绪暗示，
+    // 这样本轮系统提示词里的「此刻」就是刚被夸/被怼之后的状态。
+    noteEmotionIncoming({
+      text: parsed?.text || '',
+      atMe: decision.kind === 'private' || decision.kind === 'named',
+      chatKey: session.key,
+    });
 
     // 用 WithMeta 入口：C-BUDGET 砍掉了什么必须落进 trace，否则"它怎么突然忘了"
     // 无从排查 —— 静默失效的定义就是不报错，唯一解法是把"丢了什么"变成可查数据。
@@ -1771,12 +1833,14 @@ async function main() {
       // 扩展包指引（2026-10-15）：由**已加载**的包声明（清单 prompt.sections）收集而来。
       // 与 tier / sleep / catchUp 同一条纪律 —— 每轮才变的东西由调用方注入，
       // brain 不在那一层读全局快照。没有扩展包时是空数组 ⇒ 提示词逐字不变。
-      extensionSections: extensionSectionsOf(),
+      // 2026-10-28：按 kind 分开收集；Skill 进 skillExt，Plugin 留 extensions。
+      extensionSections: extensionSectionsOf('plugin'),
+      skillSections: extensionSectionsOf('skill'),
     });
     const messages = built.messages;
 
     // ── 扩展包钩子：before-llm-messages（第 47 轮 B12e-3，orchestrator.js:857）──
-    // 钩子可以直接改 messages（「本体情绪」往首条 system 追加状态行）。
+    // 扩展包钩子可以直接改 messages（往首条 system 追加自己的段）。
     // 之后的 trace 记的是**改完之后**的 prompt —— 注入了什么如实可见。
     // `messages` 必须**原引用**交给钩子（它们要能原地改），`chatKey` 同样纯新增。
     await hookBus.emit('before-llm-messages', llmMessagesPayload({ messages, chatKey: session.key }));
@@ -1979,7 +2043,7 @@ async function main() {
       // ── D6：中止不是失败，必须与"模型调用失败"分开走 ──────────────────
       // 三种后果都不一样，混在一起会同时错三处：
       //   ① 日志：报「模型调用失败」会把人引去查服务商，而真相是用户自己点了停止；
-      //   ② 副作用：`after-response` 的 error 会让「本体情绪」降精力 ——
+      //   ② 副作用：`after-response` 的 error 会让情绪结算降精力 ——
       //      人点个停止就掉精力，那是拿用户的耐心换一个 bug；
       //   ③ 账面：trace 里必须留下 `outcome: 'aborted'`，否则事后分不清
       //      "它答不上来" 与 "人让它别说"。
@@ -1995,14 +2059,19 @@ async function main() {
           response: '',
           session: { chatKey: session.key, sent: [], aborted: true, toolResults: [] },
         });
+        // 用户点停止不是失败：不动情绪（由 emotionOnResponse 的 aborted 分支兜住）。
+        noteEmotionOutcome({ sentCount: 0, error: '', toolErrors: 0, aborted: true, chatKey: session.key });
         return;
       }
       log.error(`模型调用失败: ${chatErr.message}`);
-      // after-response 在**失败路径**也要发（第 47 轮 B12e-3）：「本体情绪」
-      // 靠失败事件降精力，缺了它模型报错时情绪永远停在原地。
+      // after-response 在**失败路径**也要发（第 47 轮 B12e-3）：
+      // 失败事件必须让状态跟着沉一下，否则模型报错时情绪永远停在原地。
       await hookBus.emit('after-response', {
         response: '',
         session: { chatKey: session.key, sent: [], error: chatErr.message, toolResults: [] },
+      });
+      noteEmotionOutcome({
+        sentCount: 0, error: chatErr.message, toolErrors: 0, aborted: false, chatKey: session.key,
       });
       return;
     }
@@ -2216,7 +2285,7 @@ async function main() {
     } else log.info(`这一轮没有发出任何消息（发送闸全拦 ${guardBlocked.length} 条）(${session.key})`);
 
     // ── 扩展包钩子：after-response（第 47 轮 B12e-3，orchestrator.js:997）──
-    // 「本体情绪」按本轮结果更新状态。sent 只含**真的发出**的文本（被发送闸
+    // 扩展包 / 情绪结算按本轮结果更新状态。sent 只含**真的发出**的文本（被发送闸
     // 拦下的不在内）——与记忆里的口径一致；toolResults 来自工具回合的逐调用记录。
     await hookBus.emit('after-response', {
       response: String(reply ?? ''),
@@ -2226,6 +2295,15 @@ async function main() {
         error: '',
         toolResults: runToolResults,
       },
+    });
+
+    // 本体情绪：按本轮**真的发出去**的条数微调；被发送闸拦下的不算。
+    noteEmotionOutcome({
+      sentCount: sentTexts.length,
+      error: '',
+      toolErrors: (runToolResults || []).filter((r) => r && r.isError).length,
+      aborted: false,
+      chatKey: session.key,
     });
 
     // 「自我记忆 → 自动记录」：让它判断刚才这段有没有值得长期记住的事。

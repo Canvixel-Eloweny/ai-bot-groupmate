@@ -355,13 +355,16 @@ estrella-bot/
   config.example.json          # 配置模板（scripts/make-config-example.mjs 从真实配置生成并脱敏）
   docker-compose.yml           # NapCat 容器
   persona/qq-chat.md           # 人格设定
-  plugins/                     # 扩展包 · 确定性型（提供能力 / 钩子）—— 默认不随仓附带
-  skills/                      # 扩展包 · LLM 型（注册工具）—— 默认不随仓附带
+  plugins/                     # 扩展包 · 插件型（确定性能力 / 钩子）—— 默认不随仓附带
+  skills/                      # 扩展包 · Skill 型（工具 + 可选 prompt.sections）—— 默认不随仓附带
                                #   （原先自带的 13 个包已于 2026-10-17 全部删除；宿主仍支持放入新包）
                                #   ⚠️ 上面两个目录里是**代码**；config.json 里的"技能"是**数据**（提示词注入），
                                #     两者是两回事：本目录的 src/skills.js 管后者。
+                               #   两型共用同一个宿主 / 加载器 / 工具表；kind 只决定默认语义。
+                               #     纯提示词 Skill 也要 index.js（内容可写 export {}），详见 docs/SKILLS.md。
                                #   宿主会扫描 / 校验 / 报告，并在白名单内**真的加载执行**
-                               #     （白名单 = config.json 的 custom.plugins.enabled，改了要重启）。
+                               #     （白名单 = config.json 的 custom.extensions.plugins.enabled /
+                               #      custom.extensions.skills.enabled；旧 custom.plugins 会被派生，改了要重启）。
                                #   ⚠️ 这两个目录里**你自己新增**的包不入库（逐条点名，见 .gitignore）——
                                #     本仓自带的那 13 个是入库的，第三方代码请别直接塞进来。
   panel/                       # 控制台（浏览器面板 + 本地服务）
@@ -468,9 +471,10 @@ estrella-bot/
   （宁可失忆，也不要接上一个早就结束的话题）。
 - 单进程单实例，没有做多账号。
 - 面板是「每次请求读盘」零构建形态；改 `server.js` 后必须重启面板进程才生效（`POST /api/panel/restart` 幂等）。
-- **插件已能执行（B12e 起），但"目录里有"与"会生效"仍是分开的两件事**：
+- **插件与 Skill 已能执行（B12e 起），但"目录里有"与"会生效"仍是分开的两件事**：
   `plugins/` 与 `skills/` 会被扫描、清单会被校验、面板上会列出来，
-  **只有在白名单里（`config.json` 的 `custom.plugins.enabled`）才会真的加载并执行**。
+  **只有在白名单里（`config.json` 的 `custom.extensions.plugins.enabled` / `skills.enabled`）才会真的加载并执行**。
+  两型共用一套宿主与工具表；Skill 额外接受 `prompt.sections`（纯提示词包也要 `index.js`）。
 
 ## 11. 路线图
 
@@ -502,7 +506,7 @@ estrella-bot/
 ⚠️ 一条**改代码之前必须知道**的：本项目的门禁是**四层**（`check-wb` 静态契约、
 `smoke` 行为回归、沙箱里的 `presets` 与面板自检），而且**每一处修复都要配一条"只打它那一条"的
 变异测试**（见 [`test/mutations/README.md`](../test/mutations/README.md)）。
-只跑 `npm test` 是不够的 —— 完整命令与"为什么这么设计"都在 `CONTRIBUTING.md`。
+只跑 `npm test` 是不够的 —— 完整命令与"为什么这么设计"都在 `.github/CONTRIBUTING.md`。
 
 （本节 2026-10-05 补：此前仓库里已经有这五份治理文件，而 README **一个都没引用** ——
 从 README 进来的外部贡献者根本看不到它们。这是开源前审查的 M-01。）
@@ -545,5 +549,7 @@ estrella-bot/
 
 `plugins/` 与 `skills/` **默认不随仓附带扩展包**：原先自带的 13 个（确定性型 5 个 + LLM 型 8 个）
 已于 2026-10-17 全部删除。宿主仍支持你自己往这两个目录里放包；第三方包**不入库**（见 `.gitignore` 的逐条点名）。
-启用哪些由 `config.json` 的 `custom.plugins.enabled` 决定 —— ⚠️ **不支持热插拔**，改了白名单必须重启机器人才生效（面板会当场提示）。
+启用哪些由 `config.json` 的 `custom.extensions.plugins.enabled` / `custom.extensions.skills.enabled` 决定
+（旧配置的 `custom.plugins` 会被派生成两套同样的名单）—— ⚠️ **不支持热插拔**，改了白名单必须重启机器人才生效（面板会当场提示）。
+两型的差别与写法见 [`docs/SKILLS.md`](./SKILLS.md)。
 不随本仓库分发的还有：`napcat/`（协议端）与扩展包运行期写出的数据目录，原因见 `docs/legal/THIRD-PARTY-NOTICES.md` §3。

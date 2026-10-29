@@ -22,10 +22,10 @@ export default [
     note: '删掉二级滑块「目标未变就 return」的早退 —— §131① 必须变红'
       + '（每次重画都重启弹簧，重复重启会数值发散，横线飞出后被裁掉）。预期 BLOCKED',
     file: APP,
-    anchor: /const x = sel\.offsetLeft \+ NAV2_INSET - nav\.scrollLeft;\n  const w = Math\.max\(0, sel\.offsetWidth - NAV2_INSET \* 2\);\n  \/\*[\s\S]{0,600}?\*\/\n  if \(!instant && ind\.inited\n      && Math\.abs\(ind\.tx - x\) < 0\.5 && Math\.abs\(ind\.tw - w\) < 0\.5\) return;/,
+    anchor: /const x = sel\.offsetLeft \+ nav\.offsetLeft \+ NAV2_INSET - nav\.scrollLeft;\n  const w = Math\.max\(0, sel\.offsetWidth - NAV2_INSET \* 2\);\n  \/\*[\s\S]{0,600}?\*\/\n  if \(!instant && ind\.inited\n      && Math\.abs\(ind\.tx - x\) < 0\.5 && Math\.abs\(ind\.tw - w\) < 0\.5\) return;/,
     count: 1,
     apply: (s) => s.replace(
-      /(const x = sel\.offsetLeft \+ NAV2_INSET - nav\.scrollLeft;[\s\S]{0,600}?\*\/\n)  if \(!instant && ind\.inited\n      && Math\.abs\(ind\.tx - x\) < 0\.5 && Math\.abs\(ind\.tw - w\) < 0\.5\) return;\n/,
+      /(const x = sel\.offsetLeft \+ nav\.offsetLeft \+ NAV2_INSET - nav\.scrollLeft;[\s\S]{0,600}?\*\/\n)  if \(!instant && ind\.inited\n      && Math\.abs\(ind\.tx - x\) < 0\.5 && Math\.abs\(ind\.tw - w\) < 0\.5\) return;\n/,
       '$1'),
     layer: 'check-wb',
     expect: 'BLOCKED',
@@ -44,12 +44,12 @@ export default [
   {
     id: 'Q3',
     note: '把二级选中胶囊改回旧的 bottom:6px / height:3px 下划线 —— §131④ 必须变红'
-      + '（导航改版后二级选中是 24px 淡色胶囊；退回 3px 下划线会与窄条/玻璃层级脱节）。预期 BLOCKED',
+      + '（导航最终版二级选中是 28px 蓝粉胶囊；退回 3px 下划线会与窄条/玻璃层级脱节）。预期 BLOCKED',
     file: CSS,
-    anchor: /\.nav2-ind \{\n  position: absolute; left: 0; top: 3px; z-index: 0;\n  height: 24px; width: 0;/,
+    anchor: /\.nav2-ind \{\n  position: absolute; left: 0; top: 3px; z-index: 1;\n  height: 28px; width: 0;/,
     count: 1,
     apply: (s) => s.replace(
-      '.nav2-ind {\n  position: absolute; left: 0; top: 3px; z-index: 0;\n  height: 24px; width: 0;',
+      '.nav2-ind {\n  position: absolute; left: 0; top: 3px; z-index: 1;\n  height: 28px; width: 0;',
       '.nav2-ind {\n  position: absolute; left: 0; bottom: 6px;\n  height: 3px; width: 0;'),
     layer: 'check-wb',
     expect: 'BLOCKED',

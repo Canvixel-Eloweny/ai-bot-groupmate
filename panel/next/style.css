@@ -70,14 +70,17 @@
            只改页面底而留原样的面，卡片会比页面底更"青"/更"灰"，读起来是底色没换干净。
      ⚠️ 玻璃背板（`body.eg-on::before`，5 色团 + 2 层织纹，z=-1）**独立于**六团流体，
         两者共存不冲突：流体在 -2 当动态光源，它在 -1 当玻璃的静态背板。 */
-  --c-bg:            #e6f6fc;
+  /* 2026-10-27 去灰轮（维护者：「色调更干净，而不是灰蒙蒙的」）：
+     底色/面/线由青调改为中性近白 + 中性石墨；旧青调值与它上面的历史说明保留，
+     但不再代表当前值。强调色、语义色与玻璃结构不动。 */
+  --c-bg:            #f8f8f8;
   --c-surface:       #ffffff;
-  --c-surface-2:     #f4fbfd;
-  --c-sunken:        #dfeef5;
-  --c-hover:         #e9f5fa;
-  --c-line:          #d8e6ee;
-  --c-line-soft:     #e5f0f6;
-  --c-line-strong:   #c2d4de;
+  --c-surface-2:     #f3f3f3;
+  --c-sunken:        #ededed;
+  --c-hover:         #f1f1f1;
+  --c-line:          #dedede;
+  --c-line-soft:     #e8e8e8;
+  --c-line-strong:   #cccccc;
 
   /* 字：三级灰阶，都走**级1 #31446C 的四档透明度**而不是中性灰 ——
      蓝调文字读起来是"墨"，中性灰在青调底上会显脏。
@@ -100,15 +103,17 @@
         ⚠️ **方向性纪律**：看到这里对比度不足时，**压背景（--c-eg-bg-*）、
         或给玻璃态文字加文字阴影**；**不许加厚 --c-eg-surface** ——
         加厚白纱会把本轮「透亮感」这个目标直接抵消掉。 */
-  --c-text-1:        #31446c;
-  --c-text-2:        rgba(49, 68, 108, .86);
-  --c-text-3:        rgba(49, 68, 108, .76);
+  /* 2026-10-27 去灰轮：文字从蓝墨改为中性石墨。上面 8.72/5.98/4.61 是旧青调底上的
+     历史实测；新底更亮、文字更深，对比度只会更高，上机以实拍为准。 */
+  --c-text-1:        #20262d;
+  --c-text-2:        rgba(32, 38, 45, .82);
+  --c-text-3:        rgba(32, 38, 45, .68);
   /* 二级 tab 的选中文字（B29 · 与下划线**分成两个令牌**，因为它们门槛不同）：
      下划线是**非文本**图形，只要 ≥3；文字要 ≥4.5。
      ⚠️ 浅色下 `--c-accent` #2f509b 作文字实测 7.40:1 ✓，但它同时是下划线的颜色，
         一个令牌扛不住两种门槛（若哪天把 accent 调浅到 3.x，文字就跟着塌）。
         契约 N13 盯这两个令牌的存在。 */
-  --c-sub-on:         #26457f;      /* 实测对二级栏玻璃底 9.05:1 */
+  --c-sub-on:         #2f509b;      /* 去灰轮：直接用默认强调色，白底约 7.4:1 */
 
   /* 强调：全站一个。取**级2 #2F509B**（Vainny 海洋色卡 · 2026-10-03 从 #2563eb 换过来）。
      ⚠️ 色值换了，但**当初选它的理由一条没变**：主按钮上的字必须读得清。
@@ -142,22 +147,29 @@
   --c-info-bg:       #f0f9ff;
   --c-info-line:     #b9e6fe;
 
+  /* 提示卡的描边图标色（2026-10-27）：图一那种亮面语义色，只用于**非文本图形**
+     （对各自浅底 ≥3:1）；文字仍走上面的 --c-*，因为亮色压浅底读不到 4.5:1。 */
+  --c-ok-ink:        #059669;
+  --c-warn-ink:      #d97706;
+  --c-danger-ink:    #dc2626;
+
   --c-idle:          #98a2b3;
 
   /* 阴影只有**颜色**在这里，形状（offset/blur）留给组件 —— 这样换主题时
      阴影跟着一起翻，而"哪一层该多深"是布局决定、不该被令牌锁住
      ⚠️ 四档都带**级1 #31446C 的色相**而不是纯黑：青调底上纯黑阴影读起来是"灰脏"，
         蓝调阴影才像"影子落在海水上"。透明度阶梯（.05/.08/.12/.20）沿用原值，只换色相。 */
-  --c-shadow-1:      rgba(49, 68, 108, .05);
-  --c-shadow-2:      rgba(49, 68, 108, .08);
-  --c-shadow-3:      rgba(49, 68, 108, .12);
-  --c-shadow-4:      rgba(49, 68, 108, .20);
-  --c-scrim:         rgba(49, 68, 108, .40);
-  --c-scrim-soft:    rgba(230, 246, 252, .66);
+  /* 2026-10-27 去灰轮：阴影从蓝调改为中性黑；透明度阶梯沿用原值。 */
+  --c-shadow-1:      rgba(15, 20, 25, .06);
+  --c-shadow-2:      rgba(15, 20, 25, .09);
+  --c-shadow-3:      rgba(15, 20, 25, .14);
+  --c-shadow-4:      rgba(15, 20, 25, .22);
+  --c-scrim:         rgba(15, 20, 25, .42);
+  --c-scrim-soft:    rgba(247, 249, 250, .66);
 
   /* 常驻浮层（保存条）自带一套反色，否则它在两种主题下都得靠 `!important` 救 */
-  --c-bar-bg:        #31446c;
-  --c-bar-fg:        #f2f4f7;
+  --c-bar-bg:        #20262d;
+  --c-bar-fg:        #f5f6f7;
   --c-bar-line:      rgba(255, 255, 255, .22);
 
   /* ── 顶部导航「灵动岛」（2026-10-02 · 本轮；2026-10-03 B29 改为跟随主题）──────
@@ -183,7 +195,7 @@
         （真浏览器 + 冻结背景 + 在玻璃正后方铺一块 `--c-accent` 深蓝 #2f509b）：
           · 岛：.82 → 未选中字 #455c85 对合成底 rgb(216,224,243) = **5.08:1**
                 .60 → 对 rgb(164,191,255) = **3.67:1**
-          · 二级栏：.66 → tab 字（--c-text-2 合成 #4e5e81）对底 = **3.71:1**
+          · 二级栏：.66 → tab 字（--c-nav-l2-fg 合成 #4e5e81）对底 = **3.71:1**
                 .44 → **2.73:1**
         ⚠️ **这是"更通透"的固有代价，不是回归** —— 白纱薄一分，滚动内容就多透一分，
         两者是同一个旋钮。验收锚点因此从"岛上的字恒定过 AA"改成
@@ -196,18 +208,36 @@
         （`style.css:144-147` 已登记这条纪律），所以边与投影都改用级 1 蓝调。
      ⚠️ 这 10 个名字必须在深色块里**逐个出现**（契约 N4 判名字集合相等）——
         漏一个 = 深色下那处仍是浅色值，且**没有任何东西报错**（这个洞开了两轮）。 */
-  --c-nav-bg:        rgba(255, 255, 255, .60);   /* 岛底：浅色玻璃（通透轮 .82→.60，实测见上） */
-  --c-nav-edge:      rgba(49, 68, 108, .16);    /* 岛的 1px 收边：蓝调深边，白边在近白底上看不见 */
-  --c-nav-fg:        #455c85;      /* 未选中文字：对浅玻璃实测 6.60:1（深色侧仍是 #8e96a3，5.09:1） */
-  --c-nav-fg-hover:  #31466c;      /* 悬停文字：9.48:1，仍"弱于选中" */
-  --c-nav-fg-on:     #263a63;      /* 选中文字：11.04:1 */
-  --c-nav-ring:      #263a63;      /* 选中描边：非文本只要 ≥3，这里 11.04:1 */
-  --c-nav-fill:      rgba(49, 68, 108, .10);    /* 悬停填充：蓝调10%；hover 字压上去实测 8.06:1 */
-  --c-nav-cnt-bg:    rgba(49, 68, 108, .12);    /* 计数胶囊底：合成底 rgb(195,199,209)→(230,233,237) */
-  --c-nav-cnt-fg:    #263a63;      /* 计数胶囊**自己的**墨色 —— 见下方 `.cnt` 那条注释 */
-  --c-nav-shadow:    rgba(49, 68, 108, .22);    /* 岛的投影**颜色**（形状留给组件，同 --c-shadow-* 的分工） */
-  --c-nav-seam-line: rgba(31, 58, 100, .09);
-  --c-nav-seam:      rgba(31, 58, 100, .055);
+  /* 2026-10-27 夜间回滚（配色）：恢复 `8b2545d`（去灰轮）前的粉蓝/蓝调导航令牌；
+     结构、尺寸、`--c-nav-*` 名字集合与动效不变，页面底与 `--c-eg-*` 保持中性。
+     ⚠️ 粉蓝胶囊 = 原型 90° 蓝→粉；二级托盘 = 原型 weak 档冷蓝。
+        改这两组色值必须同批改 check-wb §131 与 test/mutations/nav-pinkblue-1027.mjs。 */
+  --c-nav-bg:        rgba(255, 255, 255, .60);   /* 岛底：浅色玻璃（通透轮 .82→.60） */
+  --c-nav-edge:      rgba(49, 68, 108, .16);     /* 蓝调 1px 收边，白边在近白底上看不见 */
+  --c-nav-fg:        #455c85;      /* 未选中文字：蓝灰（8b2545d 前定稿） */
+  --c-nav-fg-hover:  #31466c;      /* 悬停文字：仍弱于选中 */
+  --c-nav-fg-on:     #263a63;      /* 选中文字：海军蓝 */
+  --c-nav-ring:      #263a63;      /* 选中描边：海军蓝（非文本 ≥3） */
+  --c-nav-fill:      rgba(49, 68, 108, .10);
+  --c-nav-cnt-bg:    rgba(49, 68, 108, .12);
+  --c-nav-cnt-fg:    #263a63;
+  --c-nav-shadow:    rgba(49, 68, 108, .22);
+  --c-nav-seam-line: rgba(31, 58, 100, .26875);
+  --c-nav-seam:      rgba(31, 58, 100, .16125);
+  --c-nav-l2-fg:     rgba(49, 68, 108, .86);     /* 二级页签墨色：导航专属，避免改全站 --c-text-* */
+  --c-nav-l2-fg-hover: #31446c;
+  --c-nav-l2-shade:  rgba(31, 58, 100, .09);
+  --c-nav-glider:    var(--c-accent-weak);
+  --c-nav-badge-fg:  #ffffff;
+  --c-nav-press-ink: var(--c-accent);
+  --c-nav-press-edge: rgba(47, 80, 155, .18);
+  --c-nav-press-halo: rgba(31, 58, 100, .18);
+  --c-nav-l2-grad-a: rgba(244, 249, 255, .72);   /* 原型 weak 档冷蓝（非 mid） */
+  --c-nav-l2-grad-b: rgba(230, 240, 251, .86);
+  --c-nav-pill-a:    #d6e8ff;      /* 90° 胶囊：左蓝右粉 */
+  --c-nav-pill-b:    #ffdbe9;
+  --c-nav-pill-line: rgba(255, 255, 255, .55);
+  --c-nav-sweep:     rgba(255, 255, 255, .55);
 
 
   /* 背景流光的 --c-aurora-* / --aurora-* 令牌已随六团流体整组移除（2026-10-04）。
@@ -240,7 +270,7 @@
   /* 描边：1px、极淡。它**不是**装饰 —— backdrop-filter 在圆角处的采样会出现毛刺，
      一条同色系 1px 描边正好把那一圈压住（这也是"边缘无锯齿"最省的一招，零性能代价）。
      ⚠️ 与旧控制台那圈 3px + screen 混合的"白环"不是一回事：那是边框，这是压毛刺。 */
-  --c-eg-edge:         rgba(255, 255, 255, .28);
+  --c-eg-edge:         rgba(15, 20, 25, .10);
   --c-eg-vol-top:      rgba(255, 255, 255, .50);   /* 内缘顶部辉光（漫反射） */
   --c-eg-vol-bottom:   rgba(0, 0, 0, .07);         /* 内缘底部暗角（"厚度"） */
   /* 内侧暗壁 + 渐变描边（2026-10-23 吸收自外部做法，独立实现，不抄代码）：
@@ -250,29 +280,30 @@
         三层吸顶玻璃上下相邻，四边暗壁会在相邻处叠成两道脏缝（同 B29 的接缝教训），
         而 `--c-eg-inset` 本体另有契约与变异钉着"一字不改"。
      ⚠️ 暗壁用**负 y** ⇒ 只压下方；正 y 会把暗角推到顶边，读成"上面脏了一条"。 */
-  --c-eg-wall:         rgba(49, 68, 108, .10);
+  --c-eg-wall:         rgba(15, 20, 25, .10);
   --c-eg-bevel-top:    rgba(255, 255, 255, .62);
-  --c-eg-bevel-bottom: rgba(49, 68, 108, .12);
+  --c-eg-bevel-bottom: rgba(15, 20, 25, .12);
   /* 织纹三令牌（`--c-eg-weave` / `-weave-2` / `-weave-size`）与网格令牌
      （`--c-eg-grid`）已于 B28 批次4 **全部删除** —— 用户「斜杠杠什么的都不要」
      +「背景有一个小方块网格的，那个我也不要」。**四个令牌已零消费者**，所以整组删掉
      （留着就是本项目反复在清的那类"定义了没人用"）。
      ⚠️ 下面这五个色团是玻璃背后**仅剩**的可位移形状 —— 它们不许被一起删：
         平灰底上 backdrop-filter 采样不到任何内部差异，玻璃会读成一张半透明纸。 */
-  --c-eg-bg-a:         rgba(7, 160, 223, .10);     /* 环境层色团 ——
+  /* 2026-10-27 去灰轮：五个色团改中性灰 + 极小 accent；层数不变，玻璃仍有可模糊的形状。 */
+  --c-eg-bg-a:         rgba(15, 20, 25, .045);     /* 环境层色团 ——
         背后是"一块平灰"时玻璃没东西可模糊、可位移（旧控制台两轮反馈的共同根因），
         所以色团是玻璃效果的前提，不许删回"只有网格"。
         ⚠️ 2026-10-03：五个色值从 #2563eb 那一族换成**海洋色卡**（级4亮青 / 级5浅天蓝）——
            玻璃的环境层与流层是同一个背景世界，用两套色相会读成"两层不同的光"。 */
-  --c-eg-bg-b:         rgba(49, 68, 108, .04);      /* 级1 深蓝，最淡的一层压底 */
-  --c-eg-bg-c:         rgba(205, 200, 230, .12);    /* 级6 淡紫 */
-  --c-eg-bg-d:         rgba(47, 80, 155, .08);      /* 级2 深蓝 */
+  --c-eg-bg-b:         rgba(15, 20, 25, .025);
+  --c-eg-bg-c:         rgba(255, 255, 255, .10);
+  --c-eg-bg-d:         rgba(15, 20, 25, .030);
   /* 远景一层（范围更大、更淡、铺在中间）。纵深感的来源不是"更糊"，而是"有近有远"
      —— 四个近景色团之外再垫一层远的，玻璃后面才有层次，而不是一层贴纸。 */
-  --c-eg-bg-e:         rgba(157, 191, 235, .07);    /* 级5 浅天蓝 */
+  --c-eg-bg-e:         rgba(47, 80, 155, .025);
   /* 噪点：data-URI 里**不得出现裸 `#`/`;`**（§53⑥ 会把 `#xxx` 读成散落色值）。
      终轮 .05 → .035：噪点是"材质感"，过强就变成"脏"（色彩纯净度的反面）。 */
-  --c-eg-noise:        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.035 0 0 0 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  --c-eg-noise:        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.012 0 0 0 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
   /* 模糊与饱和度也做成令牌 —— 不是为了"可调"，是为了**实验室页能复用同一套规则**
      （A/B 对比时只在某一侧重定义这几个变量，不抄第二份样式）。
      ⚠️ 改这三个值必须与 glass.js 的 `G_DEFAULTS.blur/saturate` 同步，
@@ -324,7 +355,7 @@
   --c-eg-bright-bar:    1.18;
   --c-eg-sat-isle:      185%;
   --c-eg-bright-isle:   1.14;
-  --c-eg-seam:          rgba(49, 68, 108, .14);     /* 极淡分界：对玻璃底 1.256:1（看得见但不抢） */
+  --c-eg-seam:          rgba(15, 20, 25, .12);      /* 中性极淡分界 */
   --c-eg-inset-bar:     inset 1.6px -1.6px 1px -1px var(--c-eg-rim-sharp), inset -1.6px 1.6px 1px -1px var(--c-eg-rim-sharp), inset 8px -8px 1.5px -8px var(--c-eg-rim-soft), inset -8px 8px 1.5px -8px var(--c-eg-rim-soft), inset 0 -2px 2px var(--c-eg-vol-bottom);
   --c-eg-inset-isle:    inset 1.6px -1.6px 1px -1px var(--c-eg-rim-sharp), inset -1.6px 1.6px 1px -1px var(--c-eg-rim-sharp), inset 8px -8px 1.5px -8px var(--c-eg-rim-soft), inset -8px 8px 1.5px -8px var(--c-eg-rim-soft), inset 0 -2px 2px var(--c-eg-vol-bottom);
 
@@ -393,11 +424,20 @@
   /* 一级行 / 一级选项 / 二级可见行。吸顶高度与 JS 肩线都从这三个数推导。 */
   --h-nav1: 48px;
   --h-nav-item: 38px;
-  --h-nav2: 30px;
-  /* 连续肩线：横向 42、纵向 11.5、底部 11.5（11.5 / 30 = 38.2%，接近 φ 的短线）。 */
+  --h-nav2: 34px;
+  /* 连续肩线：横向 42、纵向 13、底部 13（13 / 34 ≈ 38.2%，与二级 34px 同比）。 */
   --nav-shoulder: 42px;
-  --nav-rise: 11.5px;
-  --nav-r2: 11.5px;
+  --nav-rise: 13px;
+  --nav-r2: 13px;
+  --nav-seam-depth: 22px;
+  --nav-hover-lift: -1px;
+  /* 一级上方留出的跑道：三球从按钮顶边升起 26px + 辉光，36px 能完整露出；
+     窄屏在文件末尾降到 32px。 */
+  --nav-top-gap: 36px;
+  /* 有效的中等浮层阴影：drop-shadow 不接受第四段 spread，旧写法的 -14/-26 会被整条丢弃。 */
+  --nav-float-shadow:
+    drop-shadow(0 10px 20px color-mix(in srgb, var(--c-nav-shadow) 85%, transparent))
+    drop-shadow(0 26px 46px color-mix(in srgb, var(--c-nav-shadow) 55%, transparent));
 
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   /* 字体风格「衬线」档（2026-10-22）：参照 Qoder 衬线档的回退顺序（去掉本机
@@ -421,18 +461,20 @@ html[data-theme="dark"] {
      ⚠️ 深色下这些值带**一点蓝**（#151b23 而非纯黑）：纯黑会让玻璃背后的环境色团
      像"打在黑板上"而不是"浮在深水里"。玻璃背板（`body.eg-on::before`）仍在，
      所以深底同样需要那点蓝调来接住光。 */
-  --c-bg:            #0b1226;
-  --c-surface:       #1e2d4e;
-  --c-surface-2:     #243560;
-  --c-sunken:        #0e1a33;
-  --c-hover:         #2a3d6b;
-  --c-line:          rgba(157, 191, 235, .3);
-  --c-line-soft:     rgba(157, 191, 235, .16);
-  --c-line-strong:   rgba(157, 191, 235, .42);
+  /* 2026-10-27 去灰轮：深色从海军蓝改为中性近黑；旧蓝调值与历史说明保留，
+     但不再代表当前值。强调色仍是浅蓝，语义色不动。 */
+  --c-bg:            #08090b;
+  --c-surface:       #15171a;
+  --c-surface-2:     #1b1e22;
+  --c-sunken:        #0d0f12;
+  --c-hover:         #22262b;
+  --c-line:          rgba(255, 255, 255, .14);
+  --c-line-soft:     rgba(255, 255, 255, .08);
+  --c-line-strong:   rgba(255, 255, 255, .22);
 
-  --c-text-1:        #e2ebf8;
-  --c-text-2:        rgba(198, 214, 238, .68);
-  --c-text-3:        rgba(157, 191, 235, .5);
+  --c-text-1:        #e8eaed;
+  --c-text-2:        rgba(232, 234, 237, .68);
+  --c-text-3:        rgba(232, 234, 237, .50);
   /* 二级 tab 选中文字（名字与 :root 相同 · 契约 N13）。深色下直接用 accent：
      它在深底上足够亮，实测 6.93:1。 */
   --c-sub-on:#9dbfeb;
@@ -445,9 +487,9 @@ html[data-theme="dark"] {
 
   /* ⚠️ 这三个是①号缺陷的修复点：深色下强调色是**浅**蓝，压白字读不清，
      所以"压在强调色上的字"必须翻成深色 */
-  --c-on-accent:     #0b1226;
-  --c-on-danger:     #2a0d0b;
-  --c-knob:          #0b1226;
+  --c-on-accent:     #08090b;
+  --c-on-danger:     #1a0d0b;
+  --c-knob:          #08090b;
 
   --c-ok:            #5fd39b;
   --c-ok-bg:         #10261c;
@@ -465,6 +507,11 @@ html[data-theme="dark"] {
   --c-info-bg:       #0f222c;
   --c-info-line:     #1f4759;
 
+  /* 深色下语义前景色本身就是亮面档，图标直接沿用（名字与浅色块成对）。 */
+  --c-ok-ink:        var(--c-ok);
+  --c-warn-ink:      var(--c-warn);
+  --c-danger-ink:    var(--c-danger);
+
   --c-idle:          #6b7684;
 
   --c-shadow-1:      rgba(0, 0, 0, .30);
@@ -472,12 +519,12 @@ html[data-theme="dark"] {
   --c-shadow-3:      rgba(0, 0, 0, .52);
   --c-shadow-4:      rgba(0, 0, 0, .66);
   --c-scrim:         rgba(0, 0, 0, .58);
-  --c-scrim-soft:    rgba(11, 18, 38, .66);
+  --c-scrim-soft:    rgba(8, 9, 11, .66);
 
   /* 保存条在深色下翻成**浅**色条（沿用原来的反相逻辑，只把底色接到级1 深底上） */
-  --c-bar-bg:        #e2ebf8;
-  --c-bar-fg:        #0b1226;
-  --c-bar-line:      rgba(11, 18, 38, .18);
+  --c-bar-bg:        #e8eaed;
+  --c-bar-fg:        #08090b;
+  --c-bar-line:      rgba(8, 9, 11, .18);
 
   /* 灵动岛（名字与 :root 逐个对齐 · 契约 N4 判的就是这一组）。
      ⚠️⚠️ 2026-10-03 B29：从「两套主题都是纯黑」改为**跟随主题**
@@ -489,18 +536,33 @@ html[data-theme="dark"] {
         默认 5.09:1 · 悬停 7.09:1 · 选中 15.17:1 · 计数胶囊 6.25:1 ——
         **通透轮把 .82 → .60，这组数同浅色侧一样不再恒真**（理由与新的验收锚点
         写在 `:root` 的 `--c-nav-bg` 上方，不在这里维护第二份）。 */
+  /* 2026-10-27 夜间回滚（配色）：深色导航恢复海军蓝玻璃与蓝调前景，只改颜色。 */
   --c-nav-bg:        rgba(11, 18, 38, .60);
   --c-nav-edge:      rgba(157, 191, 235, .20);
-  --c-nav-fg:        #8e96a3;      /* 深底"吃光"，这个值在深色下反而更合适，不用动 */
-  --c-nav-fg-hover:  #a9b2c0;      /* 提亮一档，仍"弱于选中" */
+  --c-nav-fg:        #8e96a3;
+  --c-nav-fg-hover:  #a9b2c0;
   --c-nav-fg-on:     #ffffff;
   --c-nav-ring:      #ffffff;
   --c-nav-fill:      rgba(255, 255, 255, .12);
   --c-nav-cnt-bg:    rgba(255, 255, 255, .12);
   --c-nav-cnt-fg:    #c3c8d2;
   --c-nav-shadow:    rgba(0, 0, 0, .52);
-  --c-nav-seam-line: rgba(0, 0, 0, .26);
-  --c-nav-seam:      rgba(0, 0, 0, .15);
+  --c-nav-seam-line: rgba(0, 0, 0, .688);
+  --c-nav-seam:      rgba(0, 0, 0, .4085);
+  --c-nav-l2-fg:     rgba(198, 214, 238, .68);
+  --c-nav-l2-fg-hover: #e2ebf8;
+  --c-nav-l2-shade:  rgba(0, 0, 0, .153);
+  --c-nav-glider:    var(--c-accent-weak);
+  --c-nav-badge-fg:  #0b1226;
+  --c-nav-press-ink: var(--c-accent);
+  --c-nav-press-edge: rgba(255, 255, 255, .14);
+  --c-nav-press-halo: rgba(0, 0, 0, .45);
+  --c-nav-l2-grad-a: rgba(34, 50, 80, .70);
+  --c-nav-l2-grad-b: rgba(22, 35, 60, .82);
+  --c-nav-pill-a:    rgba(78, 128, 205, .40);
+  --c-nav-pill-b:    rgba(196, 108, 158, .36);
+  --c-nav-pill-line: rgba(255, 255, 255, .20);
+  --c-nav-sweep:     rgba(255, 255, 255, .20);
 
   /* 背景流光令牌：已随六团流体移除（与 :root 侧同批）。
      背景预设色两主题共用（canvas 自带底色），无令牌可对齐。 */
@@ -509,12 +571,12 @@ html[data-theme="dark"] {
      ⚠️ 深底上白纱的观感放大约一倍：浅色档那个 .20 的悬浮条白纱拿到深色下
         会直接变成一块灰白的板子，所以四个 surface 全部压低；
         反相档（保存条）深色主题下本来就是**浅**色条（--c-bar-bg 翻白），跟着翻。 */
-  --c-eg-surface:      rgba(21, 27, 35, .40);
+  --c-eg-surface:      rgba(18, 20, 23, .40);
   --c-eg-surface-2:    rgba(255, 255, 255, .035);
   --c-eg-surface-hero: rgba(255, 255, 255, .035);
   --c-eg-surface-inv:  rgba(233, 237, 243, .70);
   /* 同上：深色下弹窗也需补偿（scrim 在深底上是压深，不是压亮） */
-  --c-eg-surface-modal: rgba(21, 27, 35, .52);
+  --c-eg-surface-modal: rgba(18, 20, 23, .52);
   --c-eg-rim-sharp:    rgba(255, 255, 255, .22);
   --c-eg-rim-soft:     rgba(255, 255, 255, .095);
   --c-eg-edge:         rgba(255, 255, 255, .16);
@@ -532,11 +594,12 @@ html[data-theme="dark"] {
   /* 织纹（名字与 :root 逐个相同 · 契约 G1 判的就是这个）。
      ⚠️ 深底用级5 浅天蓝（与 --c-eg-bg-e 同色相），alpha 比浅色高 —— 暗底吃光；
         第二向反过来用**深**线：亮底用暗线、暗底用亮线，两向都靠"与底反相"被看见。 */
-  --c-eg-bg-a:         rgba(7, 160, 223, .10);
-  --c-eg-bg-b:         rgba(0, 0, 0, .18);
-  --c-eg-bg-c:         rgba(205, 200, 230, .10);
-  --c-eg-bg-d:         rgba(47, 80, 155, .08);
-  --c-eg-bg-e:         rgba(157, 191, 235, .06);
+  /* 2026-10-27 去灰轮：环境层改中性白/黑 + 极小 accent；层数不变。 */
+  --c-eg-bg-a:         rgba(255, 255, 255, .055);
+  --c-eg-bg-b:         rgba(0, 0, 0, .20);
+  --c-eg-bg-c:         rgba(255, 255, 255, .030);
+  --c-eg-bg-d:         rgba(157, 191, 235, .025);
+  --c-eg-bg-e:         rgba(255, 255, 255, .018);
   /* 吸顶层三组（名字与 :root 逐个相同 · 契约 N4/N5 判的就是这一组）。
      ⚠️ 几何与浅色**完全同形**，只有令牌取深浅两套的值。
         深色下用深纱而不是白纱：深底本身已经很暗，再叠白纱会"发灰"，
@@ -553,7 +616,7 @@ html[data-theme="dark"] {
   --c-eg-bright-bar:    1.10;
   --c-eg-sat-isle:      185%;
   --c-eg-bright-isle:   1.08;
-  --c-eg-seam:          rgba(157, 191, 235, .16);
+  --c-eg-seam:          rgba(255, 255, 255, .12);
   --c-eg-inset-bar:     inset 1.6px -1.6px 1px -1px var(--c-eg-rim-sharp), inset -1.6px 1.6px 1px -1px var(--c-eg-rim-sharp), inset 8px -8px 1.5px -8px var(--c-eg-rim-soft), inset -8px 8px 1.5px -8px var(--c-eg-rim-soft), inset 0 -2px 2px var(--c-eg-vol-bottom);
   --c-eg-inset-isle:    inset 1.6px -1.6px 1px -1px var(--c-eg-rim-sharp), inset -1.6px 1.6px 1px -1px var(--c-eg-rim-sharp), inset 8px -8px 1.5px -8px var(--c-eg-rim-soft), inset -8px 8px 1.5px -8px var(--c-eg-rim-soft), inset 0 -2px 2px var(--c-eg-vol-bottom);
   /* 与 :root 同值：模糊/饱和度不随主题变，但**名字必须成对出现**（同 §53 口径） */
@@ -561,7 +624,7 @@ html[data-theme="dark"] {
   --c-eg-blur-2:       6px;
   --c-eg-sat:          140%;
   /* 名字与 `:root` 逐个相同（§58 G1）—— 值不同：暗底上 .50 的白是一块糊住的雾。 */
-  --c-eg-noise:        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.05 0 0 0 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  --c-eg-noise:        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.02 0 0 0 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
   --c-eg-inset:        inset 1.6px -1.6px 1px -1px var(--c-eg-rim-sharp), inset -1.6px 1.6px 1px -1px var(--c-eg-rim-sharp), inset 8px -8px 1.5px -8px var(--c-eg-rim-soft), inset -8px 8px 1.5px -8px var(--c-eg-rim-soft), inset 0 0 2px var(--c-eg-vol-bottom);
   /* 第 2 档玻璃阴影（名字必须与 :root 逐个相同 · 契约 G1）。
      ⚠️ **几何与浅色完全同形**，只有令牌取深浅两套的值 ——
@@ -589,37 +652,37 @@ html[data-accent="lagoon"], .set-acc[data-accent-opt="lagoon"] {
   --c-accent: #116b74; --c-accent-hover: #1b8a94;
   --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
   --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
-  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #0b1226);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #20262d);
 }
 html[data-accent="pine"], .set-acc[data-accent-opt="pine"] {
   --c-accent: #2f6b45; --c-accent-hover: #418a5b;
   --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
   --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
-  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #0b1226);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #20262d);
 }
 html[data-accent="amber"], .set-acc[data-accent-opt="amber"] {
   --c-accent: #8a5a12; --c-accent-hover: #a8751d;
   --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
   --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
-  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #0b1226);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #20262d);
 }
 html[data-accent="coral"], .set-acc[data-accent-opt="coral"] {
   --c-accent: #a4413a; --c-accent-hover: #bf5a52;
   --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
   --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
-  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #0b1226);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #20262d);
 }
 html[data-accent="berry"], .set-acc[data-accent-opt="berry"] {
   --c-accent: #8f2f5f; --c-accent-hover: #ac3d74;
   --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
   --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
-  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #0b1226);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #20262d);
 }
 html[data-accent="violet"], .set-acc[data-accent-opt="violet"] {
   --c-accent: #5b4a9e; --c-accent-hover: #7461bd;
   --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
   --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
-  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #0b1226);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #20262d);
 }
 /* 海蓝是默认令牌；色板里的海蓝按钮单独钉一次，否则它会跟着当前 accent 变。 */
 .set-acc[data-accent-opt="ocean"] { --c-accent: #2f509b; --c-accent-hover: #4574c2; }
@@ -661,6 +724,36 @@ html[data-theme="dark"][data-accent="violet"], html[data-theme="dark"] .set-acc[
   --c-sub-on: var(--c-accent);
 }
 html[data-theme="dark"] .set-acc[data-accent-opt="ocean"] { --c-accent: #9dbfeb; --c-accent-hover: #b8d3f2; }
+
+/* 黑白（2026-10-26）：第 8 套主题色。浅色取近黑、夜间取近白，
+   与其它色板一样由 weak/line/sub-on 从 accent 派生。 */
+html[data-accent="mono"], .set-acc[data-accent-opt="mono"] {
+  --c-accent: #1c1c1e; --c-accent-hover: #333336;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #20262d);
+}
+html[data-theme="dark"][data-accent="mono"], html[data-theme="dark"] .set-acc[data-accent-opt="mono"] {
+  --c-accent: #f2f5fa; --c-accent-hover: #ffffff;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 40%, transparent);
+  --c-sub-on: var(--c-accent);
+}
+
+/* 石墨（2026-10-27）：第 9 套主题色。比「黑白」柔一档的中性冷灰，
+   与等高线背景的黑白线条同族；浅色白字 9.51:1、夜间深字 12.06:1。 */
+html[data-accent="graphite"], .set-acc[data-accent-opt="graphite"] {
+  --c-accent: #3f4652; --c-accent-hover: #556070;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 34%, transparent);
+  --c-sub-on: color-mix(in srgb, var(--c-accent) 78%, #20262d);
+}
+html[data-theme="dark"][data-accent="graphite"], html[data-theme="dark"] .set-acc[data-accent-opt="graphite"] {
+  --c-accent: #c2cad6; --c-accent-hover: #d8dee7;
+  --c-accent-weak: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  --c-accent-line: color-mix(in srgb, var(--c-accent) 40%, transparent);
+  --c-sub-on: var(--c-accent);
+}
 
 /* ⚠️ `color-scheme` **单独一条**，不放进上面那个令牌块：令牌块里只有 `--c-*`。
    混进非令牌声明，这个块就从"另一套令牌"变成"第二张样式表"，
@@ -708,7 +801,7 @@ a:hover { text-decoration: underline; }
 
 /* 只有"状态变化"用动效；系统开了减少动态就直接关掉 */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+  *, *::before, *::after { transition-duration: .01ms !important; transition-delay: .01ms !important; animation-duration: .01ms !important; animation-delay: .01ms !important; animation-iteration-count: 1 !important; }
 }
 
 /* ── 顶栏 ─────────────────────────────────────────────────────────────── */
@@ -756,8 +849,6 @@ a:hover { text-decoration: underline; }
 }
 .tb-pills::-webkit-scrollbar { display: none; }
 .tb-actions { display: flex; align-items: center; gap: var(--s2); flex: none; }
-/* 顶栏右侧的分组竖线：左边"看/换"、右边"动"。1px 高 20px，不抢注意力 */
-.tb-sep { flex: none; width: 1px; height: 20px; margin: 0 2px; background: var(--c-line-strong); }
 
 /* ── 圆点状态胶囊 ─────────────────────────────────────────────────────── */
 .pill {
@@ -808,8 +899,69 @@ a:hover { text-decoration: underline; }
 .navrow {
   position: sticky; top: var(--h-topbar); z-index: 40;
   display: flex; justify-content: center; align-items: flex-start;
+  /* content-box + padding 跑出顶部跑道：旧的高度契约仍成立，总高由 padding 补足。 */
+  box-sizing: content-box;
   height: calc(var(--h-nav1) + var(--h-nav2));
+  padding-top: var(--nav-top-gap);
   background: none; border: 0;
+}
+/* 工厂页（2026-10-27）：工厂层在 nav 之下（z 39），nav 仍要可点。
+   全宽 navrow 默认会拦截工厂顶部整条点击，只让 dock 自己收事件。 */
+body.is-frame-page .navrow { pointer-events: none; }
+body.is-frame-page .nav-dock-wrap { pointer-events: auto; }
+
+/* 工厂域导航自动上收（2026-10-27）：进入工厂、过场与 dock 停稳后向上滑出；
+   热区负责呼出。visibility 的延迟切换让隐藏后的 nav 退出 tab 序与命中测试。 */
+body.is-frame-page .navrow {
+  visibility: visible;
+  transition: transform .34s var(--ease), opacity .22s var(--ease), visibility 0s;
+}
+body.is-frame-page.nav-auto-hidden .navrow {
+  visibility: hidden;
+  transform: translateY(-100%) scale(.985);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform .34s var(--ease), opacity .22s var(--ease), visibility 0s linear .34s;
+}
+body.is-frame-page.nav-auto-hidden .nav-dock-wrap { pointer-events: none; }
+
+.nav-hotzone {
+  position: fixed;
+  /* 紧贴玻璃顶栏下沿；固定 150×30 CSS 像素，不随窗口缩放，避免误触。 */
+  top: calc(var(--h-topbar) + 4px);
+  left: 50%;
+  width: 150px;
+  height: 30px;
+  transform: translateX(-50%);
+  z-index: 41;
+  margin: 0; padding: 0; border: 0; background: transparent;
+  appearance: none; border-radius: var(--r2);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .18s var(--ease);
+}
+/* 中间的小三角：向下指，提示这里可以把导航拉下来。 */
+.nav-hotzone::before {
+  content: '';
+  position: absolute; left: 50%; top: 50%;
+  width: 0; height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--c-text-3);
+  transform: translate(-50%, -50%);
+  opacity: .55;
+  transition: opacity .18s var(--ease), transform .18s var(--ease), border-top-color .18s var(--ease);
+}
+.nav-hotzone:hover::before,
+.nav-hotzone:focus-visible::before {
+  opacity: 1;
+  transform: translate(-50%, -35%);
+  border-top-color: var(--c-text-2);
+}
+body.is-frame-page.nav-auto-hidden .nav-hotzone {
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 1;
 }
 .nav-dock-wrap {
   position: relative;
@@ -839,9 +991,9 @@ body.eg-on .nav-dock {
   position: absolute; left: 0; right: 0;
   top: calc(var(--h-nav1) - 1px);
   z-index: 0;
-  height: 16px;
+  height: var(--nav-seam-depth, 22px);
   pointer-events: none;
-  background: linear-gradient(180deg, var(--c-nav-seam-line) 0, var(--c-nav-seam) 3px, transparent 16px);
+  background: linear-gradient(180deg, var(--c-nav-seam-line) 0, var(--c-nav-seam) 3px, transparent var(--nav-seam-depth, 22px));
 }
 .nav-dock-edge {
   position: absolute; inset: 0;
@@ -873,18 +1025,31 @@ body.eg-on .nav-dock {
 .nav-inner::-webkit-scrollbar { display: none; }
 
 .grp {
-  position: relative; flex: none; z-index: 1;
+  position: relative; flex: none; z-index: 2;
   display: inline-flex; align-items: center;
   height: var(--h-nav-item); padding: 0 var(--s4);
   border: 0; background: none; cursor: pointer;
   color: var(--c-nav-fg); font-size: var(--t-md); font-family: inherit; letter-spacing: 0;
   border-radius: var(--r-pill);
-  transition: background var(--dur) var(--ease);
+  transition:
+    color var(--dur) var(--ease),
+    background var(--dur) var(--ease),
+    transform .23s ease,
+    box-shadow .23s ease;
 }
-.grp:hover { background: var(--c-nav-fill); color: var(--c-nav-fg-hover); }
+.grp:hover {
+  background: var(--c-nav-fill); color: var(--c-nav-fg-hover);
+  transform: translateY(var(--nav-hover-lift));
+  box-shadow: 0 2px 0 var(--c-nav-press-edge), 0 9px 18px -10px var(--c-nav-press-halo);
+}
 .grp[aria-selected="true"] { color: var(--c-nav-fg-on); font-weight: 600; background: none; }
 .grp[aria-selected="true"]:hover { background: none; }
 .grp:focus-visible { outline: 2px solid var(--c-nav-ring); outline-offset: 2px; }
+.grp:active {
+  transform: translateY(3px);
+  box-shadow: 0 .5px 0 var(--c-nav-press-edge);
+  color: var(--c-nav-press-ink);
+}
 .grp .cnt {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 17px; padding: 0 5px; margin-left: 6px;
@@ -892,22 +1057,74 @@ body.eg-on .nav-dock {
   color: var(--c-nav-cnt-fg);
   font-size: var(--t-xs); font-weight: 500;
   font-variant-numeric: tabular-nums;
-  transition: background var(--dur) var(--ease);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.grp[aria-selected="true"] .cnt { background: var(--c-nav-fill); }
-.nav-ind {
-  position: absolute; left: 0; top: 50%; z-index: 2;
+.grp[aria-selected="true"] .cnt { background: var(--c-accent); color: var(--c-nav-badge-fg); }
+/* 一级选中层：滑片填充（会被速度拉长）+ 1px 细框；按压时另起一层 press 环，
+   让细框能贴到被按按钮上而不把填充也带走。三层都是**静态元素**，
+   renderNav1 只重建 .grp —— 新增一级项自动沿用同一套反馈。 */
+.nav-glider {
+  position: absolute; left: 0; top: 50%; z-index: 0;
   height: var(--h-nav-item); width: 0;
   margin-top: calc(var(--h-nav-item) / -2);
-  border: 1.5px solid var(--c-nav-ring);
   border-radius: var(--r-pill);
-  pointer-events: none;
+  pointer-events: none; opacity: 0;
+  transform: translateX(0);
+  translate: 0 0;
+  transition: translate .23s ease, opacity var(--dur) var(--ease);
+  will-change: transform, width;
+}
+.nav-glider.ready { opacity: 1; }
+.nav-glider-core {
+  display: block; width: 100%; height: 100%;
+  border-radius: inherit; background: var(--c-nav-glider);
   transform-origin: 50% 50%;
+  will-change: transform;
+}
+.nav-ind {
+  position: absolute; left: 0; top: 50%; z-index: 1;
+  height: var(--h-nav-item); width: 0;
+  margin-top: calc(var(--h-nav-item) / -2);
+  pointer-events: none;
+  transform: translateX(0);
+  translate: 0 0;
+  transition: translate .23s ease, opacity var(--dur) var(--ease);
   will-change: transform, width;
   opacity: 0;
-  transition: opacity var(--dur) var(--ease);
 }
 .nav-ind.ready { opacity: 1; }
+.nav-ind-core {
+  display: block; width: 100%; height: 100%;
+  border: 1px solid var(--c-nav-ring); border-radius: var(--r-pill);
+  box-sizing: border-box;
+  transform-origin: 50% 50%;
+}
+.nav-press {
+  position: absolute; left: 0; top: 50%; z-index: 1;
+  height: var(--h-nav-item); width: 0;
+  margin-top: calc(var(--h-nav-item) / -2);
+  border-radius: var(--r-pill);
+  pointer-events: none; opacity: 0;
+  transform: translateX(0);
+  translate: 0 0;
+  transition: translate .23s ease, opacity .12s var(--ease);
+}
+.nav-press.on { opacity: 1; }
+.nav-press.pressing { translate: 0 3px; }
+.nav-press-core {
+  display: block; width: 100%; height: 100%;
+  border: 1px solid var(--c-nav-ring); border-radius: inherit;
+  box-sizing: border-box;
+}
+.nav-inner.pressing .nav-ind { opacity: 0; }
+/* 选中项 hover：细框与填充跟着本体抬 1px；按选中的项时填充和它一起沉。 */
+.nav-inner:has(.grp[aria-selected="true"]:hover) .nav-ind,
+.nav-inner:has(.grp[aria-selected="true"]:hover) .nav-glider {
+  translate: 0 var(--nav-hover-lift);
+}
+.nav-inner:has(.grp[aria-selected="true"]:active) .nav-glider {
+  translate: 0 3px;
+}
 
 /* 二级：内容宽度由 JS 写；这里只负责行高、滚动与滑块基准。 */
 .nav2wrap {
@@ -934,6 +1151,23 @@ body.eg-on .nav2wrap::before {
           backdrop-filter: saturate(var(--c-eg-sat-bar)) blur(8px) brightness(var(--c-eg-bright-bar));
   box-shadow: var(--c-eg-inset-bar);
 }
+/* 二级弱渐变：只铺在窄条里，顶部 6px 渐隐；静态层，新增二级项自动共用。 */
+.nav2-tint {
+  position: absolute; inset: 0; z-index: 0;
+  pointer-events: none;
+  border-radius: 0 0 var(--nav-r2) var(--nav-r2);
+  background-image: linear-gradient(180deg, var(--c-nav-l2-grad-a) 0%, var(--c-nav-l2-grad-b) 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 6px);
+          mask-image: linear-gradient(180deg, transparent 0, #000 6px);
+}
+/* 一级压在二级顶部的投影：与接缝同深（22px），落在选中胶囊下方。 */
+.nav2wrap::after {
+  content: "";
+  position: absolute; inset: 0; z-index: 0;
+  pointer-events: none;
+  border-radius: 0 0 var(--nav-r2) var(--nav-r2);
+  background: linear-gradient(180deg, transparent 0, var(--c-nav-l2-shade) 5px, transparent var(--nav-seam-depth, 22px));
+}
 .nav2 {
   position: relative; z-index: 1;
   display: flex; gap: 2px; flex-wrap: nowrap;
@@ -948,29 +1182,99 @@ body.eg-on .nav2wrap::before {
 .nav2::-webkit-scrollbar { display: none; }
 .sub {
   position: relative;
-  height: 24px; padding: 0 var(--s2);
+  height: 28px; padding: 0 var(--s2);
   border: 0; background: transparent;
-  color: var(--c-text-2); font-size: var(--t-sm); font-family: inherit; letter-spacing: 0;
-  border-radius: var(--r-sm); cursor: pointer;
+  color: var(--c-nav-l2-fg); font-size: var(--t-sm); font-family: inherit; letter-spacing: 0;
+  border-radius: var(--r-pill); cursor: pointer;
   white-space: nowrap; flex: none;
-  transition: color var(--dur) var(--ease);
+  transition:
+    color var(--dur) var(--ease),
+    background var(--dur) var(--ease),
+    transform .23s ease,
+    box-shadow .23s ease;
 }
-.sub:hover { background: transparent; color: var(--c-text-1); }
+.sub:hover {
+  background: color-mix(in srgb, var(--c-nav-fill) 62%, transparent);
+  color: var(--c-nav-l2-fg-hover);
+  transform: translateY(var(--nav-hover-lift));
+  box-shadow: 0 2px 0 var(--c-nav-press-edge), 0 9px 18px -10px var(--c-nav-press-halo);
+}
 .sub:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
 .sub[aria-selected="true"] { background: transparent; color: var(--c-sub-on); font-weight: 600; }
-/* 二级选中：淡色胶囊（S2 滑块在它后面，由 app.js 写位置/宽度）。
+.sub[aria-selected="true"]:hover { background: transparent; }
+.sub:active {
+  transform: translateY(2px);
+  box-shadow: 0 .5px 0 var(--c-nav-press-edge);
+  color: var(--c-nav-press-ink);
+}
+/* 二级选中：蓝→粉淡渐变胶囊（S2 滑块在它后面，由 app.js 写位置/宽度）。
    ⚠️ 它必须是**静态元素**、在 `.nav2wrap` 里；renderNav2 只重建 `.sub`。 */
 .nav2-ind {
-  position: absolute; left: 0; top: 3px; z-index: 0;
-  height: 24px; width: 0;
+  position: absolute; left: 0; top: 3px; z-index: 1;
+  height: 28px; width: 0;
   border-radius: var(--r-pill);
-  background: var(--c-accent-weak);
-  box-shadow: inset 0 0 0 1px var(--c-accent-line);
+  background-image: linear-gradient(90deg, var(--c-nav-pill-a) 0%, var(--c-nav-pill-b) 100%);
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--c-nav-pill-line);
+  overflow: hidden;
   transform: translateX(0);
+  translate: 0 0;
   opacity: 0; pointer-events: none;
-  transition: opacity var(--dur) var(--ease);
+  transition: translate .23s ease, opacity var(--dur) var(--ease);
 }
 .nav2-ind.ready { opacity: 1; }
+.nav2-ind::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background-image: linear-gradient(90deg, transparent 0%, var(--c-nav-sweep) 50%, transparent 100%);
+  background-repeat: no-repeat; background-size: 45% 100%; background-position: -60% 0;
+  opacity: 0; pointer-events: none;
+}
+.nav2-ind.sweep::after { animation: nav2Sweep .5s ease-in-out; }
+@keyframes nav2Sweep {
+  0% { opacity: 0; background-position: -60% 0; }
+  22% { opacity: 1; }
+  100% { opacity: 0; background-position: 160% 0; }
+}
+.nav2wrap:has(.sub[aria-selected="true"]:hover) .nav2-ind { translate: 0 var(--nav-hover-lift); }
+.nav2wrap:has(.sub[aria-selected="true"]:active) .nav2-ind { translate: 0 2px; }
+
+/* 一级落位后的三颗小球：从选中项顶边升起并散开；静态容器放在 dock 外，
+   避免被 clip-path 裁掉。新增一级项自动共用。 */
+.nav-burst {
+  position: absolute; inset: 0; z-index: 5;
+  pointer-events: none; overflow: visible;
+}
+.nav-burst i {
+  position: absolute;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--c-nav-press-ink);
+  box-shadow: 0 0 7px var(--c-nav-press-ink);
+  opacity: 0;
+  transform: translate(calc(-50% + var(--dx, 0px)), -50%);
+  will-change: transform, opacity;
+}
+.nav-burst i.go { animation: navBurst .8s ease-out both; }
+@keyframes navBurst {
+  0% { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), -50%) scale(.7); }
+  12% { opacity: .95; }
+  55% { opacity: .85; }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--dx2, var(--dx, 0px))), calc(-50% - 26px)) scale(.55);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --nav-hover-lift: 0px; }
+  .grp:hover, .sub:hover, .grp:active, .sub:active { transform: none; box-shadow: none; }
+  .nav-inner:has(.grp[aria-selected="true"]:hover) .nav-ind,
+  .nav-inner:has(.grp[aria-selected="true"]:hover) .nav-glider,
+  .nav-inner:has(.grp[aria-selected="true"]:active) .nav-glider,
+  .nav2wrap:has(.sub[aria-selected="true"]:hover) .nav2-ind,
+  .nav2wrap:has(.sub[aria-selected="true"]:active) .nav2-ind,
+  .nav-press.pressing { translate: 0 0; }
+  .nav-burst { display: none; }
+  .nav2-ind.sweep::after { animation: none; }
+}
 
 /* ── 页面网格与卡片 ───────────────────────────────────────────────────── */
 .page {
@@ -978,6 +1282,48 @@ body.eg-on .nav2wrap::before {
   gap: var(--s4); align-items: start;
   padding: var(--s5);
   max-width: 1560px; margin: 0 auto;
+}
+/* 通用空态页（当前无页面使用）：导航按钮保留，页面不挂内容。 */
+.page.page--blank {
+  display: block; padding: 0; max-width: none; min-height: 0;
+}
+/* 全幅工具页（2026-10-27 · 工厂三页）：不套卡片、不留页面内边距；
+   工厂层自己铺满顶栏以下。 */
+.page.page--frame {
+  display: block; padding: 0; max-width: none;
+  height: 0; min-height: 0;       /* 高度由常驻层负责；页面本身不占位，告警条仍留在流里 */
+}
+/* 工厂 iframe 常驻在这个固定层里：由 factory-frame.js 预热，切页只显隐，
+   不重建、不重载。层级压在两级导航(40) / 顶栏(42) / 设置齿轮(79) 之下，
+   导航因此浮在工厂之上仍可点；两者视觉重叠由后续单独处理。 */
+.factory-host {
+  position: fixed; top: var(--h-topbar);
+  left: 0; right: 0; bottom: 0; z-index: 39;
+  background: var(--c-bg);
+  visibility: hidden; opacity: 0; pointer-events: none;
+  transition: opacity .2s var(--ease), visibility 0s linear .2s;
+}
+body.is-frame-page .factory-host {
+  visibility: visible; opacity: 1; pointer-events: auto;
+  transition: opacity .2s var(--ease), visibility 0s;
+}
+.factory-frame {
+  display: block; width: 100%; height: 100%; border: 0;
+  background: var(--c-bg);
+  opacity: 0; transition: opacity .2s var(--ease);
+}
+/* 工厂帧等自己的文档就绪后再淡入，避免先闪 loading 再闪内容。 */
+body.factory-frame-ready .factory-frame { opacity: 1; }
+.factory-loading {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  background: var(--c-bg); color: var(--c-text-3);
+  font-size: var(--t-sm); letter-spacing: .02em; pointer-events: none;
+  transition: opacity .18s var(--ease), visibility 0s linear .18s;
+}
+body.factory-frame-ready .factory-loading { opacity: 0; visibility: hidden; }
+body.is-frame-page .foot { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .factory-host, .factory-frame, .factory-loading { transition: none; }
 }
 /* 页头：标题 / 一句话说明 / 面包屑。原来这一块没有任何样式（class 存在但没定义） */
 .wrap-head { grid-column: span 12; min-width: 0; }
@@ -1093,7 +1439,7 @@ body.eg-on .nav2wrap::before {
   width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%;
   background: radial-gradient(120% 120% at 34% 24%, #fff 0%, #fff 46%, #e6edf9 100%);
   box-shadow: 0 2px 6px var(--c-shadow-3), inset 0 0 0 1px rgba(255, 255, 255, .8),
-              inset 0 -2px 4px rgba(49, 68, 108, .18);
+              inset 0 -2px 4px rgba(15, 20, 25, .18);
   pointer-events: none;
 }
 /* 原生滑块铺满整条轨道：透明、吃事件、留键盘与读屏语义 */
@@ -1224,27 +1570,6 @@ input[type="date"], input[type="time"] { font-variant-numeric: tabular-nums; }
 .hint.ok { color: var(--c-ok); }
 .hint b, .hint code { color: var(--c-text-2); }
 .hint code { background: var(--c-sunken); padding: 1px 5px; border-radius: var(--r-sm); font-size: .92em; }
-
-/* ── 圆形深浅切换（2026-10-04 · beui ThemeToggle circle-blur 移植）──────
-   视觉 = 参考截图同款：圆形描边 + 居中图标（太阳/月亮），不写字。
-   替换原 #themeSel 下拉（深浅只有两态，"切换器"的形状是按钮不是选择器；
-   原 `.sel` / `.sel-sm` 全站只有它在用，随它一并退役）。
-   揭开动画的规则在文件尾「深浅切换的整页揭开」段。 */
-.theme-btn {
-  flex: none; width: var(--h-ctl); height: var(--h-ctl); padding: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 50%;
-  /* 静止态描边取**最淡**的一档（--c-line）：用户实测反馈"边缘描线太重"
-     （2026-10-04，当时用的是 --c-line-strong）。hover 再回到 strong 一档，
-     给交互留出反馈梯度。 */
-  border: 1px solid var(--c-line);
-  background: var(--c-surface); color: var(--c-text-2);
-  font: inherit; cursor: pointer;
-  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
-}
-.theme-btn:hover { border-color: var(--c-line-strong); color: var(--c-text-1); }
-/* 焦点环与全局 focus-visible 同一条（--c-accent-ring），别处不再重写 */
-.theme-btn .ico { display: block; }
 
 /* ── 开关 ─────────────────────────────────────────────────────────────── */
 .sw { display: inline-flex; align-items: center; gap: var(--s2); cursor: pointer; user-select: none; min-height: var(--h-ctl); min-width: 0; }
@@ -1466,7 +1791,6 @@ a.jump:hover { border-color: var(--c-accent); color: var(--c-accent); background
 .metric .l { font-size: var(--t-xs); color: var(--c-text-3); line-height: 1.4; }
 .metric.hi { background: var(--c-accent-weak); border-color: var(--c-accent-line); }
 .metric.hi .l { color: var(--c-accent); }
-
 /* ── 状态卡组 + 端口三态（2026-10-02 运行总览页重排）────────────────────
    ⚠️ 存在的理由不是"好看"，是**把判断交给视觉系统**：
       原来那 6 行是等权两列文本，读者必须**逐行读字**才能找出"哪个坏了"。
@@ -1810,42 +2134,311 @@ details.det pre { margin: 0; }
 .savebar .btn-ghost:focus-visible { outline-color: var(--c-bar-fg); }
 .savebar .btn-primary { background: var(--c-accent); border-color: var(--c-accent); color: var(--c-on-accent); }
 
-.toasts { position: fixed; right: var(--s4); bottom: var(--s4); z-index: 60; display: grid; gap: var(--s2); justify-items: end; }
+/* ── 提示卡（2026-10-27 改版）────────────────────────────────────────────
+   形态：描边图标 + 标题 + 说明 + 右上角关闭；语义色只走**底色 / 描边 / 图标**，
+   标题与说明一律中性文字（色 + 字两条通道都在）。
+   确认卡复用同一套外观，按钮在卡内底部；原生 confirm() 不再使用。
+   ⚠️ 图标是**描边**（图一），不是实心圆章：亮面 ink 只做非文本图形，
+      对浅底 ≥3:1；文字不跟它走，否则读不到 4.5:1。 */
+.toasts {
+  position: fixed; right: var(--s4); bottom: var(--s4); z-index: 60;
+  display: grid; gap: 10px; justify-items: end;
+  width: min(412px, calc(100vw - var(--s6)));
+}
+/* 每个卡片外面一层：高度收起由它承担，卡片自己只做横向滑出 ——
+   这样收起时不会把标题/按钮挤扁（旧版直接收缩卡片高度，观感是"从下往上挤"）。 */
+.toast-slot { display: block; width: 100%; }
 .toast {
+  --tone: var(--c-text-2);
+  --tone-ink: var(--c-text-3);
+  --tone-bg: var(--c-surface);
+  --tone-line: var(--c-line);
+  --tone-on: var(--c-surface);
+  --r-toast: 18px;   /* 组件级：提示卡比卡片梯上的 14px 再圆一档（图一的大圆角） */
   position: relative;
-  display: flex; align-items: center; gap: var(--s2);
-  max-width: 440px; padding: 10px 14px 10px 30px;
-  background: var(--c-surface); border: 1px solid var(--c-line-strong);
-  border-left: 3px solid var(--c-accent);
-  border-radius: var(--r2);
-  box-shadow: 0 4px 12px -4px var(--c-shadow-3), 0 12px 32px -14px var(--c-shadow-3);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: var(--s3);
+  align-items: start;
+  width: 100%;
+  padding: 14px 14px 14px 16px;
+  background: var(--tone-bg);
+  border: 1px solid var(--tone-line);
+  border-radius: var(--r-toast);
+  box-shadow: 0 2px 6px -2px var(--c-shadow-2), 0 14px 34px -18px var(--c-shadow-3);
   font-size: var(--t-md); color: var(--c-text-1); line-height: var(--lh-2);
-  animation: tin var(--dur) var(--ease);
+  text-align: left;
+  animation: tin .24s var(--ease);
 }
-/* 圆点与左侧色条**同一个语义色**：色 + 字两条通道，不靠纯色块表意 */
-.toast::before {
-  content: ""; position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
-  width: 8px; height: 8px; border-radius: 50%; background: var(--c-accent);
+.toast:focus { outline: none; }
+.toast.ok   { --tone: var(--c-ok);     --tone-ink: var(--c-ok-ink);     --tone-bg: var(--c-ok-bg);     --tone-line: var(--c-ok-line);     background: var(--tone-bg); border-color: var(--tone-line); }
+.toast.warn { --tone: var(--c-warn);   --tone-ink: var(--c-warn-ink);   --tone-bg: var(--c-warn-bg);   --tone-line: var(--c-warn-line);   background: var(--tone-bg); border-color: var(--tone-line); }
+.toast.bad  { --tone: var(--c-danger); --tone-ink: var(--c-danger-ink); --tone-bg: var(--c-danger-bg); --tone-line: var(--c-danger-line); --tone-on: var(--c-on-danger); background: var(--tone-bg); border-color: var(--tone-line); }
+/* 中性提示也给实底：玻璃模式只留给面板材质，提示卡这一组统一是图一的实色卡 */
+.toast.tip  { background: var(--c-surface); border-color: var(--c-line); }
+
+.toast-ico {
+  display: grid; place-items: center;
+  width: 22px; height: 22px; margin-top: 1px;
+  color: var(--tone-ink);
+  flex: none;
 }
-@keyframes tin { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
-.toast.ok   { border-left-color: var(--c-ok); }
-.toast.ok::before { background: var(--c-ok); }
-.toast.warn { border-left-color: var(--c-warn); border-color: var(--c-warn-line); background: var(--c-warn-bg); color: var(--c-warn); }
-.toast.warn::before { background: var(--c-warn); }
-.toast.bad  { border-left-color: var(--c-danger); border-color: var(--c-danger-line); background: var(--c-danger-bg); color: var(--c-danger); }
-.toast.bad::before { background: var(--c-danger); }
+.toast-ico svg { display: block; width: 22px; height: 22px; }
+
+.toast-main { min-width: 0; }
+.toast-title {
+  margin: 0;
+  font-size: var(--t-xl); line-height: var(--lh-1); font-weight: 600;
+  color: var(--c-text-1);
+}
+.toast-desc {
+  margin: 3px 0 0;
+  font-size: var(--t-md); line-height: var(--lh-2);
+  color: var(--c-text-2);
+  overflow-wrap: anywhere;
+}
+
+.toast-x {
+  display: grid; place-items: center;
+  width: 28px; height: 28px; margin: -5px -5px 0 0;
+  padding: 0; border: 0; border-radius: var(--r1);
+  background: transparent; color: var(--c-text-3);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.toast-x:hover { background: color-mix(in srgb, var(--tone) 12%, transparent); color: var(--c-text-1); }
+.toast-x:active { background: color-mix(in srgb, var(--tone) 20%, transparent); }
+.toast-x:focus-visible { outline: 2px solid var(--tone); outline-offset: 1px; }
+.toast-x svg { width: 14px; height: 14px; }
+
+/* 确认卡的按钮行：右侧对齐，与说明拉开一档；胶囊形是图一 Review 按钮的形态 */
+.toast-foot {
+  grid-column: 2 / -1;
+  display: flex; justify-content: flex-end; gap: var(--s2);
+  margin-top: 10px;
+}
+/* 选中态 = 实心填充；未选中 = 中性描边纯底。焦点不再画外框：
+   Tab / 悬停都会把"选中"移到当前那颗按钮上（JS 切 .is-on）。 */
+.toast-btn {
+  --sel-bg: var(--c-accent);
+  --sel-fg: var(--c-on-accent);
+  height: 28px; padding: 0 var(--s3);
+  border: 1px solid var(--c-line-strong); border-radius: var(--r-pill);
+  background: transparent; color: var(--c-text-2);
+  font: 600 var(--t-sm)/1 var(--font);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.toast-btn.primary { --sel-bg: var(--tone); --sel-fg: var(--tone-on); }
+.toast-btn.is-on { background: var(--sel-bg); border-color: var(--sel-bg); color: var(--sel-fg); }
+.toast-btn:active { transform: scale(.96); }
+.toast-btn:focus-visible { outline: none; }
+
+@keyframes tin { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+  .toast-btn { transition: none; }
+}
 
 .busy {
   position: fixed; inset: 0; z-index: 70; display: grid; place-items: center;
+  padding: var(--s4);
   background: var(--c-scrim-soft); backdrop-filter: blur(3px);
   font-size: var(--t-md); color: var(--c-text-1);
+
+  /* ── 处理中加载动画的**本地色板**（2026-10-23）──────────────────────────
+     动效取自 Uiverse.io · dexter-st/popular-puma-86（旋转光晕环 + 逐字呼吸 + 星点），
+     原件是深底白字；这里把颜色拆成本地令牌，浅色/深色各一套：
+     · 浅色：墨蓝字 + 蓝调光晕（白字压在白纱上等于没字）
+     · 深色：近白字 + 冷白光晕（贴近原件）
+     ⚠️ 只在本组件内生效，不往全站加令牌：这套色只为这一个动画服务。 */
+  --ld-ink: #31446c;
+  --ld-ink-shadow: rgba(47, 80, 155, .35);
+  --ld-glint: rgba(255, 255, 255, .95);
+  --ld-halo: rgba(47, 80, 155, .06);
+  --ld-halo-glow: rgba(47, 80, 155, .18);
+  --ld-ring-1: rgba(255, 255, 255, .55);
+  --ld-ring-2: rgba(120, 170, 245, .75);
+  --ld-ring-3: rgba(47, 80, 155, .35);
+  --ld-star: #31446c;
+  --ld-star-glow: rgba(47, 80, 155, .45);
 }
-.busy .spin, .spin {
-  width: 14px; height: 14px; border-radius: 50%; display: inline-block; margin-right: 8px;
-  border: 2px solid var(--c-line-strong); border-top-color: var(--c-accent);
-  animation: sp .7s linear infinite; vertical-align: -2px;
+html[data-theme="dark"] .busy {
+  --ld-ink: #f2f7ff;
+  --ld-ink-shadow: rgba(0, 0, 0, .55);
+  --ld-glint: rgba(255, 255, 255, .95);
+  --ld-halo: rgba(157, 191, 235, .08);
+  --ld-halo-glow: rgba(255, 255, 255, .18);
+  --ld-ring-1: rgba(255, 255, 255, .95);
+  --ld-ring-2: rgba(255, 255, 255, .33);
+  --ld-ring-3: rgba(157, 191, 235, .20);
+  --ld-star: #f2f7ff;
+  --ld-star-glow: rgba(157, 191, 235, .60);
 }
-@keyframes sp { to { transform: rotate(360deg) } }
+.busy-box { display: grid; justify-items: center; gap: var(--s4); }
+#busyTxt { font-size: var(--t-md); color: var(--c-text-2); letter-spacing: .02em; }
+
+.loader-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 132px;
+  height: 132px;
+  font-family: var(--font);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ld-ink);
+  border-radius: 50%;
+  background-color: var(--ld-halo);
+  box-shadow: 0 0 60px -10px var(--ld-halo-glow);
+  user-select: none;
+}
+
+.loader {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  background-color: transparent;
+  animation: loader-rotate 2s linear infinite;
+  z-index: 0;
+}
+
+@keyframes loader-rotate {
+  0% {
+    transform: rotate(90deg);
+    box-shadow:
+      0 10px 20px 0 var(--ld-ring-1) inset,
+      0 20px 30px 0 var(--ld-ring-2) inset,
+      0 60px 60px 0 var(--ld-ring-3) inset;
+  }
+  50% {
+    transform: rotate(270deg);
+    box-shadow:
+      0 10px 20px 0 var(--ld-ring-1) inset,
+      0 20px 10px 0 var(--ld-ring-2) inset,
+      0 40px 60px 0 var(--ld-ring-3) inset;
+  }
+  100% {
+    transform: rotate(450deg);
+    box-shadow:
+      0 10px 20px 0 var(--ld-ring-1) inset,
+      0 20px 30px 0 var(--ld-ring-2) inset,
+      0 60px 60px 0 var(--ld-ring-3) inset;
+  }
+}
+
+.loader-letter {
+  display: inline-block;
+  opacity: 0.4;
+  transform: translateY(0);
+  animation: loader-letter-anim 2s infinite;
+  z-index: 1;
+  border-radius: 50ch;
+  border: none;
+  filter: blur(2px);
+  margin: 0.35em;
+}
+
+.loader-letter:nth-child(1) { animation-delay: 0s; }
+.loader-letter:nth-child(2) { animation-delay: 0.1s; }
+.loader-letter:nth-child(3) { animation-delay: 0.2s; }
+.loader-letter:nth-child(4) { animation-delay: 0.3s; }
+.loader-letter:nth-child(5) { animation-delay: 0.4s; }
+.loader-letter:nth-child(6) { animation-delay: 0.5s; }
+.loader-letter:nth-child(7) { animation-delay: 0.6s; }
+
+@keyframes loader-letter-anim {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translateY(0);
+    filter: blur(2px);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1.2) translateY(-1px);
+    filter: blur(0px);
+    text-shadow:
+      0px 0px 2px var(--ld-glint),
+      0px 0px 6px var(--ld-ink-shadow);
+  }
+  40% {
+    opacity: 0.7;
+    transform: translateY(0);
+    filter: blur(2px);
+  }
+}
+
+.star {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--ld-star);
+  transform: translate(20px, 90px);
+  animation: blur-anim 2s infinite;
+  box-shadow: 0 0 8px 0 var(--ld-star-glow);
+  filter: blur(4px);
+  opacity: 0.2;
+}
+
+/* ⚠️ `:nth-of-type` 数的是同标签兄弟（div）：`.loader` 是第 1 个 div，
+   所以第 1 颗星从 `(2)` 开始 —— 最后一颗星沿用上面 `.star` 的基准位。 */
+.star:nth-of-type(2) {
+  transform: translate(56px, 46px);
+  scale: 1.05;
+  animation-delay: 0.2s;
+}
+.star:nth-of-type(3) {
+  transform: translate(-26px, 56px);
+  scale: 1.4;
+  animation-delay: 0.4s;
+}
+.star:nth-of-type(4) {
+  transform: translate(-50px, -70px);
+  scale: 0.95;
+  animation-delay: 0.7s;
+}
+.star:nth-of-type(5) {
+  transform: translate(32px, -66px);
+  scale: 1.3;
+  animation-delay: 0.35s;
+}
+.star:nth-of-type(6) {
+  transform: translate(82px, -36px);
+  scale: 1;
+  animation-delay: 0.9s;
+}
+.star:nth-of-type(7) {
+  transform: translate(-92px, 26px);
+  scale: 1;
+  animation-delay: 0.95s;
+}
+
+@keyframes blur-anim {
+  0%,
+  100% {
+    opacity: 0.2;
+    filter: blur(4px);
+  }
+  50% {
+    opacity: 0.3;
+    filter: blur(1px);
+  }
+}
+
+/* 减少动态：保留"Loading"与光晕的静态形状 —— 全站那条 reduce 规则会把动画压成
+   0.01ms / 1 次，而逐字动画的末帧是 opacity:0 ⇒ 不单独兜底的话字会整个消失。 */
+@media (prefers-reduced-motion: reduce) {
+  .loader { animation: none; transform: rotate(90deg); box-shadow: 0 10px 20px 0 var(--ld-ring-1) inset, 0 20px 30px 0 var(--ld-ring-2) inset; }
+  .loader-letter { animation: none; opacity: .85; filter: none; transform: none; }
+  .star { animation: none; opacity: .25; }
+}
 
 /* ── 右键浮层（2026-10-20 · 只改呈现层，行为不变）──────────────────────
    数值规格借自 bencho 的 SortMenu：`transform-origin: 100% 0`、入场关键帧只写 `from`、
@@ -1929,7 +2522,7 @@ details.det pre { margin: 0; }
   .page { gap: var(--s3); padding-top: var(--s4); }
   .card-b { padding: var(--s3); }
   .toasts { left: var(--s4); right: var(--s4); justify-items: stretch; }
-  .toast { max-width: none; }
+  .toast { max-width: none; width: 100%; }
 }
 
 /* 窄屏：岛矮一档、选项矮一档，**换行策略一个字不改**（仍是横向滚动）。
@@ -1952,10 +2545,11 @@ details.det pre { margin: 0; }
      B39 起两层是**同一行**，"齐平"靠的就是这两个令牌相等 ——
      不等时灵动岛比二级栏高 4px，**而两级导航看起来都正常**。
      ⚠️ 少改这一处同样会退化，只是退化形态从"被压掉一截"变成"没齐平"。 */
-  :root { --h-nav1: 48px; --h-nav-item: 36px; --h-nav2: 30px; }
+  :root { --h-nav1: 48px; --h-nav-item: 36px; --h-nav2: 30px; --nav-rise: 11.5px; --nav-r2: 11.5px; }
   .grp { padding: 0 var(--s3); font-size: var(--t-sm); }
   .nav-inner { padding: 0 var(--s1); }
   .sub { height: 24px; padding: 0 var(--s3); }
+  .nav2-ind { height: 24px; }
 }
 
 /* 触摸目标补到 44px。⚠️ 这一条**没有在真机上实测过**（本机只有鼠标），
@@ -2000,6 +2594,50 @@ details.det pre { margin: 0; }
   width: 100vw; height: 100vh;
   display: block;
   pointer-events: none;
+}
+.shader-bg.is-inactive { opacity: 0; visibility: hidden; }
+
+/* ── 等高线背景（2026-10-26）────────────────────────────────────────────────
+   层序：与 .shader-bg 同为 -2，但在它之后、.custom-bg 之前；自定义背景永远
+   最后声明，所以视觉上仍压在最上面。
+   显示开关只有一个：html.bg-contour（splash.js 首帧预写，contour-bg.js 随模式/
+   自定义背景抑制切换）—— 不要让 `.is-on` 与它各管一半，那会出现"模式是等高线
+   但层没显示"的静默态。 */
+.contour-bg {
+  position: fixed; inset: 0; z-index: -2;
+  overflow: hidden; pointer-events: none;
+  background: var(--c-bg);
+  opacity: 0; visibility: hidden;
+  transition: opacity .55s var(--ease), visibility 0s linear .55s;
+}
+html.bg-contour .contour-bg {
+  opacity: 1; visibility: visible;
+  transition: opacity .55s var(--ease);
+}
+.contour-poster, .contour-video {
+  position: absolute; inset: 0; display: block;
+  width: 100%; height: 100%; object-fit: cover;
+}
+.contour-poster {
+  background-position: center; background-size: cover;
+  opacity: 1;
+  transition: opacity .45s var(--ease);
+}
+.contour-video {
+  opacity: 0;
+  transition: opacity .45s var(--ease);
+}
+.contour-bg.is-playing .contour-poster { opacity: 0; }
+.contour-bg.is-playing .contour-video { opacity: 1; }
+.contour-bg.is-static .contour-poster {
+  animation: contour-drift var(--contour-drift-dur, 48s) ease-in-out infinite alternate;
+}
+@keyframes contour-drift {
+  from { transform: scale(1.03) translate3d(-.6%, -.4%, 0); }
+  to { transform: scale(1.06) translate3d(.6%, .4%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .contour-bg.is-static .contour-poster { animation: none; }
 }
 
 /* ── 顶栏「背景」选择器（仿 beui ColorSelector：swatch + 弹簧选中环）────────
@@ -2523,19 +3161,147 @@ html[data-vt="circle-blur"]::view-transition-new(root) {
 }
 .cg-dim { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 
-/* ── Electron 壳：原生标题栏按钮区 + 顶栏拖拽（B1a · 2026-10-23）──────────
-   preload 在 <html> 上打 data-shell="electron"。原生按钮占右侧 40 DIP；
-   顶栏用 env(titlebar-area-width) 预留，交互元素全部 no-drag。
-   ⚠️ 不设 frame:false —— Snap/双击/系统菜单由原生标题栏保留。 */
-html[data-shell="electron"] .topbar {
-  -webkit-app-region: drag;
-  padding-right: calc(100vw - env(titlebar-area-width, 100vw) + var(--s5));
+/* ── Electron 壳：使用系统原生窗口框（2026-10-29）
+   原生标题栏由 Windows/macOS 自己绘制；网页顶栏只是内容，不再冒充标题栏，
+   也不预留 40 DIP 按钮区、不设 app-region: drag。 */
+
+/* 导航顶部跑道（2026-10-25）：旧的 drop-shadow 带 spread（-14/-26），浏览器会整条丢弃；
+   保留旧声明以兼容并行会话的 §136 静态契约，这里用后置有效规则覆盖。
+   工厂浮层的 top 固定在顶栏下沿，不再参与导航跑道/告警条测量。 */
+.nav-dock-wrap { filter: var(--nav-float-shadow); }
+@media (max-width: 720px) { :root { --nav-top-gap: 32px; } }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   工厂域方向性转场（2026-10-27）
+   ══════════════════════════════════════════════════════════════════════════
+   来源：桌面原型 `estrella-绝区零绿幕转场-2026-10-25.html`。
+   ⚠️ 原型是**绿幕素材**（#00ff0b 作合成占位色）。这里把绿色**抠掉**：
+      · 底色不画 —— overlay 背景透明，旧页面原样透出；
+      · 结尾的绿色回扫改成**透明擦除**（同一形状的 chevron 把黑幕吃掉），
+        露出的就是已经切好的新页面。
+   层级压在顶栏/导航/页面之上，但在启动开屏(95)之下；转场只在用户点导航时发生，
+   不会与开屏重叠。pointer-events 只在播放期间接管，避免遮罩下面的页面被误点。
+
+   ⚠️ 2026-10-27 定稿：并入 style.css（不新开资产文件）——
+      面板进程的 NEXT_ASSETS 在启动时读入内存，新文件要重启面板才可取；
+      并进已有资产后，改完刷新页面即生效，符合本仓"零构建、改完立刻生效"的前提。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.fx-wipe {
+  /* 原型 1280×720 实测值：light #6c6c6c · medium #353535 · dark #151515
+     （三层从左到右依次压上，最上层是 dark）。 */
+  --fx-light-1: #747474;
+  --fx-light-2: #6b6b6b;
+  --fx-light-3: #575757;
+  --fx-medium-1: #2e2e2e;
+  --fx-medium-2: #383838;
+  --fx-medium-3: #303030;
+  --fx-dark-1: #111111;
+  --fx-dark-2: #191919;
+  --fx-dark-3: #131313;
+  --fx-hatch: rgba(0, 0, 0, .44);
+  --fx-band: #000;
+  --fx-band-text: rgba(255, 255, 255, .92);
+
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  overflow: hidden;
+  pointer-events: none;
+  isolation: isolate;
+  contain: layout paint style;
+  background: transparent;
 }
-html[data-shell="electron"] .tb-pills,
-html[data-shell="electron"] .tb-actions,
-html[data-shell="electron"] .topbar button,
-html[data-shell="electron"] .topbar input,
-html[data-shell="electron"] .topbar select,
-html[data-shell="electron"] #hudIsle {
-  -webkit-app-region: no-drag;
+.fx-wipe[hidden] { display: none; }
+.fx-wipe.is-active { pointer-events: auto; }
+
+/* 反向（工厂 → 其它域）：只镜像三层箭头与擦除形状，文字横幅保持可读。 */
+.fx-wipe-train {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  will-change: clip-path;
+}
+.fx-wipe.is-reverse .fx-wipe-train { transform: scaleX(-1); }
+
+.fx-wipe-layer {
+  position: absolute;
+  inset: 0;
+  will-change: clip-path;
+}
+.fx-wipe-layer.is-light {
+  background: radial-gradient(118% 132% at 50% 44%, var(--fx-light-1) 0, var(--fx-light-2) 48%, var(--fx-light-3) 100%);
+}
+.fx-wipe-layer.is-light::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(0, 0, 0, .16), transparent 18% 82%, rgba(0, 0, 0, .12));
+}
+.fx-wipe-layer.is-medium {
+  background: linear-gradient(101deg, var(--fx-medium-1) 0, var(--fx-medium-2) 56%, var(--fx-medium-3) 100%);
+}
+.fx-wipe-layer.is-dark {
+  background: linear-gradient(101deg, var(--fx-dark-1) 0, var(--fx-dark-2) 58%, var(--fx-dark-3) 100%);
+}
+.fx-wipe-hatch {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(45deg,
+    var(--fx-hatch) 0 1.4px,
+    transparent 1.4px var(--fx-hp, 9px));
+}
+
+/* 中央黑带：与原型同高（720p 下 33px），随视口高度缩放；文字始终水平居中。 */
+.fx-wipe-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  z-index: 3;
+  height: 0;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--fx-band);
+}
+.fx-wipe-text {
+  font-family: var(--mono);
+  font-size: clamp(12px, 2.5vh, 24px);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: clamp(8px, 2.4vw, 32px);
+  padding-left: clamp(8px, 2.4vw, 32px);
+  white-space: nowrap;
+  color: var(--fx-band-text);
+  text-shadow: 0 0 10px rgba(255, 255, 255, .16);
+  opacity: 0;
+  transform: scaleX(.97);
+  will-change: opacity, transform;
+}
+
+/* 深色主题：三层灰阶按各自底色重新取，保留 light > medium > dark 的层次。
+   dark 层用 --c-surface 附近的 #15171a —— 它只需不透明地盖住页面，
+   不必比页面底更黑；否则盖满那一下会读成"整屏突然塌成纯黑"。
+   ⚠️ 不写进 `html[data-theme="dark"] {}` 令牌块：那一块只许 --c-*（check-wb §60）。 */
+html[data-theme="dark"] .fx-wipe {
+  --fx-light-1: #c2c5c9;
+  --fx-light-2: #b0b4b9;
+  --fx-light-3: #8f949a;
+  --fx-medium-1: #4f545a;
+  --fx-medium-2: #5c6268;
+  --fx-medium-3: #454a50;
+  --fx-dark-1: #15171a;
+  --fx-dark-2: #1b1e22;
+  --fx-dark-3: #101114;
+  --fx-hatch: rgba(0, 0, 0, .52);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-wipe { display: none !important; }
 }

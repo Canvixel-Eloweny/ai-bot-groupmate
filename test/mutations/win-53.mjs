@@ -89,11 +89,11 @@ export default [
       + 'Windows 用原生 NapCat（那边根本没有容器）⇒ 屏幕上永远"HTTP 断 / WS 断 / 未登录"，'
       + '而机器人其实连着、消息流一直有记录',
     file: 'panel/lib/state-collector.js',
-    anchor: /^      httpGet\(onebot\.httpPort, '\/get_login_info'\),$/m,
+    anchor: /^      return httpGet\(onebot\.httpPort, '\/get_login_info'\)\.then\(\(r\) => \{$/m,
     count: 1,
     apply: (s) => s.replace(
-      "      httpGet(onebot.httpPort, '/get_login_info'),",
-      "      containerRunning ? httpGet(onebot.httpPort, '/get_login_info') : Promise.resolve({ ok: false }),"
+      "      return httpGet(onebot.httpPort, '/get_login_info').then((r) => {",
+      "      return (containerRunning ? httpGet(onebot.httpPort, '/get_login_info') : Promise.resolve({ ok: false })).then((r) => {"
     ),
     layer: 'check-wb',
     expect: 'BLOCKED',

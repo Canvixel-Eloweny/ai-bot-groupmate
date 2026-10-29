@@ -1,0 +1,727 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Estrella Plugin Factory · 插件工厂</title>
+<!--
+  ══════════════════════════════════════════════════════════════════════════
+   Estrella Plugin Factory（2026-10-27）
+   ══════════════════════════════════════════════════════════════════════════
+   这是第三个**工厂项目**（与「玻璃工厂」「人设工厂」同级），不是控制台里的插件页。
+
+   ── 外观约束（维护者原话：不要拆、不要玻璃板、这是一整块）─────────────────
+     · 整面：sidebar 与内容区是**同一张纸**，只有 1px 分隔线，没有卡片、没有阴影、
+       没有 backdrop-filter、没有圆角浮层；
+     · 尺寸跟窗口走：sidebar 固定 272px，内容区吃掉剩下的宽度；窄屏折成上下两段。
+     · 主题令牌在本文件内自持（不依赖 style.css）——它是独立应用，和 Glass Lab 一样。
+
+   ── 数据 ──────────────────────────────────────────────────────────────────
+     同源读取控制台 `/api/state`（token 从父页面 `<meta name="panel-token">` 取）：
+       · 分类词表 = 清单 `category` 聚合（服务端下发；缺省归 other）
+       · 插件清单 = `extensions.items`
+       · 运行期   = `effective.extensions.items`（钩子 / 工具 / 空载 / 状态）
+     面板不在线时显示离线态，不编造数据。
+
+   ── 动作 ──────────────────────────────────────────────────────────────────
+     「导入插件」支持 ZIP / 文件夹；「创造插件」在本页填表 → 服务端模板生成 →
+     交给控制台走唯一安装接口。开关是**只读**的：写白名单仍走控制台
+     （那里有草稿 / 保存条 / 审计），工厂只负责看清楚。
+-->
+<style>
+  :root {
+    --fg: #1f2329; --fg-2: #4e5969; --fg-3: #86909c;
+    --line: #ececec; --line-2: #f2f2f3; --bg: #ffffff; --washed: #f7f8fa;
+    --accent: #165dff; --accent-weak: #eaf1ff;
+    --ok: #00b42a; --warn: #d25f00; --bad: #f53f3f;
+    --side: 272px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #e8e9eb; --fg-2: #a9adb5; --fg-3: #7a7f88;
+      --line: #26282c; --line-2: #1e2023; --bg: #121316; --washed: #17191c;
+      --accent: #4b86ff; --accent-weak: #17233c;
+      --ok: #3fd45f; --warn: #ffa53d; --bad: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.65 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; }
+  .app { display: grid; grid-template-columns: var(--side) minmax(0, 1fr); height: 100%; }
+
+  /* ── 左栏：品牌 / 入口 / 分类树 ─────────────────────────────────────── */
+  .side { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 18px 18px 14px; }
+  .brand svg { width: 26px; height: 26px; flex: none; color: var(--fg); }
+  .brand-copy { display: grid; gap: 1px; min-width: 0; }
+  .brand-en { font-size: 10px; font-weight: 700; letter-spacing: .16em; color: var(--fg-3); }
+  .brand-zh { font-size: 16px; font-weight: 700; line-height: 1.2; letter-spacing: .01em; }
+
+  .acts { display: grid; gap: 8px; padding: 0 14px 14px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 34px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg);
+    color: var(--fg); cursor: pointer; font-size: 13.5px; }
+  .btn:hover { background: var(--washed); }
+  .btn-primary { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
+  .btn-primary:hover { opacity: .9; background: var(--fg); }
+
+  .tree { flex: 1; min-height: 0; overflow: auto; padding: 4px 8px 12px; }
+  .tree-sec { padding: 6px 10px 4px; font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--fg-3); }
+  .row-btn { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0;
+    padding: 7px 10px; border: 0; border-radius: 7px; background: none; color: var(--fg-2);
+    cursor: pointer; text-align: left; font-size: 13.5px; }
+  .row-btn:hover { background: var(--washed); color: var(--fg); }
+  .row-btn[aria-pressed="true"] { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+  .row-btn .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-btn .n { margin-left: auto; font-size: 11.5px; opacity: .62; font-variant-numeric: tabular-nums; }
+  .chev { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
+    stroke-linecap: round; stroke-linejoin: round; opacity: .55; transition: transform .16s ease; }
+  .node[data-open="1"] > .row-btn .chev { transform: rotate(90deg); }
+  .subs { display: none; padding: 1px 0 4px 24px; }
+  .node[data-open="1"] > .subs { display: block; }
+  .sub-btn { display: flex; align-items: center; gap: 7px; width: 100%; padding: 5px 10px;
+    border: 0; border-radius: 7px; background: none; color: var(--fg-3); cursor: pointer;
+    text-align: left; font-size: 12.5px; }
+  .sub-btn:hover { background: var(--washed); color: var(--fg); }
+  .sub-btn[aria-pressed="true"] { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+  .dot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .5; flex: none; }
+  /* 左下角是控制台的设置齿轮（浮层压在上面）：底栏给它留出 56px，
+     否则窄高窗口里这段说明会被齿轮压住半行。 */
+  .side-foot { padding: 10px 18px 56px; border-top: 1px solid var(--line-2);
+    color: var(--fg-3); font-size: 11.5px; line-height: 1.6; }
+
+  /* ── 右栏：信息区（整面，不切卡）────────────────────────────────────── */
+  .main { min-width: 0; min-height: 0; overflow: auto; }
+  .doc { max-width: 980px; padding: 40px 48px 72px; }
+  .kicker { font-size: 12px; letter-spacing: .02em; color: var(--fg-3); }
+  .doc h1 { margin: 6px 0 10px; font-size: 30px; line-height: 1.25; letter-spacing: -.01em; font-weight: 700; }
+  .lede { margin: 0; color: var(--fg-2); font-size: 14.5px; line-height: 1.75; max-width: 68ch; }
+  .rule { height: 1px; background: var(--line); margin: 28px 0 22px; }
+  .doc h2 { margin: 0 0 4px; font-size: 15px; font-weight: 650; }
+  .doc .hint { color: var(--fg-3); font-size: 12.5px; margin: 0; }
+
+  .list { margin-top: 18px; border-top: 1px solid var(--line-2); }
+  .item { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px;
+    padding: 16px 2px; border-bottom: 1px solid var(--line-2); }
+  .item:hover { background: var(--washed); }
+  .sw { position: relative; width: 30px; height: 18px; margin-top: 3px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--washed); }
+  .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+    border-radius: 50%; background: var(--fg-3); transition: transform .16s ease; }
+  .sw[data-on="1"] { background: var(--accent); border-color: var(--accent); }
+  .sw[data-on="1"]::after { transform: translateX(12px); background: #fff; }
+  .sw[data-bad="1"] { opacity: .45; }
+  .item-main { min-width: 0; }
+  .item-h { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .item-h b { font-size: 14.5px; font-weight: 650; }
+  .item-id { font: 11.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-3); }
+  .item-desc { margin: 3px 0 0; color: var(--fg-2); font-size: 13px; line-height: 1.65; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+  .tag { font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 5px;
+    border: 1px solid var(--line); color: var(--fg-2); background: var(--bg); white-space: nowrap; }
+  .tag.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 32%, transparent); }
+  .tag.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 32%, transparent); }
+  .tag.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 32%, transparent); }
+  .item-side { text-align: right; color: var(--fg-3); font-size: 11.5px; white-space: nowrap; }
+  .empty { margin-top: 20px; padding: 28px 2px; color: var(--fg-2); }
+  .empty b { display: block; color: var(--fg); font-size: 15px; margin-bottom: 4px; }
+  .notice { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+    color: var(--fg-2); font-size: 12.5px; }
+  .fail { color: var(--bad); }
+
+  /* ── 导入插件：正中的虚线面板（2026-10-27）──────────────────────────────
+     遮罩 + 卡片，入场 0.22s 上浮淡入；虚线区支持拖拽，hover / dragover 变实。
+     不给文件夹做假承诺：本版只装 ZIP，文件夹按钮点开会说明原因。 */
+  .imp { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center;
+    background: rgba(17, 19, 24, .42); backdrop-filter: blur(2px); }
+  .imp[hidden] { display: none; }
+  .imp-card { width: min(760px, calc(100vw - 48px)); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 16px; box-shadow: 0 30px 80px -24px rgba(0, 0, 0, .45); padding: 20px 22px 18px;
+    animation: imp-in .22s cubic-bezier(.2, .8, .3, 1) both; }
+  @keyframes imp-in { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
+  .imp-h { display: flex; align-items: center; margin-bottom: 14px; }
+  .imp-h b { font-size: 17px; font-weight: 700; }
+  .imp-x { margin-left: auto; width: 30px; height: 30px; border: 0; border-radius: 8px; background: none;
+    color: var(--fg-3); font-size: 20px; line-height: 1; cursor: pointer; }
+  .imp-x:hover { background: var(--washed); color: var(--fg); }
+  .imp-drop { display: grid; place-items: center; gap: 8px; padding: 46px 24px; text-align: center;
+    border: 2px dashed var(--line); border-radius: 14px; background: var(--washed);
+    transition: border-color .16s ease, background .16s ease, transform .16s ease; }
+  .imp-drop:hover, .imp-drop.is-over { border-color: var(--accent); background: var(--accent-weak); transform: translateY(-1px); }
+  .imp-t { font-size: 18px; font-weight: 700; }
+  .imp-hint { margin: 0; color: var(--fg-2); font-size: 13px; line-height: 1.7; max-width: 46ch; }
+  .imp-btns { display: flex; gap: 8px; margin-top: 6px; }
+  .imp-note { margin: 12px 0 0; color: var(--warn); font-size: 12.5px; }
+  .imp-note[hidden] { display: none; }
+  .imp-form { display: grid; gap: 10px; width: 100%; text-align: left; padding: 4px 2px 2px; }
+  .imp-form .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .imp-form label { display: grid; gap: 4px; color: var(--fg-2); font-size: 12.5px; }
+  /* `hidden` 属性必须压过 `.imp-form label/ .row2` 的 display —— 否则创造插件里
+     plugin/skill 两套字段会同时露出来。 */
+  .imp-form [hidden] { display: none !important; }
+  .imp-form input, .imp-form select, .imp-form textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--fg); font: inherit;
+  }
+  .imp-form textarea { min-height: 74px; resize: vertical; }
+  .imp-preview { max-height: 260px; overflow: auto; margin: 10px 0 0; padding: 12px;
+    border: 1px solid var(--line-2); border-radius: 10px; background: var(--washed);
+    font: 11.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word; }
+  .imp-preview[hidden] { display: none; }
+  @media (max-width: 640px) { .imp-form .row2 { grid-template-columns: 1fr; } }
+  @media (prefers-reduced-motion: reduce) { .imp-card { animation: none; } }
+
+  @media (max-width: 900px) {
+    .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+    .side { border-right: 0; border-bottom: 1px solid var(--line); }
+    .tree { max-height: 34vh; }
+    .doc { padding: 26px 22px 56px; }
+    .doc h1 { font-size: 24px; }
+    .acts { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="side">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M9 4.5a2.5 2.5 0 1 1 5 0V6h3a1 1 0 0 1 1 1v3h-1.5a2.5 2.5 0 1 0 0 5H18v3a1 1 0 0 1-1 1h-3v-1.5a2.5 2.5 0 1 0-5 0V19H6a1 1 0 0 1-1-1v-3h1.5a2.5 2.5 0 1 0 0-5H5V7a1 1 0 0 1 1-1h3V4.5z"/>
+      </svg>
+      <span class="brand-copy">
+        <span class="brand-en">PLUGIN FACTORY</span>
+        <span class="brand-zh">插件工厂</span>
+      </span>
+    </div>
+    <div class="acts">
+      <button class="btn btn-primary" data-act="import" type="button">导入插件</button>
+      <button class="btn" data-act="create" type="button">创造插件</button>
+    </div>
+    <nav class="tree" id="tree" aria-label="插件分类">
+      <div class="tree-sec">分类</div>
+      <div id="treeRows"></div>
+    </nav>
+    <div class="side-foot">开关与控制台一致：勾选要回控制台保存并重启机器人。二级分类按机器人<b>实际挂上的</b>工具 / 钩子算。</div>
+  </aside>
+  <main class="main">
+    <div class="doc">
+      <div class="kicker" id="kicker">全部</div>
+      <h1 id="title">全部插件</h1>
+      <p class="lede" id="lede">左右两栏是同一张纸：左边选分类，右边看这一类的插件。</p>
+      <div class="rule"></div>
+      <h2 id="listTitle">插件</h2>
+      <p class="hint" id="listHint">运行期状态来自机器人上一轮加载结果；没运行就只显示磁盘上的事实。</p>
+      <div id="list"></div>
+      <p class="hint" id="loading" style="margin-top:14px;">正在读取控制台状态…</p>
+      <div class="empty" id="empty" hidden></div>
+      <div class="notice fail" id="offline" hidden>读不到控制台状态：面板可能没在运行。这个页面不编造数据。</div>
+    </div>
+  </main>
+</div>
+
+<div class="imp" id="impScrim" hidden>
+  <div class="imp-card" role="dialog" aria-modal="true" aria-labelledby="impTitle">
+    <div class="imp-h"><b id="impTitle">导入插件</b><button class="imp-x" data-imp="close" aria-label="关闭">×</button></div>
+    <div class="imp-drop" id="impDrop" role="button" tabindex="0">
+      <div class="imp-t">把 ZIP 拖到这里</div>
+      <p class="imp-hint">也可以选 ZIP 或整个文件夹。装完默认不启用 —— 回控制台勾上它，再重启机器人。</p>
+      <div class="imp-btns">
+        <button class="btn btn-primary" data-imp="zip" type="button">选择 ZIP</button>
+        <button class="btn" data-imp="folder" type="button">选择文件夹</button>
+      </div>
+      <input type="file" accept=".zip,application/zip" id="impZip" hidden>
+      <input type="file" webkitdirectory multiple id="impFolder" hidden>
+    </div>
+    <p class="imp-note" id="impNote" hidden></p>
+  </div>
+</div>
+
+<div class="imp" id="createScrim" hidden>
+  <div class="imp-card" role="dialog" aria-modal="true" aria-labelledby="createTitle">
+    <div class="imp-h"><b id="createTitle">创造插件</b><button class="imp-x" data-create="close" aria-label="关闭">×</button></div>
+    <div class="imp-form">
+      <div class="row2">
+        <label>类型
+          <select id="crKind">
+            <option value="plugin">插件（确定性工具）</option>
+            <option value="skill">Skill（提示词 + 工具）</option>
+          </select>
+        </label>
+        <label>分类（可空）<input id="crCategory" maxlength="40" placeholder="例如：工具 / 管理"></label>
+      </div>
+      <div class="row2">
+        <label>id（英文）<input id="crId" maxlength="40" placeholder="hello-plugin"></label>
+        <label>显示名称<input id="crName" maxlength="40" placeholder="你好插件"></label>
+      </div>
+      <label>说明<input id="crDesc" maxlength="200" placeholder="这个插件做什么"></label>
+      <div class="row2" data-for="plugin">
+        <label>工具名<input id="crTool" maxlength="40" placeholder="hello_tool"></label>
+        <label>工具说明<input id="crToolDesc" maxlength="200" placeholder="模型看到的工具说明"></label>
+      </div>
+      <label data-for="skill">提示词内容<textarea id="crPrompt" maxlength="2000" placeholder="模型在什么场景下参考这个 Skill"></textarea></label>
+      <p class="imp-hint">模板创建不会调用模型；生成的是标准清单 + 示例代码。装完默认不启用，启用前可以先看预览。</p>
+      <div class="imp-btns">
+        <button class="btn btn-primary" type="button" data-create="preview">生成预览</button>
+        <button class="btn" type="button" data-create="install" disabled>安装</button>
+      </div>
+      <p class="imp-note" id="crNote" hidden></p>
+      <pre class="imp-preview" id="crPreview" hidden></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ── 词表：二级分类只有这一处（按运行期能力形态）────────────────────── */
+  const SHAPES = [
+    { key: 'tools', label: '工具型', desc: '注册了工具，模型可以调用' },
+    { key: 'hooks', label: '钩子型', desc: '挂在钩子点上，改的是消息流' },
+    { key: 'both', label: '工具 + 钩子', desc: '两种能力都有' },
+    { key: 'empty', label: '空载', desc: '装了但什么都没挂上 —— 等于没装' },
+    { key: 'idle', label: '未运行', desc: '没勾选 / 待重启 / 机器人没跑，看不到运行期能力' },
+  ];
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const state = { cat: 'all', sub: 'all' };
+  let data = null;
+
+  /* token 从父页面取：工厂是控制台的 iframe（同源）。直开这个页面时没有父页面，
+     那就按"没有 token"处理 —— 只读路由会回 401，页面显示离线态而不是假装有数据。 */
+  function panelToken() {
+    try {
+      const meta = window.parent && window.parent !== window
+        ? window.parent.document.querySelector('meta[name="panel-token"]')
+        : document.querySelector('meta[name="panel-token"]');
+      return (meta && meta.content) || '';
+    } catch { return ''; }
+  }
+
+  async function api(path) {
+    const token = panelToken();
+    const r = await fetch(path, { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+    const ct = r.headers.get('content-type') || '';
+    const body = ct.includes('json') ? await r.json() : await r.text();
+    if (!r.ok) throw new Error((body && body.error) || ('HTTP ' + r.status));
+    return body;
+  }
+
+  async function postJson(path, body) {
+    const token = panelToken();
+    const r = await fetch(path, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+    const ct = r.headers.get('content-type') || '';
+    const data = ct.includes('json') ? await r.json() : await r.text();
+    if (!r.ok) {
+      const e = new Error((data && data.error) || ('HTTP ' + r.status));
+      e.status = r.status;
+      throw e;
+    }
+    return data;
+  }
+
+  function toBase64(buf) {
+    const bytes = new Uint8Array(buf);
+    let out = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      out += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(out);
+  }
+
+  function base64ToBlob(b64, type = 'application/zip') {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type });
+  }
+
+  const catOf = (it) => (data.catKeys.has(it.category) ? it.category : 'other');
+  const shapeOf = (it) => {
+    const rt = data.rtById[it.id];
+    if (!rt) return 'idle';
+    const h = (rt.hooks || []).length;
+    const t = (rt.tools || []).length;
+    if (h && t) return 'both';
+    if (t) return 'tools';
+    if (h) return 'hooks';
+    return 'empty';
+  };
+  const isBad = (it) => it.action === 'reject' || (Array.isArray(it.problems) && it.problems.length > 0);
+
+  function shapeCounts(cat) {
+    const out = {};
+    for (const it of data.items) {
+      if (cat !== 'all' && catOf(it) !== cat) continue;
+      const k = shapeOf(it);
+      out[k] = (out[k] || 0) + 1;
+    }
+    return out;
+  }
+  function catCount(key) {
+    return key === 'all' ? data.items.length : data.items.filter((it) => catOf(it) === key).length;
+  }
+
+  function treeHtml() {
+    const rows = [`<button class="row-btn" data-cat="all" aria-pressed="${state.cat === 'all'}"><span class="lbl">全部插件</span><span class="n">${data.items.length}</span></button>`];
+    for (const c of data.categories) {
+      const n = catCount(c.key);
+      if (!n) continue;
+      const open = state.cat === c.key;
+      const counts = shapeCounts(c.key);
+      const subs = SHAPES.filter((sh) => counts[sh.key]).map((sh) => `<button class="sub-btn" data-cat="${esc(c.key)}" data-sub="${sh.key}" aria-pressed="${open && state.sub === sh.key}" title="${esc(sh.desc)}"><span class="dot" aria-hidden="true"></span><span class="lbl">${esc(sh.label)}</span><span class="n">${counts[sh.key]}</span></button>`).join('');
+      rows.push(`<div class="node" data-cat="${esc(c.key)}"${open ? ' data-open="1"' : ''}>
+        <button class="row-btn" data-cat="${esc(c.key)}" aria-expanded="${open}" aria-pressed="${open}">
+          <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+          <span class="lbl">${esc(c.label)}</span><span class="n">${n}</span>
+        </button>
+        <div class="subs">${subs}</div>
+      </div>`);
+    }
+    return rows.join('');
+  }
+
+  function tagsOf(it) {
+    const rt = data.rtById[it.id];
+    const out = [];
+    out.push(`<span class="tag">${it.kind === 'plugin' ? '插件' : '技能包'}</span>`);
+    out.push(`<span class="tag">${esc(data.catLabel(catOf(it)))}</span>`);
+    if (rt) out.push(`<span class="tag ${rt.state === 'failed' ? 'bad' : 'ok'}">${esc(rt.state || 'loaded')}</span>`);
+    if (rt) {
+      const h = (rt.hooks || []).length;
+      const t = (rt.tools || []).length;
+      out.push(`<span class="tag ${h ? 'ok' : ''}">钩子 ${h}</span>`);
+      out.push(`<span class="tag ${t ? 'ok' : ''}">工具 ${t}</span>`);
+      if (rt.empty) out.push('<span class="tag bad">空载</span>');
+    }
+    if (it.netSelf) out.push('<span class="tag warn" title="这个插件自带联网：它用自己的 fetch，不受浏览锁定约束">自带联网</span>');
+    if (isBad(it)) out.push('<span class="tag bad">有问题</span>');
+    return out.join('');
+  }
+
+  function renderList() {
+    /* 排序与控制台插件库一致：先按分类词表顺序，再按名称 —— 同一个包在两处
+       不该出现在不同位置（否则"我刚在这儿看到它"会失效）。 */
+    const order = new Map(data.categories.map((c, i) => [c.key, i]));
+    const rank = (it) => order.has(catOf(it)) ? order.get(catOf(it)) : 99;
+    const items = data.items.slice()
+      .sort((a, b) => rank(a) - rank(b)
+        || String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN')
+        || String(a.id).localeCompare(String(b.id)))
+      .filter((it) => state.cat === 'all' || catOf(it) === state.cat)
+      .filter((it) => state.sub === 'all' || shapeOf(it) === state.sub);
+    const cat = state.cat === 'all' ? null : data.categories.find((c) => c.key === state.cat);
+    const sub = SHAPES.find((s) => s.key === state.sub);
+    $('kicker').textContent = cat ? (sub ? '分类 · ' + sub.label : '分类') : '全部';
+    $('title').textContent = cat ? (sub ? cat.label + ' · ' + sub.label : cat.label) : '全部插件';
+    $('lede').textContent = cat
+      ? (sub ? sub.desc : (cat.desc || ''))
+      : '左右两栏是同一张纸：左边选分类，右边看这一类的插件。';
+    $('listTitle').textContent = cat ? (cat.label + ' 下的插件') : '全部插件';
+    $('listHint').textContent = `显示 ${items.length} / 共 ${data.items.length} 个 · 开关在控制台里改，工厂只读`;
+    $('treeRows').innerHTML = treeHtml();
+
+    if (!items.length) {
+      $('list').innerHTML = '';
+      $('empty').hidden = false;
+      $('empty').innerHTML = data.items.length
+        ? '<b>这个分类下没有插件</b>换个分类，或用左边的「导入插件」装一个。'
+        : '<b>还没有装插件</b>用左边的「导入插件」拖入 ZIP 或插件文件夹。';
+      return;
+    }
+    $('empty').hidden = true;
+    $('list').innerHTML = `<div class="list">${items.map((it) => {
+      const enabled = data.enabled.has(it.id) && it.action !== 'reject';
+      return `<div class="item" data-plugin="${esc(it.id)}">
+        <span class="sw" data-on="${enabled ? '1' : '0'}" data-bad="${isBad(it) ? '1' : '0'}" title="${isBad(it) ? '这个插件有问题，勾了也不会加载' : '启用状态（只读）'}"></span>
+        <div class="item-main">
+          <div class="item-h"><b>${esc(it.name || it.id)}</b><span class="item-id">${esc(it.id)}</span></div>
+          <p class="item-desc">${esc(it.description || it.detail || '没有写描述')}</p>
+          <div class="tags">${tagsOf(it)}</div>
+        </div>
+        <div class="item-side">v${esc(it.version || '?')}</div>
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  function bindTree() {
+    $('treeRows').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-cat]');
+      if (!btn) return;
+      const cat = btn.dataset.cat;
+      if (btn.classList.contains('sub-btn')) {
+        state.cat = cat;
+        state.sub = state.sub === btn.dataset.sub ? 'all' : btn.dataset.sub;
+      } else {
+        state.cat = (cat === 'all' || state.cat !== cat) ? cat : 'all';
+        state.sub = 'all';
+      }
+      renderList();
+    });
+  }
+
+  async function load() {
+    try {
+      const st = await api('/api/state');
+      const ext = st.extensions || {};
+      const rt = (st.effective && st.effective.extensions) || null;
+      const rtById = {};
+      if (rt && Array.isArray(rt.items)) for (const r of rt.items) rtById[r.id] = r;
+      const categories = Array.isArray(ext.categories) ? ext.categories : [];
+      const items = Array.isArray(ext.items) ? ext.items : [];
+      data = {
+        categories,
+        catKeys: new Set(categories.map((c) => c.key)),
+        items,
+        rtById,
+        enabled: new Set(((st.custom || {}).plugins || {}).enabled || []),
+        catLabel: (k) => (categories.find((c) => c.key === k) || {}).label || '其他',
+      };
+      $('offline').hidden = true;
+      $('loading').hidden = true;
+      renderList();
+    } catch (e) {
+      $('loading').hidden = true;
+      $('offline').hidden = false;
+      $('offline').textContent = '读不到控制台状态：' + (e && e.message ? e.message : e) + '。这个页面不编造数据。';
+      $('list').innerHTML = '';
+      $('empty').hidden = true;
+    }
+  }
+
+  /* ── 导入面板（居中虚线区）────────────────────────────────────────────── */
+  const scrim = $('impScrim');
+  const note = $('impNote');
+  function sayNote(text) { note.hidden = false; note.textContent = text; }
+  function openImp() {
+    note.hidden = true;
+    scrim.hidden = false;
+    $('impDrop').focus({ preventScroll: true });
+  }
+  function closeImp() { scrim.hidden = true; }
+  function handoff(file) {
+    if (!file) return;
+    if (!/\.zip$/i.test(file.name)) { sayNote('只支持 .zip —— 请先把插件文件夹压成 ZIP，或用「选择文件夹」。'); return; }
+    closeImp();
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ source: 'estrella-factory', action: 'plugin.import.file', file, name: file.name, kind: 'plugin' }, location.origin);
+    } else {
+      sayNote('请在控制台里打开这个工厂再导入 —— 安装动作由控制台执行。');
+      scrim.hidden = false;
+    }
+  }
+
+  function handoffBlob(blob, name, kind) {
+    if (!(blob instanceof Blob)) { sayNote('打包结果不是文件。'); return; }
+    closeCreate();
+    closeImp();
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({
+        source: 'estrella-factory', action: 'plugin.import.file', file: blob, name, kind,
+      }, location.origin);
+      return;
+    }
+    sayNote('请在控制台里打开这个工厂再安装 —— 安装动作由控制台执行。');
+    scrim.hidden = false;
+  }
+
+  async function handoffFolder(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    note.hidden = true;
+    const entries = [];
+    let root = '';
+    let total = 0;
+    for (const f of files) {
+      const rel = String(f.webkitRelativePath || f.name || '').replace(/\\/g, '/');
+      if (!rel) continue;
+      if (/(^|\/)(__MACOSX|\.DS_Store|Thumbs\.db)(\/|$)/i.test(rel)) continue;
+      if (rel.startsWith('/') || rel.split('/').some((s) => !s || s === '.' || s === '..')) {
+        sayNote('文件夹里有不安全的路径：' + rel);
+        return;
+      }
+      if (!root) root = rel.split('/')[0];
+      const sub = rel.startsWith(root + '/') ? rel.slice(root.length + 1) : rel;
+      if (!sub) continue;
+      if (f.size > 2 * 1024 * 1024) { sayNote('单个文件超过 2 MB：' + rel); return; }
+      total += f.size;
+      if (total > 3 * 1024 * 1024) { sayNote('文件夹内容超过 3 MB，请先精简。'); return; }
+      const buf = await f.arrayBuffer();
+      entries.push({ path: sub, contentBase64: toBase64(buf) });
+    }
+    if (!entries.length) { sayNote('文件夹里没有可打包的文件。'); return; }
+    sayNote('正在打包 ' + entries.length + ' 个文件…');
+    try {
+      const r = await postJson('/api/extensions/package', {
+        mode: 'folder', kind: 'plugin', root, files: entries,
+      });
+      if (!r || !r.ok || !r.zipBase64) throw new Error((r && r.error) || '打包失败');
+      handoffBlob(base64ToBlob(r.zipBase64), (root || 'plugin') + '.zip', r.kind || 'plugin');
+    } catch (e) {
+      sayNote('打包失败：' + e.message);
+    }
+  }
+  /* ── 创造插件（模板创建，不调用模型）──────────────────────────────────── */
+  const createScrim = $('createScrim');
+  const crNote = $('crNote');
+  const crPreview = $('crPreview');
+  const crInstall = createScrim ? createScrim.querySelector('[data-create="install"]') : null;
+  let createState = null;
+
+  function setCrNote(text) {
+    if (!crNote) return;
+    crNote.hidden = !text;
+    crNote.textContent = text || '';
+  }
+  function setCreateKind(kind) {
+    if (!createScrim) return;
+    const k = kind === 'skill' ? 'skill' : 'plugin';
+    createScrim.querySelectorAll('[data-for]').forEach((el) => {
+      el.hidden = el.getAttribute('data-for') !== k;
+    });
+  }
+  function openCreate() {
+    if (!createScrim) return;
+    createState = null;
+    if (crInstall) crInstall.disabled = true;
+    if (crPreview) { crPreview.hidden = true; crPreview.textContent = ''; }
+    setCrNote('');
+    setCreateKind($('crKind') ? $('crKind').value : 'plugin');
+    createScrim.hidden = false;
+    const id = $('crId');
+    if (id) id.focus({ preventScroll: true });
+  }
+  function closeCreate() {
+    if (createScrim) createScrim.hidden = true;
+  }
+  function createMeta() {
+    const val = (id) => ($(id) && $(id).value ? $(id).value.trim() : '');
+    return {
+      kind: $('crKind') && $('crKind').value === 'skill' ? 'skill' : 'plugin',
+      id: val('crId'),
+      name: val('crName'),
+      description: val('crDesc'),
+      category: val('crCategory'),
+      toolName: val('crTool'),
+      toolDescription: val('crToolDesc'),
+      prompt: val('crPrompt'),
+    };
+  }
+  async function previewCreate() {
+    if (!createScrim) return;
+    const meta = createMeta();
+    if (!/^[A-Za-z0-9_-]{1,40}$/.test(meta.id)) {
+      setCrNote('id 只能用字母、数字、下划线、连字符（1–40 字）。');
+      return;
+    }
+    if (!meta.name) { setCrNote('先填显示名称。'); return; }
+    setCrNote('正在生成…');
+    if (crInstall) crInstall.disabled = true;
+    try {
+      const r = await postJson('/api/extensions/package', { mode: 'create', meta });
+      if (!r || !r.ok || !r.zipBase64) throw new Error((r && r.error) || '生成失败');
+      createState = { kind: r.kind, zipBase64: r.zipBase64, name: meta.id + '.zip' };
+      if (crPreview) {
+        crPreview.hidden = false;
+        crPreview.textContent = (r.files || [])
+          .map((f) => `// ${f.path}\n${f.text || ''}`)
+          .join('\n\n');
+      }
+      if (crInstall) crInstall.disabled = false;
+      setCrNote('');
+    } catch (e) {
+      setCrNote('生成失败：' + e.message);
+    }
+  }
+  function installCreate() {
+    if (!createState) { setCrNote('先点「生成预览」。'); return; }
+    handoffBlob(base64ToBlob(createState.zipBase64), createState.name, createState.kind);
+  }
+  if (createScrim) {
+    createScrim.addEventListener('click', (ev) => {
+      if (ev.target === createScrim || ev.target.closest('[data-create="close"]')) {
+        closeCreate();
+        return;
+      }
+      const b = ev.target.closest('[data-create]');
+      if (!b) return;
+      if (b.dataset.create === 'preview') void previewCreate();
+      if (b.dataset.create === 'install') installCreate();
+    });
+    const kindSel = $('crKind');
+    if (kindSel) {
+      kindSel.addEventListener('change', () => {
+        setCreateKind(kindSel.value);
+        createState = null;
+        if (crInstall) crInstall.disabled = true;
+      });
+    }
+    createScrim.addEventListener('input', () => {
+      createState = null;
+      if (crInstall) crInstall.disabled = true;
+    });
+  }
+
+  scrim.addEventListener('click', (ev) => {
+    if (ev.target === scrim || ev.target.closest('[data-imp="close"]')) closeImp();
+    const b = ev.target.closest('[data-imp]');
+    if (!b) return;
+    if (b.dataset.imp === 'zip') $('impZip').click();
+    if (b.dataset.imp === 'folder') $('impFolder').click();
+  });
+  $('impZip').addEventListener('change', (ev) => handoff(ev.target.files && ev.target.files[0]));
+  $('impFolder').addEventListener('change', (ev) => {
+    // ⚠️ 先快照再清 value：清空 input.value 会让 FileList 变成空，异步打包就读不到文件。
+    const files = Array.from(ev.target.files || []);
+    ev.target.value = '';
+    void handoffFolder(files);
+  });
+  const drop = $('impDrop');
+  drop.addEventListener('dragover', (ev) => { ev.preventDefault(); drop.classList.add('is-over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('is-over'));
+  drop.addEventListener('drop', (ev) => {
+    ev.preventDefault();
+    drop.classList.remove('is-over');
+    const files = ev.dataTransfer && ev.dataTransfer.files;
+    if (files && files.length > 1) void handoffFolder(files);
+    else handoff(files && files[0]);
+  });
+  drop.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openImp(); } });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    if (!scrim.hidden) closeImp();
+    if (createScrim && !createScrim.hidden) closeCreate();
+  });
+
+  document.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-act]');
+    if (!btn) return;
+    if (btn.dataset.act === 'import') openImp();
+    else if (btn.dataset.act === 'create') openCreate();
+  });
+
+  bindTree();
+  load();
+  /* 控制台每 3 秒拉一次 state；工厂按同一节奏刷新（只读，开销很小）。 */
+  setInterval(load, 5000);
+})();
+</script>
+</body>
+</html>

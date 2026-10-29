@@ -112,7 +112,8 @@ ok('两个开关都只在启动时决定注册', /if \(cfg\.custom\?\.image\?\.s
   && /if \(cfg\.custom\?\.image\?\.view === true\)/.test(idx));
 
 const sch = read('panel/next/schema.js');
-ok('面板有「聊天等待与图片」页', /label: '聊天等待与图片'/.test(sch));
+ok('面板有「聊天等待」页', /id: 'waiting', label: '聊天等待'/.test(sch));
+ok('面板有「识图与发图」页', /id: 'imaging', label: '识图与发图'/.test(sch));
 ok('等待与图片都绑到 custom 下的新字段',
   /bind: 'wait\.enabled'/.test(sch) && /bind: 'wait\.mergeMs'/.test(sch)
   && /bind: 'image\.send'/.test(sch) && /bind: 'image\.view'/.test(sch));

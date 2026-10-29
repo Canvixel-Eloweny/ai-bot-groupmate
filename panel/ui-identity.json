@@ -1,0 +1,187 @@
+{
+  "schema": 1,
+  "kind": "ui-identity",
+  "appId": "com.estrellabot.windows",
+  "signedAt": "2026-10-29T12:28:05.571Z",
+  "domains": [
+    {
+      "id": "run",
+      "label": "运行",
+      "pages": [
+        {
+          "id": "overview",
+          "label": "总览"
+        },
+        {
+          "id": "sessions",
+          "label": "会话与日志"
+        }
+      ]
+    },
+    {
+      "id": "speak",
+      "label": "发言",
+      "pages": [
+        {
+          "id": "fake",
+          "label": "假 QQ"
+        },
+        {
+          "id": "trigger",
+          "label": "触发方式"
+        },
+        {
+          "id": "scheduled",
+          "label": "定时消息"
+        },
+        {
+          "id": "waiting",
+          "label": "聊天等待"
+        },
+        {
+          "id": "imaging",
+          "label": "识图与发图"
+        },
+        {
+          "id": "proactive",
+          "label": "主动与免打扰"
+        }
+      ]
+    },
+    {
+      "id": "know",
+      "label": "记忆",
+      "pages": [
+        {
+          "id": "memory",
+          "label": "自我记忆"
+        },
+        {
+          "id": "skills",
+          "label": "知识包与角色卡"
+        },
+        {
+          "id": "people",
+          "label": "群友档案"
+        },
+        {
+          "id": "faces",
+          "label": "图库"
+        }
+      ]
+    },
+    {
+      "id": "persona",
+      "label": "人格",
+      "pages": [
+        {
+          "id": "overview",
+          "label": "总览"
+        },
+        {
+          "id": "profile",
+          "label": "人设"
+        },
+        {
+          "id": "mbti",
+          "label": "MBTI"
+        },
+        {
+          "id": "enhance",
+          "label": "增强项"
+        },
+        {
+          "id": "mood",
+          "label": "心情值"
+        },
+        {
+          "id": "prompt",
+          "label": "系统提示词"
+        }
+      ]
+    },
+    {
+      "id": "brain",
+      "label": "模型",
+      "pages": [
+        {
+          "id": "model",
+          "label": "模型与线路"
+        },
+        {
+          "id": "thinking",
+          "label": "思考与能力"
+        },
+        {
+          "id": "usage",
+          "label": "用量与花费"
+        }
+      ]
+    },
+    {
+      "id": "sys",
+      "label": "维护",
+      "pages": [
+        {
+          "id": "safety",
+          "label": "安全红线"
+        },
+        {
+          "id": "history",
+          "label": "配置历史"
+        },
+        {
+          "id": "panel",
+          "label": "面板维护"
+        },
+        {
+          "id": "hud",
+          "label": "HUD调整"
+        }
+      ]
+    },
+    {
+      "id": "factory",
+      "label": "工厂",
+      "pages": [
+        {
+          "id": "visual",
+          "label": "视觉工厂"
+        },
+        {
+          "id": "persona",
+          "label": "人设工厂"
+        },
+        {
+          "id": "plugin",
+          "label": "插件工厂"
+        },
+        {
+          "id": "plugins",
+          "label": "插件管理"
+        },
+        {
+          "id": "skill",
+          "label": "Skill"
+        }
+      ]
+    }
+  ],
+  "selectors": [
+    ".topbar",
+    "#nav1",
+    "#nav2",
+    "#page",
+    "#settingsLayer",
+    "#settingsPanel",
+    "#setGear",
+    "#banners",
+    "#bootSplash"
+  ],
+  "renderers": [
+    "renderNav1",
+    "renderNav2",
+    "paintPage",
+    "RENDER"
+  ]
+}

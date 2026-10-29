@@ -63,7 +63,7 @@ export function crc32(buf) {
  * 不压缩是有意的 —— 导出/自合成的内容都是文本，压不压差不了多少，
  * 但省掉一整条 deflate 写出路径（读侧仍然支持 deflate，因为别人的包多半是压过的）。
  *
- * @param {Array<{name:string, text:string}>} entries
+ * @param {Array<{name:string, text?:string, data?:Buffer|Uint8Array}>} entries（text 与 data 二选一）
  * @returns {Buffer}
  */
 export function makeZip(entries) {
@@ -76,7 +76,9 @@ export function makeZip(entries) {
 
   for (const e of entries) {
     const nameBuf = Buffer.from(e.name, 'utf8');
-    const data = Buffer.from(e.text ?? '', 'utf8');
+    const data = Buffer.isBuffer(e.data)
+      ? e.data
+      : (e.data instanceof Uint8Array ? Buffer.from(e.data) : Buffer.from(e.text ?? '', 'utf8'));
     const crc = crc32(data);
     const local = Buffer.concat([
       u32(0x04034b50), u16(20), u16(0x0800), u16(0), // 标志位 0x800 = 文件名用 UTF-8

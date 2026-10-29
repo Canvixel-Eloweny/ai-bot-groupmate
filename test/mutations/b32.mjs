@@ -48,7 +48,6 @@
  *    mutate 的 worktree 里没有这些文件 —— 入库后这份清单可直接跑。
  */
 const SBG = 'panel/next/shader-bg.js';
-const VFY = 'panel/next/verify.mjs';
 
 // ── M1：resize 防抖整个删掉（回到 B32 之前）────────────────────────────────
 const M1 = {

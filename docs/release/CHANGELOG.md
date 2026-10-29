@@ -572,7 +572,7 @@ one process while still reporting success.
 
 ### 2026-10-08 · A user guide, in both languages, for both platforms
 
-New: `USER-GUIDE.md` and `USER-GUIDE.zh-CN.md`. The READMEs explain what the project *is*;
+New: `docs/guides/USER-GUIDE.md` and `docs/guides/USER-GUIDE.zh-CN.md`. The READMEs explain what the project *is*;
 these explain what to *do*, in the order you would do it: prerequisites, install, sign in,
 the configuration checklist, start, verify, day-to-day use, troubleshooting, uninstall.
 

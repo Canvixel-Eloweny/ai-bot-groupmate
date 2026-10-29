@@ -304,6 +304,11 @@ cat > "$SB/zhipu-packages.fixture.json" <<'JSONEOF'
 }
 JSONEOF
 
+# 0.1.5：GitHub 星标也走离线夹具（沙箱不该有出站流量；设置页会真的请求 /api/github/star）。
+cat > "$SB/github-star.fixture.json" <<'JSONEOF'
+{"count":4242}
+JSONEOF
+
 "$PY" - "$SB" "$FAKE_HOME" "$PORT" "$NODE" <<'PY'
 import os, subprocess, sys
 sb, fake_home, port, node = sys.argv[1:5]
@@ -317,6 +322,7 @@ env = dict(os.environ, HOME=fake_home, QQBOT_PANEL_PORT=port, QQBOT_SANDBOX="1",
            QQBOT_LOCAL_MODEL_PORT="18080", QQBOT_QWENCHAT_PORT="18765",
            # 余额接口走夹具：沙箱不发任何出站请求（见上面 ④ 的说明）
            QQBOT_ZHIPU_PACKAGES_FIXTURE=os.path.join(sb, "zhipu-packages.fixture.json"),
+           QQBOT_GITHUB_STAR_FIXTURE=os.path.join(sb, "github-star.fixture.json"),
            # M-1（2026-10-04）：扩展包数据目录指向**沙箱自己造的夹具**（见上面 ⑤）。
            # ⚠️ 不指它的话，面板会去读真机的 `data/`（那里是**真实**的情绪与额度），
            #    既污染沙箱、又让"验的是不是夹具"这件事说不清。

@@ -99,7 +99,7 @@ export default [
   {
     id: 'M7',
     file: 'src/context-budget.js',
-    anchor: /^const SECTION_ORDER = \[$/m,
+    anchor: /^export const SECTION_ORDER = \[$/m,
     count: 1,
     // ⚠️ 名字**故意拼出来**（`'CLEAN' + 'UP_DEAD_PROBE'`），不写成字面量 ——
     //    写成一个完整的字面量的话，它会出现在**本清单自己的源码**里，
@@ -115,7 +115,7 @@ export default [
   {
     id: 'M8',
     file: 'src/context-budget.js',
-    anchor: /^const SECTION_ORDER = \[$/m,
+    anchor: /^export const SECTION_ORDER = \[$/m,
     count: 1,
     apply: (src) => `${src}\nexport * from './atomic-write.js';\n`,
     layer: 'check-wb',
@@ -125,7 +125,7 @@ export default [
   {
     id: 'M9',
     file: 'src/context-budget.js',
-    anchor: /^const SECTION_ORDER = \[$/m,
+    anchor: /^export const SECTION_ORDER = \[$/m,
     count: 1,
     // 同 M7：名字拼出来，别让它出现在**本清单自己**的源码里（否则恒 NOT-BLOCKED）。
     apply: (src) => {

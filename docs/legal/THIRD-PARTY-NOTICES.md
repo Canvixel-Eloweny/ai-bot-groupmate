@@ -131,6 +131,19 @@
 
 ---
 
+## 2.3 人设页 MBTI 场景图（16Personalities · 按授权随包分发）
+
+`panel/next/assets/mbti/` 下的 16 张 JPEG（`intj.jpg` … `esfp.jpg`，1000×389）
+是 **16Personalities 官方类型场景图**，版权归 NERIS Analytics Limited / 16Personalities 所有。
+
+- **授权口径**：维护者 2026-10-26 明确授权把它们从桌面原型搬进主项目、**随包分发**；
+  仅用于控制台人设页的类型展示与“看大图”，未修改原图内容、未单独售卖。
+- **来源标注**：人设页 MBTI 卡与看大图弹窗显示“图源 16Personalities”。
+- **撤回方式**：若权利方提出异议，删除 `panel/next/assets/mbti/`、移除 `PSN_ART` 与
+  `/assets/mbti` 路由，并把 MBTI 头图回退到本地 SVG 场景；其余功能不受影响。
+- **边界**：这 16 张图**不是**本项目代码，不适用 Apache-2.0；不要把它们搬到别处、
+  不要单独再分发，也不要声称是本项目原创。
+
 ## 3. 随本仓库分发的扩展包（`skills/` `plugins/`），以及仍然不分发的东西
 
 随本仓库分发的扩展包**共 0 个**。

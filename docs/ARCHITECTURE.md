@@ -71,10 +71,19 @@ OneBot 事件
 - **不把安全边界押在流程上**：能进 `.gitignore` 的就不进版本控制，
   不依赖"发布时记得排除"。
 
-## 6. 插件
+## 6. 插件与 Skill（一套宿主，两种语义）
 
 `skills/` 与 `plugins/` 放**用户自己安装的第三方包**（不随仓库分发，见 `docs/legal/THIRD-PARTY-NOTICES.md`）。
-宿主提供 `api`（`registerTool` / `config` / `log` / `fetch` …）与四个生命周期函数
-（`setup` / `activate` / `deactivate` / `dispose`）。
+
+- **同一个宿主**：扫描、清单校验、白名单、四态生命周期、工具表、钩子总线、设置控件全部共用。
+- **kind 只决定语义**：`plugin` 靠 `setup` / `activate` / `hooks` 生效；`skill` 额外接受
+  `prompt.sections` 作为入口契约（纯提示词包可以 `index.js: export {}`），提示词走独立的
+  `skillExt` 段（2000 字预算）；Skill 导出 hooks 时标 `mixed`，不静默丢钩子。
+- **配置**：`custom.extensions.plugins` / `custom.extensions.skills` 两套白名单与设置，
+  `max` 与 `hookTimeoutMs` 两型共用；旧的 `custom.plugins` 会派生成两套同样的名单（读兼容，写新路径）。
+- 宿主提供 `api`（`registerTool` / `config` / `log` / `fetch` …）与生命周期函数
+  （`setup` / `activate` / `deactivate` / `dispose`）。
+
+完整写法、清单字段、预览与安装规则见 `docs/SKILLS.md`。
 
 ⚠️ **它们不是沙箱** —— 包在进程内加载，能直接 `import fs`。见 `.github/SECURITY.md`。

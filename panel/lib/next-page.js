@@ -74,6 +74,8 @@ export const NEXT_ASSETS = {
      `<html>` 上再让样式表生效。必须登记 —— 否则 §58① 的双向比对会把它判成
      "永远取不到的孤儿文件"。 */
   'splash.js': 'text/javascript; charset=utf-8',
+  'boot-splash.css': 'text/css; charset=utf-8',
+  'boot-splash.js': 'text/javascript; charset=utf-8',
 
   /* ── 动效三件套 + 实验室（2026-10-02 · UI 升级轮）────────────────────────
      `motion.js` / `liquid-toggle.js` / `liquid-toggle.css` 是**动效能力层**。
@@ -101,6 +103,14 @@ export const NEXT_ASSETS = {
   'liquid-toggle.js': 'text/javascript; charset=utf-8',
   'liquid-toggle.css': 'text/css; charset=utf-8',
   'ticks.css': 'text/css; charset=utf-8',
+  /* 人设域六页（2026-10-25）：整页视觉层。全部规则作用域在 `.psn`，
+     与主面板的 `--c-*` 令牌互不覆盖；`index.html` 里排在 style.css 之后。
+     ⚠️ 磁盘↔HTTP 面是双向比对（check-wb §58①）—— 这个文件不在表里就是 404，
+        而页面只是"少了样式"，不会报错。 */
+  'persona.css': 'text/css; charset=utf-8',
+  /* 运行总览三栏（2026-10-27）：只作用于 `.ov*` / `#card-chain|dash|side` / `.ov-fold`，
+     颜色仍走 `--c-*`。磁盘↔HTTP 双向比对见 check-wb §58①。 */
+  'overview.css': 'text/css; charset=utf-8',
   /* `sortable.js`（2026-10-03 · 模型线路拖拽排序）：可排序列表引擎，接在
      `app.js` 的 `mountRouteSort()` 上（唯一接线点）。⚠️ 顺序仍然是硬要求：
      它启动时读 `window.Motion`，排在 `motion.js` 之后 —— 反了就是
@@ -115,6 +125,12 @@ export const NEXT_ASSETS = {
      ⚠️ 顺序硬要求：它启动时读 `window.Motion`，必须排在 `motion.js` 之后。
      契约见 `check-wb` 第 62 节「卡片的 3D 倾斜」。 */
   'tilt.js': 'text/javascript; charset=utf-8',
+  /* `cursor-follow.js/.css`（2026-10-28 · 全局光标跟随层）：纯装饰环 + 点，
+     点实时跟手、环弹簧拖尾并钳在 14px；悬停可点元素放大并换强调色。
+     工厂 iframe 由 `factory-frame.js` 在帧 load 时调用 `CursorFollow.attachFrame`。
+     契约见 `check-wb` §168（资产/层级/指针面/降级/时钟纪律/桥接线）。 */
+  'cursor-follow.css': 'text/css; charset=utf-8',
+  'cursor-follow.js': 'text/javascript; charset=utf-8',
   'lab-liquid-toggle.html': 'text/html; charset=utf-8',
   'lab-ticks.html': 'text/html; charset=utf-8',
   /* `lab-motion-spec.html`（2026-10-03）：交互与动效判据的实验室。
@@ -128,6 +144,27 @@ export const NEXT_ASSETS = {
   'lab-liquid-glass.html': 'text/html; charset=utf-8',
   'glass-station.css': 'text/css; charset=utf-8',
   'glass-station.js': 'text/javascript; charset=utf-8',
+  /* `visual-factory.html`（2026-10-25）：工厂 → 视觉工厂的整页工具。
+     它是**独立单文件**（自带 CSS/JS/SVG，无外部请求），由 factory-frame.js 用全幅常驻
+     iframe 承载，不是普通 schema 卡片页。源是仓库外的独立工厂工程，构建后原样复制；
+     当前 286,170 B · sha256 `06f9039c…`。工厂保留独立外观（不设 data-embed）；
+     桌面单文件外观不变。⚠️ 更新时：改源 → rebuild → 覆盖本文件 → 同步这里的哈希。 */
+  'visual-factory.html': 'text/html; charset=utf-8',
+  /* `plugin-factory.html`（2026-10-27）：工厂 → 插件工厂的整页工具。
+     独立单文件、整面结构、无玻璃卡；数据读 /api/state，入口 postMessage 回控制台。 */
+  'plugin-factory.html': 'text/html; charset=utf-8',
+  /* `persona-factory.html`（2026-10-27）：工厂 → 人设工厂的整页工具。
+     独立单文件（自带 CSS/JS/SVG，零外部请求），作为「工厂」二级页在常驻 iframe 里打开。
+     源在 `panel/next/persona-studio/`，改源后跑
+     `scripts/build-persona-factory.mjs` 重建，不要手改产物。 */
+  'persona-factory.html': 'text/html; charset=utf-8',
+  /* `persona-entry.css`（2026-10-27）：只补 `.factory-pane` 的绝对定位与
+     0.22s 切换入场；`.factory-host` 仍由 style.css 定义。 */
+  'persona-entry.css': 'text/css; charset=utf-8',
+  /* `factory-frame.js`（2026-10-25）：工厂帧控制器 —— 把 iframe 常驻在 #page
+     之外的固定层，悬停/切页时预热，只显隐不重载；由 `#page[data-frame]` 选帧。
+     独立模块，不进 app.js 的渲染主链。 */
+  'factory-frame.js': 'text/javascript; charset=utf-8',
   /* `glass-scrim.css`（2026-10-22）：弹窗的渐进模糊遮罩，产品页与制作站共用。
      它只消费 style.css 的令牌，不定义 --c-*。 */
   'glass-scrim.css': 'text/css; charset=utf-8',
@@ -147,6 +184,11 @@ export const NEXT_ASSETS = {
         reduced-motion 下只画一帧；WebGL 不可用退 2D 渐变（fail-open）。
      契约见 `check-wb`「新版背景」⑥/⑦ 与 `panel/next/verify.mjs` ②·。 */
   'shader-bg.js': 'text/javascript; charset=utf-8',
+  /* `contour-bg.js`（2026-10-26 · 等高线背景）：默认档的视频/海报控制器。
+     它复用 shader-bg.js 的 SPEEDS 与 `bgfx:speed` 事件，自己不写速度键；
+     模式键 `qqbot-bg-mode`（缺省 contour），旧流光的 `qqbot-bgfx` 原样保留。
+     契约见 check-wb §163 与 panel/next/verify.mjs。 */
+  'contour-bg.js': 'text/javascript; charset=utf-8',
   /* `url-safe.js`（2026-10-05 · 开源前审查第 10 轮 · H-01）：`href` 的协议白名单。
      它**只被 `app.js` 当 ES 模块 import**（不是 `<script src>`）；
      登记它的理由与上面几条一样，是 §58① 的**磁盘↔名单双向比对** ——
@@ -199,6 +241,7 @@ export const PANEL_CSP = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
+  "media-src 'self'",
   "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'none'",
@@ -237,10 +280,30 @@ export function resolveNextAsset(name, dir = NEXT_DIR) {
  * 读一个资产。**唯一读盘口** —— 别处不许再 `fs.readFileSync` 读这个目录。
  * 读失败当场抛（形态与已删除的片段装载器 `loadParts()` 一致）。
  *
- * @returns {{name: string, type: string, raw: string}}
+ * 进程内按绝对路径缓存：`mtimeMs + size` 同时不变才复用，改文件立刻失效。
+ * `etag` 由同一组指纹生成，服务端拿它做 304 协商（见 server.js 的资产分发块）。
+ *
+ * @returns {{name: string, type: string, raw: string, etag: string}}
  */
+const ASSET_CACHE = new Map();
+
+function assetEtagOf(st) {
+  return '"' + Math.round(st.mtimeMs).toString(16) + '-' + st.size.toString(16) + '"';
+}
+
 export function readNextAsset(name, dir = NEXT_DIR) {
   const abs = resolveNextAsset(name, dir);
+  let st;
+  try {
+    st = fs.statSync(abs);
+  } catch (e) {
+    throw new Error(`新版页面资产读不到：${name}（${abs}）—— ${e.message}`);
+  }
+  const etag = assetEtagOf(st);
+  const hit = ASSET_CACHE.get(abs);
+  if (hit && hit.etag === etag) {
+    return { name, type: NEXT_ASSETS[name], raw: hit.raw, etag };
+  }
   let raw;
   try {
     raw = fs.readFileSync(abs, 'utf8');
@@ -248,12 +311,44 @@ export function readNextAsset(name, dir = NEXT_DIR) {
     throw new Error(`新版页面资产读不到：${name}（${abs}）—— ${e.message}`);
   }
   if (!raw.trim()) throw new Error(`新版页面资产是空的：${name} —— 空资产发出去必然白屏`);
-  return { name, type: NEXT_ASSETS[name], raw };
+  ASSET_CACHE.set(abs, { etag, raw });
+  return { name, type: NEXT_ASSETS[name], raw, etag };
 }
 
-/** 读页面入口。服务端发页面时用这一个入口。 */
-export function readNextPage(dir = NEXT_DIR) {
-  return readNextAsset(NEXT_ENTRY, dir).raw;
+/**
+ * MBTI 人设页的 16 张官方场景图（2026-10-26 · 维护者授权随包分发）。
+ *
+ * ⚠️ 它们**刻意不在 `NEXT_ASSETS` 里**：那张表是"顶层 html/css/js"的 UTF-8 文本面，
+ *    而这里是二进制 jpg、放在 `panel/next/assets/mbti/` 子目录，由 `server.js` 的
+ *    `/assets/mbti/<name>` 显式路由发送。`unregisteredAssets()` 只筛顶层
+ *    html/css/js/mjs/md，因此不会把 `assets/` 目录误判成孤儿。
+ *    加图/换图只改这一份名单与磁盘文件，别在路由里再抄一份文件名。
+ */
+export const MBTI_ART_NAMES = Object.freeze([
+  'intj.jpg', 'intp.jpg', 'entj.jpg', 'entp.jpg',
+  'infj.jpg', 'infp.jpg', 'enfj.jpg', 'enfp.jpg',
+  'istj.jpg', 'isfj.jpg', 'estj.jpg', 'esfj.jpg',
+  'istp.jpg', 'isfp.jpg', 'estp.jpg', 'esfp.jpg',
+]);
+
+/** 读一张 MBTI 场景图。名字必须在 16 名单内，且结果不能逃出 assets/mbti。 */
+export function readMbtiArt(name, dir = NEXT_DIR) {
+  const n = String(name == null ? '' : name).toLowerCase();
+  if (!MBTI_ART_NAMES.includes(n)) throw new Error(`不是登记过的 MBTI 场景图：${n}`);
+  if (path.basename(n) !== n || path.isAbsolute(n)) throw new Error(`MBTI 图名不许带路径：${n}`);
+  const base = path.resolve(dir, 'assets', 'mbti');
+  const abs = path.resolve(base, n);
+  if (path.relative(base, abs) !== n) throw new Error(`MBTI 图路径逃出 assets/mbti：${n}`);
+  let raw;
+  try {
+    raw = fs.readFileSync(abs);
+  } catch (e) {
+    throw new Error(`MBTI 场景图读不到：${n}（${abs}）—— ${e.message}`);
+  }
+  if (raw.length < 4 || raw[0] !== 0xff || raw[1] !== 0xd8 || raw[raw.length - 2] !== 0xff || raw[raw.length - 1] !== 0xd9) {
+    throw new Error(`MBTI 场景图不是完整 JPEG：${n}`);
+  }
+  return { name: n, type: 'image/jpeg', raw };
 }
 
 /**
@@ -295,4 +390,67 @@ export function unregisteredAssets(dir = NEXT_DIR) {
     .filter((f) => SAFE_ASSET_NAME.test(f) || /\.(?:html|css|js|mjs|md)$/.test(f))
     .filter((f) => !Object.prototype.hasOwnProperty.call(NEXT_ASSETS, f))
     .sort();
+}
+
+/**
+ * 等高线背景的媒体白名单（2026-10-26）。
+ *
+ * 二进制素材**不进 `NEXT_ASSETS`**：那张表是顶层文本资产面，二进制由
+ * `/assets/contour/<name>` 显式路由发送。客户端 `contour-bg.js` 里也有一份
+ * 同名表 —— 服务端白名单是安全主闸，客户端只是引用；两份是否漂移由
+ * `check-wb §163` 逐项比对，不靠人记。
+ */
+export const CONTOUR_MEDIA = Object.freeze({
+  'contour-light-standard-v2.mp4': 'video/mp4',
+  'contour-dark-standard-v2.mp4': 'video/mp4',
+  'contour-light-lite-v2.mp4': 'video/mp4',
+  'contour-dark-lite-v2.mp4': 'video/mp4',
+  'contour-light-v2.jpg': 'image/jpeg',
+  'contour-dark-v2.jpg': 'image/jpeg',
+});
+
+/** 媒体名 → { name, type, abs }。名字必须在白名单内，且结果不能逃出 assets/contour。 */
+export function resolveContourMedia(name, dir = NEXT_DIR) {
+  const n = String(name == null ? '' : name).toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(CONTOUR_MEDIA, n)) {
+    throw new Error(`不是登记过的等高线媒体：${n}`);
+  }
+  if (path.basename(n) !== n || path.isAbsolute(n)) {
+    throw new Error(`等高线媒体名不许带路径：${n}`);
+  }
+  const base = path.resolve(dir, 'assets', 'contour');
+  const abs = path.resolve(base, n);
+  if (path.relative(base, abs) !== n) {
+    throw new Error(`等高线媒体路径逃出 assets/contour：${n}`);
+  }
+  return { name: n, type: CONTOUR_MEDIA[n], abs };
+}
+
+/**
+ * 解析单段 Range。返回值：
+ *   null           —— 没有 Range（发 200 全量）
+ *   { start, end } —— 合法闭区间（发 206）
+ *   { invalid: true } —— 乱码 / 多段 / 越界（发 416）
+ * 只支持单段：多段会让流式发送与 Content-Length 的关系变复杂，而背景视频
+ * 只需要浏览器做单段寻址。后缀 `bytes=-n` 超过文件大小时按整文件处理。
+ */
+export function parseByteRange(header, size) {
+  if (header == null || String(header).trim() === '') return null;
+  const raw = String(header).trim();
+  const n = Number(size);
+  if (!Number.isSafeInteger(n) || n <= 0) return { invalid: true };
+  if (!raw.startsWith('bytes=')) return { invalid: true };
+  const m = /^bytes=(\d*)-(\d*)$/.exec(raw);
+  if (!m || (m[1] === '' && m[2] === '')) return { invalid: true };
+  if (m[1] === '') {
+    const suffix = Number(m[2]);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return { invalid: true };
+    return { start: Math.max(0, n - suffix), end: n - 1 };
+  }
+  const start = Number(m[1]);
+  let end = m[2] === '' ? n - 1 : Number(m[2]);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return { invalid: true };
+  if (start >= n || start > end) return { invalid: true };
+  end = Math.min(end, n - 1);
+  return { start, end };
 }

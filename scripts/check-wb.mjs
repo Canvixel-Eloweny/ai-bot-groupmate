@@ -6,7 +6,7 @@
  * 逐段都有单独的注释说明它防的是哪一种**静默失效**。
  *
  * ⚠️ 面板契约的取源一律是**现役控制台** `panel/next/`（经 `panel/lib/next-page.js`
- *    的 `readNextAsset()` / `readNextPage()`）。旧页那套「16 个片段拼成一份 HTML」
+ *    的 `readNextAsset()`）。旧页那套「16 个片段拼成一份 HTML」
  *    已在 S-12 第六批（2026-10-05）整块删除 —— 取源、清单、反向闸门见第 6 / 58 / 66 段。
  */
 import fs from 'node:fs';
@@ -14,6 +14,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripBom } from '../src/plugin-manifest.js';
 
 let bad = 0;
 
@@ -89,7 +90,7 @@ console.log = (first, ...rest) => {
  *       提交门 `pre-commit.sh` 正是因此才把 `node_modules` **软链**进闸门用的临时 worktree。
  *       记在这里是为了下次有人量到 17 时**别以为闸门坏了**。
  */
-const MIN_CONTRACTS = 160;
+const MIN_CONTRACTS = 172;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -118,7 +119,7 @@ process.on('exit', () => {
 //  `panel/next/` 的独立静态资产）；S-12 的六批迁移把它连文件一起清掉：`panel/parts/`、
 //  `page-parts.js`、`test/verify-panel.mjs`、`test/e2e/verify-fixes.mjs` 全部删除。
 //  现在：
-//    · 面板契约的取源一律是**现役控制台** —— `readNextAsset(name)` / `readNextPage()`，
+//    · 面板契约的取源一律是**现役控制台** —— `readNextAsset(name)`，
 //      唯一读盘口是 `panel/lib/next-page.js`；
 //    · "页面由哪些文件构成"这件事**仍然只有一处声明**，只是从 `PARTS` 换成了 `NEXT_ASSETS`；
 //    · 反向闸门仍在 §66：旧面板那六个机制**不许回到运行时**。
@@ -1926,6 +1927,21 @@ const LIB_SRC_ALLOW = [
   // 2026-10-21（Win-v0.1.2 移植）：角色卡十维分级。零依赖叶子（闭包 = 1），
   // 面板只渲染分数、不抄门槛表；自然不触达 llm / brain / onebot / index / config / logger。
   'persona-grade.js',
+  // 2026-10-25（人设域六页）：MBTI / 生日彩蛋 / 21 项情绪键 / 提示词分段。
+  // 四个都是零依赖叶子（prompt-sections 只 import mbti + birthday，闭包 3 个模块），
+  // 面板要它们在 `/api/state` 里算出与 brain **同一份**提示词文本 ——
+  // 前端再写一份，就会出现"页面说注入 A、模型收到 B"。不触达机器人重型启动链。
+  'mbti.js',
+  'birthday.js',
+  'emotion-keys.js',
+  // 2026-10-25（情绪收回项目本体）：状态形状 / 每轮增减 / 提示词文本的唯一实现。
+  // 闭包 = user-root + atomic-write + emotion-keys（三者都已在白名单），
+  // 面板要它算出与 brain **逐字相同**的「此刻的状态」段，不能再自己拼一份。
+  'emotion.js',
+  'prompt-sections.js',
+  // 2026-10-28（Plugin/Skill 综合优化）：Skill 提示词渲染器是**零依赖纯函数**，
+  // 面板预览与 brain 必须逐字同源（否则“页面说注入 A、模型收到 B”）。
+  'extension-prompts.js',
   'net-rules.js', // 本机地址 / 服务商判据（唯一一份）
   'plugin-host.js', // 扩展包扫描（面板要列清单）
   // D7 新增：设置项的**类型/敏感键**判据（四类控件 + 加密码框 + 越界拒绝）。
@@ -2167,6 +2183,13 @@ const LIB_SRC_ALLOW = [
       // （`plugin-manifest.js` 的路径/清单判据、`atomic-write.js` 的临时文件命名形状），
       // 所以是 L2。它**不许**被 L0/L1 反过来引用（那会绕开"先校验后落盘"的顺序）。
       'panel/lib/ext-install.js': 2,
+      // 0.1.5 接口收尾（2026-10-28）：
+      //   · backgrounds.js 依赖 L1 next-page 的 Range 解析 + src/atomic-write ⇒ L2
+      //   · ext-package.js 依赖 L1 zip + src/plugin-manifest ⇒ L2
+      //   · github-star.js 只用 node 内置 + src/atomic-write（无 panel-lib import）⇒ L0
+      'panel/lib/backgrounds.js': 2,
+      'panel/lib/ext-package.js': 2,
+      'panel/lib/github-star.js': 0,
       'panel/lib/models.js': 2,
       // 官方模型目录对账（2026-10-17 · 维护者点名「打开面板就同步模型名/地址」）。
       // 拆分是**被迫的**、也是对的：`state-collector`（L3）只需要**读**那份缓存，
@@ -2203,6 +2226,9 @@ const LIB_SRC_ALLOW = [
       // 用量与花费（第 22 轮 · H-10 从主文件搬出）。除 `node:` 内置**零 import**
       // （连 `paths.js` 都不引 —— 路径与名单由主文件注入）⇒ **L1**。
       'panel/lib/usage-report.js': 1,
+      // 发言账本聚合 + 运行总览热力网格（2026-10-27）。除 `node:` 内置零 import，
+      // 目录 / 文件名判据 / 本地日期键全部由主文件注入 ⇒ **L1**。
+      'panel/lib/sent-report.js': 1,
       // 主文件是 L3，逐条业务段（audit/bridge/local/usage/路由…）仍在它里面。
       // P3 更新协议（2026-10-18）：
       //   纯判据/签名/下载零 panel-lib import ⇒ L0；清单校验依赖版本比较 ⇒ L1；
@@ -2210,6 +2236,9 @@ const LIB_SRC_ALLOW = [
       //   路由工厂只依赖 http-io ⇒ L1。
       'panel/lib/update-version.js': 0,
       'panel/lib/update-signature.js': 0,
+      // UI 身份清单（2026-10-29）：依赖 L0 的 paths/update-signature + 已登记的
+      // src/plugin-manifest.js（stripBom）⇒ L1。它只读清单/验签，不碰业务模块。
+      'panel/lib/ui-identity.js': 1,
       'panel/lib/update-download.js': 0,
       'panel/lib/update-manifest.js': 1,
       'panel/lib/update-routes.js': 1,
@@ -2874,7 +2903,7 @@ const LIB_SRC_ALLOW = [
   if (!/extHost\.load\(\)/.test(indexSrc)) {
     problems.push('src/index.js 里没有 extHost.load() 的调用点 —— 建了宿主但没人调');
   }
-  if (!/extensions:\s*extensionsOf\(/.test(serverSrc)) {
+  if (!/extensions:\s*(?:extensionsOf\(|extSnapshot)/.test(serverSrc)) {
     problems.push('/api/state 没有下发 extensions —— 面板上那个区块会永远空着');
   }
 
@@ -3975,9 +4004,9 @@ const LIB_SRC_ALLOW = [
   const apiSrc20 = stripComments(fs.readFileSync(new URL('../src/plugin-api.js', import.meta.url), 'utf8'));
 
   // ① 归一化：`plugins` 那一项必须带 settings
-  const pf = (ccSrc.match(/function pluginFields\([\s\S]*?\n\}/) || [''])[0];
-  if (!pf) problems.push('custom-config.js 里没有 pluginFields —— 扩展包设置没有归一化口');
-  else if (!/settings\s*:/.test(pf)) problems.push('pluginFields 没有归一化 settings —— 用户填的东西进不了配置');
+  const pf = (ccSrc.match(/function (?:pluginFields|extensionKindFields)\([\s\S]*?\n\}/) || [''])[0];
+  if (!pf) problems.push('custom-config.js 里没有扩展包设置归一化口（pluginFields / extensionKindFields）');
+  else if (!/settings\s*:/.test(pf)) problems.push('扩展包设置归一化口没有 settings —— 用户填的东西进不了配置');
 
   // ② 宿主 → buildApi 的接线（切片到 buildApi 调用块里找，别被文件里别处的 settings 冒充）
   const hostCall = (hostSrc20.match(/buildApi\(\{[\s\S]*?\n {6}\}\);/) || [''])[0];
@@ -4024,8 +4053,8 @@ const LIB_SRC_ALLOW = [
   if (toggleFn.length < 100) {
     problems.push('抽不出现役面板的 plugin.toggle 分支 —— 本节契约失效');
   } else {
-    if (!/touchC\('plugins\.enabled'\)/.test(toggleFn)) {
-      problems.push('现役面板的插件开关没有只动 plugins.enabled 那一格 —— 整份重建 plugins 会抹掉用户填过的设置');
+    if (!/touchC\(path\)/.test(toggleFn)) {
+      problems.push('现役面板的插件开关没有只动对应白名单那一格 —— 整份重建对象会抹掉用户填过的设置');
     }
     if (/plugins\s*:\s*\{/.test(toggleFn)) {
       problems.push('现役面板的插件开关重建了整个 plugins 对象 —— 用户填过的设置会被静默抹掉');
@@ -4820,13 +4849,14 @@ const LIB_SRC_ALLOW = [
   if (!/applySettingsPatch\(\{/.test(server)) {
     problems.push('panel/server.js 没有调 applySettingsPatch —— 越界键会直接存进配置（面板的检查只是 UX，不是边界）');
   }
-  if (!/psPatch\[id\] = r\.value/.test(server)) {
+  if (!/ns\.patch\[id\] = r\.value/.test(server)) {
     problems.push('服务端没有把**强转后**的值写回请求体 —— 面板送的是字符串，会静默存成错类型');
   }
-  // ④ 命名空间：写入路径只许落在 settings[id] 这一格
-  //    ⚠️ S-12 第四批：现役页把这一格拼成 `plugins.settings.${extId}.${f.key}`（草稿路径）。
-  const pageWrite = /plugins\.settings\.\$\{extId\}/.test(page);
-  if (!pageWrite) problems.push('现役面板没有把值写进 plugins.settings[extId] 那一格 —— 命名空间约束失效');
+  // ④ 命名空间：写入路径只许落在 <kind>.settings[id] 这一格
+  //    ⚠️ 2026-10-28：kind 是单数（plugin/skill），配置命名空间是复数（plugins/skills），
+  //    换算只许走 extNsOf；直接 `extensions.${kind}` 会写到不存在的键上（实测保存无效）。
+  const pageWrite = /extensions\.\$\{extNsOf\(kind\)\}\.settings\.\$\{extId\}/.test(page);
+  if (!pageWrite) problems.push('现役面板没有把值写进 extensions.<plugins|skills>.settings[extId] 那一格 —— 命名空间约束失效');
 
   // ⑤ 输入基数自证
   if (!problems.length) {
@@ -10078,18 +10108,24 @@ const LIB_SRC_ALLOW = [
   const rd = (rel) => stripComments(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
   const cfgSrc = (() => { try { return rd('../src/custom-config.js'); } catch { return ''; } })();
   const schSrc = (() => { try { return rd('../panel/next/schema.js'); } catch { return ''; } })();
+  /* 2026-10-25（人设六页）：字段从 schema 的平铺控件改成 app.js 的整页渲染器，
+     但**仍然是现役面板的输入**（psnField 的 `bind: 'persona.X'` 走同一个写口）。
+     所以抽取面要同时看两份 —— 只看 schema 会把 11 个真实输入判成"面板上填不了"。 */
+  const appSrc = (() => { try { return rd('../panel/next/app.js'); } catch { return ''; } })();
   if (!cfgSrc) problems.push('读不到 src/custom-config.js —— 取不到 PERSONA_KEYS');
   if (!schSrc) problems.push('读不到 panel/next/schema.js —— 本节的判据会落在真空里');
-  if (cfgSrc && schSrc) {
+  if (!appSrc) problems.push('读不到 panel/next/app.js —— 人设整页渲染器里的输入抽不到');
+  if (cfgSrc && schSrc && appSrc) {
     const backKeys = (cfgSrc.match(/export const PERSONA_KEYS = \[([^\]]*)\]/) || ['', ''])[1]
       .split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean);
-    const binds = [...new Set([...schSrc.matchAll(/bind:\s*'persona\.(\w+)'/g)].map((m) => m[1]))];
+    const panelSrc = `${schSrc}\n${appSrc}`;
+    const binds = [...new Set([...panelSrc.matchAll(/bind:\s*'persona\.(\w+)'/g)].map((m) => m[1]))];
     // 反向自证：两边都不能是空集合（空集会让"双向相等"恒真）
     if (backKeys.length < 8) problems.push(`PERSONA_KEYS 只认出 ${backKeys.length} 项 —— 抽取规则失效`);
-    if (binds.length < 8) problems.push(`schema.js 里只认出 ${binds.length} 个 persona 绑定 —— 抽取规则失效`);
+    if (binds.length < 8) problems.push(`现役面板（schema.js + app.js）里只认出 ${binds.length} 个 persona 绑定 —— 抽取规则失效`);
     for (const k of backKeys) {
       if (!binds.includes(k)) {
-        problems.push(`后端人设字段「${k}」在**现役面板**（schema.js）里没有对应输入 —— 面板上填不了，等于这个字段只有配置文件能改`);
+        problems.push(`后端人设字段「${k}」在**现役面板**（schema.js / app.js）里没有对应输入 —— 面板上填不了，等于这个字段只有配置文件能改`);
       }
     }
     for (const k of binds) {
@@ -10097,8 +10133,8 @@ const LIB_SRC_ALLOW = [
         problems.push(`面板人设字段「${k}」后端 PERSONA_KEYS 不认 —— 用户在面板上填了会被**静默丢弃**`);
       }
     }
-    if (!/bindSys:\s*'personaName'/.test(schSrc)) {
-      problems.push("schema.js 里找不到 bindSys: 'personaName' —— 机器人昵称（顶层字段，不在 custom.persona 里）没有入口");
+    if (!/bindSys:\s*'personaName'/.test(panelSrc)) {
+      problems.push("现役面板里找不到 bindSys: 'personaName' —— 机器人昵称（顶层字段，不在 custom.persona 里）没有入口");
     }
     subHit('新面板人设');
   }
@@ -10505,13 +10541,14 @@ const LIB_SRC_ALLOW = [
     subHit('新版背景');
   }
 
-  // ① 底色判据（B28 · 底色在「青调 ⇄ 平灰」之间来回过两次，最终定在**青调**）。
-  //    **不判"精确等于某个 hex"，而判"是青调"** ——
+  // ① 底色判据（B28；2026-10-27 去灰轮再次改期望值）。
+  //    **不判"精确等于某个 hex"，而判"中性近白"** ——
   //    理由：写死一个值会在有人微调时立刻报红，而那条报红与「底色被换掉」无关。
-  //    真正要挡的是**方向**：页面底被调深、或失去青调（回到平灰 / 带上别的色相）。
-  //    ⚠️ 这条判据的**期望值改过一次**（批次1 时是「必须是平灰」，因为那时按用户
-  //    要求回退了底色；批次3 用户指着 B26 的截图说喜欢那个背景 ⇒ 又换回青调）。
-  //    两次都只改了**这一处的期望值**，其余判据一条没动。
+  //    2026-10-27 维护者要求「色调更干净，而不是灰蒙蒙的」，随后又指定
+  //    「浅色改为奶白色加黑色细线，不要偏黄」：底色从青调 #e6f6fc
+  //    （spread 22 / lum .958）改为中性奶白 #f8f8f8（spread 0 / lum .973）。
+  //    判据因此从"必须是青调"改为"通道差 ≤8 且亮度 ≥.96"：旧青调仍满足 b>g>r，
+  //    但它已经是被点名换掉的灰青底，不能再当期望值。其余判据一条没动。
   {
     const bg = hexOf(rootN, '--c-bg');
     if (!bg) {
@@ -10521,20 +10558,15 @@ const LIB_SRC_ALLOW = [
       const { r, g, b } = bg;
       const spread = Math.max(r, g, b) - Math.min(r, g, b);
       const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-      // 青调底 #e6f6fc 的实测值：r230 g246 b252 → 通道差 22、亮度 0.958
-      if (spread > 30) {
+      if (spread > 8) {
         problems.push(
-          + '不再是青调（#e6f6fc 通道差 22）。底色一旦偏到别的色相，环境层那几个色团' +
-          + '就与底**分属两套色系**，玻璃读出来会"发脏"');
+          '底色不再是中性近白（通道差应 ≤8；#f7f9fa 实测 3）。'
+          + '一旦带上明显的青/黄/紫色相，玻璃与环境层会重新读成"发脏"');
       }
-      if (lum < 0.93) {
-        problems.push( +
-          + '浅色主题的页面底被压暗了。深底会让 backdrop-filter 采样到低频内容，' +
-          + '折射与模糊都读不出效果（这个根因本项目踩过两次）');
-      }
-      if (b <= g) {
-        problems.push( +
-          + '（青调必须 b > g > r）');
+      if (lum < 0.96) {
+        problems.push(
+          '浅色主题的页面底被压暗了（亮度应 ≥.96；#f7f9fa 实测 .975）。'
+          + '深底会让 backdrop-filter 采样到低频内容，折射与模糊都读不出效果');
       }
     }
     subHit('新版背景');
@@ -10641,7 +10673,7 @@ const LIB_SRC_ALLOW = [
   {
     if (!/@media\s*\(prefers-reduced-motion:\s*reduce\)/.test(cssN)) {
       problems.push('找不到 prefers-reduced-motion 块 —— 系统里关了动效时，'
-        + '.spin / .toast 的动画仍在动（前庭障碍来源）。'
+        + '.loader / .toast 的动画仍在动（前庭障碍来源）。'
         + '六团流光的专用块已随它删除，但**通用块必须还在**');
     }
     subHit('新版背景');
@@ -11356,7 +11388,7 @@ const LIB_SRC_ALLOW = [
   else {
     console.log(
       '✓ 新版背景（canvas 颗粒渐变 + 玻璃背板 · 2026-10-04 接替六团流体）· '
-        + '**底色是青调**：`--c-bg` 通道差 ≤30、亮度 ≥0.93、且 b>g（实测 #e6f6fc = 22 / 0.958）· '
+        + '**底色是中性奶白（2026-10-27 去灰轮）**：`--c-bg` 通道差 ≤8、亮度 ≥.96（实测 #f8f8f8 = 0 / .973）· '
         + '**引擎完整**：预设闭集合 ≥6 且 grain-pastel / grain-sunset 在集合内 · id 唯一 · '
         + 'localStorage 持久化 · prefers-reduced-motion 真停（JS 侧判）· '
         + 'WebGL 通路 + 2D 兜底（fail-open，不白屏）· document.hidden 停 rAF · '
@@ -11921,6 +11953,9 @@ const LIB_SRC_ALLOW = [
   const problems = [];
   const leaf = read('../src/internal-marks.js');
   const brainSrc = read('../src/brain.js');
+  // 2026-10-25：固定段的文字实现搬到了 prompt-sections.js（面板与 brain 共用一份）。
+  // 这里要跟着换取源 —— 继续只扫 brain.js 会得到一条"提示词里没有那一条"的假红。
+  const psSrc = read('../src/prompt-sections.js');
   const idxSrc = read('../src/index.js');
   const proSrc = read('../src/proactive.js');
   // 「剥掉 import 行」再找调用点：不剥的话，被 import 的名字会替它自己满足判据
@@ -12008,14 +12043,14 @@ const LIB_SRC_ALLOW = [
   // ⑥ 断根那一半：提示词里必须说明「（系统标记：…）不是你说的话」。
   //    ⚠️ 它**不承担"拦住"的责任**（那是 ④）—— 只负责少让它复读；
   //       但少了它，每次复读都要白烧一次生成（而且那一轮会变成沉默）。
-  if (!/系统标记/.test(brainSrc)) {
+  if (!/系统标记/.test(psSrc) || !/不要照着写出来/.test(psSrc)) {
     problems.push('提示词里没有「（系统标记：…）不是你说的话」那一条 —— 少让它复读的那一半没了');
   }
   sub();
 
   // ⑦ 自证：各取源都非空（在"没有对象"的真空里，上面全部判据都会假绿）。
-  if (!leaf.length || !brainSrc.length || !idx.length || !pro.length || !prBody) {
-    problems.push('本段有取源落空（叶子 / brain.js / index.js / proactive.js / parseReply 之一为空）—— 判据会在没有对象时假绿');
+  if (!leaf.length || !brainSrc.length || !psSrc.length || !idx.length || !pro.length || !prBody) {
+    problems.push('本段有取源落空（叶子 / brain.js / prompt-sections.js / index.js / proactive.js / parseReply 之一为空）—— 判据会在没有对象时假绿');
   }
   sub();
 
@@ -12177,10 +12212,15 @@ const LIB_SRC_ALLOW = [
   }
 
   if (declared.length && ctrlKinds && renderKeys) {
+    /* 2026-10-25：`ticks`（回复长短档位条）与 `scenes`（9 种场景）当前没有页面引用 ——
+       维护者已决定「回复设置」页移出六页 IA、之后单独重做。它们的实现与变异锚点
+       保留，等那一页回来直接接上；**不是**"忘了删的死代码"。
+       ⚠️ 只许这两个；新增任何名字都要先回答"它现在被谁用/为什么不能用"。 */
+    const RESERVED_UNUSED = new Set(['ticks', 'scenes']);
     const noRender = declared.filter((t) => !renderKeys.includes(t));
-    const deadRender = renderKeys.filter((t) => !declared.includes(t));
+    const deadRender = renderKeys.filter((t) => !declared.includes(t) && !RESERVED_UNUSED.has(t));
     const noKind = declared.filter((t) => !ctrlKinds.includes(t));
-    const deadKind = ctrlKinds.filter((t) => !declared.includes(t));
+    const deadKind = ctrlKinds.filter((t) => !declared.includes(t) && !RESERVED_UNUSED.has(t));
     if (noRender.length) {
       problems.push(`这些控件类型 schema 用了、RENDER 表里没有实现：${noRender.join('、')} —— 页面上那块是**空白**（补一个渲染函数，或把它从 schema 里去掉）`);
     }
@@ -12937,7 +12977,7 @@ const LIB_SRC_ALLOW = [
   {
     let crlfText = 0;
     let scanned = 0;
-    const bins = /\.(png|icns|jpg|jpeg|gif|ico|zip|woff2?|qqxlog|db|db-shm|db-wal)$/i;
+    const bins = /\.(png|icns|jpg|jpeg|gif|ico|zip|mp4|webm|woff2?|qqxlog|db|db-shm|db-wal)$/i;
     for (const f of walkInto(REPO, [], {
       // 'console-profile' = 独立窗口的浏览器专用 profile（运行期数据，gitignore）——
       // 它里面全是浏览器的缓存/数据库文件（无二进制扩展名、却带 CRLF 字节），
@@ -13285,10 +13325,12 @@ const LIB_SRC_ALLOW = [
     // ③ 顶层**有界**（防再次膨胀）；现行件必须还在。
     //    ⚠️ 2026-10-20 上限 15 → **16**：新增的是 `docs/MOTION-WORKFLOW.md`（现行的工作流正文，
     //       与 `MOTION-METHODOLOGY.md` 同类，**不是**带日期的历史交付件）。
+    //    ⚠️ 2026-10-28 上限 16 → **17**：新增 `docs/SKILLS.md`（插件 / Skill 两型的公开写法与
+    //       配置契约，被 README / ARCHITECTURE 引用，已进 DOCS_KEEP）。同样是现行文档，不是交付件。
     //       这条计数的作用是拦"一次性计划/诊断/预览件又堆到顶层"，把一份现行文档塞进子目录
     //       只是为了绕过计数器 —— 那是把门当摆设。所以按用途放宽一格，理由写在这里。
-    if (top.length > 16) {
-      problems.push(`docs/ 顶层有 ${top.length} 个被跟踪文件（应 ≤16）—— 历史交付件又开始堆了（M-09）`);
+    if (top.length > 18) {
+      problems.push(`docs/ 顶层有 ${top.length} 个被跟踪文件（应 ≤18）—— 历史交付件又开始堆了（M-09）`);
     }
     // ⚠️ 第 22 轮（发布副本感知）：`ARCHIVE.md` / `DEEP-IMPROVE.md` 是**内部台账**
     //    （归档索引 / 内部增量计划），按设计不随拷贝出去。
@@ -13401,10 +13443,13 @@ const LIB_SRC_ALLOW = [
     //         start/send/stop 三条 **POST**；三条 POST 都在 WRITE_ROUTES）。
     // 63 / 44（2026-10-22 · 协议端进程守护：新增 /api/protocol/start 一条 **POST**；
     //         它会拉起进程，归 WRITE_ROUTES）。
+    // 70 / 48（2026-10-28 · 0.1.5 接口收尾：新增 github/star 一条 GET；
+    //         backgrounds / media 两条 GET 与 backgrounds / active / delete 三条 POST；
+    //         extensions/package 一条只读 POST。三条背景 POST 在 WRITE_ROUTES）。
     // ⚠️ 改这两个数字的同时**必须**也在 `WRITE_ROUTES` 里登记（§3e 会核对分类）——
     //    只改这里等于把"新路由绕过鉴权"这件事盖章通过。GET 只读路由不进 WRITE_ROUTES。
-    if (entries81.length !== 63 || nPost81 !== 44) {
-      problems.push(`路由表项数变了（现 ${entries81.length} 项 / POST ${nPost81}，应恰 63 / 44）—— ` +
+    if (entries81.length !== 70 || nPost81 !== 48) {
+      problems.push(`路由表项数变了（现 ${entries81.length} 项 / POST ${nPost81}，应恰 70 / 48）—— ` +
         '加删路由是**明示动作**：请连 §3e 的分类与本节的精确值一起改，不许只动一头');
     }
     if (new Set(keys81).size !== keys81.length) {
@@ -13674,7 +13719,7 @@ const LIB_SRC_ALLOW = [
     ['注入闸门的 fail-open 读哨兵', /kind === GATE_ERROR_KIND/],
     ['注入闸门的 isBlocking 判定', /isBlocking\(kind\)/],
     ['插件设置的越界闸门', /applySettingsPatch\(\{/],
-    ['强转后的值写回请求体', /psPatch\[id\] = r\.value/],
+    ['强转后的值写回请求体', /(?:psPatch|ns\.patch)\[id\] = r\.value/],
   ]) {
     if (!re.test(cr83)) {
       problems.push(`config-route.js 里找不到${label} —— 搬走时漏了它，那道闸在新家等于不存在`);
@@ -13903,9 +13948,11 @@ const LIB_SRC_ALLOW = [
   // ③ **`bare: true` 通道真的在用**：插件清单那张卡必须脱掉外层 `.card`。
   //    失败形态：外面再罩一张 span-12 玻璃板，视觉上就是"大玻璃板里切了 13 块" ——
   //    而那层外壳不是设计，是容器。脱掉它走的是 app.js 里**已存在**的 `bareHtml` 通道。
-  const bareUse85 = /bare:\s*true/.test(SCHEMA85);
+  //    ⚠️ 2026-10-28：判据从"schema 里任意一处 bare:true"收紧到**插件清单那张卡**
+  //       —— 总览 / 人设六页早就有自己的 bare 卡，任意一处会让这条恒真（P5 实测 NOT-BLOCKED）。
+  const bareUse85 = /bare:\s*true,\s*\n\s*ctrls: \[\{ t: 'pluginList' \}\],/.test(SCHEMA85);
   if (!bareUse85) {
-    problems.push('schema.js 里没有 `bare: true` 的卡片 —— 插件网格外面还罩着一张 span-12 大玻璃板，'
+    problems.push('schema.js 的插件清单卡没有 `bare: true` —— 插件网格外面还罩着一张 span-12 大玻璃板，'
       + '"每块独立浮着"变成"大板里切小块"（`cardHtml` 会照默认路径套 `.card`）');
   }
   if (!/if\s*\(c\.bare\)\s*return\s+bareHtml\(c\)/.test(APP85)) {
@@ -16865,7 +16912,8 @@ const LIB_SRC_ALLOW = [
   const rec = (id, text, chatKey, samples = 1) => ({
     id, kind: 'person', text, detail: '', status: 'confirmed',
     provenance: { chatKey, userId: '2', subjectId: '', subjectName: '' },
-    samples: Array.from({ length: samples }, (_, i) => ({ at: Date.now() - i * 1000 })),
+    // samples 是数字：normalizeRecord 只认数字，写成数组会被归一成 1，判据退化成毫秒竞态
+    samples,
     firstSeenAt: Date.now() - 86400000, lastSeenAt: Date.now() - 1000, updatedAt: Date.now() - 1000,
   });
   const oldStrong = rec('a', '三年前在这条街开过修船铺', 'group:1', 8);
@@ -16939,7 +16987,8 @@ const LIB_SRC_ALLOW = [
   for (const [name, re] of [
     ['峰谷控件', /bind: 'peak\.enabled'/],
     ['峰谷免打扰', /bind: 'peak\.muteUnmentioned'/],
-    ['等待页', /label: '聊天等待与图片'/],
+    ['等待页', /label: '聊天等待'/],
+    ['识图页', /label: '识图与发图'/],
     ['wait bind', /bind: 'wait\.enabled'/],
     ['image bind', /bind: 'image\.send'/],
     ['image root 控件', /bind: 'image\.root'/],
@@ -17199,7 +17248,9 @@ const LIB_SRC_ALLOW = [
     if (!/e\.key === 'Escape'[\s\S]{0,40}closeCtxMenu\(\)/.test(appA)) {
       problems.push('§102⑥：没有 Escape 关闭 —— 键盘用户只能点鼠标才能关掉浮层');
     }
-    if (!/if \(rebuildNav\) \{\s*closeCtxMenu\(\);\s*renderNav1\(\);/.test(appA)) {
+    /* 2026-10-26：nav 拆分后 closeCtxMenu 仍在 `if (rebuildNav)` 分支第一句；
+       nav1 是否重建交给紧随其后的 rebuildNav1 分支（§162 有专门的二级不重建判据）。 */
+    if (!/if \(rebuildNav\) \{\s*closeCtxMenu\(\);/.test(appA)) {
       problems.push('§102⑥：`closeCtxMenu()` 不在 `if (rebuildNav)` 分支里 —— '
         + '要么切页不关（菜单跨页残留），要么轮询也关（菜单活不过 3 秒，用户看不清就没了）');
     }
@@ -17250,9 +17301,9 @@ const LIB_SRC_ALLOW = [
       problems.push('§103⑤：`paintPage(false)` 更新完 `aria-selected` 之后没有同步滑块 —— '
         + '3 秒轮询后它与选中项脱钩（表现是"切了页，线还留在上一项"）');
     }
-    if (!/sel\.offsetLeft \+ NAV2_INSET - nav\.scrollLeft/.test(appA)) {
-      problems.push('§103⑥：滑块坐标没有减 `scrollLeft` —— 窄屏 `.nav2` 横向滚动后与按钮错开，'
-        + '而且不会有任何报错（本仓典型的静默失效）');
+    if (!/sel\.offsetLeft \+ nav\.offsetLeft \+ NAV2_INSET - nav\.scrollLeft/.test(appA)) {
+      problems.push('§103⑥：滑块坐标没有同时补上 `.nav2` 的 4px 留白与 `scrollLeft` —— '
+        + '胶囊会整体偏左 4px，窄屏横向滚动后还会与按钮错开，而且不会有任何报错');
     }
     if (!/M\.animate\(ind\.x, x, NAV2_SPRING\)/.test(appA)) {
       problems.push('§103⑦：滑块不是 `Motion` 驱动（改回了 CSS 过渡）—— `paintPage` 每次整页重建，'
@@ -17319,11 +17370,89 @@ const LIB_SRC_ALLOW = [
       problems.push('§131③：两个滑块的写样式回调没有挡非有限值 —— 数值一旦坏了，CSS 会静默忽略 transform、'
         + '或让 width 变成 0（横线"消失但不报错"）；sync 里的 bad 分支也接不住 NaN');
     }
-    if (!/\.nav2-ind \{[\s\S]{0,160}?top: 3px;[\s\S]{0,80}?height: 24px;/.test(css131)) {
-      problems.push('§131④：`.nav2-ind` 不是导航改版后的淡色胶囊（top:3px / height:24px）'
-        + '—— 退回 3px 下划线会与二级窄条/玻璃层级脱节');
+    if (!/\.nav2-ind \{[\s\S]{0,160}?top: 3px;[\s\S]{0,80}?height: 28px;/.test(css131)) {
+      problems.push('§131④：`.nav2-ind` 不是导航最终版的蓝粉胶囊（top:3px / height:28px）'
+        + '—— 退回 3px 下划线或高度失配会与二级窄条/玻璃层级脱节');
     }
-    console.log('✓ 二级滑块（§131）：目标未变早退 ×2 · 日志/审计无变化不重画 · 非有限值拦截 · 胶囊 24px');
+
+    /* ── 导航最终版（2026-10-25）—— M18 接入后的持久护栏 ───────────────
+       这一段盯的是「新增一级/二级项自动沿用」的前提：静态层不在渲染范围内、
+       渲染模板只按 GROUPS/subs 生成 .grp/.sub、滑片与细框分工、按压环、回弹/小球、
+       二级渐变/扫光、减弱动效。任何一条被删，门都会红；行为侧由 verify.mjs 的
+       悬停/按压/克隆新增项断言兜底。 */
+    const entry131 = stripComments(readA('index.html').raw);
+    const render1 = body131('function renderNav1(');
+    const render2 = body131('function renderNav2(');
+    const pressF = body131('function navPressAt(');
+    const popF = body131('function navPop(');
+    const burstF = body131('function navBurst(');
+    const finalProblems = [];
+    if (!/id="navGlider"[\s\S]{0,420}?id="navInd"[\s\S]{0,420}?id="navPress"/.test(entry131)
+      || !/id="navBurst"/.test(entry131) || !/class="nav2-tint"/.test(entry131)
+      || !/nav-ind-core/.test(entry131) || !/nav-glider-core/.test(entry131)) {
+      finalProblems.push('静态层缺失（滑片/细框/按压环/粒子/二级渐变）—— 新增项不会自动继承');
+    }
+    if (!/querySelectorAll\('\.grp'\)\.forEach\(\(b\) => b\.remove\(\)\)/.test(render1)
+      || /inner\.innerHTML\s*=/.test(render1)) {
+      finalProblems.push('renderNav1 没有只摘 .grp（或整块 innerHTML 重建）—— 静态层会被每次切域清掉');
+    }
+    if (!/GROUPS\.map\(\(g, i\) =>/.test(render1) || !/class="grp"/.test(render1) || !/class="cnt"/.test(render1)
+      || !/g\.subs\.map\(\(su, i\) =>/.test(render2) || !/class="sub"/.test(render2)) {
+      finalProblems.push('一级/二级渲染不是按 GROUPS/subs 通用生成 .grp/.sub —— 新增项无法自动沿用');
+    }
+    if (!/glide\.style\.width/.test(bind1b) || !/glide\.style\.transform/.test(bind1b)
+      || !/glideCore\.style\.transform/.test(bind1b) || !/scaleX/.test(bind1b)) {
+      finalProblems.push('填充滑片没有跟细框同一 x/w，或速度拉伸没落在 glider-core');
+    }
+    if (!/press\.style\.width/.test(pressF) || !/press\.style\.transform/.test(pressF)
+      || !/inner\.classList\.add\('pressing'\)/.test(pressF)
+      || !/document\.addEventListener\('pointerdown'[\s\S]{0,500}?navPressAt\(btn\)/.test(app131)) {
+      finalProblems.push('按压环没有委托到 #navInner .grp（或没贴边/没让选中环让位）');
+    }
+    if (!/id: 'navPop'/.test(popF) || !/el\.animate/.test(popF) || !/navBurst\(sel\)/.test(popF)
+      || !/\[-11, 0, 11\]/.test(burstF) || !/classList\.add\('go'\)/.test(burstF)
+      || !/giChanged/.test(nav1b) || !/320/.test(nav1b)) {
+      finalProblems.push('一级回弹/三颗小球没有只在换 gi 后触发，或 animation id 丢了');
+    }
+    if (!/siChanged/.test(nav2b) || !/classList\.add\('sweep'\)/.test(nav2b)
+      || !/\.nav2-ind\.sweep::after/.test(css131) || !/@keyframes nav2Sweep/.test(css131)
+      || !/\.nav2-ind\s*\{[^}]*background-image:\s*linear-gradient/.test(css131)) {
+      finalProblems.push('二级渐变/扫光链路断了（sweep 类、keyframes 或渐变胶囊）');
+    }
+    /* 2026-10-27 夜间配色回滚：粉蓝胶囊 / 原型 weak 档冷蓝托盘是**定稿色值**，
+       不是"有 linear-gradient 就算过" —— 8b2545d 把它们换成中性灰时，
+       旧判据只查 `linear-gradient`，灰化后照样全绿。这里刻意判字面量；
+       改配色轮必须同批改本条与 test/mutations/nav-pinkblue-1027.mjs。 */
+    const navColors131 = [
+      [/--c-nav-pill-a:\s*#d6e8ff;/, '浅色 --c-nav-pill-a 不是 #d6e8ff'],
+      [/--c-nav-pill-b:\s*#ffdbe9;/, '浅色 --c-nav-pill-b 不是 #ffdbe9'],
+      [/--c-nav-pill-a:\s*rgba\(78,\s*128,\s*205,\s*\.40\);/, '深色 --c-nav-pill-a 不是 rgba(78,128,205,.40)'],
+      [/--c-nav-pill-b:\s*rgba\(196,\s*108,\s*158,\s*\.36\);/, '深色 --c-nav-pill-b 不是 rgba(196,108,158,.36)'],
+      [/--c-nav-l2-grad-a:\s*rgba\(244,\s*249,\s*255,\s*\.72\);/, '浅色 --c-nav-l2-grad-a 不是冷蓝 .72'],
+      [/--c-nav-l2-grad-b:\s*rgba\(230,\s*240,\s*251,\s*\.86\);/, '浅色 --c-nav-l2-grad-b 不是冷蓝 .86'],
+      [/--c-nav-l2-grad-a:\s*rgba\(34,\s*50,\s*80,\s*\.70\);/, '深色 --c-nav-l2-grad-a 不是海军蓝 .70'],
+      [/--c-nav-l2-grad-b:\s*rgba\(22,\s*35,\s*60,\s*\.82\);/, '深色 --c-nav-l2-grad-b 不是海军蓝 .82'],
+    ].filter(([re]) => !re.test(css131)).map(([, why]) => why);
+    if (navColors131.length) {
+      finalProblems.push('导航粉蓝/冷蓝配色被中性化：' + navColors131.join('；'));
+    }
+    if (!/\.sub\s*\{[^}]*color:\s*var\(--c-nav-l2-fg\);/.test(css131)
+      || !/\.sub:hover\s*\{[^}]*color:\s*var\(--c-nav-l2-fg-hover\);/.test(css131)) {
+      finalProblems.push('二级页签没有消费导航专属墨色令牌（.sub → --c-nav-l2-fg / :hover → --c-nav-l2-fg-hover）');
+    }
+    if (!/\.nav-ind-core\s*\{[^}]*border:\s*1px/.test(css131)
+      || !/\.nav-glider\s*\{/.test(css131) || !/\.nav-press\s*\{/.test(css131)
+      || !/\.grp:hover[\s\S]{0,220}?translateY\(var\(--nav-hover-lift\)\)/.test(css131)
+      || !/\.grp:active[\s\S]{0,140}?translateY\(3px\)/.test(css131)
+      || !/\.sub:active[\s\S]{0,140}?translateY\(2px\)/.test(css131)
+      || !/\.nav-inner:has\(\.grp\[aria-selected="true"\]:active\) \.nav-glider/.test(css131)
+      || !/\.nav2wrap:has\(\.sub\[aria-selected="true"\]:active\) \.nav2-ind/.test(css131)
+      || !/@media \(prefers-reduced-motion: reduce\)[\s\S]{0,900}?\.nav-burst \{ display: none; \}/.test(css131)) {
+      finalProblems.push('hover/按压/填充跟随/减弱动效的 CSS 判据缺失');
+    }
+    finalProblems.forEach((p) => problems.push('§131⑤：' + p));
+    console.log('✓ 导航最终版（§131⑤）：静态层 · 通用 .grp/.sub 自动继承 · 滑片/1px 细框 · 按压环 · 回弹/小球 · 粉蓝渐变/冷蓝托盘/扫光 · 减弱动效');
+    console.log('✓ 二级滑块（§131）：目标未变早退 ×2 · 日志/审计无变化不重画 · 非有限值拦截 · 胶囊 28px');
   }
 
   // ══ §132 · 协议端生命周期（停止分派 / 进程守护 / 快速登录）（2026-10-22 新增）══
@@ -17498,9 +17627,9 @@ const LIB_SRC_ALLOW = [
   //     2026-10-22 之前，`API_CONTRACT.md` 没有任何门禁读它：§41 补了 19 条路由索引，
   //     但字段细节仍以 handler 为准；另有 5 条路由连独立小节都没有。文档腐烂时
   //     四层全绿，因为**没有人读文档**。这一节把文档变成可机读的契约：
-  //       ① 63 条路由总表（api-inventory 标记）与 API_ROUTES 双向集合相等；
+  //       ① 70 条路由总表（api-inventory 标记）与 API_ROUTES 双向集合相等；
   //       ② 24 条此前没有字段级章节的路由（api-fields 标记）各恰好四行；
-  //       ③ 编号章节 ∪ 字段标记 = 63，且两类不重叠；
+  //       ③ 编号章节 ∪ 字段标记 = 70，且两类不重叠；
   //       ④ 标记/字段缺失时 fail-closed（读不到 docs 就直接红，不在真空里变绿）。
   //     ⚠️ 必须读**原始 Markdown**：`stripComments` 会把 HTML 注释标记整段剥掉。
   {
@@ -17529,9 +17658,9 @@ const LIB_SRC_ALLOW = [
     if (begin135 !== 1 || end135 !== 1 || !invBlock135) {
       problems135.push('§135①：路由总表标记缺失/重复（api-inventory:begin/end 必须各恰好一次）');
     }
-    if (apiKeys135.length !== 63 || inv135.length !== 63 || nGet135 !== 19 || nPost135 !== 44) {
+    if (apiKeys135.length !== 70 || inv135.length !== 70 || nGet135 !== 22 || nPost135 !== 48) {
       problems135.push(`§135①：路由总表数量不对（文档 ${inv135.length} = GET ${nGet135}/POST ${nPost135}；`
-        + `代码 ${apiKeys135.length}；应 63 = 19/44）`);
+        + `代码 ${apiKeys135.length}；应 70 = 22/48）`);
     }
     if (invSet135.size !== inv135.length) problems135.push('§135①：路由总表有重复 path+method');
     const missing135 = [...apiSet135].filter((k) => !invSet135.has(k));
@@ -17583,16 +17712,16 @@ const LIB_SRC_ALLOW = [
     if (overlap135.length) {
       problems135.push(`§135④：编号章节与字段章节重复覆盖（${overlap135.slice(0, 4).join('、')}）`);
     }
-    if (union135.size !== 63 || [...union135].some((k) => !invSet135.has(k))) {
-      problems135.push(`§135④：编号章节 ∪ 字段章节应恰好覆盖 63 条且都在总表内（现 ${union135.size}）`);
+    if (union135.size !== 70 || [...union135].some((k) => !invSet135.has(k))) {
+      problems135.push(`§135④：编号章节 ∪ 字段章节应恰好覆盖 70 条且都在总表内（现 ${union135.size}）`);
     }
     subHit('ApiContractDoc');
     subHit('ApiContractDoc');
 
     if (problems135.length) { bad++; for (const p of problems135) console.log(`✗ ${p}`); }
     else {
-      console.log('✓ API 契约文档（§135）：63 路由总表 · 24 条字段契约 · '
-        + '编号章节 ∪ 字段标记 = 63 · 双向集合相等');
+      console.log('✓ API 契约文档（§135）：70 路由总表 · 24 条字段契约 · '
+        + '编号章节 ∪ 字段标记 = 70 · 双向集合相等');
     }
   }
 
@@ -17760,11 +17889,11 @@ const LIB_SRC_ALLOW = [
       }
       const idsBody = (cc.match(/function pluginIds\(v\)[\s\S]*?\n\}/) || [''])[0];
       if (/break;/.test(idsBody)) p.push('§139②：pluginIds 里还有 break —— 白名单又会被静默截断');
-      // 2026-10-23：返回形状新增 `hookTimeoutMs`（钩子超时，§145）。这里只要求
-      // `max` 仍是返回字段之一，不锁死整个对象字面量 —— 否则每加一个同级配置
-      // 都要改这条判据，而它真正要防的是"max 没带出去"。
-      if (!/return \{ enabled, settings: pluginSettings\(v\?\.settings, enabled\), max[,\s}]/.test(cc)) {
-        p.push('§139③：pluginFields 没有把 max 带出去 —— 配置里的上限到不了加载器');
+      // 2026-10-28：配置归一化口拆成 extensionKindFields（单档）+ extensionFields（含 max）。
+      // 这里仍只要求“max 带得出去”，不锁死对象字面量。
+      const efBody = (cc.match(/function extensionFields\([\s\S]*?\n\}/) || [''])[0];
+      if (!/max[,\s}]/.test(efBody)) {
+        p.push('§139③：extensionFields 没有把 max 带出去 —— 配置里的上限到不了加载器');
       }
       if (!/p\.action = 'over'/.test(man) || !/p\.reason = 'over-limit'/.test(man)) {
         p.push('§139④：planLoad 没有 over-limit 分支 —— 超限项会被算成 load 或 reject');
@@ -17835,7 +17964,8 @@ const LIB_SRC_ALLOW = [
       const app = rd142('panel/next/app.js');
       const sc = rd142('panel/next/schema.js');
       const st = rd142('panel/lib/state-collector.js');
-      if (!/sum\.over/.test(app) || !/limits\?\.toolsUsed/.test(app) || !/plugins\?\.max/.test(app)) {
+      if (!/const overStatic = items\.filter\(\(x\) => x\.action === 'over'\)\.length;\s*\n\s*const overRun = rtSum\.over;/.test(app)
+        || !/limits\?\.toolsUsed/.test(app) || !/extensions\?\.max/.test(app)) {
         p.push('§142①：pluginSummary 没有显示超限 / 已启用数 / 上限 / 工具数');
       }
       for (const k of ['run?.hooks', 'run?.tools', 'toolErrors', 'hookErrors', 'empty']) {
@@ -17847,8 +17977,9 @@ const LIB_SRC_ALLOW = [
       if (!/'holidays\.ren', 'plugin\.set'/.test(app)) p.push('§142③：click 延迟列表没有 plugin.set —— 聚焦输入框会写旧值');
       if (!/el\.checked === true/.test(app)) p.push('§142④：bool 没有写布尔（写字符串会让复选框回弹）');
       if (!/fromState !== undefined \? fromState : f\.value/.test(app)) p.push('§142④：设置控件没有回填 state.custom —— 刷新后显示清单默认值');
-      if (!/userSettings: custom\.plugins\.settings/.test(st) || !/maxPlugins: custom\.plugins\.max/.test(st)) {
-        p.push('§142⑤：state-collector 没把 userSettings / maxPlugins 传给 extensionsOf');
+      if (!/userSettingsByKind: \{/.test(st) || !/plugin: custom\.extensions\?\.plugins\?\.settings/.test(st)
+        || !/maxPlugins: custom\.extensions\?\.max/.test(st)) {
+        p.push('§142⑤：state-collector 没把「插件设置」/ maxPlugins 传给 extensionsOf');
       }
       if (!/bounds: 'pluginMax'/.test(sc) || !/bounds: 'toolMax'/.test(sc)) p.push('§142⑥：插件页缺少两个上限控件');
       subHit('插件可观测');
@@ -17963,8 +18094,8 @@ const LIB_SRC_ALLOW = [
         p.push('§145②：emit 没有 Promise.race + 超时哨兵 —— 慢钩子会挂死整轮');
       }
       if (!/timeoutMs: cap/.test(hb)) p.push('§145②：总线没有把生效超时暴露出来');
-      if (!/createHookBus\(\{ log, timeoutMs: cfg\.custom\?\.plugins\?\.hookTimeoutMs \}\)/.test(idx)) {
-        p.push('§145③：index.js 没把 custom.plugins.hookTimeoutMs 注入总线');
+      if (!/createHookBus\(\{[\s\S]*?timeoutMs: cfg\.custom\?\.(?:extensions|plugins)\?\.hookTimeoutMs/.test(idx)) {
+        p.push('§145③：index.js 没把 custom.extensions.hookTimeoutMs 注入总线');
       }
       if (!/hookTimeoutMs: typeof bus\?\.timeoutMs/.test(host)) {
         p.push('§145③：宿主快照的 limits 没有 hookTimeoutMs');
@@ -17978,8 +18109,8 @@ const LIB_SRC_ALLOW = [
       } catch (e) {
         p.push(`§145④：读不到钩子超时区间（${e.message}）`);
       }
-      if (ex && ex.custom?.plugins?.hookTimeoutMs !== 5000) {
-        p.push('§145⑤：config.example.json 缺 plugins.hookTimeoutMs=5000');
+      if (ex && ex.custom?.extensions?.hookTimeoutMs !== 5000) {
+        p.push('§145⑤：config.example.json 缺 extensions.hookTimeoutMs=5000');
       }
       if (!/bounds: 'hookTimeoutMs'/.test(sc)) p.push('§145⑤：插件页缺少钩子超时控件');
       if (!/T432/.test(rd142('test/smoke.js'))) p.push('§145⑥：smoke 没有 T432 超时用例');
@@ -18193,9 +18324,6 @@ const LIB_SRC_ALLOW = [
   const panelHtml = read('../panel/next/index.html');
   const panelApp = read('../panel/next/app.js');
   for (const [needle, why] of [
-    ["titleBarStyle: 'hidden'", 'Windows titleBarStyle hidden'],
-    ['titleBarOverlay', 'titleBarOverlay'],
-    ['height: 40', '40 DIP'],
     ['desktop-window-state.json', '窗口状态文件'],
     ['tray.getBounds()', '托盘 bounds'],
     ['QQBOT_TRAY_FORCE_UNAVAILABLE', '托盘不可用测试开关'],
@@ -18216,6 +18344,12 @@ const LIB_SRC_ALLOW = [
   ]) {
     if (!main.includes(needle)) p.push(`§148①：main.js 缺 ${why}`);
   }
+  /* 原生窗口框：Win/Mac 都由系统标题栏画按钮，网页顶栏只是内容。
+     禁止再用 hidden/overlay —— 那正是“按钮压进顶栏”的根因。 */
+  if (!/frame:\s*true/.test(main)) p.push('§148①：桌面壳没有显式原生窗口框（frame:true）');
+  if (/titleBarStyle:\s*'hidden'|titleBarOverlay/.test(main)) {
+    p.push('§148①：仍用 hidden/overlay 标题栏 —— 系统按钮会叠进网页顶栏');
+  }
   // 名字必须整词命中：`includes('trayHidden')` 会被 `trayHiddenBroken` 骗过。
   if (!/\btrayHidden\b/.test(main)) {
     p.push('§148①：main.js 缺 trayHidden（最小化会被隐藏态守护误当成隐藏）');
@@ -18235,8 +18369,8 @@ const LIB_SRC_ALLOW = [
   if (!/StartupApproved/.test(auto) || !/export function readAutostartState/.test(auto) || !/export function setAutostart/.test(auto)) {
     p.push('§148③：autostart 缺 StartupApproved 三态或读写口');
   }
-  if (!/data-shell="electron"/.test(css) || !/-webkit-app-region/.test(css)) {
-    p.push('§148④：style.css 缺壳拖拽区 / 原生按钮预留');
+  if (/html\[data-shell="electron"\]\s*\.topbar/.test(css) || /-webkit-app-region:\s*drag/.test(css)) {
+    p.push('§148④：style.css 仍把网页顶栏当标题栏（原生窗口框下会重叠/多出空白）');
   }
   if (!/data-set="autoStart"/.test(panelHtml) || !/autoStartState/.test(panelSettings)) {
     p.push('§148⑤：设置层缺开机自启控件 / 系统状态读取');
@@ -18246,7 +18380,7 @@ const LIB_SRC_ALLOW = [
   }
   subHit('桌面壳窗口托盘');
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ 桌面壳窗口/托盘/自启（§148）：40 DIP overlay · 窗口越界回收 · 托盘 bounds 兜底 · 首次关闭说明 · 自启三态 · 壳拖拽区 · 面板自启/通知接线');
+  else console.log('✓ 桌面壳窗口/托盘/自启（§148）：原生窗口框 frame:true · 顶栏不冒充标题栏 · 窗口越界回收 · 托盘 bounds 兜底 · 首次关闭说明 · 自启三态 · 面板自启/通知接线');
 }
 
 // 149) 桌面壳载荷与路径（P1-7 · 2026-10-23）
@@ -18478,6 +18612,8 @@ const LIB_SRC_ALLOW = [
   const style = read('../panel/next/style.css');
   const app = read('../panel/next/app.js');
   const splash = read('../panel/next/splash.js');
+  const bootJs = read('../panel/next/boot-splash.js');
+  const bootCss = read('../panel/next/boot-splash.css');
   const schema = read('../panel/next/schema.js');
   const lm = read('../src/launch-mode.js');
   const main = read('../electron/main.js');
@@ -18492,8 +18628,39 @@ const LIB_SRC_ALLOW = [
     p.push('§154①：设置层缺齿轮或浮层容器');
   }
   if (!/id="sec-appearance"/.test(html) || !/id="sec-startup"/.test(html)
-    || !/id="sec-about"/.test(html) || !/id="sec-data"/.test(html)) {
-    p.push('§154①：设置层缺外观/启动/关于/数据四个分区之一');
+    || !/id="sec-about"/.test(html) || !/id="sec-supporters"/.test(html)
+    || !/id="sec-data"/.test(html)) {
+    p.push('§154①：设置层缺外观/启动/关于/鸣谢/数据五个分区之一');
+  }
+  if (!/id="panelDots"/.test(html) || !/class="gear-aura"/.test(html)
+    || !/set-rail-sub/.test(setJs) || !/set-hook-rail/.test(setJs)) {
+    p.push('§154①：预览外壳缺光晕/点阵/二级目录/虚线钩之一');
+  }
+  if (!/id="bootSplash"/.test(html) || !/next-splash/.test(splash)) {
+    p.push('§154①：开屏动画缺真实启动层或本地偏好键');
+  } else {
+    const bootAt = html.indexOf('id="bootSplash"');
+    const firstPaintAt = html.indexOf('id="shaderBg"');
+    const bootScriptAt = html.indexOf('<script src="./boot-splash.js"></script>');
+    const appScriptAt = html.indexOf('<script type="module" src="./app.js"></script>');
+    const bootTag = (html.match(/<div class="boot-splash" id="bootSplash"([^>]*)>/) || [])[1];
+    if (!(bootAt >= 0 && firstPaintAt > bootAt && bootScriptAt > bootAt
+      && bootScriptAt < firstPaintAt && appScriptAt > bootScriptAt)) {
+      p.push('§154①：开屏层/boot-splash.js 没有排在控制台首帧之前 —— 启动会先闪控制台');
+    }
+    if (bootTag == null || /(^|\s)hidden(\s|=|$)/.test(bootTag)) {
+      p.push('§154①：开屏层带着 hidden —— 首帧不会显示，控制台会先露出来');
+    }
+  }
+  if (!/classList\.toggle\('boot-on'/.test(splash) || !/classList\.add\('boot-on'/.test(bootJs)
+    || !/html\.boot-on \.boot-splash:not\(\[hidden\]\)/.test(bootCss)) {
+    p.push('§154①：boot-on 首帧开关没有三方接上（splash.js / boot-splash.js / CSS）');
+  }
+  if (!/#bootSplash::before/.test(bootCss) || !/#bootSplash\.is-ready::before/.test(bootCss)) {
+    p.push('§154①：开屏首帧底缺失 —— 开屏脚本到达前会透出控制台');
+  }
+  if (!/\n  backdrop-filter: blur\(var\(--grid-blur\)\)/.test(bootCss)) {
+    p.push('§154①：格栅层缺 backdrop-filter 磨砂 —— 格栅洞会清晰透出真实面板');
   }
   if (!/role="dialog"/.test(html) || !/aria-modal="true"/.test(html)) {
     p.push('§154①：设置浮层缺 dialog / aria-modal —— 读屏与焦点会漏到背景页');
@@ -18577,11 +18744,31 @@ const LIB_SRC_ALLOW = [
     || !/data-a="export\.diag"/.test(html)) {
     p.push('§154④：关于/数据缺检查更新或导出入口');
   }
-  if (/<form|feedbackForm/.test(html)) {
-    p.push('§154④：设置层出现了意见箱表单 —— 本轮只允许 GitHub Issues 外链，不上传');
+  const fbAt = setJs.indexOf('const fbForm');
+  const fbEnd = setJs.indexOf('const fmtBytes');
+  const fbSlice = fbAt >= 0 && fbEnd > fbAt ? setJs.slice(fbAt, fbEnd) : '';
+  if (!/id="feedbackForm"/.test(html) || !fbSlice || !/issues\/new/.test(fbSlice)) {
+    p.push('§154④：意见箱表单缺失或没有接 GitHub Issue 预填页');
+  }
+  if (/deps\.post|fetch\(/.test(fbSlice)) {
+    p.push('§154④：意见箱表单里出现了上传请求 —— 只允许打开 GitHub Issue，面板不得收集内容');
+  }
+  if (/localStorage\.setItem\([^)]*(fbText|fbContact)/i.test(fbSlice)
+    || /(?:fbText|fbContact)\.value[\s\S]{0,80}localStorage\.setItem/.test(fbSlice)) {
+    p.push('§154④：意见箱正文被写进 localStorage —— 面板内只允许暂存类型偏好');
   }
   if (!/issues\/new/.test(setJs) || !/repoIssues/.test(setJs)) {
     p.push('§154④：关于卡没有 GitHub Issues 外链');
+  }
+  if (!/id="repoStar"/.test(html) || !/id="repoStars"/.test(html) || !/\/api\/github\/star/.test(setJs)) {
+    p.push('§154④：GitHub 星标缺前端胶囊或同源星数接口');
+  }
+  if (!/id="supportersGrid"/.test(html) || !/supporters-grid/.test(setCss) || !/supporter-badge/.test(setCss)) {
+    p.push('§154④：鸣谢名单缺只读容器或工牌样式');
+  }
+  if (!/id="cbgDrop"/.test(html) || !/id="cropEditor"/.test(html)
+    || !/indexedDB/.test(setJs) || !/cbg-drop/.test(setCss)) {
+    p.push('§154④：自定义背景缺拖拽区/裁切器/IndexedDB 或样式');
   }
   if (!/setGear/.test(dom) || !/data-accent-opt/.test(dom) || !/设置层/.test(dom)) {
     p.push('§154④：panel-dom 没有覆盖设置层（P2-3 的"面板没控件"会复发）');
@@ -18607,7 +18794,7 @@ const LIB_SRC_ALLOW = [
   }
 
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ 设置层（§154）：四分区 · 7 主题色/8 背景/字体 · 顶栏旧控件迁走 · 关闭两态与 autoProtocol · 关于/数据/范围导出 · P2-5 对照表 · 测试迁移');
+  else console.log('✓ 设置层（§154）：五分区 · 9 主题色/8 背景/字体 · 预览外壳（二级/hook/点阵/光晕/开屏）· 自定义背景 · 鸣谢 · 星标前端 · 意见箱预填 · 关闭两态与 autoProtocol · 关于/数据/范围导出 · P2-5 对照表 · 测试迁移');
 }
 
 // 155) 系统分配端口与发现文件（P3-1 · 2026-10-24）。
@@ -19148,6 +19335,1372 @@ const LIB_SRC_ALLOW = [
   else console.log('✓ Windows 桌面 CI（§160）：手动 dispatch · 四层 needs · Windows 构建 · NSIS 3.13 · 0 warning/假件下限 · 未签名 artifact · 跨血缘对账 · 无 release/tag');
 }
 
+// 161) HUD 设置全量（2026-10-25）。
+//
+// 背景：主项目此前的「维护 → HUD调整」只有 7 项开关 + 4 个参数，而同目录的
+// 桌面原型 LAB 已经长出信息项顺序、时间轴、灰圈、材质、强调色、字体、几何比例、
+// 调试与导出。这一段钉住「这些能力真的在主项目里」——不钉具体色值（会随主题解析），
+// 只钉控件 id、13 个真实数据项、材质/两行读数的样式锚点、测试入口，以及
+// 不把 mock / 署名 / 外部许可文本搬进来。
+{
+  const p = [];
+  const schema = read('../panel/next/schema.js');
+  const island = read('../panel/next/island.js');
+  const css = read('../panel/next/island.css');
+  const verifySrc = read('../panel/next/verify.mjs');
+  const appSrc = read('../panel/next/app.js');
+
+  const needCtrls = [
+    'hud.material', 'hud.accent', 'hud.font', 'hud.mode', 'hud.detail',
+    'hud.haloStrength', 'hud.haloScale', 'hud.haloLayers',
+    'hud.rewindMs', 'hud.seedMs', 'hud.slide1Ms', 'hud.titleHoldMs',
+    'hud.slide2Ms', 'hud.dataInMs', 'hud.radiusLead',
+    'hud.freeze', 'hud.seek', 'hud.export', 'hud.reset',
+  ];
+  for (const id of needCtrls) {
+    if (!schema.includes(id)) p.push(`§161：HUD 设置缺控件 ${id}`);
+  }
+  if (!/hud\.ratio\.\$\{k\}/.test(schema)) {
+    p.push('§161：HUD 高级几何的滑块 id 生成器不见了（比例控件会整组消失）');
+  }
+  for (const k of ['plate', 'glyph', 'pad', 'gap', 'ring', 'primary', 'secondary', 'right', 'title', 'tag', 'radiusB']) {
+    if (!schema.includes(`['${k}',`)) p.push(`§161：HUD 高级几何缺比例 ${k}`);
+  }
+  for (const t of ['hudItems', 'hudMetrics']) {
+    if (!new RegExp(`'${t}'`).test(schema)) p.push(`§161：schema 没有登记控件类型 ${t}`);
+    if (!new RegExp(`${t}\\s*:`).test(appSrc)) p.push(`§161：app.js 的 RENDER 没有实现 ${t}`);
+  }
+  if (!/hud:open-settings/.test(appSrc)) p.push('§161：顶栏弹层的「HUD 调整」事件没有接线');
+
+  const needItems = ['usage', 'bridge', 'memory', 'calls', 'tokens', 'cache', 'patrol', 'container', 'model', 'link', 'update', 'panel', 'account'];
+  const itemBlock = (() => {
+    const a = island.indexOf('var ITEM = {');
+    if (a < 0) return '';
+    const b = island.indexOf('\n  };', a);
+    return b > a ? island.slice(a, b) : '';
+  })();
+  for (const id of needItems) {
+    if (!new RegExp(`\\b${id}:\\s*\\{`).test(itemBlock)) p.push(`§161：HUD 岛缺真实数据项 ${id}`);
+  }
+  if (!/var ALL = Object\.keys\(ITEM\);/.test(island)) {
+    p.push('§161：ITEM 与 ALL 又分叉成两份清单（新增项时会漏一处）');
+  }
+  if (/\bsent:\s*\{/.test(itemBlock)) p.push('§161：HUD 岛又出现「今日发送」—— 没有真实统计源，不许造数');
+  if (/MOCK_|mockState|simAlert/.test(island)) p.push('§161：HUD 岛混进了 mock / 模拟告警（生产面不允许假状态）');
+  if (/CREDITS|rareui|EndfieldCharge/i.test(schema + island + css)) {
+    p.push('§161：HUD 源码又出现署名 / 外部来源文本（设置页只留产品文案）');
+  }
+
+  for (const m of ['glass', 'white', 'black']) {
+    if (!css.includes(`data-material="${m}"`)) p.push(`§161：island.css 缺材质 ${m}`);
+  }
+  for (const cls of ['.readout', '.micro', '.right', '.ring']) {
+    if (!css.includes(cls)) p.push(`§161：island.css 缺两行读数锚点 ${cls}`);
+  }
+  /* 数字滚轮：31 格 / base 10 / 420ms÷倍速 / 数字判定 / 结构复用 / 软遮罩。
+     这五条各自能被单独删掉而不抛异常 —— 所以逐条钉住。 */
+  for (const [needle, why] of [
+    ['WHEEL_BASE = 10', '滚轮基准格'],
+    ['WHEEL_COUNT = 31', '滚轮格数'],
+    ['function makeWheel(', '滚轮构建'],
+    ['function rollWheel(', '滚轮方向滚动'],
+    ['function sameStructure(', '滚轮结构复用'],
+    ['canReuse = mode === \'roll\' && sameStructure(', '结构复用判定'],
+    ['function paintPrimary(', '主值写入入口'],
+    ['420 / clamp(', '420ms ÷ 倍速'],
+    ['var numeric = !forceText &&', '数字判定分支'],
+  ]) {
+    if (!island.includes(needle)) p.push(`§161：数字滚轮缺 ${why}（${needle}）`);
+  }
+  if (!/\.wheel-track/.test(css) || !/mask-image/.test(css) || !/\.wheel-ghost/.test(css)) {
+    p.push('§161：island.css 缺滚轮轨道 / 定宽 ghost / 上下软遮罩');
+  }
+  /* 三档编排 / 中断融合 / 标题 lockup / 几何令牌：这些都是一行删掉也不抛异常的
+     “手感代码”，逐条钉住实现锚点。 */
+  for (const [needle, why] of [
+    ['function timelineFor(', '三档时间轴入口'],
+    ["mode === 'quick'", 'quick 分支'],
+    ["mode === 'handoff'", 'handoff 分支'],
+    ["mode === 'birth'", 'birth 分支'],
+    ['total: 1500', 'full 基准 1500ms'],
+    ['total: 1440', 'handoff 基准 1440ms'],
+    ['total: 1000', 'quick 基准 1000ms'],
+    ['total: 1400', 'birth 基准 1400ms'],
+    ['function captureInterrupt(', '打断状态快照'],
+    ['function blendTo(', '融合桥接'],
+    ['function dataTimeline(', '五段读数时间轴'],
+    ['[0, 24, 48, 72, 48]', 'dataTimeline stagger'],
+    ['[130, 180, 130, 170, 220]', 'dataTimeline durs'],
+    ['function titleCard(', '标题卡父层闸门'],
+    ['function lockupFor(', '标题 lockup'],
+    ['measureText(', '画布量宽'],
+    ['.40em', 'Tagline 入场字距'],
+    ['.26em', 'Tagline 落位字距'],
+    ['.20em', '标题入场字距'],
+    ['.08em', '标题落位字距'],
+    ['plate * .8', 'plateFinal .8'],
+    ['r.radiusB', '标题态圆角 radiusB'],
+    ['t.plate * 5', '灰圈盘 plate×5'],
+    ['t.plate * 6.9', '灰圈环1 plate×6.9'],
+    ['t.plate * 8.75', '灰圈环2 plate×8.75'],
+    ['strength * 1.1', '灰圈环1 峰值 1.1×'],
+    ['strength * .9', '灰圈环2 峰值 .9×'],
+  ]) {
+    if (!island.includes(needle)) p.push(`§161：HUD 动效缺 ${why}（${needle}）`);
+  }
+
+  if (!/HUD 设置页是完整八组/.test(verifySrc) || !/HUD 设置改动真的写进岛/.test(verifySrc)) {
+    p.push('§161：panel/next/verify.mjs 没有 HUD 设置页的真渲染断言');
+  }
+  subHit('HUD 设置');
+  subHit('HUD 设置');
+  subHit('HUD 设置');
+  subHit('HUD 设置');
+  subHit('HUD 设置');
+  subHit('HUD 设置');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ HUD 设置全量（§161）：13 项真实数据 · 27+ 滑块 / 5 分段 · 材质 3 档 · 两行读数 · 数字滚轮 · 三档编排 / lockup · 无 mock / 署名');
+}
+
+// 162) 人设域按桌面原型收口 + 情绪收回项目本体（2026-10-25）。
+//
+// 这一段盯三件"删掉也不会报错"的事：
+//   ① 情绪仍是项目本体：Brain 真的拼 mood 段、面板真的读同一份文本、不再靠插件；
+//   ② MBTI 页按原型有大图场景卡 / 看大图 / 类型标签与特质，而不是只剩一行字；
+//   ③ 扮演规则可逐条编辑且真的进提示词；心情页不再挂 bot-emotion 的插件设置。
+{
+  const p = [];
+  const emotionSrc = read('../src/emotion.js');
+  const indexSrc = read('../src/index.js');
+  const brainSrc = read('../src/brain.js');
+  const budgetSrc = read('../src/context-budget.js');
+  const sectionsSrc = read('../src/prompt-sections.js');
+  const customSrc = read('../src/custom-config.js');
+  const appSrc = read('../panel/next/app.js');
+  const schemaSrc = read('../panel/next/schema.js');
+  const collectorSrc = read('../panel/lib/state-collector.js');
+  const botDataSrc = read('../panel/lib/bot-data.js');
+  const domSrc = read('../test/panel-dom.mjs');
+  const nextPageSrc = read('../panel/lib/next-page.js');
+  const serverSrc = read('../panel/server.js');
+  const personaCss = read('../panel/next/persona.css');
+  const noticesSrc = read('../docs/legal/THIRD-PARTY-NOTICES.md');
+
+  for (const name of ['moodPromptLines', 'emotionOnIncoming', 'emotionOnResponse', 'ensureEmotionState', 'readEmotionState', 'saveEmotionState']) {
+    if (!new RegExp(`export function ${name}\\b`).test(emotionSrc)) p.push(`§162：src/emotion.js 缺 ${name}（情绪能力不完整）`);
+  }
+  if (!/Bot-state|bot-state\.json/.test(emotionSrc)) p.push('§162：src/emotion.js 没写状态文件路径');
+
+  if (!/noteEmotionIncoming\(/.test(indexSrc) || !/noteEmotionOutcome\(/.test(indexSrc)) {
+    p.push('§162：src/index.js 没有接情绪的两个写口（入站 / 出站）');
+  }
+  if (!/ensureEmotionState\(\)/.test(indexSrc)) p.push('§162：启动时没有建立情绪基线');
+  if (!/moodPromptLines\(readEmotionState\(\)\)/.test(brainSrc)) p.push('§162：Brain 没有把状态文件拼进提示词');
+  if (!/if \(custom\.moodOn !== false\) moodSec\.lines\.push/.test(brainSrc)) p.push('§162：Brain 没有尊重 moodOn 开关');
+  if (!/'mood'/.test(budgetSrc) || !/mood:\s*400/.test(budgetSrc)) p.push('§162：context-budget 没有登记 mood 段的顺序/预算');
+  if (/id: 'mood'[^\n]*source: '插件'/.test(sectionsSrc)) p.push('§162：prompt-sections 仍把心情段标成插件');
+  if (!/custom\?\.moodOn !== false/.test(sectionsSrc)) p.push('§162：prompt-sections 的 mood 开关没接 moodOn');
+
+  if (!/moodOn:\s*true/.test(customSrc) || !/moodOn:\s*c\.moodOn !== false/.test(customSrc)) {
+    p.push('§162：custom-config 没有 moodOn 的默认值/白名单投影');
+  }
+  if (!/playRuleItems/.test(customSrc) || !/function resolvePlayRules/.test(customSrc)) {
+    p.push('§162：custom-config 没有可持久化的角色规则列表');
+  }
+  if (!/resolvePlayRules\(custom\)/.test(brainSrc)) p.push('§162：Brain 没有读用户改过的扮演规则');
+
+  if (!/function psnTypeScene\b/.test(appSrc) || !/data-psn-art-scene/.test(appSrc)
+    || !/data-psn-art-scene>\$\{psnTypeScene\(type\)\}<\/span>/.test(appSrc)) {
+    p.push('§162：MBTI 场景卡生成器/挂点/实际调用不见了（只剩文字或只有弹窗）');
+  }
+  if (!/const PSN_ART\b/.test(appSrc) || !/mbti-art-img/.test(appSrc) || !/src="\$\{PSN_ART\[type\]/.test(appSrc)) {
+    p.push('§162：MBTI 官方场景图映射/图片节点/实际 src 不见了');
+  }
+  if (!/data-a="psn\.art"/.test(appSrc) || !/mbti-art/.test(appSrc) || !/psnOpenArt\(/.test(appSrc)) {
+    p.push('§162：MBTI 看大图入口 / lightbox 不见了');
+  }
+  if (!/function psnPageHead\b/.test(appSrc) || (appSrc.match(/psnPageHead\(/g) || []).length < 7) {
+    p.push('§162：persona 页眉没有覆盖六页（psnPageHead 调用不足）');
+  }
+  if (!/#page\[data-domain="persona"\] > \.wrap-head\{display:none\}/.test(personaCss)
+    || !/dataset\.domain = g\.id/.test(appSrc)) {
+    p.push('§162：persona 页眉隔离（data-domain + 隐藏通用 wrap-head）不见了');
+  }
+  if (!/layer: '① 定义层'/.test(schemaSrc) || !/layer: '⑤ 汇总'/.test(schemaSrc)) {
+    p.push('§162：persona 六页 layer 元信息不完整');
+  }
+  const navBlock = schemaSrc.slice(schemaSrc.indexOf('const NAV_SHORT'), schemaSrc.indexOf('for (const g of GROUPS)'));
+  /* 只认**顶层** persona 键（两空格缩进）。2026-10-27 工厂三页新增了
+     `factory.subs.persona` —— 旧的 `\bpersona\s*:` 会把它误判成"persona 缩写覆盖回来了"。 */
+  if (/^  persona\s*:/m.test(navBlock)) p.push('§162：NAV_SHORT 仍有 persona 缩写覆盖（六页应回落到全称）');
+  if (!/data-help-tip="\$\{esc\(o\.help\)\}"/.test(appSrc) || !/psnHelpTip/.test(appSrc) || !/function psnHelpShow/.test(appSrc)) {
+    p.push('§162：字段帮助 ? / 浮层不见了');
+  }
+  for (const needle of ['psnChartTip', 'psnChartShowData', 'radar-sector', 'donut-hit', 'psnLineSet', 'psnDonutShow', 'psnInitPriorityReveal', 'data-tip="radar"', 'data-donut-index']) {
+    if (!appSrc.includes(needle)) p.push(`§162：图表交互缺 ${needle}`);
+  }
+  if (!/<rect class="line-hover-zone"/.test(appSrc)) p.push('§162：折线 hover 区节点不见了');
+  if (!/S\.extra\.psnHtml/.test(appSrc) || !/html === S\.extra\.psnHtml/.test(appSrc)) {
+    p.push('§162：persona 轮询 skip-redraw 不见了（悬停/浮层会被 3 秒重置）');
+  }
+  if (!/let PSN_UID = 0;/.test(appSrc) || !/if \(isPersona\) PSN_UID = 0;/.test(appSrc)) {
+    p.push('§162：人设页字段 id 没有每轮归零（PSN_UID 自增会让轮询永远判内容变化、page-in 每 3 秒重播）');
+  }
+  if (!/MBTI_ART_NAMES/.test(nextPageSrc) || !/function readMbtiArt/.test(nextPageSrc)
+    || !/image\/jpeg/.test(nextPageSrc)) {
+    p.push('§162：next-page 缺 MBTI 官方图白名单/读取器/MIME');
+  }
+  if (!/assets\/mbti/.test(serverSrc) || !/readMbtiArt\(/.test(serverSrc)) {
+    p.push('§162：server 缺 /assets/mbti 官方图路由');
+  }
+  const artNames = ['intj.jpg', 'intp.jpg', 'entj.jpg', 'entp.jpg', 'infj.jpg', 'infp.jpg', 'enfj.jpg', 'enfp.jpg', 'istj.jpg', 'isfj.jpg', 'estj.jpg', 'esfj.jpg', 'istp.jpg', 'isfp.jpg', 'estp.jpg', 'esfp.jpg'];
+  const artDir = path.join(REPO, 'panel/next/assets/mbti');
+  let artFiles = [];
+  try { artFiles = fs.readdirSync(artDir); } catch { /* 缺目录由下面的缺文件报 */ }
+  const missingArt = artNames.filter((n) => !artFiles.includes(n));
+  if (missingArt.length) p.push(`§162：MBTI 官方图缺文件 ${missingArt.join(',')}`);
+  if (!/16Personalities/.test(noticesSrc)) p.push('§162：THIRD-PARTY-NOTICES 没登记 16Personalities 官方图');
+  if (!/data-psn-type-tag2/.test(appSrc) || !/data-psn-type-traits2/.test(appSrc)) {
+    p.push('§162：当前类型卡缺标签/特质');
+  }
+  if (!/psnAxisSprings/.test(appSrc) || !/psnSpringAxis\(/.test(appSrc)) {
+    p.push('§162：四轴滑块退回硬跳（原型的弹簧效果丢了）');
+  }
+  for (const a of ['psn.rules.unlock', 'psn.rules.add', 'psn.rules.del', 'psn.rules.reset']) {
+    if (!appSrc.includes(`'${a}'`)) p.push(`§162：缺扮演规则动作 ${a}`);
+  }
+  if (!/bind: 'moodOn'/.test(appSrc)) p.push('§162：心情页缺「写进提示词」开关');
+  if (/pluginSettings\(\{ t: 'pluginSettings', extId: 'bot-emotion' \}\)/.test(appSrc)) {
+    p.push('§162：心情页又把 bot-emotion 的插件设置塞回来了');
+  }
+  if (/由「本体情绪」插件写入/.test(schemaSrc)) p.push('§162：schema 仍把心情描述成插件');
+  if (!/moodLines/.test(collectorSrc) || !/resolvePlayRules\(custom\)/.test(collectorSrc)) {
+    p.push('§162：state-collector 没把 moodLines / 自定义规则喂给面板');
+  }
+  if (!/radar/.test(botDataSrc)) p.push('§162：bot-data 没有透传五维雷达');
+  if (!/MBTI 场景卡 \/ 官方图/.test(domSrc) || !/扮演规则可解锁/.test(domSrc) || !/心情页不再渲染插件设置/.test(domSrc)
+    || !/页眉 1:1/.test(domSrc) || !/字段帮助/.test(domSrc) || !/图表交互/.test(domSrc) || !/其他一级域隔离/.test(domSrc)
+    || !/原型排版\/色条\/快捷入口\/图表动效/.test(domSrc) || !/悬停卡片/.test(domSrc) || !/悬停快捷入口/.test(domSrc)
+    || !/页级主题色跟随子页/.test(domSrc) || !/人设页轮询稳定/.test(domSrc)
+    || !/平面柱/.test(domSrc) || !/字段卡紧凑/.test(domSrc) || !/导航切换：二级/.test(domSrc)
+    || !/分段渲染：壳先图后/.test(domSrc) || !/分段渲染：真落图与零位移/.test(domSrc)) {
+    p.push('§162：panel-dom 缺少场景卡 / 规则编辑 / 去插件化 / 页眉 / 帮助 / 图表交互 / 隔离 / 排版色条 / 快捷入口 / 图表动效 / 字段页轮询稳定 / 平面柱 / 字段卡紧凑 / 二级导航不重建 / 分段渲染的真渲染断言');
+  }
+
+  // 2026-10-26：维护者要求"不要收紧宽度、左上色条与编辑人设按钮必须照 HTML 复刻"。
+  // 这些都是纯样式，删掉不会报错，只能靠静态锚点 + panel-dom 真渲染双重盯住。
+  for (const [name, needle] of [
+    ['卡片左上色条', '.psn .card::before{'],
+    ['色条 hover 96px', '.psn .card:hover::before,.psn .card:focus-within::before{width:96px}'],
+    ['快捷入口胶囊', '.psn .layer-foot .linklike,'],
+    ['快捷入口灰底', 'background:var(--quick-bg)'],
+    ['原型内容宽 1352', 'max-width: 1352px;'],
+    ['页级主题色', '.psn[data-psn-page="mbti"]{--page-lc:var(--layer-2)}'],
+    ['雷达入场', 'psn-radar-in 1s'],
+    ['雷达点 pop', 'psn-point-pop .5s'],
+    ['柱状生长', 'psn-bar-grow 1s'],
+    ['折线绘制', 'psn-line-draw 1.15s'],
+    ['轮询重画不重播入场', '#page.psn-no-enter .psn{animation:none}'],
+    ['平面柱数字居中', 'translate:-50% 0;'],
+    ['柱顶百分比间距', 'bottom:calc(var(--h,0) * 1% + 8px)'],
+    ['字段行去边框', 'border:0;background:transparent;box-shadow:none;min-height:0;'],
+    ['字段列表紧凑', 'flex-direction:column;justify-content:flex-start;gap:6px'],
+    ['优先级列表紧凑', '.psn .priority-row .priority-card .pri-list{flex:1;justify-content:flex-start}'],
+    /* 2026-10-28 分段渲染（样式侧）。 */
+    ['分段渲染动画闸门', '#page.psn-stage .psn,'],
+    ['分段占位高度', '.psn [data-psn-slot="radar"]{aspect-ratio:360/276}'],
+    ['页级入场无 blur', 'psn-page-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}'],
+  ]) {
+    if (!personaCss.includes(needle)) p.push(`§162：${name}不见了（${needle}）`);
+  }
+  if (/\.psn \.cyl::before\{/.test(personaCss)) {
+    p.push('§162：情绪柱又长出 3D 椭圆帽（维护者要求平面 2D）');
+  }
+  const cylRule = (personaCss.match(/\.psn \.cyl\{[^}]*\}/) || [''])[0];
+  if (/linear-gradient|inset/.test(cylRule)) {
+    p.push('§162：情绪柱仍有 3D 渐变/内阴影（维护者要求平面 2D）');
+  }
+  if (/\.psn \.persona-bottom \.persona-col-right > \.card:last-child \.mini-list\{[^}]*justify-content:space-between/.test(personaCss)) {
+    p.push('§162：字段卡又被 space-between 拉成等高行（应紧凑自然）');
+  }
+  if (/psn-page-in[^}]*blur\(3px\)/.test(personaCss)) {
+    p.push('§162：页级入场又带回 filter:blur(3px)（祖先 blur 会让 10 张 backdrop-filter 卡逐帧重光栅）');
+  }
+  for (const [name, needle] of [
+    ['总览页主题属性', 'data-psn-page="overview"'],
+    ['人设页主题属性', 'data-psn-page="profile"'],
+    ['MBTI 页主题属性', 'data-psn-page="mbti"'],
+    ['提示词页主题属性', 'data-psn-page="prompt"'],
+    ['雷达轨道', 'class="radar-orbit"'],
+    ['雷达刷新按钮', 'data-a="psn.mood.refresh"'],
+    ['四层提示词用量标题', '四层提示词用量'],
+    ['雷达悬停副标题', '实时 · 悬停看单项'],
+    ['轮询重画不重播入场标记', "classList.add('psn-no-enter')"],
+    ['二级切换只改选中态', 'paintPage(true, { nav1: false, nav2: false })'],
+    ['nav 选中态同步', 'syncNav2Selection'],
+    ['textarea 批量布局', 'psnGrowAll(document.querySelectorAll'],
+    ['两阶段渲染令牌', 'pagePaintPending'],
+    ['两阶段渲染双 rAF', 'requestAnimationFrame(() => requestAnimationFrame'],
+    ['dock 帧内不读布局', 'const W = navDockBoxW;'],
+    ['二级自动滚动不掐弹簧', 'syncNav2Indicator(performance.now() - nav2AutoScrollT > 120)'],
+    /* 2026-10-28：滚动状态的键必须是「上一份 DOM 的归属」，不是点击后已改写的 S.gi/S.si
+       —— 否则换域时把「运行」日志的滚动位置盖到「人设」上，且白遍历一遍旧 DOM。 */
+    ['跨页不恢复旧滚动', "if (S.extra.paintKey !== S.gi + '/' + S.si) return null;"],
+    ['页面归属盖章', "S.extra.paintKey = S.gi + '/' + S.si;"],
+    /* 2026-10-28：换域那一帧 layoutNavDock 会被调两次，几何令牌只在断点/触屏档变
+       —— 每次重读 5 个 getComputedStyle 全是白读。 */
+    ['dock 几何按 resize 失效', 'if (!navGeom) navGeom = readNavGeom();'],
+    /* 2026-10-28 分段渲染：导航走导航的，图表体与入场动画等 dock 停稳。 */
+    ['分段渲染槽位', 'data-psn-slot='],
+    ['分段渲染落图', 'function psnArmAndFill('],
+    ['分段渲染等导航停稳', 'navDockSettled(psnArm)'],
+    ['dock 停稳回调统一触发', 'fireNavDockSettled();'],
+    ['分段渲染排期', 'psnScheduleArm();'],
+    ['分段渲染代号', 'psnStageGen'],
+    ['分段渲染载荷表', 'psnChartSlots'],
+    ['轮询缓存只存完整趟', 'S.extra.psnHtml = isPersona ? html : null;'],
+  ]) {
+    if (!appSrc.includes(needle)) p.push(`§162：${name}不见了（${needle}）`);
+  }
+  if (/dock\.getBoundingClientRect\(\)\.width/.test(appSrc) || /wrap\.getBoundingClientRect\(\)\.width/.test(appSrc)) {
+    p.push('§162：dock 动画又回到每帧 getBoundingClientRect（应使用缓存的 navDockBoxW）');
+  }
+  if ((appSrc.match(/data-psn-page="/g) || []).length < 7) {
+    p.push('§162：人设域根节点少于 7 个 data-psn-page（页级主题色会漏页）');
+  }
+
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  subHit('人设原型');
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 人设原型收口（§162）：情绪本体 · 官方场景图 · 页眉 1:1 · 帮助/图表交互 · 全称导航 · 沉浸隔离');
+}
+
+// 163) 等高线背景（2026-10-26）：默认档视频 + 旧流光保留 + Range 媒体面。
+//
+// 这一段守的是「默认换背景」最容易出现的四类静默失效：
+//   ① 层序/属性写错 —— 视频盖住内容、或吃掉点击；
+//   ② 默认档只改了文案没改代码 —— 用户看到的还是旧流光；
+//   ③ 客户端/服务端两份媒体名漂移 —— 页面请求 404，但背景只是"没动"；
+//   ④ 10MB 视频没有 Range/错误体积/非 faststart —— 能播，但换主题/循环反复整段下载。
+// 取向同 §60/§154：判接线与产物真值，不判"好不好看"（那是人眼与截图的事）。
+{
+  const p = [];
+  const html = read('../panel/next/index.html');
+  const css = read('../panel/next/style.css');
+  const setCss = read('../panel/next/settings.css');
+  const setJs = read('../panel/next/settings.js');
+  const boot = read('../panel/next/splash.js');
+  const cbg = read('../panel/next/contour-bg.js');
+  const sbg = read('../panel/next/shader-bg.js');
+  const nextPage = read('../panel/lib/next-page.js');
+  const server = read('../panel/server.js');
+  const dom = read('../test/panel-dom.mjs');
+  const verify = read('../panel/next/verify.mjs');
+  const bootJs = read('../test/panel-boot.mjs');
+  const smoke = read('../test/smoke.js');
+  const ga = fs.readFileSync(path.join(REPO, '.gitattributes'), 'utf8');
+
+  if (!html || !css || !setCss || !setJs || !boot || !cbg || !sbg
+    || !nextPage || !server || !dom || !verify || !bootJs || !smoke) {
+    p.push('§163①：等高线背景的取源为空 —— 本段全部判据落在真空里（输入为空 ≠ 通过）');
+  }
+  subHit('等高线背景');
+
+  // ② 层序 / 无障碍 / 视频属性。默认档是 `<video>`，不是 CSS 实时渲染。
+  const atShader = html.indexOf('id="shaderBg"');
+  const atContour = html.indexOf('id="contourBg"');
+  const atCustom = html.indexOf('id="customBg"');
+  if (!(atShader >= 0 && atContour > atShader && atCustom > atContour)) {
+    p.push('§163②：层序不对 —— #contourBg 必须排在 #shaderBg 之后、#customBg 之前'
+      + '（负层号之间比声明顺序；排错会让自定义背景被盖住或两层互相穿插）');
+  }
+  if (!/class="contour-bg"[^>]*aria-hidden="true"/.test(html)) {
+    p.push('§163②：等高线层缺 aria-hidden —— 全屏装饰进了无障碍树');
+  }
+  if (!/id="contourVideo"[^>]*muted[^>]*playsinline[^>]*loop[^>]*preload="none"/.test(html)) {
+    p.push('§163②：<video> 缺 muted/playsinline/loop/preload=none —— 移动端会全屏、或静音策略失败、或先下载整段视频');
+  }
+  if (/id="contourVideo"[^>]*(controls|autoplay)/.test(html)) {
+    p.push('§163②：<video> 带了 controls/autoplay —— 背景不许出控件，也不许用属性绕过 JS 的暂停策略');
+  }
+  if (!/assets\/contour\/\$\{name\}\?v=\d+/.test(cbg)) {
+    p.push('§163②：客户端媒体 URL 没有统一缓存版本 —— 浅深两套内容变更后，'
+      + 'immutable 缓存会让用户继续看旧视频（不能只给浅色加 ?v=）');
+  }
+  if (!/\.contour-bg\s*\{[^}]*position:\s*fixed[^}]*z-index:\s*-2[^}]*pointer-events:\s*none/s.test(css)) {
+    p.push('§163②：.contour-bg 不是 fixed / z=-2 / pointer-events:none —— 会盖内容或吃掉点击');
+  }
+  if (!/html\.bg-contour \.contour-bg/.test(css) || !/\.shader-bg\.is-inactive/.test(css)) {
+    p.push('§163②：显示开关或旧引擎暂停样式缺失（html.bg-contour / .shader-bg.is-inactive）');
+  }
+  subHit('等高线背景');
+
+  // ③ 默认档与旧流光保留。
+  if (!/qqbot-bg-mode/.test(cbg) || !/DEFAULT_MODE\s*=\s*'contour'/.test(cbg)) {
+    p.push('§163③：contour-bg.js 缺模式键或默认 contour —— 新用户/老用户都不会看到新背景');
+  }
+  if (!/__bgModeBoot/.test(boot) || !/bg-contour/.test(boot) || !/bg-dark/.test(boot)) {
+    p.push('§163③：splash.js 缺 __bgModeBoot / bg-contour / bg-dark 预绘制 —— 首帧会先闪旧背景或深字压黑底');
+  }
+  const ids = [...sbg.matchAll(/id:\s*'([\w-]+)'/g)].map((m) => m[1]);
+  if (ids.length < 8 || !ids.includes('grain-ocean')) {
+    p.push(`§163③：旧流光预设只剩 ${ids.length} 个（应 ≥8，含 grain-ocean）—— "保留旧背景"落空`);
+  }
+  if (!/setActive/.test(sbg) || !/!active/.test(sbg) || !/bgfx:speed/.test(sbg)) {
+    p.push('§163③：旧引擎缺 setActive/!active 收口 或 bgfx:speed 事件 —— 等高线档下旧 rAF 仍在烧，速度也传不过去');
+  }
+  if (!/window\.ShaderBG\.setActive\(false\)/.test(cbg)) {
+    p.push('§163③：contour-bg.js 没有在默认档调用 ShaderBG.setActive(false) —— 旧引擎会继续每帧重画');
+  }
+  if (!/if \(!active \|\| reduced\(\) \|\| raf/.test(sbg)) {
+    p.push('§163③：startLoop 缺 !active 守卫 —— setSpeed/visibility 仍会在等高线档重新起 rAF');
+  }
+  subHit('等高线背景');
+
+  // ④ 状态机接线：暂停原因、低配、主题、速度。
+  for (const [re, why] of [
+    [/prefers-reduced-motion: reduce/, 'reduced-motion'],
+    [/visibilitychange/, 'document.hidden 暂停'],
+    [/playbackRate/, '速度倍率'],
+    [/setSuppressed/, '自定义背景抑制'],
+    [/setSettingsOpen/, '设置层暂停'],
+    [/document\.addEventListener\('bgfx:speed'/, '速度单一来源'],
+    [/saveData/, 'saveData'],
+    [/deviceMemory/, 'deviceMemory'],
+    [/hardwareConcurrency/, 'hardwareConcurrency'],
+    [/pickQuality/, '画质选择纯函数'],
+    [/preload\s*=\s*'none'/, '懒加载'],
+    [/is-static/, '海报静态兜底'],
+  ]) {
+    if (!re.test(cbg)) p.push(`§163④：contour-bg.js 缺 ${why} —— 低端机/暂停/速度链路会静默缺失`);
+  }
+  if (!/id="setBgMode"/.test(html) || !/data-bgmode-opt="contour"/.test(html)
+    || !/data-bgmode-opt="shader"/.test(html) || !/id="bgPick"[^>]*hidden/.test(html)) {
+    p.push('§163④：设置层缺背景模式两态，或流光色板没有默认隐藏');
+  }
+  if (!/ContourBG/.test(setJs) || !/setBgMode/.test(setJs) || !/setSettingsOpen/.test(setJs)
+    || !/setSuppressed/.test(setJs)) {
+    p.push('§163④：settings.js 没有接 ContourBG 的模式/设置层暂停/自定义背景抑制');
+  }
+  if (!/showCustomImage[\s\S]{0,700}setSuppressed\(true\)/.test(setJs)
+    || !/startVideoRotation[\s\S]{0,700}setSuppressed\(true\)/.test(setJs)) {
+    p.push('§163④：自定义背景的图片/视频两条启用路径没有 setSuppressed(true) —— 等高线视频会在后面继续解码');
+  }
+  if (!/#settingsPanel \.bgpick\[hidden\]/.test(setCss) || !/#setBgMode\[data-bgmode="shader"\]/.test(setCss)) {
+    p.push('§163④：settings.css 缺隐藏色板或模式滑块位移规则 —— 两态会看起来都选中/都不选中');
+  }
+  subHit('等高线背景');
+
+  // ⑤ 客户端 ↔ 服务端媒体表必须逐项一致；CSP/路由要有 Range。
+  const pairsOf = (src) => [...src.matchAll(/'([^']+\.(?:mp4|jpg))':\s*'(video\/mp4|image\/jpeg)'/g)]
+    .map((m) => [m[1], m[2]]);
+  const clientMap = Object.fromEntries(pairsOf(cbg));
+  const serverMap = Object.fromEntries(pairsOf(nextPage));
+  const clientKeys = Object.keys(clientMap).sort();
+  const serverKeys = Object.keys(serverMap).sort();
+  if (!clientKeys.length || clientKeys.join(',') !== serverKeys.join(',')) {
+    p.push('§163⑤：客户端 MEDIA 与服务端 CONTOUR_MEDIA 的键不一致 —— 背景会 404，而页面只是"没动"');
+  }
+  if (clientKeys.some((k) => serverMap[k] !== clientMap[k])) {
+    p.push('§163⑤：客户端/服务端媒体 MIME 不一致');
+  }
+  if (!/CONTOUR_MEDIA/.test(nextPage) || !/parseByteRange/.test(nextPage) || !/media-src 'self'/.test(nextPage)) {
+    p.push('§163⑤：next-page 缺媒体白名单/Range 解析/media-src CSP');
+  }
+  if (!/\/assets\/contour\//.test(server) || !/Accept-Ranges/.test(server)
+    || !/Content-Range/.test(server) || !/createReadStream/.test(server)
+    || !/206/.test(server) || !/416/.test(server)) {
+    p.push('§163⑤：server 缺 /assets/contour 的流式 + 206/416 Range 面');
+  }
+  subHit('等高线背景');
+
+  // ⑥ 文件真值：6 个媒体、体积上限、MP4 ftyp/moov 顺序、JPEG 完整。
+  const mediaDir = path.join(REPO, 'panel/next/assets/contour');
+  const expectedMedia = [
+    ['contour-light-standard-v2.mp4', 27_000_000],
+    ['contour-dark-standard-v2.mp4', 27_000_000],
+    ['contour-light-lite-v2.mp4', 5_767_168],
+    ['contour-dark-lite-v2.mp4', 5_767_168],
+    ['contour-light-v2.jpg', 1_000_000],
+    ['contour-dark-v2.jpg', 1_000_000],
+  ];
+  for (const [name, cap] of expectedMedia) {
+    const abs = path.join(mediaDir, name);
+    let st = null;
+    try { st = fs.statSync(abs); } catch { /* 缺文件在下面报 */ }
+    if (!st || !st.isFile()) {
+      p.push(`§163⑥：缺少媒体 ${name} —— 背景会永远停在海报/旧层`);
+      continue;
+    }
+    const floor = name.endsWith('.mp4') ? 100_000 : 10_000;
+    if (st.size < floor || st.size > cap) {
+      p.push(`§163⑥：${name} 体积 ${st.size}B 不在 [${floor}, ${cap}] —— 可能是空片/超大文件`);
+    }
+    if (name.endsWith('.mp4')) {
+      const head = fs.readFileSync(abs).subarray(0, 65_536);
+      if (head.subarray(4, 8).toString() !== 'ftyp') {
+        p.push(`§163⑥：${name} 不是 MP4（缺 ftyp）`);
+      }
+      const moov = head.indexOf('moov');
+      const mdat = head.indexOf('mdat');
+      if (!(moov > 0 && mdat > moov)) {
+        p.push(`§163⑥：${name} 不是 faststart（moov 必须在 mdat 前）—— 首帧要等整段下载`);
+      }
+    } else {
+      const buf = fs.readFileSync(abs);
+      if (buf[0] !== 0xff || buf[1] !== 0xd8 || buf[buf.length - 2] !== 0xff || buf[buf.length - 1] !== 0xd9) {
+        p.push(`§163⑥：${name} 不是完整 JPEG`);
+      }
+    }
+  }
+  try {
+    const leftovers = fs.readdirSync(mediaDir).filter((n) => /\.sb-/.test(n));
+    if (leftovers.length) p.push(`§163⑥：媒体目录有编码临时件：${leftovers.join('、')} —— 会随包发布`);
+  } catch { /* 目录不存在已在上面报 */ }
+  if (!/\*\.mp4\s+binary/.test(ga)) p.push('§163⑥：.gitattributes 缺 *.mp4 binary —— 发布拷贝可能按文本处理');
+  subHit('等高线背景');
+
+  // ⑦ 测试面：四层里至少各有对应断言，防"契约存在但没人跑"。
+  if (!/ContourBG/.test(dom) || !/#setBgMode/.test(dom) || !/contourVideo/.test(dom)) {
+    p.push('§163⑦：panel-dom 没有覆盖等高线模式/视频属性');
+  }
+  if (!/等高线默认档/.test(verify) || !/ContourBG\.setMode\('shader'\)/.test(verify)) {
+    p.push('§163⑦：verify.mjs 没有等高线默认断言，或旧 shader 用例前没切流光');
+  }
+  if (!/assets\/contour/.test(bootJs) || !/Content-Range/.test(bootJs) || !/416/.test(bootJs)) {
+    p.push('§163⑦：panel-boot 没有真发媒体 Range/416 请求');
+  }
+  if (!/parseByteRange/.test(smoke)) {
+    p.push('§163⑦：smoke 缺 Range 纯函数断言');
+  }
+  subHit('等高线背景');
+  if (!/media-src 'self'/.test(smoke)) {
+    p.push('§163⑦：smoke 缺 media-src CSP 断言');
+  }
+  subHit('等高线背景');
+
+  if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+  else console.log('✓ 等高线背景（§163）：默认档 · 旧流光保留 · 媒体表同源 · Range/CSP · 6 文件体积与 MP4 结构 · 四层测试面');
+}
+
+  // ══ §164 · 运行总览发言账本与热力网格（2026-10-27）══
+  //     这一段只钉**新数据链**：出口唯一计数 / 精确与估算日 / 日期键只在后端 /
+  //     总览三栏与折叠。页面视觉断言在 `panel-dom` 的「运行总览三栏」段。
+  {
+    const p = [];
+    const sentSrc = read('../src/sent-stats.js');
+    const indexSrc = read('../src/index.js');
+    const reportSrc = read('../panel/lib/sent-report.js');
+    const pathsSrc163 = read('../panel/lib/paths.js');
+    const serverSrc163 = read('../panel/server.js');
+    const collectorSrc163 = read('../panel/lib/state-collector.js');
+    const appSrc163 = read('../panel/next/app.js');
+    const schemaSrc163 = read('../panel/next/schema.js');
+    const cssSrc163 = read('../panel/next/overview.css');
+    const htmlSrc163 = read('../panel/next/index.html');
+    const nextPageSrc163 = read('../panel/lib/next-page.js');
+    const panelDomSrc163 = read('../test/panel-dom.mjs');
+    const sentTestSrc163 = read('../test/check-sent-stats.mjs');
+    const pkgSrc163 = read('../package.json');
+
+    subHit('发言账本');
+    if (!/export function recordSentRound\(/.test(sentSrc)
+      || !/panelFile\(/.test(sentSrc) || !/monthKeyOf\(/.test(sentSrc)
+      || !/catch \{/.test(sentSrc)
+      || /export function sentFilePath/.test(sentSrc)) {
+      p.push('§164①：sent-stats.js 缺唯一写口/路径来源/吞异常，或 sentFilePath 又被导出成无引用 API');
+    }
+    subHit('发言账本');
+    const wrapAt163 = indexSrc.indexOf('const sendMsgRaw = bot.sendMsg.bind(bot);');
+    const recAt163 = indexSrc.indexOf('recordSentRound({ n: 1');
+    if (wrapAt163 < 0 || recAt163 < 0 || recAt163 < wrapAt163
+      || !/await sendMsgRaw\(scene, id, segments\)/.test(indexSrc)) {
+      p.push('§164②：index.js 没有在 sendMsg 成功后按 n=1 记账 —— 主动出站/发图/插件 sender 会漏计');
+    }
+    subHit('发言账本');
+    if (!/export function makeSentReport\(/.test(reportSrc)
+      || !/export function makeOverviewHeat\(/.test(reportSrc)
+      || !/export function makeOverviewKpi\(/.test(reportSrc)
+      || !/prevEst/.test(reportSrc) || !/series: series\.map/.test(reportSrc)
+      || !/const prev = series\[series\.length - 2\] \|\| null;/.test(reportSrc)
+      || !/n <= 0/.test(reportSrc)
+      || !/estimated = count > 0/.test(reportSrc)
+      || !/days\.push\(\{ key, future, count, estimated, exact \}\)/.test(reportSrc)
+      || !/months\.push/.test(reportSrc) || !/activeDays/.test(reportSrc)
+      || !/weekCount/.test(reportSrc) || !/peakCount/.test(reportSrc) || !/streak/.test(reportSrc)
+      || /from ['"]\.\.\/\.\.\/src\//.test(reportSrc)) {
+      p.push('§164③：sent-report.js 缺精确/估算日、周/峰值/连续，或自己引了 src（日期键必须注入）');
+    }
+    subHit('发言账本');
+    if (!/SENT_DIR/.test(pathsSrc163) || !/SENT_FILE_RE/.test(pathsSrc163)
+      || !/'panel\/lib\/sent-report\.js'/.test(pathsSrc163)) {
+      p.push('§164④：paths.js 缺发言账本路径/文件名判据，或 sent-report.js 没进 BACKEND_SOURCES');
+    }
+    subHit('发言账本');
+    if (!/sent: readSent\(\)/.test(collectorSrc163)
+      || !/const heat = heatOf\(stateBody\)/.test(serverSrc163)
+      || !/heat,\n\s*kpi: kpiOf\(\{ \.\.\.stateBody, heat \}\)/.test(serverSrc163)
+      || !/makeOverviewHeat\(\{ dayKeyOf/.test(serverSrc163)
+      || !/makeOverviewKpi\(\{ dayKeyOf/.test(serverSrc163)) {
+      p.push('§164⑤：/api/state 没把 sent、后端生成的 heat 与 KPI 近 14 天序列一起下发');
+    }
+    subHit('发言账本');
+    if (!/s\.heat/.test(appSrc163) || !/heat\.days/.test(appSrc163)
+      || !/data-ov-kpi/.test(appSrc163) || !/ovKpiSpark\(/.test(appSrc163)
+      || !/ov-kpi-delta/.test(appSrc163) || !/ovMountKpi\(/.test(appSrc163)
+      || !/ov-kpi-pt/.test(appSrc163)
+      || !/\$\{ovKpiSpark\(k\.messages\.series/.test(appSrc163)
+      || !/\$\{ovKpiSpark\(k\.tokens\.series/.test(appSrc163)
+      || !/\$\{ovKpiSpark\(k\.cost\.series/.test(appSrc163)
+      || !/const open = _ovOpen\.has\(g\.id\) \? _ovOpen\.get\(g\.id\) : true/.test(appSrc163)
+      || /const ovDayKey =/.test(appSrc163) || /const ovShiftDay =/.test(appSrc163)) {
+      p.push('§164⑥：总览没消费后端 heat/KPI，或主节点不是默认展开，或前端又自己拼日期键（H-11①）');
+    }
+    subHit('发言账本');
+    {
+      const gridAt163 = appSrc163.indexOf('<div class="ov-act-grid">');
+      const gridSeg163 = gridAt163 >= 0 ? appSrc163.slice(gridAt163, gridAt163 + 900) : '';
+      const protoInGrid163 = gridSeg163.indexOf("ovActionButton('拉起协议端'");
+      const stopInGrid163 = gridSeg163.indexOf('${stop}');
+      if (gridAt163 < 0 || protoInGrid163 < 0 || stopInGrid163 < 0
+        || protoInGrid163 > stopInGrid163
+        || !/ovActionButton\('结束本次运行', 'onekey\.stop', 'ov-btn-ghost', 'stop'\)/.test(appSrc163)
+        || !/const primary = running\s*\?\s*''/.test(appSrc163)) {
+        p.push('§164⑨：运行控制没有把「结束本次运行」改成幽灵按钮并排在「拉起协议端」之后');
+      }
+    }
+    subHit('发言账本');
+    {
+      const focusCss163 = (cssSrc163.match(/\.ov-focus \{[^}]*\}/) || [''])[0];
+      if (!/onebotLatencyMs,/.test(collectorSrc163) || !/infoProbe/.test(collectorSrc163)
+        || !/class="ov-focus-extra"/.test(appSrc163)
+        || !/运行内存/.test(appSrc163) || !/网络延迟/.test(appSrc163) || !/已运行/.test(appSrc163)
+        || !/onebotLatencyMs/.test(appSrc163)
+        || !/memory\?\.procs/.test(appSrc163)
+        || !/grid-template-areas: "main facts" "extra extra"/.test(cssSrc163)
+        || !/\.ov-focus-extra \{/.test(cssSrc163)) {
+        p.push('§164⑩：今日小结没同步同材质卡片/没接入运行内存、协议端延迟、已运行时长');
+      }
+      if (!focusCss163 || /linear-gradient/.test(focusCss163)
+        || /\.ov-focus::before/.test(cssSrc163) || /\.ov-focus::after/.test(cssSrc163)) {
+        p.push('§164⑩：今日小结仍带自己的渐变/纹理，没和周围卡片同材质');
+      }
+    }
+    subHit('发言账本');
+    if (!/ov-sub-ring/.test(appSrc163) || !/class="ov-sub-pct"/.test(appSrc163)
+      || !/data-p="\$\{pct\}"/.test(appSrc163) || !/class="ov-node-check"/.test(appSrc163)
+      || !/const anim = !bad && !_ovSeenDone\.has\(key\)/.test(appSrc163)
+      || !/const groupAnim = st === 'done' && !_ovSeenGroups\.has\(g\.id\)/.test(appSrc163)
+      || !/data-anim="\$\{anim/.test(appSrc163) || !/data-justdone="\$\{groupAnim/.test(appSrc163)
+      || !/function ovMountChainProgress/.test(appSrc163)
+      || !/\.ov-sub-ring/.test(cssSrc163) || !/\.ov-sub-pct/.test(cssSrc163)
+      || !/\.ov-sub\.done \.stp-tx::after/.test(cssSrc163)
+      || !/\.ov-node-check/.test(cssSrc163)
+      || !/@keyframes ovRingFill/.test(cssSrc163) || !/@keyframes ovStrike/.test(cssSrc163)
+      || !/@keyframes ovCheckDraw/.test(cssSrc163)) {
+      p.push('§164⑪：启动链子项缺圆圈进度/右侧百分比/完成横线/父节点勾，或对应关键帧缺失');
+    }
+    subHit('发言账本');
+    if (!/overviewDash/.test(schemaSrc163) || !/overviewSide/.test(schemaSrc163)
+      || !/'overview\.css'/.test(nextPageSrc163)
+      || !/href="\.\/overview\.css"/.test(htmlSrc163)
+      || !/\.ov-cell/.test(cssSrc163) || !/\.ov-gauge-seg/.test(cssSrc163)
+      || !/\.ov-kpi-spark/.test(cssSrc163) || !/\.ov-kpi\.hot \.scan/.test(cssSrc163)
+      || !/\.ov-kpi-delta/.test(cssSrc163)
+      || !/\.ov-node:not\(:first-child\) \.ov-group::before/.test(cssSrc163)
+      || !/\.ov-chain-foot b \{ font-size: 22px/.test(cssSrc163)
+      || !/html\[data-theme="light"\]\.bg-dark body:has\(#page \.ov-center\)::before/.test(cssSrc163)
+      || !/\.ov-btn-ghost \{ background: transparent; --fill: var\(--c-ok\)/.test(cssSrc163)) {
+      p.push('§164⑦：总览控件类型/样式资产没登记，或 KPI 缩略曲线/分段连接线/浅色兜底/幽灵按钮样式缺失');
+    }
+    subHit('发言账本');
+    if (!/\.ov-cell/.test(panelDomSrc163) || !/#card-details/.test(panelDomSrc163)
+      || !/ovGroups/.test(panelDomSrc163) || !/ovKpiSparks/.test(panelDomSrc163)
+      || !/kpiHover/.test(panelDomSrc163) || !/chainSeg/.test(panelDomSrc163)
+      || !/check-sent-stats/.test(pkgSrc163)
+      || !/makeOverviewHeat/.test(sentTestSrc163) || !/makeOverviewKpi/.test(sentTestSrc163)) {
+      p.push('§164⑧：panel-dom 缺总览结构/KPI 悬停/轮询稳定断言，或发言账本单测没进 verify');
+    }
+    subHit('发言账本');
+    if (!/const xOf = \(i\) => \(i \* W\) \/ \(vals\.length - 1\);/.test(appSrc163)
+      || !/x1="0" y1="24" x2="100"/.test(appSrc163)
+      || !/\.ov-kpi-spark \{ position: relative; margin: auto -14px 0;/.test(cssSrc163)) {
+      p.push('§164⑫：KPI 缩略曲线又内缩了（左右与卡片边框之间出现白缝）');
+    }
+    subHit('发言账本');
+    if (!/function ovPctParts\(counts, total\)/.test(appSrc163)
+      || !/if \(!counts\.length\) return \[\];/.test(appSrc163)
+      || !/if \(String\(it\.action \|\| ''\) !== 'load'\) continue;/.test(appSrc163)
+      || !/class="ov-stat-main"/.test(appSrc163) || !/class="ov-stat-side"/.test(appSrc163)
+      || !/class="ov-stat-status/.test(appSrc163) || !/class="ov-split-legend"/.test(appSrc163)
+      || !/\.ov-stat b\.v \{/.test(cssSrc163) || !/\.ov-stat-side \{/.test(cssSrc163)
+      || !/\.ov-stat-status \{/.test(cssSrc163) || !/\.ov-split-legend \{/.test(cssSrc163)) {
+      p.push('§164⑬：四张信息卡又退回「大字+一行小字」的简陋排版，或插件计数口径没把未加载分开，或空插件集时 Gauge 的百分比空哨兵被删');
+    }
+    subHit('发言账本');
+    if (!/class="ov-gauge-row"/.test(appSrc163) || !/data-ov-gauge-arc=/.test(appSrc163)
+      || !/data-ov-gauge-k/.test(appSrc163)
+      || !/const gap = p\.segs\.length > 1 \? Math\.min\(0\.3, 1\.4 \/ p\.segs\.length\) : 0;/.test(appSrc163)
+      || !/function ovMountGauge\(root\)/.test(appSrc163) || !/ovMountGauge\(side\)/.test(appSrc163)
+      || !/\.ov-gauge-row \{/.test(cssSrc163) || !/\.ov-gauge-row\.hot \{/.test(cssSrc163)
+      || !/\.ov-gauge\[data-hot="1"\] \.ov-gauge-seg \{/.test(cssSrc163)
+      || !/\.ov-gauge-row \.pc \{/.test(cssSrc163) || !/\.ov-gauge-center b\.n \{/.test(cssSrc163)) {
+      p.push('§164⑬：Gauge 缺分段间隙/图例数值与百分比/中心读数联动，或悬停褪色样式没登记');
+    }
+    subHit('发言账本');
+    if (!/ovGaugeRows/.test(panelDomSrc163) || !/gaugeHover/.test(panelDomSrc163)
+      || !/ovStatSides/.test(panelDomSrc163) || !/ovKpiEdge/.test(panelDomSrc163)) {
+      p.push('§164⑬：panel-dom 缺 KPI 贴边 / 信息卡副读数 / Gauge 悬停联动断言');
+    }
+    if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+    else console.log('✓ 发言账本与总览（§164）：出口唯一计数 · 精确/估算日 · 后端日期键 · KPI 曲线贴边/增幅 · 信息卡副读数 · Gauge 分段悬停 · 默认全展开 · 按钮次序');
+  }
+
+  // ══ §165 · 工厂入口只在二级导航（2026-10-27 新增）══════════════════════
+  //     背景：三个工厂原先是顶栏三颗圆钮 + 空白占位页；入口分散在顶栏时，
+  //     导航数据层看不到它们，加页/改名都不会带上工厂。现在工厂域是
+  //     「三个 frame 子页 + 插件管理 / Skill 两个普通页」，且 `#page[data-frame]`
+  //     是唯一的选帧来源。判据分五组：schema 子页 / 顶栏无入口 / 控制器按页选帧 /
+  //     paintPage 同值不写 / 工厂层在导航之下且 pointer-events 交接。
+  {
+    const { readNextAsset: readF } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
+    const schemaF = stripComments(readF('schema.js').raw, 'js');
+    const htmlF = stripComments(readF('index.html').raw, 'html');
+    const appF = stripComments(readF('app.js').raw, 'js');
+    const ffF = stripComments(readF('factory-frame.js').raw, 'js');
+    const cssF = stripComments(readF('style.css').raw, 'css');
+    const p = [];
+
+    const fIdx = schemaF.indexOf("id: 'factory'");
+    const fSlice = fIdx < 0 ? '' : schemaF.slice(fIdx, schemaF.indexOf('];', fIdx));
+    const idsF = [...fSlice.matchAll(/^ {8}id:\s*'([^']+)'/gm)].map((m) => m[1]);
+    const framesF = [...fSlice.matchAll(/frame:\s*'([^']+)'/g)].map((m) => m[1]);
+    if (!fSlice || idsF.join(',') !== 'visual,persona,plugin,plugins,skill'
+      || framesF.join(',') !== 'visual-factory.html,persona-factory.html,plugin-factory.html'
+      || /blank:\s*true/.test(fSlice)) {
+      p.push('§165①：工厂不是 visual/persona/plugin 三个 frame 子页 + plugins/skill 两个普通页（或仍有 blank）');
+    }
+    subHit('工厂二级导航');
+
+    if (/id="(?:personaFactoryBtn|factoryBtn|pluginFactoryBtn)"/.test(htmlF)
+      || /data-a="factory\.toggle"/.test(htmlF)
+      || /'factory\.toggle'\s*:/.test(appF)) {
+      p.push('§165②：顶栏工厂圆钮或 factory.toggle 回来了 —— 入口必须只存在于「工厂」二级导航');
+    }
+    subHit('工厂二级导航');
+
+    if (!/page\.dataset\.frame/.test(ffF)
+      || !/attributeFilter:\s*\['data-frame'\]/.test(ffF)
+      || /factoryBtn|personaFactoryBtn|pluginFactoryBtn/.test(ffF)
+      || /keydown[\s\S]{0,200}?Escape/.test(ffF)) {
+      p.push('§165③：工厂帧控制器没有按 #page[data-frame] 选帧，或还残留顶栏圆钮/Escape');
+    }
+    subHit('工厂二级导航');
+
+    const paintF = fnSlice(appF, 'function paintPage(', 4000);
+    if (!/const frameSrc = su\.frame \|\| '';/.test(paintF)
+      || !/if \(\(page\.dataset\.frame \|\| ''\) !== frameSrc\)/.test(paintF)
+      || !/document\.body\.classList\.toggle\('is-frame-page', !!frameSrc\)/.test(paintF)
+      || !/if \(su\.frame\)/.test(paintF)) {
+      p.push('§165④：paintPage 缺「同值不写」的 data-frame 同步或 frame 分支 —— 轮询会重播入场/切页失效');
+    }
+    subHit('工厂二级导航');
+
+    const zh = /\.factory-host\s*\{[^}]*z-index:\s*(\d+)/.exec(cssF);
+    const zn = /\.navrow\s*\{[^}]*z-index:\s*(\d+)/.exec(cssF);
+    if (!zh || !zn || Number(zh[1]) >= Number(zn[1])
+      || !/\.factory-host\s*\{[^}]*top:\s*var\(--h-topbar\)/.test(cssF)
+      || !/body\.is-frame-page\s+\.navrow\s*\{\s*pointer-events:\s*none/.test(cssF)
+      || !/body\.is-frame-page\s+\.nav-dock-wrap\s*\{\s*pointer-events:\s*auto/.test(cssF)) {
+      p.push('§165⑤：工厂层不在导航之下，或缺 pointer-events 交接 —— 二级按钮会被工厂盖住/点不到');
+    }
+    subHit('工厂二级导航');
+
+    if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+    else console.log('✓ 工厂入口只在二级导航（§165）：三 frame 子页 · 顶栏无圆钮 · 帧由 #page[data-frame] 选 · 轮询不重写 · 导航浮在工厂上且可点');
+  }
+
+  // ══ §166 · 工厂域导航自动上收（2026-10-27 新增）════════════════════════
+  //     需求：进入工厂、过场与 dock 停稳后两级导航向上滑出；顶部居中热区（150×30，
+  //     紧贴玻璃顶栏 +4px，中间小三角）呼出；离开导航 2.5s 再收；离开工厂域立刻复位为常显。只在工厂页生效。
+  {
+    const { readNextAsset: readF } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
+    const htmlF = stripComments(readF('index.html').raw, 'html');
+    const cssF = stripComments(readF('style.css').raw, 'css');
+    const appF = stripComments(readF('app.js').raw, 'js');
+    const setF = stripComments(readF('settings.js').raw, 'js');
+    const p = [];
+    const cssBlock = (head) => {
+      const i = cssF.indexOf(head);
+      if (i < 0) return '';
+      const b = cssF.indexOf('{', i);
+      return b < 0 ? '' : braceAt(cssF, b);
+    };
+    const hotCss = cssBlock('.nav-hotzone');
+    const hideCss = cssBlock('body.is-frame-page.nav-auto-hidden .navrow');
+    const shownHotCss = cssBlock('body.is-frame-page.nav-auto-hidden .nav-hotzone');
+
+    if (!/<button[^>]*class="nav-hotzone"[^>]*id="navHotzone"/.test(htmlF)
+      || !/aria-label="显示导航"/.test(htmlF)) {
+      p.push('§166①：index.html 缺导航热区按钮（nav-hotzone / navHotzone / 显示导航）');
+    }
+    subHit('工厂导航自动上收');
+
+    if (!hotCss || !/position:\s*fixed/.test(hotCss) || !/z-index:\s*41/.test(hotCss)
+      || !/width:\s*150px/.test(hotCss) || !/height:\s*30px/.test(hotCss)
+      || !/top:\s*calc\(var\(--h-topbar\) \+ 4px\)/.test(hotCss)
+      || !/pointer-events:\s*none/.test(hotCss) || !/opacity:\s*0/.test(hotCss)
+      || !/\.nav-hotzone::before\s*\{[^}]*border-top:\s*5px solid/.test(cssF)
+      || !hideCss || !/translateY\(-100%\)/.test(hideCss) || !/opacity:\s*0/.test(hideCss)
+      || !/visibility:\s*hidden/.test(hideCss)) {
+      p.push('§166②：热区尺寸/位置/小三角或隐藏动画缺失（应 150×30、紧贴顶栏 +4px、向上滑出）');
+    }
+    subHit('工厂导航自动上收');
+
+    if (!/body\.is-frame-page\.nav-auto-hidden \.nav-dock-wrap\s*\{\s*pointer-events:\s*none/.test(cssF)
+      || !shownHotCss || !/pointer-events:\s*auto/.test(shownHotCss) || !/opacity:\s*1/.test(shownHotCss)) {
+      p.push('§166③：隐藏态 pointer-events/热区显隐交接缺失（nav 仍可点 / 热区与三角不显示）');
+    }
+    subHit('工厂导航自动上收');
+
+    if (!/const NAV_HIDE_DELAY = 2500;/.test(appF)
+      || !/function navAutoHide\(/.test(appF) || !/function navAutoShow\(/.test(appF)
+      || !/function navAutoReset\(/.test(appF)
+      || !/syncNavAuto\(!!frameSrc && S\.gi === FACTORY_GI\);/.test(appF)) {
+      p.push('§166④：2.5s 计时 / 显示隐藏复位 / paintPage 的工厂域守卫缺失');
+    }
+    subHit('工厂导航自动上收');
+
+    if (!/row\.inert = true;/.test(appF) || !/hot\.tabIndex = 0;/.test(appF)
+      || !/#navHotzone/.test(setF)) {
+      p.push('§166⑤：隐藏态没有退出 tab 序/无障碍树，或设置层没把热区设为 inert');
+    }
+    subHit('工厂导航自动上收');
+
+    if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+    else console.log('✓ 工厂域导航自动上收（§166）：过场后上收 · 150×30 热区+三角呼出 · 2.5s 再收 · 离开复位 · 键盘可达');
+  }
+
+  // §167 Skill 扩展域（2026-10-28 · Plugin/Skill 综合优化）
+  //   这一节只钉“两型共用一套宿主、Skill 是独立语义”的接线；具体行为由 smoke/panel-dom 验。
+  {
+    const p = [];
+    const rd = (rel) => stripComments(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
+    const kindSrc = rd('../src/extension-kind.js');
+    const ccSrc = rd('../src/custom-config.js');
+    const hostSrc = rd('../src/plugin-host.js');
+    const cbSrc = rd('../src/context-budget.js');
+    const brainSrc = rd('../src/brain.js');
+    const idxSrc = rd('../src/index.js');
+    const scSrc = rd('../panel/next/schema.js');
+    const appSrc = rd('../panel/next/app.js');
+    const stSrc = rd('../panel/lib/state-collector.js');
+    const instSrc = rd('../panel/lib/ext-install.js');
+
+    if (!/function contractOf\(/.test(kindSrc)
+      || !/hasPrompt\s*=\s*k === KIND_SKILL && promptSections\.length > 0/.test(kindSrc)
+      || !/promptOnly/.test(kindSrc) || !/mixed/.test(kindSrc)) {
+      p.push('§167①：contractOf 没有把 prompt.sections 只对 skill 计入入口契约（或丢了 promptOnly / mixed）');
+    }
+    if (!/function extensionKindFields\(/.test(ccSrc) || !/function extensionFields\(/.test(ccSrc)
+      || !/plugins: legacyPluginAlias\(extensions\),/.test(ccSrc) || !/extensions\s*:/.test(ccSrc)) {
+      p.push('§167②：custom-config 没有 extensions 双命名空间 / 旧 plugins 派生别名');
+    }
+    if (!/enabledByKindOf\(/.test(hostSrc) || !/contractOf\(mod, m, p\.kind\)/.test(hostSrc)
+      || !/promptSections\.length : 0\) === 0/.test(hostSrc)) {
+      p.push('§167③：plugin-host 没按 kind 取名单 / 没走 contractOf / empty 没计入 promptSections');
+    }
+    if (!/'skillExt'/.test(cbSrc) || !/skillExt:\s*2000/.test(cbSrc)
+      || !/skillExtPlanOf/.test(brainSrc) || !/skillSections/.test(idxSrc)) {
+      p.push('§167④：skillExt 段 / 2000 预算 / brain 与 index 接线缺一块');
+    }
+    if (!/id: 'skill'/.test(scSrc) || !/skillList|skillPromptPreview/.test(scSrc)
+      || !/skillSummary/.test(scSrc)) {
+      p.push('§167⑤：schema 没有 Skill 页 / 清单 / 预览控件');
+    }
+    if (!/skillPromptPreview|extensionPrompt/.test(appSrc) || !/extensions\.\$\{extNsOf\(kind\)\}\.settings/.test(appSrc)) {
+      p.push('§167⑥：现役面板没有 Skill 预览或 kind→命名空间换算缺失（会写到 extensions.plugin 这种不存在的键）');
+    }
+    if (!/extensionPromptPreviewOf/.test(stSrc) || !/userSettingsByKind/.test(stSrc)
+      || !/skill: custom\.extensions\?\.skills\?\.settings/.test(stSrc)
+      || !/extensions\?\.skills\?\.enabled/.test(stSrc)) {
+      p.push('§167⑦：state-collector 没有 Skill 预览 / 按 kind 的设置与白名单');
+    }
+    if (!/expectedKind/.test(instSrc) || !/Skill 包缺少 index\.js/.test(instSrc)) {
+      p.push('§167⑧：安装器没有 expectedKind 或纯提示词 Skill 的入口预检');
+    }
+    subHit('Skill扩展');
+    if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+    else console.log('✓ Skill 扩展域（§167）：contractOf / extensions 双命名空间 / skillExt 2000 / Skill 页与预览 / expectedKind');
+  }
+
+  // §168 全局光标跟随层（2026-10-28）
+  //   静态面只钉「接线/层级/降级/时钟纪律/工厂桥」；跟随、拖尾与悬停行为由 panel-dom 真渲染验。
+  {
+    const p = [];
+    const rd = (rel) => stripComments(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
+    const cfCss = rd('../panel/next/cursor-follow.css');
+    const cfJs = rd('../panel/next/cursor-follow.js');
+    const idx = fs.readFileSync(new URL('../panel/next/index.html', import.meta.url), 'utf8');
+    const ff = rd('../panel/next/factory-frame.js');
+    const assets = fs.readFileSync(new URL('../panel/lib/next-page.js', import.meta.url), 'utf8');
+    const dom = fs.readFileSync(new URL('../test/panel-dom.mjs', import.meta.url), 'utf8');
+
+    const cssAt = idx.indexOf('href="./cursor-follow.css"');
+    const styleAt = idx.indexOf('href="./style.css"');
+    const jsAt = idx.indexOf('src="./cursor-follow.js"');
+    const motionAt = idx.indexOf('src="./motion.js"');
+    const appAt = idx.indexOf('src="./app.js"');
+    if (!/['"]cursor-follow\.js['"]\s*:\s*['"]text\/javascript/.test(assets)
+      || !/['"]cursor-follow\.css['"]\s*:\s*['"]text\/css/.test(assets)
+      || cssAt < 0 || styleAt < 0 || cssAt < styleAt
+      || jsAt < 0 || motionAt < 0 || appAt < 0 || jsAt < motionAt || jsAt > appAt) {
+      p.push('§168①：新资产未登记 / CSS 不在 style.css 之后 / JS 不在 motion.js 与 app.js 之间');
+    }
+    subHit('光标跟随');
+
+    const cfAt = idx.indexOf('id="cfRoot"');
+    const modalAt = idx.indexOf('id="modal"');
+    const scrimAt = idx.indexOf('id="glassScrim"');
+    const tagEnd = cfAt >= 0 ? idx.indexOf('>', cfAt) : -1;
+    const tag = cfAt >= 0 && tagEnd > cfAt ? idx.slice(cfAt, tagEnd) : '';
+    if (cfAt < 0 || modalAt < 0 || scrimAt < 0 || cfAt < modalAt
+      || (scrimAt < cfAt && cfAt < modalAt)
+      || !/aria-hidden="true"/.test(tag) || !/data-on="false"/.test(tag)) {
+      p.push('§168②：#cfRoot 不在 #modal 之后（或插进了 scrim→modal 之间）/ 缺 aria-hidden / data-on=false');
+    }
+    subHit('光标跟随');
+
+    if (!/\.cf-root\s*\{[^}]*position:\s*fixed/.test(cfCss)
+      || !/\.cf-root\s*\{[^}]*z-index:\s*81\s*;/.test(cfCss)
+      || !/\.cf-root\s*\{[^}]*pointer-events:\s*none/.test(cfCss)
+      || !/\.cf-ring[\s\S]{0,500}?pointer-events:\s*none/.test(cfCss)
+      || !/\.cf-dot[\s\S]{0,500}?pointer-events:\s*none/.test(cfCss)
+      || /\bcursor\s*:/.test(cfCss)) {
+      p.push('§168③：跟随层不是 fixed/z81/三层 pointer-events:none，或出现了 cursor 声明（不许替换原生光标）');
+    }
+    subHit('光标跟随');
+
+    const line = cfCss.match(/--cf-line:[^;]*?([\d.]+)%/);
+    const fill = cfCss.match(/--cf-fill:[^;]*?([\d.]+)%/);
+    const lineN = line ? Number(line[1]) : NaN;
+    const fillN = fill ? Number(fill[1]) : NaN;
+    if (!/--cf-ring-size:\s*26\.7px/.test(cfCss)
+      || !/--cf-dot-size:\s*5\.3px/.test(cfCss)
+      || !Number.isFinite(lineN) || !Number.isFinite(fillN)
+      || !(fillN < lineN) || !(lineN <= 30)
+      || /--c-accent/.test(cfCss)
+      || !/\.cf-root\[data-hover="true"\]\s+\.cf-ring\s*\{[^}]*border-color:\s*color-mix\(in srgb, var\(--c-text-1\)/.test(cfCss)) {
+      p.push('§168④：环/点尺寸不是 26.7/5.3，或填充没有弱于描边，或悬停又用了强调色（必须全程黑白）');
+    }
+    subHit('光标跟随');
+
+    if (!/@media\s*\(prefers-reduced-motion:\s*reduce\)/.test(cfCss)
+      || !/@media\s*\(pointer:\s*coarse\)/.test(cfCss)
+      || ((cfCss.match(/display:\s*none\s*!important/g) || []).length < 2)
+      || !/var enabled = !M\.reducedMotion\(\) && !coarse;/.test(cfJs)
+      || !/matchMedia\('\(pointer: coarse\)'\)/.test(cfJs)
+      || /\bimport\s/.test(cfJs) || /\brequire\s*\(/.test(cfJs)) {
+      p.push('§168⑤：减弱动效/触屏降级缺失，或 JS 门槛没同时判两条，或用了 import/require');
+    }
+    subHit('光标跟随');
+
+    const lagM = cfJs.match(/var MAX_LAG = (\d+);/);
+    const idleM = cfJs.match(/var IDLE_MS = (\d+);/);
+    const lagN = lagM ? Number(lagM[1]) : NaN;
+    const idleN = idleM ? Number(idleM[1]) : NaN;
+    if (!/M\.springStep\(/.test(cfJs) || !/requestAnimationFrame\(/.test(cfJs)
+      || !/cancelAnimationFrame\(/.test(cfJs) || /setInterval\(/.test(cfJs)
+      || !(lagN >= 8 && lagN <= 18) || !(idleN >= 400 && idleN <= 1200)
+      || !/if \(d > MAX_LAG\)/.test(cfJs)
+      || !/global\.__cursorFollow = \{ state: state/.test(cfJs)) {
+      p.push('§168⑥：时钟纪律/钳制/常量越界/测试钩子缺失');
+    }
+    subHit('光标跟随');
+
+    const docPointer = (cfJs.match(/document\.addEventListener\('pointer(?:move|over|out)'/g) || []).length;
+    const rootLeave = (cfJs.match(/document\.documentElement\.addEventListener\('pointerleave'/g) || []).length;
+    const scrollCap = (cfJs.match(/document\.addEventListener\('scroll', onScroll, \{ passive: true, capture: true \}\)/g) || []).length;
+    if (docPointer !== 3 || rootLeave !== 1 || scrollCap !== 1
+      || /\.(?:ring|dot|root)\.addEventListener/.test(cfJs)
+      || !/window\.CursorFollow\?\.attachFrame\?\.\(frame\)/.test(ff)
+      || !/── 光标跟随层 ──/.test(dom)) {
+      p.push('§168⑦：document 指针监听不是 3 个 / documentElement leave 不是 1 个 / scroll 捕获不是 1 个 / 工厂桥未接 / panel-dom 无新段');
+    }
+    subHit('光标跟随');
+
+    if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
+    else console.log('✓ 全局光标跟随层（§168）：资产/入口/层级/指针面/降级/时钟纪律/工厂桥/真渲染');
+  }
+
+  // 169) 0.1.5 接口收尾（2026-10-28）：背景 / 星标 / 扩展包 / 分类与中文名。
+  //     这一段守的是「前端有、后端没有」那一类断点：路由表、写路由分类、流式上传、
+  //     Range 媒体、IndexedDB 迁移读取、星标 UA/缓存/失败分支、扩展包单一实现、
+  //     文件夹导入、覆盖安装与真渲染覆盖面。
+  {
+    const p = [];
+    const srv = read('../panel/server.js');
+    const bg = read('../panel/lib/backgrounds.js');
+    const pack = read('../panel/lib/ext-package.js');
+    const star = read('../panel/lib/github-star.js');
+    const setJs = read('../panel/next/settings.js');
+    const app = read('../panel/next/app.js');
+    const pf = read('../panel/next/plugin-factory.html');
+    const ext = read('../panel/lib/extensions.js');
+    const ps = read('../src/plugin-settings.js');
+    const pm = read('../src/plugin-manifest.js');
+    const z = read('../panel/lib/zip.js');
+    const dom = read('../test/panel-dom.mjs');
+    const boot = read('../test/panel-boot.mjs');
+    if (!srv || !bg || !pack || !star || !setJs || !app || !pf || !ext || !ps || !pm || !z || !dom || !boot) {
+      p.push('§169：取源为空 —— 本段在真空里');
+    }
+    const api = srv.slice(srv.indexOf('const API_ROUTES = ['), srv.indexOf('const server = http.createServer'));
+    for (const needle of [
+      "{ path: '/api/github/star', handler: apiGithubStar }",
+      "{ path: '/api/backgrounds', handler: apiBackgroundsList }",
+      "{ path: '/api/backgrounds/media', handler: apiBackgroundsMedia }",
+      "{ path: '/api/backgrounds', method: 'POST', handler: apiBackgroundsUpload }",
+      "{ path: '/api/backgrounds/active', method: 'POST', handler: apiBackgroundsActive }",
+      "{ path: '/api/backgrounds/delete', method: 'POST', handler: apiBackgroundsDelete }",
+      "{ path: '/api/extensions/package', method: 'POST', handler: apiExtensionsPackage }",
+    ]) if (!api.includes(needle)) p.push('§169：路由表缺 ' + needle);
+    const writeAt = srv.indexOf('const WRITE_ROUTES = new Set([');
+    const writeEnd = writeAt >= 0 ? srv.indexOf(']);', writeAt) : -1;
+    const write = writeAt >= 0 && writeEnd > writeAt ? srv.slice(writeAt, writeEnd) : '';
+    if (!/'\/api\/backgrounds', '\/api\/backgrounds\/active', '\/api\/backgrounds\/delete'/.test(write)) {
+      p.push('§169：背景三条 POST 没进 WRITE_ROUTES');
+    }
+    const roAt = srv.indexOf('const READ_ONLY_POST = new Set([');
+    const roEnd = roAt >= 0 ? srv.indexOf(']);', roAt) : -1;
+    const ro = roAt >= 0 && roEnd > roAt ? srv.slice(roAt, roEnd) : '';
+    if (!/'\/api\/extensions\/package'/.test(ro)) p.push('§169：package 没进 READ_ONLY_POST');
+    if (!/readBodyToFile\(req, \{ file: tmp, maxBytes: BG_LIMITS\.video \}\)/.test(srv)) {
+      p.push('§169：背景上传没有流式落盘/上限');
+    }
+    if (!/sniffBackground\(readFileHead\(tmp\)\)/.test(srv)) p.push('§169：背景上传没有嗅探魔数');
+    const bgMedia = fnSlice(srv, 'async function apiBackgroundsMedia(', 500);
+    if (!bgMedia || !/parseByteRange\(req\.headers\.range, stat\.size\)/.test(bgMedia)
+      || !/Accept-Ranges/.test(bgMedia) || !/Content-Range/.test(bgMedia)) {
+      p.push('§169：背景媒体没有 Range 三态');
+    }
+    if (!/writeJsonAtomic\(indexFile/.test(bg) || !/queue\.then\(fn, fn\)/.test(bg)) {
+      p.push('§169：背景索引不是原子写/单飞');
+    }
+    if (!/isBackgroundId/.test(bg) || !/originalFilePath\(dir, id, format\)/.test(bg)) {
+      p.push('§169：背景路径没有 id/格式囚笼');
+    }
+    const bgAt = setJs.indexOf("const DB_NAME = 'estrella-panel-bg';");
+    const bgEnd = setJs.indexOf('function mountPanelDots', bgAt);
+    const bgSlice = bgAt >= 0 && bgEnd > bgAt ? setJs.slice(bgAt, bgEnd) : '';
+    if (!bgSlice || !/\/api\/backgrounds\?/.test(bgSlice) || !/deps\.api\(/.test(bgSlice)) {
+      p.push('§169：设置层没有接背景接口');
+    }
+    if (!/indexedDB/.test(bgSlice)) p.push('§169：设置层丢了 IndexedDB 迁移读取');
+    if (/URL\.createObjectURL/.test(bgSlice)) p.push('§169：背景仍用 blob URL（CSP 会拦视频）');
+    if (!/User-Agent/.test(star) || !/STAR_TTL_MS = 5 \* 60 \* 1000/.test(star) || !/upstream_unavailable/.test(star)) {
+      p.push('§169：星标缺 UA/5 分钟缓存/失败分支');
+    }
+    if (!/category: String\(p\.manifest\?\.category/.test(ext) || !/categories/.test(ext)) {
+      p.push('§169：扩展没有投影 category/categories');
+    }
+    if (!/label: typeof meta\[key\]\?\.label/.test(ps) || !/configSchema/.test(pm)) {
+      p.push('§169：configSchema label 没透传');
+    }
+    if (!/f\.label \|\| f\.key/.test(app)) p.push('§169：插件设置渲染没用中文名');
+    if (!/Buffer\.isBuffer\(e\.data\)/.test(z)) p.push('§169：makeZip 不支持二进制（文件夹里的图片会被写空）');
+    if (!/isSafeRelPath/.test(pack) || !/normalizeManifest/.test(pack) || !/makeZip\(entries/.test(pack)) {
+      p.push('§169：扩展包打包没复用路径/清单/ZIP 唯一实现');
+    }
+    if (!/webkitdirectory/.test(pf) || !/handoffFolder/.test(pf) || !/mode: 'folder'/.test(pf)) {
+      p.push('§169：文件夹导入没接线');
+    }
+    if (/还不支持从文件夹导入|还没装「创造插件」/.test(pf + app)) p.push('§169：仍保留“未实现”死文案');
+    if (!/overwrite=1/.test(app) || !/installZip\(file, kind, \{ overwrite: true \}\)/.test(app)) {
+      p.push('§169：覆盖安装没有前端重试');
+    }
+    if (!/api\/backgrounds/.test(boot) || !/4,242/.test(dom) || !/自定义背景上传后走同源 URL/.test(dom)) {
+      p.push('§169：panel-boot/panel-dom 没覆盖新接口');
+    }
+    if (p.length) { bad++; for (const x of p) console.log('✗ ' + x); }
+    else console.log('✓ 接口收尾（§169）：背景 5 条 · 星标 · 扩展包 · 分类/中文名 · 覆盖安装 · 真渲染');
+  }
+
+  // ══ §170 · 启动首屏与静态资产缓存（2026-10-29 新增）══════════════════════
+  // 开屏必须是第一显示与最高层；开屏期间的重活必须等闸门结束；静态资产必须可协商缓存。
+  if (true) {
+    const p170 = [];
+    const splash170 = read('../panel/next/splash.js');
+    const boot170 = read('../panel/next/boot-splash.js');
+    const bootCss170 = read('../panel/next/boot-splash.css');
+    const app170 = read('../panel/next/app.js');
+    const island170 = read('../panel/next/island.js');
+    const contour170 = read('../panel/next/contour-bg.js');
+    const factory170 = read('../panel/next/factory-frame.js');
+    const shader170 = read('../panel/next/shader-bg.js');
+    const set170 = read('../panel/next/settings.js');
+    const srv170 = read('../panel/server.js');
+    const nextPage170 = read('../panel/lib/next-page.js');
+    const main170 = read('../electron/main.js');
+    const dom170 = read('../test/panel-dom.mjs');
+
+    // ① 静态资产：内存缓存 + ETag/304 + gzip（入口页仍 no-store）
+    if (!/ASSET_CACHE/.test(nextPage170) || !/mtimeMs/.test(nextPage170) || !/etag/.test(nextPage170)) {
+      p170.push('§170①：readNextAsset 没有 mtimeMs+size 的进程内缓存 / ETag');
+    }
+    if (!/'Cache-Control': isEntry \? 'no-store' : 'no-cache'/.test(srv170)
+      || !/'ETag': etag/.test(srv170) || !/'Vary': 'Accept-Encoding'/.test(srv170)
+      || !/gzipSync/.test(srv170) || !/headers\['Content-Encoding'\] = 'gzip'/.test(srv170)
+      || !/warmAssetBundles/.test(srv170)) {
+      p170.push('§170①：静态路由缺 no-cache/ETag/Vary/gzip/预热 之一');
+    }
+
+    // ② 请求缓存：GET 并发去重（写后强制刷新可绕行）+ 星数懒加载
+    if (!/apiInflight/.test(app170) || !/opts\.dedupe === false/.test(app170)) {
+      p170.push('§170②：api() 缺 GET 并发去重或强制刷新绕行');
+    }
+    if (!/paintStarsFromCache\(\);\s*\n\s*let starsStarted/.test(set170)
+      || !/paintAll\(\);\s*\n\s*startRepoStars\(\);/.test(set170)) {
+      p170.push('§170②：星数请求没有推迟到设置层首次打开');
+    }
+
+    // ③ 轮询：内容逐字未变就不重建 DOM
+    if (!/html === S\.extra\.pageHtml && S\.extra\.pageHtmlKey === htmlKey/.test(app170)
+      || !/__paintStats/.test(app170)) {
+      p170.push('§170③：轮询缺「内容未变不重建」或计数观察孔');
+    }
+
+    // ④ 开屏闸门：finish + 各模块的具体 whenDone 接线 + 中途 watchdog
+    if (!/whenDone: function/.test(splash170) || !/finish: function/.test(splash170)) {
+      p170.push('§170④：__bootGate 没有 whenDone/finish');
+    }
+    if (!/__bootGate\.finish\(\)/.test(boot170) || !/GRID\.END_MS \+ 2000/.test(boot170)) {
+      p170.push('§170④：开屏结束没放行重活，或缺中途 watchdog');
+    }
+    const gates170 = [
+      ['app.js', app170, /bootGate\.whenDone\(startRefreshTimer\)/],
+      ['island.js', island170, /bootGate\.whenDone\(beginHud\)/],
+      ['contour-bg.js', contour170, /whenDone\(function \(\) \{ bootHold = false; apply\(\); \}\)/],
+      ['factory-frame.js', factory170, /whenDone\(\(\) => idleWarm\('visual', 300\)\)/],
+      ['shader-bg.js', shader170, /whenDone\(function \(\) \{ bootHold = false; startLoop\(\); \}\)/],
+      ['settings.js 迁移', set170, /gate\.whenDone\(resolve\)/],
+      ['settings.js 视频', set170, /gate\.whenDone\(function \(\) \{ if \(videoMode\) playVideoItem\(first\); \}\)/],
+    ];
+    for (const [name, src, re] of gates170) {
+      if (!re.test(src)) p170.push(`§170④：${name} 没有接开屏闸门`);
+    }
+
+    // ⑤ 最高显示层级 / 开屏成本 / Electron 同色底 / 真渲染断言
+    const zs170 = [...bootCss170.matchAll(/z-index:\s*(\d+)/g)].map((m) => Number(m[1]));
+    const bootZ170 = Number((bootCss170.match(/\.boot-splash\s*\{[^}]*z-index:\s*(\d+)/) || [])[1] || 0);
+    const otherZ170 = Math.max(0, ...zs170.filter((z) => z !== bootZ170 && z < 300));
+    if (!(bootZ170 >= 200 && bootZ170 > otherZ170)) {
+      p170.push(`§170⑤：开屏 z-index=${bootZ170} 不是全站最高（其它最高 ${otherZ170}）`);
+    }
+    if (!/3500000/.test(boot170) || !/1200000/.test(boot170) || !/bs-lite/.test(boot170)
+      || !/html\.bs-lite/.test(bootCss170)
+      || !/later\(function \(\) \{\s*if \(run !== T\.run \|\| !T\.grid\) return;\s*if \(gridVeil\) \{/.test(boot170)) {
+      p170.push('§170⑤：开屏缺像素预算 / 低端降级 / veil 延后启用');
+    }
+    if (!/backgroundColor: dark \? '#050812' : '#dfeeff'/.test(main170)
+      || !/if \(!windowReady && !force\)/.test(main170)
+      || !/backgroundThrottling: false/.test(main170)
+      || !/paintWhenInitiallyHidden: true/.test(main170) || !/windowReady/.test(main170)) {
+      p170.push('§170⑤：Electron 缺开屏同色底 / 满速 rAF / 首绘前不 show');
+    }
+    if (!/__splashTest/.test(dom170) || !/elementFromPoint/.test(dom170)) {
+      p170.push('§170⑤：panel-dom 没有真渲染的开屏首帧/层序断言');
+    }
+
+    if (p170.length) { bad++; for (const x of p170) console.log('✗ ' + x); }
+    else console.log('✓ 启动首屏与静态缓存（§170）：ETag/304/gzip · GET 去重 · 轮询跳重建 · 开屏闸门 · 最高层级 · Electron 同色底');
+  }
+
+  // ══ §171 · 界面身份签名与锚点（2026-10-29 新增）══════════════════════════
+  //  用户要求：允许改代码、加功能、加插件；不允许把 7 域 / 30 页的骨架整体换掉。
+  //  这里只认签名清单里的核心锚点；多出来的域/页/选择器/渲染入口一律放行。
+  {
+    const p171 = [];
+    const idFile = new URL('../panel/ui-identity.json', import.meta.url);
+    const sigFile = new URL('../panel/ui-identity.json.sig', import.meta.url);
+    const PIN = 'sha256:20a9a6b2f509fcedadb8544d8c41e4ef4a30e098c169fb36768fce2f73122f0d';
+    let raw = null;
+    let sig = '';
+    let manifest = null;
+    let snapshot = null;
+    try { raw = fs.readFileSync(idFile); } catch { p171.push('§171①：panel/ui-identity.json 不存在'); }
+    try { sig = fs.readFileSync(sigFile, 'utf8').trim(); } catch { p171.push('§171①：panel/ui-identity.json.sig 不存在'); }
+    if (raw && raw.includes(13)) p171.push('§171①：身份清单含 CR（0x0d）—— 签名覆盖原始字节，必须 LF');
+    try {
+      const { loadPublicKeyFile, verifyRawSignature, fingerprintOf } = await import(new URL('../panel/lib/update-signature.js', import.meta.url));
+      const key = loadPublicKeyFile(new URL('../resources/update-pubkey.pem', import.meta.url));
+      const fp = fingerprintOf(key);
+      const info = fs.readFileSync(new URL('../resources/UPDATE-KEY-INFO.txt', import.meta.url), 'utf8');
+      const hit = info.match(/^fingerprint=(.+)$/m);
+      if (fp !== PIN || !hit || hit[1].trim() !== PIN) p171.push('§171①：更新公钥指纹与官方 pin 不一致');
+      if (raw && sig && !verifyRawSignature(raw, sig, key)) p171.push('§171①：身份清单签名无效');
+      if (raw) {
+        try { manifest = JSON.parse(stripBom(raw.toString('utf8'))); } catch { p171.push('§171①：身份清单不是合法 JSON'); }
+      }
+    } catch (e) {
+      p171.push(`§171①：验签依赖不可用（${e && e.message ? e.message : e}）`);
+    }
+    subHit('界面身份');
+
+    if (manifest) {
+      const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+      if (manifest.schema !== 1 || manifest.kind !== 'ui-identity' || manifest.appId !== pkg.appId) {
+        p171.push('§171②：身份清单的 schema/kind/appId 不对');
+      }
+      const domains = Array.isArray(manifest.domains) ? manifest.domains : [];
+      const pages = domains.reduce((n, d) => n + (Array.isArray(d.pages) ? d.pages.length : 0), 0);
+      if (domains.length !== 7 || pages !== 30) p171.push(`§171②：核心域/页数量不对（域 ${domains.length} / 页 ${pages}，应 7 / 30）`);
+      if (!Array.isArray(manifest.selectors) || manifest.selectors.length !== 9) p171.push('§171②：核心外壳选择器应 9 条');
+      if (!Array.isArray(manifest.renderers) || manifest.renderers.length !== 4) p171.push('§171②：渲染入口应 4 条');
+    }
+    subHit('界面身份');
+
+    // 核心锚点与现役 schema / 外壳 / 渲染入口比对；加项放行
+    try {
+      const { GROUPS } = await import(new URL('../panel/next/schema.js', import.meta.url));
+      const { readNextAsset } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
+      const htmlF = stripComments(readNextAsset('index.html').raw, 'html');
+      const appF = stripComments(readNextAsset('app.js').raw, 'js');
+      const { evaluateIdentity } = await import(new URL('../panel/lib/ui-identity.js', import.meta.url));
+      const selectorPresent = (html, sel) => {
+        if (sel.startsWith('#')) return new RegExp(`\\bid=["']${sel.slice(1)}["']`).test(html);
+        if (sel.startsWith('.')) return new RegExp(`\\bclass=["'][^"']*\\b${sel.slice(1)}\\b`).test(html);
+        return html.includes(sel);
+      };
+      const domains = GROUPS.map((g) => ({ id: g.id, label: g.label, pages: g.subs.map((s) => ({ id: s.id, label: s.label })) }));
+      const selectors = (manifest?.selectors || []).filter((sel) => selectorPresent(htmlF, sel));
+      const renderers = (manifest?.renderers || []).filter((r) => (r === 'RENDER'
+        ? appF.includes('const RENDER = {')
+        : new RegExp(`function ${r}\\(`).test(appF)));
+      snapshot = { domains, selectors, renderers };
+      if (manifest) {
+        const ev = evaluateIdentity(manifest, snapshot);
+        if (!ev.ok) p171.push(`§171③：核心锚点缺失/不一致（${ev.missing.slice(0, 6).join('、')}）`);
+      }
+      for (const sel of manifest?.selectors || []) {
+        if (!selectorPresent(htmlF, sel)) p171.push(`§171④：index.html 缺外壳 ${sel}`);
+      }
+      const refreshBody = fnSlice(appF, 'async function refresh');
+      const bannerBody = fnSlice(appF, 'function renderBanners');
+      if (!refreshBody || !refreshBody.includes('runUiIdentityCheck(')) p171.push('§171⑤：refresh() 没有调用 runUiIdentityCheck');
+      else if (refreshBody.indexOf('runUiIdentityCheck(') > refreshBody.indexOf('renderBanners()')) p171.push('§171⑤：身份检查必须在 renderBanners() 之前');
+      if (!bannerBody || !bannerBody.includes('data-ui-identity="unofficial"')) p171.push('§171⑤：renderBanners 没有非官方横幅分支');
+      if (!appF.includes('document.documentElement.dataset.uiIdentity')) p171.push('§171⑤：没有写 html[data-ui-identity]');
+    } catch (e) {
+      p171.push(`§171③：核心锚点比对跑不起来（${e && e.message ? e.message : e}）`);
+    }
+    subHit('界面身份');
+
+    // 服务端接线
+    try {
+      const srvF = stripComments(fs.readFileSync(new URL('../panel/server.js', import.meta.url), 'utf8'));
+      if (!srvF.includes('uiIdentity: uiIdentityState()')) p171.push('§171⑥：server.js 的 /api/state 没有下发 uiIdentity');
+    } catch { /* 上面已报 */ }
+    subHit('界面身份');
+
+    // paths 登记
+    try {
+      const pathsF = fs.readFileSync(new URL('../panel/lib/paths.js', import.meta.url), 'utf8');
+      if (!pathsF.includes("'panel/lib/ui-identity.js'")) p171.push('§171⑦：panel/lib/ui-identity.js 没进 BACKEND_SOURCES');
+    } catch { /* 上面已报 */ }
+    subHit('界面身份');
+
+    // 公钥候选 + 测试缝
+    try {
+      const modF = fs.readFileSync(new URL('../panel/lib/ui-identity.js', import.meta.url), 'utf8');
+      for (const needle of [
+        "path.join(INSTALL_ROOT, 'resources', 'update-pubkey.pem')",
+        "path.join(PROGRAM_ROOT, 'resources', 'update-pubkey.pem')",
+        'QQBOT_UI_IDENTITY_FILE', 'QQBOT_SANDBOX', 'QQBOT_MODE',
+      ]) {
+        if (!modF.includes(needle)) p171.push(`§171⑧：ui-identity.js 缺 ${needle}`);
+      }
+    } catch { /* 上面已报 */ }
+    subHit('界面身份');
+
+    // 运行时测试存在
+    try {
+      const domF = fs.readFileSync(new URL('../test/panel-dom.mjs', import.meta.url), 'utf8');
+      const bootF = fs.readFileSync(new URL('../test/panel-boot.mjs', import.meta.url), 'utf8');
+      const htmlF = fs.readFileSync(new URL('../panel/next/index.html', import.meta.url), 'utf8');
+      const setF = fs.readFileSync(new URL('../panel/next/settings.js', import.meta.url), 'utf8');
+      if (!domF.includes('__uiIdentity') || !domF.includes('data-ui-identity')) p171.push('§171⑨：panel-dom 没有非官方横幅断言');
+      if (!bootF.includes('uiIdentity')) p171.push('§171⑨：panel-boot 没有 /api/state.uiIdentity 断言');
+      if (!htmlF.includes('aboutUiIdentity') || !setF.includes('uiIdentity')) p171.push('§171⑨：关于页没有界面身份行');
+    } catch { /* 上面已报 */ }
+    subHit('界面身份');
+
+    // 纯函数负向自证：加项放行、删/改名/重排才红
+    try {
+      const { evaluateIdentity } = await import(new URL('../panel/lib/ui-identity.js', import.meta.url));
+      if (manifest && snapshot) {
+        if (!evaluateIdentity(manifest, snapshot).ok) p171.push('§171⑩：纯函数基线不通过');
+        const extra = structuredClone(snapshot);
+        extra.domains.push({ id: 'extra', label: '额外', pages: [{ id: 'x', label: '额外' }] });
+        extra.selectors.push('#extra');
+        if (!evaluateIdentity(manifest, extra).ok) p171.push('§171⑩：加新域/新选择器应放行，却被判红');
+        const noPage = structuredClone(snapshot);
+        if (noPage.domains[0] && noPage.domains[0].pages.length) noPage.domains[0].pages.pop();
+        if (evaluateIdentity(manifest, noPage).ok) p171.push('§171⑩：删核心页应判红，却通过了');
+        const reorder = structuredClone(snapshot);
+        const d0 = reorder.domains[0];
+        if (d0 && d0.pages.length > 1) { [d0.pages[0], d0.pages[1]] = [d0.pages[1], d0.pages[0]]; }
+        if (evaluateIdentity(manifest, reorder).ok) p171.push('§171⑩：重排核心页应判红，却通过了');
+        const relabel = structuredClone(snapshot);
+        if (relabel.domains[0]) relabel.domains[0].label = `${relabel.domains[0].label}x`;
+        if (evaluateIdentity(manifest, relabel).ok) p171.push('§171⑩：改核心域标签应判红，却通过了');
+        const noSel = structuredClone(snapshot);
+        noSel.selectors.pop();
+        if (evaluateIdentity(manifest, noSel).ok) p171.push('§171⑩：删外壳选择器应判红，却通过了');
+        const noRen = structuredClone(snapshot);
+        noRen.renderers.pop();
+        if (evaluateIdentity(manifest, noRen).ok) p171.push('§171⑩：删渲染入口应判红，却通过了');
+        const noDomain = structuredClone(snapshot);
+        noDomain.domains.shift();
+        if (evaluateIdentity(manifest, noDomain).ok) p171.push('§171⑩：删核心域应判红，却通过了');
+      }
+    } catch (e) {
+      p171.push(`§171⑩：纯函数自证跑不起来（${e && e.message ? e.message : e}）`);
+    }
+    subHit('界面身份');
+
+    if (p171.length) { bad++; for (const x of p171) console.log('✗ ' + x); }
+    else console.log('✓ 界面身份（§171）：签名/公钥指纹 · 7 域 30 页顺序 · 外壳 · 渲染入口 · 运行时接线 · 加项放行');
+  }
+
   // ① 契约块数下限。`ran + 1` 里那个 +1 就是**本段自己**（本段也走 console.log、也被计入），
   //    于是这里比的是"算上本段一共多少段"，与 `process.on('exit')` 的口径完全一致。
   //    ⚠️ 放在 §148 之后：桌面壳三段与其它契约块一样必须先计入，再比下限。
@@ -19155,7 +20708,7 @@ const LIB_SRC_ALLOW = [
     problems.push(`只跑了 ${ran + 1} 段契约（下限 ${MIN_CONTRACTS}）—— 有人删了断言，或某一段被提前 return 掉了`);
   }
 
-const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5]];
+const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8]];
   for (const [bucket, min] of HEAVY_SUB_MIN) {
     const c = subCountOf(bucket);
     if (c < min) {

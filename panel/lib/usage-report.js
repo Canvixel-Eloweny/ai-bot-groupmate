@@ -338,10 +338,12 @@ export function makeUsageReport({
       }
       {
         const day = dayKeyOf(new Date(Number.isFinite(r.t) ? r.t : Date.now()));
-        const bucket = byDay.get(day) || { key: day, calls: 0, tokens: 0, cost: 0 };
+        const bucket = byDay.get(day) || { key: day, calls: 0, tokens: 0, cost: 0, agentCalls: 0 };
         bucket.calls += 1;
         bucket.tokens += (r.p || 0) + (r.c || 0);
         bucket.cost += c;
+        // 总览热力图的历史补齐用：只数主回复调用，不是第二套用量口径。
+        if (r.s === 'agent') bucket.agentCalls += 1;
         byDay.set(day, bucket);
       }
 

@@ -187,6 +187,10 @@ async function evalJs(expr) {
 }
 
 await send('Page.enable'); await send('Runtime.enable');
+/* 启动层是产品首屏；验证页跳过它，否则 4.3s 的全屏层会挡住下面的交互。 */
+await send('Page.addScriptToEvaluateOnNewDocument', {
+  source: `try { sessionStorage.setItem('boot-splash-played', '1'); } catch (e) {}`,
+});
 await send('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: HEIGHT, deviceScaleFactor: 2, mobile: false });
 await send('Page.navigate', { url: URL_ });
 
@@ -208,38 +212,312 @@ const nav = await evalJs(`return {
   staleAttrs: document.querySelectorAll('[data-act]').length,
 }`);
 const groupCount = (nav?.groups || []).length;
-check('一级域数量 = 6', groupCount === 6, `实测 ${groupCount}`);
+check('一级域数量 = 7', groupCount === 7, `实测 ${groupCount}`);
 const maintNav = await evalJs(`return {
   visible: [...document.querySelectorAll('#nav1 .grp')].filter((x) => !x.hidden && getComputedStyle(x).display !== 'none').length,
   hidden: document.querySelectorAll('#nav1 .grp[hidden]').length,
   btn: !!document.querySelector('[data-a="nav.maint"]'),
 }`);
-check('维护域回到岛内一级（6 个域，无顶栏入口）',
-  maintNav?.visible === 6 && maintNav?.hidden === 0 && maintNav?.btn === false,
+check('维护域回到岛内一级（7 个域，无顶栏入口）',
+  maintNav?.visible === 7 && maintNav?.hidden === 0 && maintNav?.btn === false,
   `岛内可见 ${maintNav?.visible} · hidden ${maintNav?.hidden} · 顶栏按钮 ${maintNav?.btn}`);
 check('拿到真实后端数据（非演示模式）', !!nav?.online,
   `__next=${nav?.hasHook ? '有' : '无'} provider=${nav?.provider ?? '?'} model=${nav?.model ?? '?'} 演示条=${nav?.demoBanner}`);
 check('静态标记里没有失效的 data-act 属性', nav?.staleAttrs === 0, `data-act=${nav?.staleAttrs}`);
 
-let pagesChecked = 0; let cardsTotal = 0; const badPages = [];
+let pagesChecked = 0; let cardsTotal = 0; const badPages = []; const blankPages = []; const framePages = [];
 for (let g = 0; g < groupCount; g += 1) {
+  /* 工厂域导航会自动上收；遍历前先呼出，否则 navrow 是 inert，子页点不动。 */
+  const navHiddenG = await evalJs(`return document.body.classList.contains('nav-auto-hidden')`);
+  if (navHiddenG) {
+    await evalJs(`window.__navAutoHide && window.__navAutoHide.reveal(); return 1;`);
+    await sleep(380);
+  }
   await evalJs(`document.querySelectorAll('#nav1 .grp')[${g}].click(); return 1;`);
   await sleep(120);
   const subCount = await evalJs(`return document.querySelectorAll('#nav2 .sub').length`);
   for (let s = 0; s < subCount; s += 1) {
+    const navHiddenS = await evalJs(`return document.body.classList.contains('nav-auto-hidden')`);
+    if (navHiddenS) {
+      await evalJs(`window.__navAutoHide && window.__navAutoHide.reveal(); return 1;`);
+      await sleep(380);
+    }
     await evalJs(`document.querySelectorAll('#nav2 .sub')[${s}].click(); return 1;`);
     await sleep(160);
+    const subLabel = await evalJs(`return (document.querySelectorAll('#nav2 .sub')[${s}]?.textContent || '').trim()`);
     const r = await evalJs(`return {
       cards: document.querySelectorAll('#page .card').length,
       text: (document.getElementById('page').textContent || '').length,
       broke: [...document.querySelectorAll('#page .card')].filter(c => c.textContent.includes('没有实现的控件类型') || c.textContent.includes('渲染「')).length,
       title: (document.querySelector('#page h1')?.textContent || '').trim(),
+      frame: document.body.classList.contains('is-frame-page'),
+      blank: document.getElementById('page').classList.contains('page--blank'),
     }`);
     pagesChecked += 1; cardsTotal += r.cards;
-    if (!r.cards || !r.text || r.broke) badPages.push(`${nav.groups[g]}/${r.title}(cards=${r.cards}, broke=${r.broke})`);
+    if (r.frame) framePages.push(`${nav.groups[g]}/${subLabel}`);
+    if (r.blank) blankPages.push(`${nav.groups[g]}/${subLabel}`);
+    if (!r.frame && !r.blank && (!r.cards || !r.text || r.broke)) badPages.push(`${nav.groups[g]}/${r.title}(cards=${r.cards}, broke=${r.broke})`);
   }
 }
-check('每个页面都渲染出了卡片', badPages.length === 0, badPages.length ? badPages.join(' · ') : `共 ${pagesChecked} 页 / ${cardsTotal} 张卡`);
+check('每个页面都渲染出了卡片（frame / 空白页除外）', badPages.length === 0, badPages.length ? badPages.join(' · ') : `共 ${pagesChecked} 页 / ${cardsTotal} 张卡`);
+check('没有空白页（工厂三页改为 frame 页）', blankPages.length === 0, blankPages.join(' · ') || '无');
+check('工厂三页都挂 frame',
+  framePages.length === 3 && /视觉工厂/.test(framePages.join(' '))
+    && /人设工厂/.test(framePages.join(' ')) && /插件工厂/.test(framePages.join(' ')),
+  framePages.join(' · ') || '无');
+
+/* 工厂三页（2026-10-27）：入口只在「工厂」二级导航，三份常驻 iframe 由
+   #page[data-frame] 选帧。这里验：三页映射、导航压在上方可点、host 几何、
+   3.6s 不重载不重播、切帧不重载、离开收起、重进不重载。 */
+const factory = await evalJs(`return (async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const groups = () => [...document.querySelectorAll('#nav1 .grp')];
+  const subs = () => [...document.querySelectorAll('#nav2 .sub')];
+  const subOf = (name) => subs().find((b) => (b.title || b.textContent || '').includes(name));
+  const grp = groups().find((b) => (b.title || b.textContent || '').includes('工厂'));
+  if (!grp) return { err: '找不到工厂域' };
+  if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
+    window.__navAutoHide.reveal();
+    await sleep(420);
+  }
+  groups()[0].click(); await sleep(650);
+  const grpEnter = groups().find((b) => (b.title || b.textContent || '').includes('工厂'));
+  if (!grpEnter) return { err: '进工厂前找不到工厂域' };
+  grpEnter.click(); await sleep(620);
+  const hiddenWait = async (ms) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      if (document.body.classList.contains('nav-auto-hidden')) return true;
+      await sleep(100);
+    }
+    return false;
+  };
+  const autoHidden = await hiddenWait(3000);
+  const rowEl = document.getElementById('navrow');
+  const hot = document.getElementById('navHotzone');
+  /* visibility 是 0.34s 延迟切换；负载下固定 sleep 会读到还在过渡中的 visible。 */
+  for (let i = 0; i < 15; i++) {
+    if (getComputedStyle(rowEl).visibility === 'hidden') break;
+    await sleep(100);
+  }
+  await sleep(80);
+  const hiddenState = {
+    body: document.body.classList.contains('nav-auto-hidden'),
+    inert: rowEl.inert === true,
+    opacity: getComputedStyle(rowEl).opacity,
+    visibility: getComputedStyle(rowEl).visibility,
+    hotPointer: getComputedStyle(hot).pointerEvents,
+    hotW: Math.round(hot.getBoundingClientRect().width),
+    hotTop: Math.round(hot.getBoundingClientRect().top),
+    topbarBottom: Math.round(document.querySelector('.topbar').getBoundingClientRect().bottom),
+  };
+  const st0 = window.__navAutoHide ? window.__navAutoHide.state() : null;
+  if (st0 && !st0.armed) hot.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
+  hot.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }));
+  await sleep(420);
+  const shownState = {
+    body: document.body.classList.contains('nav-auto-hidden'),
+    inert: rowEl.inert === true,
+    opacity: getComputedStyle(rowEl).opacity,
+    visibility: getComputedStyle(rowEl).visibility,
+  };
+  const labels = subs().map((b) => (b.title || b.textContent || '').trim());
+  const framesAttr = subs().map((b) => b.dataset.frame || '');
+  const sub = subOf('视觉工厂');
+  if (!sub) return { err: '找不到视觉工厂页', labels, framesAttr };
+  sub.click();
+  let frame = null;
+  for (let i = 0; i < 120; i++) {
+    frame = document.querySelector('#factoryHost iframe[data-frame="visual-factory.html"]');
+    if (frame && document.body.classList.contains('factory-frame-ready')) break;
+    await sleep(100);
+  }
+  if (!frame) return { err: '视觉工厂 iframe 未就绪', labels, framesAttr };
+  let doc = null;
+  for (let i = 0; i < 20 && !doc; i++) { doc = frame.contentDocument; if (!doc) await sleep(100); }
+  if (!doc) return { err: '视觉工厂 document 未就绪', labels, framesAttr };
+  if (doc.defaultView) doc.defaultView.__factoryKeep = 1;
+  const page = document.getElementById('page');
+  const host = document.getElementById('factoryHost');
+  const nav = document.getElementById('navrow');
+  const topbar = document.querySelector('.topbar');
+  const gear = document.getElementById('setGear');
+  const hs = getComputedStyle(host), ns = getComputedStyle(nav);
+  const ts = getComputedStyle(topbar), gs = getComputedStyle(gear);
+  const hb = host.getBoundingClientRect(), tb = topbar.getBoundingClientRect();
+  const st = window.__factoryFrame.state();
+  const sr = sub.getBoundingClientRect();
+  const hitSub = document.elementFromPoint(Math.round(sr.left + sr.width / 2), Math.round(sr.top + sr.height / 2));
+  const navBottom = Math.round(nav.getBoundingClientRect().bottom);
+  const hitBelow = document.elementFromPoint(Math.round(innerWidth / 2), Math.min(innerHeight - 4, navBottom + 24));
+  const open = {
+    labels, framesAttr,
+    pageCls: page.className, pageText: (page.textContent || '').length, pageCards: page.querySelectorAll('.card').length,
+    dataFrame: page.dataset.frame || '', bodyFrame: document.body.classList.contains('is-frame-page'),
+    hostVis: hs.visibility, hostAria: host.getAttribute('aria-hidden'),
+    hostZ: Number(hs.zIndex) || 0, navZ: Number(ns.zIndex) || 0,
+    topbarZ: Number(ts.zIndex) || 0, gearZ: Number(gs.zIndex) || 0,
+    top: Math.round(hb.top), bottom: Math.round(hb.bottom), w: Math.round(hb.width), h: Math.round(hb.height),
+    topbarBottom: Math.round(tb.bottom), innerW: innerWidth, innerH: innerHeight,
+    active: st.active, src: st.src, ready: st.ready, enterCount: st.enterCount, loads: st.loadCount,
+    selected: (subs().find((b) => b.getAttribute('aria-selected') === 'true') || {}).textContent || '',
+    btnIds: ['factoryBtn', 'personaFactoryBtn', 'pluginFactoryBtn'].filter((id) => !!document.getElementById(id)),
+    toggle: !!document.querySelector('[data-a="factory.toggle"]'),
+    brandText: (doc.querySelector('.brand-copy b') || {}).textContent || '',
+    embed: doc.documentElement.dataset.embed || '',
+    hitSubOk: !!(hitSub && hitSub.closest && hitSub.closest('#nav2 .sub')),
+    hitIframe: !!(hitBelow && (hitBelow.tagName === 'IFRAME' || (hitBelow.closest && hitBelow.closest('#factoryHost')))),
+    navHidden: document.body.classList.contains('nav-auto-hidden'),
+    navInert: rowEl.inert === true,
+  };
+  await sleep(3600);
+  const same = frame === document.querySelector('#factoryHost iframe[data-frame="visual-factory.html"]');
+  const st1 = window.__factoryFrame.state();
+  const keep1 = frame.contentDocument && frame.contentDocument.defaultView ? frame.contentDocument.defaultView.__factoryKeep : 0;
+  const poll = { same, loads: st1.loadCount, enterCount: st1.enterCount, keep: keep1, navHidden: document.body.classList.contains('nav-auto-hidden') };
+  const subP = subOf('人设工厂');
+  if (!subP) return { err: '找不到人设工厂页', labels, framesAttr };
+  subP.click();
+  let pFrame = null;
+  for (let i = 0; i < 300; i++) {
+    pFrame = document.querySelector('#factoryHost iframe[data-frame="persona-factory.html"]');
+    const stP0 = window.__factoryFrame.state();
+    if (pFrame && stP0.active === 'persona' && stP0.frames.persona.ready) break;
+    await sleep(100);
+  }
+  const stP = window.__factoryFrame.state();
+  const persona = {
+    active: stP.active, open: stP.open,
+    personaHidden: !!document.querySelector('#factoryHost .factory-pane[data-factory="persona"]').hidden,
+    visualHidden: !!document.querySelector('#factoryHost .factory-pane[data-factory="visual"]').hidden,
+    root: !!(pFrame && pFrame.contentDocument && pFrame.contentDocument.querySelector('.site-header')),
+    visualLoads: stP.frames.visual.loadCount, personaLoads: stP.frames.persona.loadCount,
+  };
+  const subG = subOf('插件工厂');
+  if (!subG) return { err: '找不到插件工厂页', labels, framesAttr };
+  subG.click();
+  let gFrame = null;
+  for (let i = 0; i < 300; i++) {
+    gFrame = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+    const stG0 = window.__factoryFrame.state();
+    if (gFrame && stG0.active === 'plugin' && stG0.frames.plugin.ready) break;
+    await sleep(100);
+  }
+  const stG = window.__factoryFrame.state();
+  const plugin = {
+    active: stG.active, open: stG.open,
+    pluginHidden: !!document.querySelector('#factoryHost .factory-pane[data-factory="plugin"]').hidden,
+    personaHidden: !!document.querySelector('#factoryHost .factory-pane[data-factory="persona"]').hidden,
+    root: !!(gFrame && gFrame.contentDocument && gFrame.contentDocument.querySelector('.app')),
+    personaLoads: stG.frames.persona.loadCount,
+  };
+  subOf('视觉工厂').click(); await sleep(500);
+  const stBack = window.__factoryFrame.state();
+  const back = {
+    active: stBack.active,
+    same: frame === document.querySelector('#factoryHost iframe[data-frame="visual-factory.html"]'),
+    loads: stBack.frames.visual.loadCount,
+    keep: frame.contentDocument && frame.contentDocument.defaultView ? frame.contentDocument.defaultView.__factoryKeep : 0,
+  };
+  groups()[0].click(); await sleep(700);
+  const left = {
+    bodyFrame: document.body.classList.contains('is-frame-page'), dataFrame: page.dataset.frame || '',
+    pageCls: page.className, hostVis: getComputedStyle(host).visibility,
+    hostAria: host.getAttribute('aria-hidden'),
+    navHidden: document.body.classList.contains('nav-auto-hidden'),
+    navInert: rowEl.inert === true,
+    navVis: getComputedStyle(rowEl).visibility,
+  };
+  const grpBack = groups().find((b) => (b.title || b.textContent || '').includes('工厂'));
+  if (!grpBack) return { err: '重进时找不到工厂域', labels, framesAttr };
+  grpBack.click(); await sleep(620);
+  const reHidden = await hiddenWait(3000);
+  await sleep(420);
+  const st3 = window.__navAutoHide ? window.__navAutoHide.state() : null;
+  if (st3 && !st3.armed) hot.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
+  hot.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }));
+  await sleep(420);
+  const stRe = window.__factoryFrame.state();
+  const reFrame = document.querySelector('#factoryHost iframe[data-frame="visual-factory.html"]');
+  const re = {
+    active: stRe.active, open: stRe.open, ready: document.body.classList.contains('factory-frame-ready'),
+    hostVis: getComputedStyle(host).visibility,
+    same: reFrame === frame, loads: stRe.frames.visual.loadCount,
+    keep: reFrame && reFrame.contentDocument && reFrame.contentDocument.defaultView ? reFrame.contentDocument.defaultView.__factoryKeep : 0,
+    navHidden: document.body.classList.contains('nav-auto-hidden'),
+    navInert: rowEl.inert === true,
+  };
+  groups()[0].click(); await sleep(500);
+  return { autoHidden, hiddenState, shownState, open, poll, persona, plugin, back, left, re, reHidden };
+})()`);
+check('进入工厂后导航自动上收',
+  !!factory && !factory.err && factory.autoHidden === true
+    && factory.hiddenState?.body === true && factory.hiddenState?.inert === true
+    && factory.hiddenState?.opacity === '0' && factory.hiddenState?.visibility === 'hidden'
+    && factory.hiddenState?.hotPointer === 'auto'
+    && Math.abs((factory.hiddenState?.hotW || 0) - 150) <= 1
+    && Math.abs((factory.hiddenState?.hotTop || 0) - ((factory.hiddenState?.topbarBottom || 0) + 4)) <= 1,
+  factory && JSON.stringify(factory.hiddenState));
+check('顶部热区呼出导航',
+  !!factory && !factory.err && factory.shownState?.body === false
+    && factory.shownState?.inert === false && factory.shownState?.visibility === 'visible'
+    && Number(factory.shownState?.opacity) >= 0.99,
+  factory && JSON.stringify(factory.shownState));
+check('工厂五页映射正确、顶栏圆钮已删除',
+  !!factory && !factory.err && factory.open?.labels?.length === 5
+    && factory.open.labels.join('|') === '视觉工厂|人设工厂|插件工厂|插件管理|Skill'
+    && factory.open.framesAttr.filter(Boolean).join('|') === 'visual-factory.html|persona-factory.html|plugin-factory.html'
+    && factory.open.btnIds?.length === 0 && factory.open.toggle === false,
+  factory && JSON.stringify({ labels: factory.open?.labels, frames: factory.open?.framesAttr, ids: factory.open?.btnIds, toggle: factory.open?.toggle, err: factory.err }));
+check('视觉工厂页 = 全幅 frame，工厂铺满顶栏以下',
+  !!factory && !factory.err && factory.open?.bodyFrame === true
+    && factory.open.dataFrame === 'visual-factory.html' && /page--frame/.test(factory.open.pageCls || '')
+    && factory.open.pageText === 0 && factory.open.pageCards === 0
+    && factory.open.hostVis === 'visible' && factory.open.hostAria === 'false'
+    && Math.abs((factory.open.top || 0) - (factory.open.topbarBottom || 0)) <= 1
+    && Math.abs((factory.open.bottom || 0) - (factory.open.innerH || 0)) <= 20
+    && Math.abs((factory.open.w || 0) - (factory.open.innerW || 0)) <= 20 && factory.open.h > 100
+    && factory.open.active === 'visual' && /visual-factory\.html/.test(factory.open.src || '')
+    && factory.open.ready === true && factory.open.selected === '视觉工厂'
+    && factory.open.navHidden === false && factory.open.navInert === false
+    && /Estrella Glass Lab/.test(factory.open.brandText || '') && factory.open.embed === '',
+  factory && JSON.stringify(factory.open));
+check('导航浮在工厂之上、二级按钮与工厂都可点',
+  !!factory && !factory.err && factory.open?.hostZ < factory.open?.navZ
+    && factory.open?.navZ < factory.open?.topbarZ && factory.open?.gearZ > factory.open?.hostZ
+    && factory.open?.hitSubOk === true && factory.open?.hitIframe === true,
+  factory && JSON.stringify({ z: [factory.open?.hostZ, factory.open?.navZ, factory.open?.topbarZ, factory.open?.gearZ], hitSub: factory.open?.hitSubOk, hitIframe: factory.open?.hitIframe }));
+check('3.6s 轮询不重载、不重播入场、导航未误收',
+  !!factory && !factory.err && factory.poll?.same === true && factory.poll?.keep === 1
+    && factory.poll?.loads === factory.open?.loads && factory.poll?.enterCount === factory.open?.enterCount
+    && factory.poll?.navHidden === false,
+  factory && JSON.stringify(factory.poll));
+check('视觉 → 人设切帧不重载',
+  !!factory && !factory.err && factory.persona?.active === 'persona' && factory.persona?.open === true
+    && factory.persona?.personaHidden === false && factory.persona?.visualHidden === true
+    && factory.persona?.root === true && factory.persona?.visualLoads === factory.open?.loads,
+  factory && JSON.stringify(factory.persona));
+check('人设 → 插件切帧不重载',
+  !!factory && !factory.err && factory.plugin?.active === 'plugin' && factory.plugin?.open === true
+    && factory.plugin?.pluginHidden === false && factory.plugin?.personaHidden === true
+    && factory.plugin?.root === true && factory.plugin?.personaLoads === factory.persona?.personaLoads,
+  factory && JSON.stringify(factory.plugin));
+check('插件 → 视觉回原帧、状态保留',
+  !!factory && !factory.err && factory.back?.active === 'visual' && factory.back?.same === true
+    && factory.back?.loads === factory.open?.loads && factory.back?.keep === 1,
+  factory && JSON.stringify(factory.back));
+check('离开工厂域后收起、导航复位，重进再次上收后可呼出',
+  !!factory && !factory.err && factory.left?.bodyFrame === false && !factory.left?.dataFrame
+    && !/page--frame/.test(factory.left?.pageCls || '')
+    && factory.left?.hostVis === 'hidden' && factory.left?.hostAria === 'true'
+    && factory.left?.navHidden === false && factory.left?.navInert === false
+    && factory.left?.navVis === 'visible'
+    && factory.reHidden === true
+    && factory.re?.active === 'visual' && factory.re?.open === true && factory.re?.ready === true
+    && factory.re?.hostVis === 'visible' && factory.re?.same === true
+    && factory.re?.loads === factory.open?.loads && factory.re?.keep === 1
+    && factory.re?.navHidden === false && factory.re?.navInert === false,
+  factory && JSON.stringify({ left: factory.left, reHidden: factory.reHidden, re: factory.re }));
 
 /* 只浏览不该产生"未保存改动"。列表类渲染器会把当前数组快照进草稿，
    如果拿"草稿有几个键"当改动计数，光打开页面就会显示脏、并且让轮询永久停更。
@@ -305,7 +583,7 @@ const islandContrast = () => evalJs(`
      这类"看起来在验、其实没验"的形态必须当场抓出来，而不是等它变成假绿。 */
   const on   = document.querySelector('#navInner .grp[aria-selected="true"]');
   const off  = document.querySelector('#navInner .grp[aria-selected="false"]');
-  const ind  = getComputedStyle(document.getElementById('navInd'));
+  const ind  = getComputedStyle(document.querySelector('#navInd .nav-ind-core') || document.getElementById('navInd'));
   const body = getComputedStyle(document.body);
   if (!on || !off) return { err: '未同时找到选中项与未选中项', has: { on: !!on, off: !!off } };
 
@@ -362,7 +640,7 @@ await sleep(700);
 /* 维护域已回到岛内（一级 6 个域），这里点最后一颗可见域量形变。 */
 await evalJs(`document.querySelectorAll('#nav1 .grp')[5].click(); return 1;`);
 const flight = await evalJs(`
-  const ind = document.getElementById('navInd');
+  const ind = document.querySelector('#navGlider .nav-glider-core') || document.getElementById('navInd');
   return (async () => {
     let best = { sx: 1, sy: 1, tx: 0 };
     for (let i = 0; i < 24; i += 1) {
@@ -398,7 +676,7 @@ const nav2flight = await evalJs(`
     }
     const sel = nav.querySelector('.sub[aria-selected="true"]');
     const m = new DOMMatrixReadOnly(last);
-    return { distinct: seen.size, dx: m.e, want: sel.offsetLeft - nav.scrollLeft };
+    return { distinct: seen.size, dx: m.e, want: sel.offsetLeft + nav.offsetLeft - nav.scrollLeft };
   })();
 `);
 check('二级导航切换时滑块**在途**（≥3 个不同帧位）+ 终点对齐选中页签',
@@ -421,16 +699,19 @@ check('指示器停在选中项上（位移与宽度都对得上）',
 /* §131（2026-10-21）：数据刷新不能把二级滑块逼疯。
    复现用户视频：进入「日志与审计」并停留 —— 旧实现里 loadLogs→softPaint 是本地
    取数回环（每秒上千次重画），每次都重启滑块弹簧，最终把它写到屏幕外。
-   判据：观察窗口内重画回调 < 10 次；滑块每帧都在玻璃条内、宽度 > 4、不透明；
-   最终位置与选中页签对齐。 */
+   ⚠️ 2026-10-28：日志页已并入「会话与日志」，本段先回到运行域再找页
+   （此前它停在维护域里找日志页，永远找不到，是假绿）。 */
+await evalJs(`document.querySelectorAll('#nav1 .grp')[0].click(); return 1;`);
+await sleep(150);
 const nav2Loop = await evalJs(`
   const nav = document.getElementById('nav2');
   const ind = document.getElementById('nav2Ind');
   const wrap = document.getElementById('nav2wrap');
   const subs = [...nav.querySelectorAll('.sub')];
-  const logTab = subs.find((b) => /日志与审计/.test(b.title || '')) || subs[4] || subs[subs.length - 1];
+  const logTab = subs.find((b) => /会话与日志/.test(b.title || ''));
+  if (!logTab) return { err: '找不到会话与日志页' };
   logTab.click();
-  await new Promise((r) => setTimeout(r, 1200));
+  await new Promise((r) => setTimeout(r, 2200));
   let paints = 0;
   const mo = new MutationObserver(() => { paints += 1; });
   mo.observe(document.getElementById('page'), { childList: true, subtree: true });
@@ -451,13 +732,400 @@ const nav2Loop = await evalJs(`
     minW: Math.min(...seen.map((s) => s.w)),
     maxW: Math.max(...seen.map((s) => s.w)),
     dx: m.e,
-    want: sel ? sel.offsetLeft - nav.scrollLeft : null,
+    want: sel ? sel.offsetLeft + nav.offsetLeft - nav.scrollLeft : null,
   };
 `);
 check('数据刷新期间二级滑块不发散/不消失，且日志页不再自循环重画（§131）',
   !!nav2Loop && nav2Loop.paints < 10 && nav2Loop.bad === 0 && nav2Loop.maxW < 400
     && Math.abs(nav2Loop.dx - nav2Loop.want) <= 3,
   nav2Loop ? `重画回调=${nav2Loop.paints} · 越界帧=${nav2Loop.bad} · 宽度 ${nav2Loop.minW.toFixed(1)}~${nav2Loop.maxW.toFixed(1)} · x=${nav2Loop.dx.toFixed(1)}（期望 ${nav2Loop.want}）` : '取不到');
+
+/* ── 导航最终版（2026-10-25）────────────────────────────────────────────
+   桌面 M18 接入主项目后的手感验收：一级滑片/1px 细框/按压环/回弹/三颗小球，
+   二级渐变胶囊/扫光/按压，以及「后续新增一级/二级项自动沿用」。
+   鼠标交互走 CDP 真实事件（CSS :hover/:active 与 pointerdown 都是合成事件测不出来的）。 */
+const navTestPoint = async (sel) => evalJs(`
+  const e = document.querySelector(${JSON.stringify(sel)});
+  if (!e) return null;
+  const r = e.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, left: r.left, top: r.top };
+`);
+const navTestMouse = (type, p, extra = {}) => send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, ...extra });
+
+await evalJs(`
+  document.querySelectorAll('#nav1 .grp')[0].click();
+  await new Promise((r) => setTimeout(r, 2200));
+  return 1;
+`);
+
+const navStatic = await evalJs(`
+  const q = (s) => document.querySelector(s);
+  const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, top: r.top }; };
+  const sel = q('#navInner .grp[aria-selected="true"]');
+  const sub = q('#nav2 .sub[aria-selected="true"]');
+  const gl = q('#navGlider'), ring = q('#navInd'), pill = q('#nav2Ind');
+  if (!sel || !sub || !gl || !ring || !pill) return { err: 'missing' };
+  const rc = ring.firstElementChild, gc = gl.firstElementChild;
+  const br = box(sel), gr = box(gl), rr = box(ring), pr = box(pill), sr = box(sub);
+  const row = q('#navrow'), top = q('.topbar'), wrap = q('#navDockWrap'), dock = q('#navDock');
+  const root = getComputedStyle(document.documentElement);
+  const rs = row && getComputedStyle(row);
+  const rr2 = row && row.getBoundingClientRect();
+  const dr = dock && dock.getBoundingClientRect();
+  const tr = top && top.getBoundingClientRect();
+  return {
+    layers: !!q('#navPress') && !!q('#navBurst') && !!q('.nav2-tint'),
+    burstParent: q('#navBurst') ? (q('#navBurst').parentElement?.id || '') : '',
+    ringBorder: getComputedStyle(rc).borderTopWidth,
+    gliderBg: getComputedStyle(gc).backgroundColor,
+    pillBg: getComputedStyle(pill).backgroundImage,
+    pillH: getComputedStyle(pill).height,
+    tintBg: getComputedStyle(q('#nav2Tint')).backgroundImage,
+    subFg: getComputedStyle(q('#nav2 .sub:not([aria-selected="true"])')).color,
+    gliderFit: Math.abs(br.x - gr.x) < 1 && Math.abs(br.w - gr.w) < 1 && Math.abs(br.top - gr.top) < 1,
+    ringFit: Math.abs(br.x - rr.x) < 1 && Math.abs(br.w - rr.w) < 1 && Math.abs(br.top - rr.top) < 1,
+    pillFit: Math.abs(sr.x - pr.x) < 1 && Math.abs(sr.w - pr.w) < 1 && Math.abs(sr.top - pr.top) < 1,
+    gap: parseFloat(root.getPropertyValue('--nav-top-gap')) || 0,
+    pad: rs ? parseFloat(rs.paddingTop) || 0 : 0,
+    h1: parseFloat(root.getPropertyValue('--h-nav1')) || 0,
+    h2: parseFloat(root.getPropertyValue('--h-nav2')) || 0,
+    rowH: rr2 ? rr2.height : 0,
+    gapPx: dr && tr ? dr.top - tr.bottom : -1,
+    floatFilter: wrap ? getComputedStyle(wrap).filter : 'none',
+  };
+`);
+check('导航最终版：滑片/1px 细框/按压环/粒子/二级渐变静态层齐全',
+  !!navStatic && !navStatic.err && navStatic.layers && navStatic.ringBorder === '1px'
+    && navStatic.burstParent === 'navrow'
+    && !/rgba\(0, 0, 0, 0\)|transparent/.test(navStatic.gliderBg),
+  navStatic ? JSON.stringify(navStatic) : '取不到');
+check('导航最终版：一级滑片+细框贴合选中项，二级 28px 粉蓝渐变胶囊+冷蓝托盘贴合页签',
+  !!navStatic && !navStatic.err && navStatic.gliderFit && navStatic.ringFit && navStatic.pillFit
+    && navStatic.pillH === '28px'
+    && /90deg/.test(navStatic.pillBg)
+    && /rgba?\(214,\s*232,\s*255\)/.test(navStatic.pillBg)
+    && /rgba?\(255,\s*219,\s*233\)/.test(navStatic.pillBg)
+    && /rgba?\(244,\s*249,\s*255(?:,\s*0?\.72)?\)/.test(navStatic.tintBg)
+    && /rgba?\(230,\s*240,\s*251(?:,\s*0?\.86)?\)/.test(navStatic.tintBg)
+    && /rgba?\(49,\s*68,\s*108(?:,\s*0?\.86)?\)/.test(navStatic.subFg),
+  navStatic ? `pill ${navStatic.pillH} · ${navStatic.pillBg} · tint ${navStatic.tintBg} · sub ${navStatic.subFg}` : '取不到');
+/* 深色侧是另一套字面量：只验浅色会让「深色粉端变灰 / 托盘变纯黑」完全静默。
+   ⚠️ 读色值走 computed，不读源码；切主题后等 360ms 让 .sub 的颜色过渡落定。 */
+await evalJs(`document.documentElement.dataset.theme = 'dark'; return 1;`);
+await sleep(360);
+const navColorDark = await evalJs(`
+  const q = (s) => document.querySelector(s);
+  const pill = q('#nav2Ind'), tint = q('#nav2Tint');
+  const sub = q('#nav2 .sub:not([aria-selected="true"])');
+  return {
+    pillBg: pill ? getComputedStyle(pill).backgroundImage : '',
+    tintBg: tint ? getComputedStyle(tint).backgroundImage : '',
+    subFg: sub ? getComputedStyle(sub).color : '',
+  };
+`);
+check('导航最终版（深色）：粉蓝胶囊/冷蓝托盘/蓝调二级墨色都是定稿值（不是中性灰）',
+  !!navColorDark
+    && /90deg/.test(navColorDark.pillBg)
+    && /rgba?\(78,\s*128,\s*205(?:,\s*0?\.4)?\)/.test(navColorDark.pillBg)
+    && /rgba?\(196,\s*108,\s*158(?:,\s*0?\.36)?\)/.test(navColorDark.pillBg)
+    && /rgba?\(34,\s*50,\s*80(?:,\s*0?\.7)?\)/.test(navColorDark.tintBg)
+    && /rgba?\(22,\s*35,\s*60(?:,\s*0?\.82)?\)/.test(navColorDark.tintBg)
+    && /rgba?\(198,\s*214,\s*238(?:,\s*0?\.68)?\)/.test(navColorDark.subFg),
+  navColorDark ? JSON.stringify(navColorDark) : '取不到');
+await evalJs(`document.documentElement.dataset.theme = 'light'; return 1;`);
+await sleep(360);
+check('导航最终版：顶部跑道 ≥32px（三球完整）且浮层阴影有效',
+  !!navStatic && !navStatic.err && navStatic.gap >= 32
+    && Math.abs(navStatic.pad - navStatic.gap) < 0.6
+    && Math.abs(navStatic.rowH - (navStatic.gap + navStatic.h1 + navStatic.h2)) < 1.2
+    && navStatic.gapPx >= navStatic.gap - 1
+    && /drop-shadow/.test(navStatic.floatFilter),
+  navStatic ? `gap=${navStatic.gap} pad=${navStatic.pad} rowH=${navStatic.rowH} 实测=${navStatic.gapPx.toFixed(2)} filter=${navStatic.floatFilter}` : '取不到');
+
+const navSelP = await navTestPoint('#navInner .grp[aria-selected="true"]');
+await navTestMouse('mouseMoved', navSelP);
+await sleep(420);
+const navHover = await evalJs(`
+  const sel = document.querySelector('#navInner .grp[aria-selected="true"]');
+  const gl = document.getElementById('navGlider'), ring = document.getElementById('navInd');
+  const br = sel.getBoundingClientRect(), gr = gl.getBoundingClientRect(), rr = ring.getBoundingClientRect();
+  return {
+    t: getComputedStyle(sel).transform,
+    glT: getComputedStyle(gl).translate,
+    ringT: getComputedStyle(ring).translate,
+    fit: Math.abs(br.top - gr.top) < 1 && Math.abs(br.top - rr.top) < 1,
+  };
+`);
+check('导航最终版：hover 选中项时按钮/细框/滑片同步抬 1px',
+  !!navHover && navHover.t === 'matrix(1, 0, 0, 1, 0, -1)' && navHover.glT === '0px -1px'
+    && navHover.ringT === '0px -1px' && navHover.fit,
+  JSON.stringify(navHover));
+
+await navTestMouse('mousePressed', navSelP, { button: 'left', buttons: 1, clickCount: 1 });
+/* 按压态是持续的（鼠标一直按住），等过渡完全落位再量；320ms 在负载下会读到 2.99/3 的假红。
+   判据仍是精确 +3px，不是放宽。 */
+await sleep(560);
+const navPressed = await evalJs(`
+  const inner = document.getElementById('navInner');
+  const press = document.getElementById('navPress');
+  const sel = document.querySelector('#navInner .grp[aria-selected="true"]');
+  const gl = document.getElementById('navGlider'), ring = document.getElementById('navInd');
+  const br = sel.getBoundingClientRect(), pr = press.getBoundingClientRect(), gr = gl.getBoundingClientRect();
+  return {
+    inner: inner.classList.contains('pressing'),
+    on: press.classList.contains('on'),
+    pressing: press.classList.contains('pressing'),
+    x: Math.abs(br.x - pr.x) < 1 && Math.abs(br.width - pr.width) < 1,
+    top: Math.abs(br.top - pr.top) < 1 && Math.abs(br.top - gr.top) < 1,
+    btnT: getComputedStyle(sel).transform,
+    glT: getComputedStyle(gl).translate,
+    pressT: getComputedStyle(press).translate,
+    ringOp: getComputedStyle(ring).opacity,
+  };
+`);
+check('导航最终版：按压选中项时 press 环贴边下沉，滑片跟沉，选中环让位',
+  !!navPressed && navPressed.inner && navPressed.on && navPressed.pressing && navPressed.x && navPressed.top
+    && navPressed.btnT === 'matrix(1, 0, 0, 1, 0, 3)' && navPressed.glT === '0px 3px'
+    && navPressed.pressT === '0px 3px' && navPressed.ringOp === '0',
+  JSON.stringify(navPressed));
+
+await navTestMouse('mouseReleased', navSelP, { button: 'left', buttons: 0, clickCount: 1 });
+await sleep(650);
+const navReleased = await evalJs(`
+  const inner = document.getElementById('navInner');
+  const press = document.getElementById('navPress');
+  const sel = document.querySelector('#navInner .grp[aria-selected="true"]');
+  const gl = document.getElementById('navGlider'), ring = document.getElementById('navInd');
+  return {
+    inner: inner.classList.contains('pressing'),
+    on: press.classList.contains('on'),
+    ringOp: getComputedStyle(ring).opacity,
+    btnT: getComputedStyle(sel).transform,
+    glT: getComputedStyle(gl).translate,
+    ringT: getComputedStyle(ring).translate,
+  };
+`);
+check('导航最终版：松开后 press 环退场，hover 抬升恢复',
+  !!navReleased && !navReleased.inner && !navReleased.on && navReleased.ringOp === '1'
+    && navReleased.btnT === 'matrix(1, 0, 0, 1, 0, -1)' && navReleased.glT === '0px -1px'
+    && navReleased.ringT === '0px -1px',
+  JSON.stringify(navReleased));
+
+await navTestMouse('mouseMoved', { x: 5, y: 5 });
+await sleep(300);
+const navPopGroup = await evalJs(`
+  const b = document.querySelectorAll('#nav1 .grp')[1];
+  if (!b) return null;
+  const t = b.textContent.trim();
+  b.click();
+  await new Promise((r) => setTimeout(r, 430));
+  return t;
+`);
+const navPopState = await evalJs(`
+  const sel = document.querySelector('#navInner .grp[aria-selected="true"]');
+  const rc = document.querySelector('#navInd .nav-ind-core');
+  const gc = document.querySelector('#navGlider .nav-glider-core');
+  const first = document.querySelector('#navBurst i');
+  const count = (el) => el ? el.getAnimations().filter((a) => a.id === 'navPop').length : -1;
+  return {
+    burst: document.querySelectorAll('#navBurst i').length,
+    go: document.querySelectorAll('#navBurst i.go').length,
+    anim: first ? getComputedStyle(first).animationName : 'none',
+    pop: [count(sel), count(rc), count(gc)],
+  };
+`);
+check('导航最终版：一级换域后整项回弹 + 三颗小球',
+  !!navPopGroup && navPopState.burst === 3 && navPopState.go === 3 && navPopState.anim === 'navBurst'
+    && navPopState.pop.every((n) => n === 1),
+  JSON.stringify(navPopState));
+
+let navBurstFit = null;
+for (let i = 0; i < 28; i += 1) {
+  navBurstFit = await evalJs(`
+    const top = document.querySelector('.topbar');
+    const dots = [...document.querySelectorAll('#navBurst i')];
+    if (!top || !dots.length) return null;
+    const tb = top.getBoundingClientRect().bottom;
+    const anim = dots[0] && dots[0].getAnimations()[0];
+    return {
+      count: dots.length,
+      parent: document.getElementById('navBurst')?.parentElement?.id || '',
+      progress: anim && Number.isFinite(anim.currentTime) ? anim.currentTime : 0,
+      topbarBottom: tb,
+      minTop: Math.min(...dots.map((d) => d.getBoundingClientRect().top)),
+      maxW: Math.max(...dots.map((d) => d.getBoundingClientRect().width)),
+      minOpacity: Math.min(...dots.map((d) => Number(getComputedStyle(d).opacity))),
+    };
+  `);
+  if (navBurstFit && navBurstFit.count === 3 && navBurstFit.progress >= 380) break;
+  await sleep(60);
+}
+check('导航最终版：三颗小球在跑道里可见（HUD 下方 · 非亚像素 · 不淡出）',
+  !!navBurstFit && navBurstFit.count === 3 && navBurstFit.parent === 'navrow'
+    && navBurstFit.minTop >= navBurstFit.topbarBottom + 2
+    && navBurstFit.maxW >= 2.5 && navBurstFit.minOpacity >= 0.15,
+  navBurstFit ? `进度=${Math.round(navBurstFit.progress)}ms · 顶部 ${navBurstFit.minTop.toFixed(2)} vs HUD 底 ${navBurstFit.topbarBottom.toFixed(2)} · 宽 ${navBurstFit.maxW.toFixed(2)} · 透明度 ${navBurstFit.minOpacity.toFixed(2)} · parent=${navBurstFit.parent}` : '取不到');
+
+await sleep(1200);
+const navSameGroup = await evalJs(`
+  const s = document.querySelectorAll('#nav2 .sub')[1];
+  if (!s) return { err: 'no sub' };
+  s.click();
+  await new Promise((r) => setTimeout(r, 60));
+  const ind = document.getElementById('nav2Ind');
+  const after = getComputedStyle(ind, '::after');
+  return {
+    sweep: ind.classList.contains('sweep'),
+    anim: after.animationName,
+    burst: document.querySelectorAll('#navBurst i').length,
+    pop: document.querySelector('#navInner .grp[aria-selected="true"]').getAnimations().filter((a) => a.id === 'navPop').length,
+  };
+`);
+check('导航最终版：同域切二级只扫光，不触发一级回弹/小球',
+  !!navSameGroup && !navSameGroup.err && navSameGroup.sweep && navSameGroup.anim === 'nav2Sweep'
+    && navSameGroup.burst === 0 && navSameGroup.pop === 0,
+  JSON.stringify(navSameGroup));
+
+await sleep(600);
+const navSubP = await navTestPoint('#nav2 .sub[aria-selected="true"]');
+await navTestMouse('mouseMoved', navSubP);
+await sleep(420);
+const navL2Hover = await evalJs(`
+  const sub = document.querySelector('#nav2 .sub[aria-selected="true"]');
+  const pill = document.getElementById('nav2Ind');
+  const sr = sub.getBoundingClientRect(), pr = pill.getBoundingClientRect();
+  return {
+    t: getComputedStyle(sub).transform,
+    pillT: getComputedStyle(pill).translate,
+    fit: Math.abs(sr.top - pr.top) < 1 && Math.abs(sr.x - pr.x) < 1 && Math.abs(sr.width - pr.width) < 1,
+  };
+`);
+check('导航最终版：hover 选中二级项时文字与渐变胶囊一起抬 1px',
+  !!navL2Hover && navL2Hover.t === 'matrix(1, 0, 0, 1, 0, -1)' && navL2Hover.pillT === '0px -1px'
+    && navL2Hover.fit,
+  JSON.stringify(navL2Hover));
+
+await navTestMouse('mousePressed', navSubP, { button: 'left', buttons: 1, clickCount: 1 });
+await sleep(560);
+const navL2Press = await evalJs(`
+  const sub = document.querySelector('#nav2 .sub[aria-selected="true"]');
+  const pill = document.getElementById('nav2Ind');
+  const sr = sub.getBoundingClientRect(), pr = pill.getBoundingClientRect();
+  return {
+    t: getComputedStyle(sub).transform,
+    pillT: getComputedStyle(pill).translate,
+    fit: Math.abs(sr.top - pr.top) < 1 && Math.abs(sr.x - pr.x) < 1 && Math.abs(sr.width - pr.width) < 1,
+  };
+`);
+check('导航最终版：按压选中二级项时渐变胶囊跟文字一起沉 2px',
+  !!navL2Press && navL2Press.t === 'matrix(1, 0, 0, 1, 0, 2)' && navL2Press.pillT === '0px 2px'
+    && navL2Press.fit,
+  JSON.stringify(navL2Press));
+await navTestMouse('mouseReleased', navSubP, { button: 'left', buttons: 0, clickCount: 1 });
+await sleep(600);
+
+const navAuto1 = await evalJs(`
+  const inner = document.getElementById('navInner');
+  const src = document.querySelector('#navInner .grp');
+  if (!inner || !src) return null;
+  const c = src.cloneNode(true);
+  c.id = 'navAutoGrp';
+  c.setAttribute('aria-selected', 'false');
+  c.dataset.g = '0';
+  inner.insertBefore(c, inner.firstChild);
+  const r = c.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2, left: r.left, top: r.top, w: r.width };
+`);
+await navTestMouse('mouseMoved', navAuto1);
+await sleep(420);
+const navAuto1Hover = await evalJs(`return getComputedStyle(document.getElementById('navAutoGrp')).transform;`);
+check('导航最终版：新增一级项自动继承 hover 抬升',
+  navAuto1Hover === 'matrix(1, 0, 0, 1, 0, -1)', navAuto1Hover);
+await navTestMouse('mousePressed', navAuto1, { button: 'left', buttons: 1, clickCount: 1 });
+await sleep(560);
+const navAuto1Press = await evalJs(`
+  const c = document.getElementById('navAutoGrp');
+  const p = document.getElementById('navPress');
+  if (!c || !p) return { err: 'missing' };
+  const br = c.getBoundingClientRect(), pr = p.getBoundingClientRect();
+  return {
+    on: p.classList.contains('on'),
+    fit: Math.abs(br.x - pr.x) < 1 && Math.abs(br.width - pr.width) < 1 && Math.abs(br.top - pr.top) < 1,
+    t: getComputedStyle(c).transform,
+  };
+`);
+check('导航最终版：新增一级项自动继承按压环与下沉',
+  !!navAuto1Press && !navAuto1Press.err && navAuto1Press.on && navAuto1Press.fit
+    && navAuto1Press.t === 'matrix(1, 0, 0, 1, 0, 3)',
+  JSON.stringify(navAuto1Press));
+await navTestMouse('mouseReleased', navAuto1, { button: 'left', buttons: 0, clickCount: 1 });
+await sleep(600);
+await evalJs(`document.getElementById('navAutoGrp')?.remove(); return 1;`);
+
+const navAuto2 = await evalJs(`
+  const nav = document.getElementById('nav2');
+  const src = nav && nav.querySelector('.sub');
+  if (!nav || !src) return null;
+  const c = src.cloneNode(true);
+  c.id = 'navAutoSub';
+  c.setAttribute('aria-selected', 'false');
+  c.dataset.s = '0';
+  nav.insertBefore(c, nav.firstChild);
+  const r = c.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+`);
+await navTestMouse('mouseMoved', navAuto2);
+await sleep(420);
+const navAuto2Hover = await evalJs(`return getComputedStyle(document.getElementById('navAutoSub')).transform;`);
+check('导航最终版：新增二级项自动继承 hover 抬升',
+  navAuto2Hover === 'matrix(1, 0, 0, 1, 0, -1)', navAuto2Hover);
+await evalJs(`document.getElementById('navAutoSub')?.remove(); return 1;`);
+
+await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+await sleep(250);
+const navRmP = await navTestPoint('#navInner .grp[aria-selected="true"]');
+await navTestMouse('mouseMoved', navRmP);
+await sleep(320);
+const navRmHover = await evalJs(`
+  const sel = document.querySelector('#navInner .grp[aria-selected="true"]');
+  const gl = document.getElementById('navGlider'), ring = document.getElementById('navInd');
+  return { t: getComputedStyle(sel).transform, glT: getComputedStyle(gl).translate, ringT: getComputedStyle(ring).translate };
+`);
+await navTestMouse('mousePressed', navRmP, { button: 'left', buttons: 1, clickCount: 1 });
+await sleep(320);
+const navRmPress = await evalJs(`
+  const sel = document.querySelector('#navInner .grp[aria-selected="true"]');
+  const gl = document.getElementById('navGlider'), ring = document.getElementById('navInd'), press = document.getElementById('navPress');
+  return {
+    btnT: getComputedStyle(sel).transform,
+    glT: getComputedStyle(gl).translate,
+    pressT: getComputedStyle(press).translate,
+    ringOp: getComputedStyle(ring).opacity,
+  };
+`);
+check('导航最终版：减弱动效下 hover/按压都不位移',
+  !!navRmHover && navRmHover.t === 'none' && navRmHover.glT === '0px' && navRmHover.ringT === '0px'
+    && navRmPress.btnT === 'none' && navRmPress.glT === '0px' && navRmPress.pressT === '0px',
+  JSON.stringify({ hover: navRmHover, press: navRmPress }));
+await navTestMouse('mouseReleased', navRmP, { button: 'left', buttons: 0, clickCount: 1 });
+await sleep(300);
+const navRmPop = await evalJs(`
+  const b = document.querySelectorAll('#nav1 .grp')[2] || document.querySelectorAll('#nav1 .grp')[1];
+  if (!b) return { err: 'no group' };
+  b.click();
+  await new Promise((r) => setTimeout(r, 430));
+  return { burst: document.querySelectorAll('#navBurst i').length, display: getComputedStyle(document.getElementById('navBurst')).display };
+`);
+check('导航最终版：减弱动效下换域不弹、不撒小球',
+  !!navRmPop && !navRmPop.err && navRmPop.burst === 0 && navRmPop.display === 'none',
+  JSON.stringify(navRmPop));
+await send('Emulation.setEmulatedMedia', { features: [] });
+await sleep(200);
+await evalJs(`
+  document.querySelectorAll('#nav1 .grp')[0].click();
+  await new Promise((r) => setTimeout(r, 500));
+  return 1;
+`);
 
 /* 文案里的 `**粗体**` 必须被渲染成 <b>；漏了会在页面上留下字面量星号。 */
 const starText = await evalJs(`return (document.body.innerText.match(/\\*\\*[^*\\n]{1,40}\\*\\*/g) || []).slice(0,3)`);
@@ -488,6 +1156,23 @@ const backplate = await evalJs(`
     frames: sb ? sb.frames : -1,
     swatches: document.querySelectorAll('#bgPickList [role="radio"]').length,
     checked: document.querySelectorAll('#bgPickList [aria-checked="true"]').length,
+    contourOn: document.documentElement.classList.contains('bg-contour'),
+    contourMode: window.ContourBG ? window.ContourBG.mode : '',
+    shaderActive: sb ? sb.active : null,
+    contour: (() => {
+      const c = document.getElementById('contourBg');
+      const v = document.getElementById('contourVideo');
+      if (!c || !v) return null;
+      const cs = getComputedStyle(c);
+      const po = document.getElementById('contourPoster');
+      return {
+        z: cs.zIndex, pos: cs.position, pe: cs.pointerEvents,
+        poster: !!(po && po.style.backgroundImage),
+        muted: v.muted, inline: v.playsInline, loop: v.loop,
+        preload: v.getAttribute('preload'),
+        controls: v.hasAttribute('controls'), autoplay: v.hasAttribute('autoplay'),
+      };
+    })(),
   };
 `);
 check('背景 canvas 真的挂进 DOM 且是 fixed + z=-2 + 不吃点击（层序与旧流体层同规）',
@@ -514,6 +1199,24 @@ check('设置层背景选择器已挂载：swatch 数 == 预设数，且恰有�
   backplate && !backplate.missing
     ? 'swatches=' + backplate.swatches + ' · checked=' + backplate.checked
     : '取不到');
+check('等高线默认档：层 fixed/z=-2/不吃点击，视频 muted·playsinline·loop·无 controls/autoplay',
+  !!backplate && !backplate.missing && !!backplate.contour
+    && backplate.contourOn === true
+    && Number(backplate.contour.z) === -2 && backplate.contour.pos === 'fixed' && backplate.contour.pe === 'none'
+    && backplate.contour.poster === true
+    && backplate.contour.muted && backplate.contour.inline && backplate.contour.loop
+    && ['none', 'auto'].includes(backplate.contour.preload)
+    && !backplate.contour.controls && !backplate.contour.autoplay,
+  backplate && backplate.contour
+    ? `z=${backplate.contour.z} · pos=${backplate.contour.pos} · pe=${backplate.contour.pe} · poster=${backplate.contour.poster} · preload=${backplate.contour.preload}`
+    : '取不到 #contourBg/#contourVideo');
+check('等高线与旧流光互斥：默认等高线、旧引擎暂停',
+  !!backplate && backplate.contourMode === 'contour' && backplate.shaderActive === false,
+  backplate ? `mode=${backplate.contourMode} · shaderActive=${backplate.shaderActive}` : '取不到');
+
+/* 后面的 shader 断言需要旧引擎真的在跑：先切到流光，结束时再切回等高线。 */
+await evalJs(`if (window.ContourBG) window.ContourBG.setMode('shader'); return true;`);
+await sleep(350);
 
 /* 逐帧证据：背景**真的在动** —— 900ms 内帧计数必须前进。
  * ⚠️ 用引擎暴露的 frames 计数，而不是读像素：WebGL canvas 默认不带
@@ -590,7 +1293,7 @@ check('还原浅底档后 html.bg-dark 摘掉（这条副作用不许过夜）',
  *
  * 防抖生效时：24 次连发只落地 1 次尾帧 ⇒ 增量 1–6。
  * 不防抖时：24 次各画一次 ⇒ 增量 ≈24，差一个数量级，噪声压不住。 */
-const rzMedia = await send('Emulation.setEmulatedMedia', {
+await send('Emulation.setEmulatedMedia', {
   features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
 }).catch(() => null);
 await sleep(500);                       // 等 matchMedia 变化事件把主循环停掉
@@ -994,11 +1697,19 @@ const leak = await evalJs(`
     subs[0].click(); await new Promise(r=>setTimeout(r,90));
     subs[1].click(); await new Promise(r=>setTimeout(r,90));
   }
-  return { after: window.Motion.activeCount(), count: window.Sortable.count() };
+  /* 2026-10-26：二级切换不再重建 nav2，subs 节点保持附着 —— 循环最后一次点击的
+     弹簧仍在途是**正在动**而不是泄漏。先等它自然收敛再量（判据不变）。
+     ⚠️ 固定 700ms 不够：Motion 每帧最多推进 40ms，慢机/并行会话下墙钟走完而模拟时间没走完
+     （2026-10-28 实测活跃动画=1 的假红）。改成条件等待，上限 3s。 */
+  const t0 = performance.now();
+  while (window.Motion.activeCount() > 0 && performance.now() - t0 < 3000) {
+    await new Promise(r=>setTimeout(r,50));
+  }
+  return { after: window.Motion.activeCount(), count: window.Sortable.count(), waited: Math.round(performance.now() - t0) };
 `);
 check('反复切页重挂后无 rAF 泄漏（Motion 活跃动画归零、排序实例不累积）',
   !!leak && leak.after === 0 && leak.count <= 1,
-  `活跃动画=${leak?.after} · 排序实例=${leak?.count}`);
+  `活跃动画=${leak?.after} · 排序实例=${leak?.count} · 收敛用时=${leak?.waited}ms`);
 
 /* ── ③'' 卡片的 3D 倾斜 + 跟随高光（2026-10-04 · `tilt.js`）──────────────
  * 这四条打的都是**「坏了完全看不出来」**：
@@ -1222,17 +1933,14 @@ const maybeShot = (name, g, s, full = false) =>
   (WITH_SHOT ? shot(name, g, s, full) : Promise.resolve(`（未截图 · 加 --shot 打开）`));
 
 const shot1 = await maybeShot('01-run-overview', 0, 0);
-const shotEmotion = await maybeShot('04-emotion', 2, 0);   // 情绪卡已并入人格/人格设定
-// 2026-10-21：speak 组在 scheduled 与 proactive 之间插入了 peak/patrol/waiting，
-// 睡眠页从第 3 个子页移到第 6 个。
-// 2026-10-22 B2：speak 为第 2 个域（0-based 1）；峰谷/巡逻/作息已并入触发/主动，
-// 作息卡现在在「主动与免打扰」（0-based 3）。
-const shotSleep = await maybeShot('05-sleep', 1, 3);
+await maybeShot('04-persona-overview', 3, 0);   // 人设域六页：总览
+// 2026-10-28：假 QQ 移到 speak 首位、等待拆成两页 ⇒ 主动与免打扰现在是第 6 个子页。
+await maybeShot('05-sleep', 1, 5);
 
 /* ── ④ 真实交互：草稿机制 ─────────────────────────────────────────────── */
-await evalJs(`document.querySelectorAll('#nav1 .grp')[2].click(); return 1;`); // 人格
+await evalJs(`document.querySelectorAll('#nav1 .grp')[3].click(); return 1;`); // 人格
 await sleep(150);
-await evalJs(`document.querySelectorAll('#nav2 .sub')[0].click(); return 1;`);
+await evalJs(`document.querySelectorAll('#nav2 .sub')[1].click(); return 1;`);
 await sleep(200);
 const draft = await evalJs(`
   const inp = document.querySelector('[data-id="p.name"]');
@@ -1302,7 +2010,7 @@ check('VT 揭开动画真的接线（data-vt 挂上且动画后摘掉）',
    它不是"接口能通"，而是"这次写请求真的被服务端受理了"。 */
 await evalJs(`document.querySelectorAll('#nav1 .grp')[0].click(); return 1;`);
 await sleep(150);
-await evalJs(`const s=[...document.querySelectorAll('#nav2 .sub')].find((x)=>/日志与审计/.test(x.title||'')); if(s) s.click(); return 1;`);
+await evalJs(`const s=[...document.querySelectorAll('#nav2 .sub')].find((x)=>/会话与日志/.test(x.title||'')); if(s) s.click(); return 1;`);
 await sleep(400);
 const write = await evalJs(`
   const n = window.__next;
@@ -1341,35 +2049,52 @@ async function goto(group, sub) {
   await sleep(320);
 }
 const newPages = {};
-// 情绪状态（人格 · 第 1 页）：应当有 mood 的真数字，而不是骨架说明
-await goto(2, 0);
+// 人设总览（人格 · 第 1 页）：四层卡都在；心情卡没有插件时也要给诚实的空态
+await goto(3, 0);
 newPages.emotion = await evalJs(`return {
   title: (document.querySelector('#page h1')||{}).textContent || '',
-  nums: [...document.querySelectorAll('#page .metric .n')].map(e=>e.textContent.trim()).filter(Boolean),
+  cards: [...document.querySelectorAll('#page .psn .layer-card')].map(c => (c.textContent||'').replace(/\\s+/g,' ').trim()).filter(Boolean),
   skeleton: /读不到|还没下发/.test(document.getElementById('page').textContent),
 }`);
+// 分段渲染（2026-10-28）：换域进人设时图表体等 dock 停稳才落 —— 这里只验它**真的落位**
+// （空槽永远空着是无声失效：不报错、只是图没了），3 秒封顶，量的是结果不是墙钟。
+// ⚠️ verify 的 evalJs 外层已经包了 async IIFE，**不 return Promise**（再套一层 async 会得到
+// undefined）；所以这里直接写 await 循环，不要写成 `(async () => {})()`。
+newPages.emotionChart = await evalJs(`
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (let i = 0; i < 60; i++) {
+    const radar = document.querySelector('.psn [data-psn-slot="radar"] .radar-shape');
+    const empty = document.querySelector('.psn .chart-empty');
+    if (radar || empty) return { ok: true, kind: radar ? 'radar' : 'empty' };
+    await sleep(50);
+  }
+  return { ok: false, slots: document.querySelectorAll('.psn [data-psn-slot]').length };
+`);
+check('分段渲染的总览图在 3 秒内真的落位（不是永远空槽）',
+  newPages.emotionChart?.ok === true, JSON.stringify(newPages.emotionChart));
 // 群友档案（记忆与知识 · 第 3 页）：目录为空时应当给"还没被用到过"的人话，而不是报错
-await goto(4, 2);
+await goto(2, 2);
 newPages.people = await evalJs(`return {
   title: (document.querySelector('#page h1')||{}).textContent || '',
   text: (document.getElementById('page').textContent||'').slice(0,200),
 }`);
 // 用量与花费（模型 · 第 3 页）：额度情报并到这一页，应当有条目
-await goto(3, 2);
+await goto(4, 2);
 newPages.deals = await evalJs(`return {
   title: (document.querySelector('#page h1')||{}).textContent || '',
   rows: document.querySelectorAll('#page .row').length,
   tag: (document.querySelector('#page .tag.accent')||{}).textContent || '',
 }`);
 // 定时消息 → 节假日表：那一格**必须可编辑**了（此前是 disabled）
-await goto(1, 1);
+await goto(1, 2);
 newPages.holidays = await evalJs(`
   const btn = [...document.querySelectorAll('#page button')].find(b=>b.textContent.trim()==='添加');
   const dateInp = document.getElementById('holiDate');
   return { hasBtn: !!btn, btnDisabled: btn ? btn.disabled : null, hasDate: !!dateInp, dateDisabled: dateInp ? dateInp.disabled : null };
 `);
-check('情绪页显示真数字（不再是骨架）', newPages.emotion?.nums?.length > 0 && !newPages.emotion?.skeleton,
-  `${newPages.emotion?.title} 数字=${(newPages.emotion?.nums || []).join('/')}`);
+check('人设总览四层卡都在（心情未接入时给诚实空态，而不是骨架报错）',
+  newPages.emotion?.cards?.length === 4 && !newPages.emotion?.skeleton,
+  `${newPages.emotion?.title} 卡=${(newPages.emotion?.cards || []).length} :: ${(newPages.emotion?.cards || []).join(' | ').slice(0, 160)}`);
 check('群友档案页有说明或列表（不报错）', /群友档案/.test(newPages.people?.title || '') && (newPages.people?.text || '').length > 10,
   (newPages.people?.text || '').replace(/\s+/g, ' ').slice(0, 60));
 check('免费额度情报页渲染出条目', (newPages.deals?.rows || 0) > 0, `${newPages.deals?.title} · ${newPages.deals?.tag} · ${newPages.deals?.rows} 行`);
@@ -1397,7 +2122,7 @@ const LIST_CAP_EXPECTED = 15;   // 与 `app.js` 的 `LIST_CAP` 同源 —— 改
 // 2026-10-21：注入夹具与断言之间**不许**被 3 秒轮询插进来（它会用服务端数据覆盖
 // S.state.apiDeals，症状就是"展开到 40 条后突然变回 2 条"）。暂停到 keepA 结束。
 await evalJs('window.__nextPauseRefresh?.(true); return 1;');
-await goto(3, 2);
+await goto(4, 2);
 const cap = await evalJs(`
   const S = window.__next, repaint = window.__nextRepaint;
   if (!S || !repaint) return { err: '拿不到页面状态或重绘钩子' };
@@ -1477,31 +2202,38 @@ check('容器滚动位置真的守得住（不是"滚一半被拉回去"）',
   keepA?.err || `可滚余量 ${keepA?.scrollable}px · 滚到 ${keepA?.scrolled} → 重绘后 ${keepA?.scAfter}`);
 await evalJs('window.__nextPauseRefresh?.(false); return 1;');
 
-await goto(2, 1);   // 人格 → 底层规则（用户截图那张卡）
+await goto(3, 3);   // 人格 → 增强项
 const keepD = await evalJs(`
   const repaint = window.__nextRepaint;
   if (!repaint) return { err: '没有重绘钩子' };
-  const d = document.querySelector('#page details');
-  if (!d) return { err: '这一页没有 details' };
   const title = (document.querySelector('#page h1') || {}).textContent || '';
-  d.querySelector('summary').click();
-  await new Promise((r) => setTimeout(r, 80));
-  const afterClick = document.querySelector('#page details').open;
+  const count = () => ({
+    fields: document.querySelectorAll('#page .psn .enh-field').length,
+    rules: document.querySelectorAll('#page .psn .rules-grid .rule-row').length,
+    groups: document.querySelectorAll('#page .psn .enh-group').length,
+  });
+  const before = count();
+  const box = document.querySelector('#page .psn .enh-fields');
+  const cs = box ? getComputedStyle(box) : null;
+  /* ⚠️ 必须在 repaint **之前**把值读成快照：getComputedStyle 返回的是**活对象**，
+     元素被 innerHTML 换掉后它的 display / gridTemplateColumns 会变成空字符串 ——
+     在 return 里再读，测到的就是"页面没样式"的假红（本轮实测踩到）。 */
+  const grid = cs ? cs.display : null;
+  const cols = cs ? cs.gridTemplateColumns.split(' ').length : 0;
   repaint();
   await new Promise((r) => setTimeout(r, 140));
-  const afterRepaint = document.querySelector('#page details').open;
-  const box = document.querySelector('#page details > .rows');
-  const cs = box ? getComputedStyle(box) : null;
-  return { title, afterClick, afterRepaint, hasBox: !!box, maxH: cs ? cs.maxHeight : null, ovf: cs ? cs.overflowY : null };
+  const after = count();
+  return { title, before, after, grid, cols };
 `);
-check('展开的折叠块跨重绘不被收回（用户截图点名的那一个）',
-  /扮演规则/.test(keepD?.title || '') && keepD?.afterClick === true && keepD?.afterRepaint === true,
-  keepD?.err || `${keepD?.title} · 点开 open=${keepD?.afterClick} → 重绘后 open=${keepD?.afterRepaint}`);
-/* ⚠️「声明了样式」≠「样式落到了元素上」（本项目反复踩过）。这条读的是**计算样式** ——
-   选择器一旦因为结构变化而落空，它是红的，而不是安安静静地不限高。 */
-check('折叠块的内容容器真的被限高（选择器没落空）',
-  keepD?.hasBox === true && keepD?.maxH !== 'none' && parseFloat(keepD?.maxH || '0') > 100 && keepD?.ovf === 'auto',
-  keepD?.err || `内容容器 max-height=${keepD?.maxH} · overflow-y=${keepD?.ovf}`);
+check('增强项 12 个字段 / 4 组 / 扮演规则都在，且跨重绘不丢',
+  /增强项/.test(keepD?.title || '') && keepD?.before?.fields === 12 && keepD?.after?.fields === 12
+  && keepD?.before?.groups === 4 && keepD?.after?.rules >= 10,
+  keepD?.err || `${keepD?.title} · 字段 ${keepD?.before?.fields}→${keepD?.after?.fields} · 组 ${keepD?.before?.groups} · 规则 ${keepD?.after?.rules}`);
+/* ⚠️「声明了样式」≠「样式落到了元素上」。这条读**计算样式**：
+   选择器一旦因为结构变化而落空，它是红的，而不是安安静静地堆成一列。 */
+check('增强项字段容器真的按网格排布（选择器没落空）',
+  keepD?.grid === 'grid' && keepD?.cols >= 2,
+  keepD?.err || `display=${keepD?.grid} · 列数=${keepD?.cols}`);
 
 /* ── ⑧' 模型优先级线路的拖拽排序（2026-10-03 · sortable.js）──────────────
  * 这一组专治「坏了不会报错」的四类：
@@ -1522,9 +2254,12 @@ check('折叠块的内容容器真的被限高（选择器没落空）',
  *   ③ **材质与全站卡片同源** —— 玻璃靠 `.pcard` 挂 `card` 类继承。若有人把材质
  *      抄一份写在 `.pcard` 上，这条会红：那时两份语义早晚会漂（玻璃每改一次，
  *      插件板就少跟一次，而没有任何测试会发现）。
- * ⚠️ 组号 5 = 「维护」域（GROUPS 里的第 6 个，0-based），子页 3 = 「插件」页。 */
-await evalJs(`document.querySelectorAll('#nav1 .grp')[5].click(); return 1;`);
+ * ⚠️ 组号 6 = 「工厂」域（0-based），子页 3 = 「插件管理」页。
+ *   工厂 frame 页会自动上收导航并 inert，点子页前先呼出。 */
+await evalJs(`document.querySelectorAll('#nav1 .grp')[6].click(); return 1;`);
 await sleep(200);
+await evalJs(`window.__navAutoHide && window.__navAutoHide.reveal(); return 1;`);
+await sleep(420);
 await evalJs(`document.querySelectorAll('#nav2 .sub')[3].click(); return 1;`);
 await sleep(300);
 const plug = await evalJs(`return (() => {
@@ -1842,6 +2577,395 @@ check('窄视口下装不下的页签真的能横向滚动（不是溢出玻璃�
 await send('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: HEIGHT, deviceScaleFactor: 2, mobile: false });
 await sleep(400);
 
+/* ── ⑪ HUD 设置页（2026-10-25）：全量控件与真实交互 ─────────────────────
+   这一页以前只有 7 项开关 + 4 个参数；现在与 HUD 原型的 LAB 对齐。
+   判据只盯「控件在、点了真的写进 Island.cfg()」—— 不写死视觉值，
+   因为材质/强调色的最终色由主题解析，写死它会在深色主题下假失败。 */
+await evalJs(`
+  const g = [...document.querySelectorAll('#nav1 .grp')].find((b) => /维护/.test(b.textContent));
+  if (g) g.click();
+  await new Promise((r) => setTimeout(r, 220));
+  const s = [...document.querySelectorAll('#nav2 .sub')].find((b) => /HUD/.test(b.textContent));
+  if (s) s.click();
+  await new Promise((r) => setTimeout(r, 650));
+  window.__nextPauseRefresh(true);
+  return 1;
+`);
+const hudPage = await evalJs(`return {
+  title: (document.querySelector('#page h1') || {}).textContent || '',
+  rows: document.querySelectorAll('#page .hud-row').length,
+  checks: document.querySelectorAll('#page .hud-row input[type=checkbox]').length,
+  ranges: document.querySelectorAll('#page .rng').length,
+  segs: document.querySelectorAll('#page .seg').length,
+  metrics: document.querySelectorAll('#page .metric').length,
+  items: window.Island ? window.Island.items().length : -1,
+  credits: /CREDITS|Rare UI|Endfield|Glimmer|Watermelon/i.test(document.getElementById('page').textContent || ''),
+};`);
+check('HUD 设置页是完整八组（信息项 / 节奏 / 灰圈 / 时间轴 / 外观 / 几何 / 比例 / 调试）',
+  !!hudPage && hudPage.rows === 13 && hudPage.checks === 13 && hudPage.ranges >= 25 && hudPage.segs >= 4 && hudPage.metrics === 8,
+  hudPage ? `${hudPage.title} · ${hudPage.rows} 行 / ${hudPage.checks} 勾选 / ${hudPage.ranges} 滑块 / ${hudPage.segs} 分段 / ${hudPage.metrics} 读数` : '页面没起来');
+check('HUD 设置页没有第三方署名 / 许可文本',
+  hudPage && hudPage.items === 13 && !hudPage.credits,
+  hudPage ? `岛内 ${hudPage.items} 项 · 署名文本=${hudPage.credits ? '有' : '无'}` : '页面没起来');
+
+const hudFlow = await evalJs(`
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const e = document.getElementById('hudIsle');
+  const out = {};
+  const radio = [...document.querySelectorAll('.seg input[type=radio]')].find((i) => i.value === 'black');
+  if (radio) radio.click();
+  await wait(80);
+  out.material = e.dataset.material;
+  const pause = document.querySelector('[data-id="hud.pauseHover"]');
+  if (pause) pause.click();
+  await wait(60);
+  out.pauseHover = window.Island.cfg().pauseHover;
+  const rng = document.querySelector('[data-rng="hud.ratio.primary"] input');
+  if (rng) {
+    rng.value = '800';
+    rng.dispatchEvent(new Event('input', { bubbles: true }));
+    rng.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  await wait(80);
+  out.ratioPrimary = window.Island.cfg().ratios.primary;
+  const acc = document.querySelector('[data-id="hud.i.account"]');
+  if (acc) acc.click();
+  await wait(80);
+  out.account = window.Island.cfg().enabled.indexOf('account') >= 0;
+  const preset = [...document.querySelectorAll('#page button')].find((b) => /440×44/.test(b.textContent));
+  if (preset) preset.click();
+  await wait(220);
+  out.preset = { w: window.Island.cfg().width, h: window.Island.cfg().height };
+  const up = [...document.querySelectorAll('#page .hud-row')].find((r) => r.dataset.hudId === 'bridge')?.querySelector('button[data-p$="|-1"]');
+  if (up && !up.disabled) up.click();
+  await wait(220);
+  out.order = window.Island.cfg().order.slice(0, 3);
+  const reset = [...document.querySelectorAll('#page button')].find((b) => /恢复默认/.test(b.textContent));
+  if (reset) reset.click();
+  await wait(220);
+  const cfg = window.Island.cfg();
+  out.reset = { enabled: cfg.enabled, width: cfg.width, height: cfg.height, material: e.dataset.material };
+  window.__nextPauseRefresh(false);
+  return out;
+`);
+check('HUD 设置改动真的写进岛（材质 / 暂停 / 比例 / 轮播项）',
+  !!hudFlow && hudFlow.material === 'black' && hudFlow.pauseHover === false
+    && Math.abs(Number(hudFlow.ratioPrimary) - .55) < .011 && hudFlow.account === true,
+  hudFlow ? `材质=${hudFlow.material} · pauseHover=${hudFlow.pauseHover} · primary=${hudFlow.ratioPrimary} · account=${hudFlow.account}` : '交互探针失败');
+check('HUD 几何预设与轮播顺序可改，恢复默认能回到三项',
+  !!hudFlow && hudFlow.preset && hudFlow.preset.w === 440 && hudFlow.preset.h === 44
+    && hudFlow.order && hudFlow.order[0] === 'bridge'
+    && hudFlow.reset && hudFlow.reset.enabled.join(',') === 'usage,bridge,memory'
+    && hudFlow.reset.width === 380 && hudFlow.reset.height === 38,
+  hudFlow ? `预设=${hudFlow.preset?.w}×${hudFlow.preset?.h} · 前三位=${hudFlow.order?.join('>')} · 复位=${hudFlow.reset?.enabled?.join(',')} ${hudFlow.reset?.width}×${hudFlow.reset?.height}` : '交互探针失败');
+
+
+/* HUD 居中：岛的几何只由配置与视口决定，左右品牌/按钮不再参与。 */
+const hudCenters = [];
+for (const w of [1440, 900, 760, 320]) {
+  await send('Emulation.setDeviceMetricsOverride', { width: w, height: HEIGHT, deviceScaleFactor: 2, mobile: false });
+  await sleep(320);
+  hudCenters.push(await evalJs(`
+    const tb = document.querySelector('.topbar').getBoundingClientRect();
+    const isle = document.getElementById('hudIsle').getBoundingClientRect();
+    const brand = document.querySelector('.tb-brand').getBoundingClientRect();
+    const actions = document.querySelector('.tb-actions').getBoundingClientRect();
+    return {
+      vw: innerWidth,
+      delta: +((isle.left + isle.width / 2) - (tb.left + tb.width / 2)).toFixed(2),
+      isleW: Math.round(isle.width),
+      density: window.Island.debug().density,
+      overlap: Math.max(0, brand.right - isle.left) + Math.max(0, isle.right - actions.left),
+    };
+  `));
+}
+await send('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: HEIGHT, deviceScaleFactor: 2, mobile: false });
+await sleep(350);
+const centersOk = hudCenters.length === 4 && hudCenters.every((x) => Math.abs(x.delta) <= 1);
+check('HUD 岛在顶栏始终水平居中（左右内容再挤也不改变中心）',
+  centersOk && hudCenters[0].isleW === 380 && hudCenters[3].isleW === 296,
+  hudCenters.map((x) => `${x.vw}px→岛${x.isleW} 偏差${x.delta}px·${x.density}·左右重叠${x.overlap}px`).join(' · '));
+
+/* HUD 设置页紧凑排版：小轨道/小把手、多列、总高受限。 */
+const hudDense = await evalJs(`
+  const page = document.getElementById('page');
+  const root = page && page.querySelector('#card-hudItems');
+  if (!root) return null;
+  const cs = (sel) => getComputedStyle(page.querySelector(sel));
+  const cols = (sel) => cs(sel).gridTemplateColumns.split(' ').filter(Boolean).length;
+  return {
+    cards: page.querySelectorAll('[id^="card-hud"]').length,
+    trackH: parseFloat(cs('#card-hudRatios .rng-track').height),
+    knobW: parseFloat(cs('#card-hudRatios .rng-knob').width),
+    itemsCols: cols('#card-hudItems .hud-list'),
+    timelineCols: cols('#card-hudTimeline .card-b'),
+    ratioCols: cols('#card-hudRatios .card-b'),
+    metricsCols: cols('#card-hudDebug .metrics'),
+    pageH: page.scrollHeight,
+  };
+`);
+check('HUD 设置页紧凑重排：小轨道/小把手、多列网格、整页高度受控',
+  !!hudDense && hudDense.cards === 8 && hudDense.trackH <= 18 && hudDense.knobW <= 12
+    && hudDense.itemsCols >= 2 && hudDense.timelineCols >= 2 && hudDense.ratioCols >= 2
+    && hudDense.metricsCols >= 4 && hudDense.pageH < 1500,
+  hudDense ? `${hudDense.cards} 卡 · 轨道 ${hudDense.trackH}px / 把手 ${hudDense.knobW}px · 列 轮播${hudDense.itemsCols}/时间轴${hudDense.timelineCols}/比例${hudDense.ratioCols}/读数${hudDense.metricsCols} · 页高 ${hudDense.pageH}px` : 'HUD 设置页不在当前页');
+
+/* 两行读数的核心判据：中文左缘 = 数字左缘；右栏第一行 = 第二行（含后缀）右缘。
+   13 项 × serif/sans 全跑；用 Range 取**字形墨迹**，不取盒子边（盒子对齐了、字形偏了也算错）。 */
+const hudAlign = await evalJs(`
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const e = document.getElementById('hudIsle');
+  const ink = (el) => {
+    if (!el) return null;
+    if (getComputedStyle(el).display === 'none' || el.offsetParent === null) return null;
+    const r = document.createRange(); r.selectNodeContents(el);
+    const rs = [...r.getClientRects()].filter((x) => x.width > 0 && x.height > 0);
+    if (!rs.length) return null;
+    return { l: Math.min(...rs.map((x) => x.left)), r: Math.max(...rs.map((x) => x.right)) };
+  };
+  let worstLeft = 0, worstRight = 0, clipped = 0, checked = 0;
+  for (const font of ['serif', 'sans']) {
+    for (const it of window.Island.items()) {
+      window.Island.set({ enabled: [it.id], width: 380, height: 38, material: 'white', font, detail: 'full', interval: 15000 });
+      await wait(70);
+      const label = ink(e.querySelector('.readout.primary .micro'));
+      const primary = ink(e.querySelector('.readout.primary .value b'));
+      const rightLabel = ink(e.querySelector('.readout.right .micro'));
+      const right = ink(e.querySelector('.readout.right .value b'));
+      const suffix = ink(e.querySelector('.readout.right .value i'));
+      if (label && primary) worstLeft = Math.max(worstLeft, Math.abs(primary.l - label.l));
+      if (rightLabel && right) {
+        const rr = suffix ? Math.max(right.r, suffix.r) : right.r;
+        worstRight = Math.max(worstRight, Math.abs(rightLabel.r - rr));
+      }
+      for (const box of [e.querySelector('.readout.primary'), e.querySelector('.readout.right')]) {
+        if (box && box.scrollWidth > box.clientWidth + 1) clipped++;
+      }
+      checked++;
+    }
+  }
+  window.Island.setDefault();
+  return { worstLeft: +worstLeft.toFixed(2), worstRight: +worstRight.toFixed(2), clipped, checked };
+`);
+check('HUD 两行读数对齐：13 项 × 两种字体，中文/数字左缘与右栏右缘都 ≤1px，无省略裁剪',
+  !!hudAlign && hudAlign.checked === 26 && hudAlign.worstLeft <= 1 && hudAlign.worstRight <= 1 && hudAlign.clipped === 0,
+  hudAlign ? `${hudAlign.checked} 组 · 左缘最大 ${hudAlign.worstLeft}px · 右缘最大 ${hudAlign.worstRight}px · 裁剪 ${hudAlign.clipped}` : '对齐探针失败');
+
+/* ── ⑪b HUD 动效核（2026-10-26）：滚轮 / 三档 / 中断 / 入场 / 灰圈 ─────
+   这一组全部走真实渲染：滚轮看节点复用与方向、三档用 freeze+seek 定帧、
+   入场看 1320/620 与终态、灰圈看令牌尺寸与峰值。 */
+const hudWheel = await evalJs(`
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const I = window.Island;
+  const e = document.getElementById('hudIsle');
+  window.__nextPauseRefresh(true);
+  I.set({ enabled: ['usage'], width: 380, height: 38, detail: 'full', reduced: false, speed: 1, interval: 15000 });
+  await wait(1700);
+  const b = e.querySelector('.readout.primary .value b');
+  const wheels = () => [...b.querySelectorAll('.wheel')];
+  const count = () => wheels().length;
+  const pos = (w) => {
+    const tr = getComputedStyle(w.querySelector('.wheel-track')).transform;
+    if (!tr || tr === 'none') return null;
+    const em = parseFloat(getComputedStyle(w).fontSize) || 16;
+    return Math.round((-new DOMMatrixReadOnly(tr).m42 / em) * 100) / 100;
+  };
+  const fx = JSON.parse(JSON.stringify(window.__next.state || {}));
+  fx.usage.today.cost = 12.34;
+  I.update(fx, { online: true });
+  await wait(30);
+  const built = count();
+  const stableNode = wheels()[1];
+  /* 滚轮是**帧推进**的动画：固定 sleep 在慢机上会读到"还没动"（2026-10-28 实测
+     downMid 仍等于 downStart 的假红）。改成条件采样 —— 等位置真的离开起点、真的落到
+     目标值，上限 1.2s；判据（方向 + 终值 + 复用节点）一个字没放宽。 */
+  const waitFor = async (fn, ms) => {
+    const t0 = performance.now();
+    while (!fn() && performance.now() - t0 < ms) await wait(40);
+  };
+  const start = pos(stableNode);
+  await waitFor(() => { const p = pos(stableNode); return p !== start && p !== 12; }, 600);
+  const mid = pos(stableNode);
+  await waitFor(() => pos(stableNode) === 12, 1200);
+  const end = pos(stableNode);
+  for (let i = 0; i < 20; i++) I.update(fx, { online: true });
+  await wait(480);
+  const stable = !!stableNode && stableNode.isConnected && wheels()[1] === stableNode;
+  const after20 = count();
+  fx.usage.today.cost = 10.00;
+  I.update(fx, { online: true });
+  await wait(30);
+  const downStart = pos(wheels()[1]);
+  await waitFor(() => { const p = pos(wheels()[1]); return p !== downStart && p !== 10; }, 600);
+  const downMid = pos(wheels()[1]);
+  await waitFor(() => pos(wheels()[1]) === 10, 1200);
+  const downEnd = pos(wheels()[1]);
+  const bridgeFx = JSON.parse(JSON.stringify(fx));
+  bridgeFx.bridge = Object.assign({}, bridgeFx.bridge, { running: false });
+  I.update(bridgeFx, { online: true });
+  I.set({ enabled: ['bridge'] });
+  await wait(180);
+  const textCount = count();
+  I.set({ enabled: ['usage'], reduced: true });
+  fx.usage.today.cost = 99.99;
+  I.update(fx, { online: true });
+  await wait(40);
+  const reducedPos = wheels().map(pos);
+  I.set({ reduced: false, width: 260, height: 30, detail: 'auto' });
+  fx.usage.today.cost = 12.34;
+  I.update(fx, { online: true });
+  await wait(500);
+  const narrow = { count: count(), overflow: b.scrollWidth - b.clientWidth, width: I.debug().width, density: I.debug().density };
+  I.setDefault();
+  window.__nextPauseRefresh(false);
+  return { built, start, mid, end, stable, after20, downStart, downMid, downEnd, textCount, reducedPos, narrow };
+`);
+check('数字滚轮：420ms 内滚动、方向正确、同结构刷新复用节点、文本值不建轮',
+  !!hudWheel && hudWheel.built >= 4
+    && hudWheel.mid > hudWheel.start && hudWheel.mid < hudWheel.end
+    && hudWheel.end === 12 && hudWheel.downMid < hudWheel.downStart && hudWheel.downEnd === 10
+    && hudWheel.stable && hudWheel.after20 === hudWheel.built && hudWheel.textCount === 0,
+  hudWheel ? `4 位起? ${hudWheel.built} · 上滚 ${hudWheel.start}→${hudWheel.mid}→${hudWheel.end} · 下滚 ${hudWheel.downStart}→${hudWheel.downEnd} · 20 次后节点 ${hudWheel.after20} / 复用=${hudWheel.stable} · 文本轮 ${hudWheel.textCount}` : '滚轮探针失败');
+check('滚轮在 reduced 直落、260px 不裁剪',
+  !!hudWheel && hudWheel.reducedPos.length > 0 && hudWheel.reducedPos.every((v) => v === 19)
+    && hudWheel.narrow.count >= 3 && Math.abs(hudWheel.narrow.overflow) <= 1,
+  hudWheel ? `reduced=${hudWheel.reducedPos.join(',')} · 260px 轮数=${hudWheel.narrow.count} 溢出=${hudWheel.narrow.overflow} 密度=${hudWheel.narrow.density}` : '滚轮探针失败');
+
+const hudModes = await evalJs(`
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const I = window.Island;
+  const e = document.getElementById('hudIsle');
+  window.__nextPauseRefresh(true);
+  I.set({ width: 380, height: 38, detail: 'full', reduced: false, speed: 1, interval: 15000,
+    enabled: ['usage'], haloStrength: .42, haloLayers: 3, haloScale: 1 });
+  await wait(1500);
+  const snap = () => ({
+    total: I.debug().timelineMs, mode: I.debug().mode, frozen: I.debug().frozen,
+    title: +getComputedStyle(e.querySelector('.isle-title')).opacity,
+    data: +getComputedStyle(e.querySelector('.readout.primary .value')).opacity,
+    parts: ['.readout.primary .micro','.readout.primary .value','.readout.right .micro','.readout.right .value','.ring'].map((q) => +getComputedStyle(e.querySelector(q)).opacity),
+    plate: getComputedStyle(e.querySelector('.plate')).transform,
+    radius: getComputedStyle(e).borderRadius,
+    r2: +getComputedStyle(e.querySelector('.r2')).opacity,
+  });
+  const modeAt = async (mode, at) => {
+    I.set({ switchMode: mode });
+    await wait(30);
+    I.replaySwitch();
+    await wait(30);
+    I.seek(at);
+    await wait(30);
+    const s = snap();
+    I.freeze(false);
+    await wait(I.debug().timelineMs + 500);
+    return s;
+  };
+  const fullEarly = await modeAt('full', 700);
+  const fullLate = await modeAt('full', 1300);
+  const handoff = await modeAt('handoff', 700);
+  const quickPeak = await modeAt('quick', 340);
+  const quickLate = await modeAt('quick', 900);
+  I.set({ switchMode: 'full' });
+  await wait(30);
+  I.replayBirth();
+  await wait(30);
+  const birthTotal = I.debug().timelineMs;
+  const birthMode = I.debug().mode;
+  I.seek(450);
+  await wait(30);
+  const birthTitle = +getComputedStyle(e.querySelector('.isle-title')).opacity;
+  I.freeze(false);
+  await wait(1600);
+
+  const haloVars = {
+    disc: e.style.getPropertyValue('--halo-disc'),
+    ring1: e.style.getPropertyValue('--halo-ring1'),
+    ring2: e.style.getPropertyValue('--halo-ring2'),
+  };
+  I.replaySwitch();
+  await wait(30);
+  I.seek(250);
+  await wait(30);
+  const r2Peak = +getComputedStyle(e.querySelector('.r2')).opacity;
+  I.freeze(false);
+  await wait(1500);
+  const idlePlate = getComputedStyle(e.querySelector('.plate')).transform;
+
+  const inkW = (sel) => {
+    const el = e.querySelector(sel);
+    const rg = document.createRange(); rg.selectNodeContents(el);
+    const rs = [...rg.getClientRects()].filter((x) => x.width > 0 && x.height > 0);
+    return rs.length ? Math.max(...rs.map((x) => x.right)) - Math.min(...rs.map((x) => x.left)) : null;
+  };
+  const lock = { shift: I.debug().titleShift, lockWidth: I.debug().lockWidth, nameW: inkW('.isle-title .title') };
+  I.setDefault();
+  window.__nextPauseRefresh(false);
+  return { fullEarly, fullLate, handoff, quickPeak, quickLate, birthTotal, birthMode, birthTitle, haloVars, r2Peak, idlePlate, lock };
+`);
+check('三档编排：full 1500 / handoff 1440 / quick 1000 / birth 1400，标题与读数按相位落位',
+  !!hudModes && hudModes.fullEarly.total === 1500 && hudModes.handoff.total === 1440
+    && hudModes.quickPeak.total === 1000 && hudModes.birthTotal === 1400 && hudModes.birthMode === 'birth'
+    && hudModes.fullEarly.title > .8 && hudModes.fullEarly.parts.every((v) => v < .2)
+    && hudModes.fullLate.parts.every((v) => v > .8) && hudModes.quickPeak.title < .05,
+  hudModes ? `full ${hudModes.fullEarly.total} · handoff ${hudModes.handoff.total} · quick ${hudModes.quickPeak.total} · birth ${hudModes.birthTotal} · 标题 ${hudModes.fullEarly.title} · 读数 ${hudModes.fullEarly.data}→${hudModes.fullLate.data}` : '三档探针失败');
+check('quick 峰值 1.08 / 落定 .8，birth 标题可见，标题 lockup 与画布量宽一致',
+  !!hudModes && /matrix\(1\.0[5-9]/.test(hudModes.quickPeak.plate)
+    && /matrix\(0\.8/.test(hudModes.quickLate.plate)
+    && hudModes.birthTitle > .5
+    && Math.abs(hudModes.lock.nameW - hudModes.lock.lockWidth) < 3,
+  hudModes ? `quick 峰值 ${hudModes.quickPeak.plate} · 落定 ${hudModes.quickLate.plate} · birth 标题 ${hudModes.birthTitle} · lock ${hudModes.lock.nameW?.toFixed(1)} vs ${hudModes.lock.lockWidth?.toFixed(1)}` : '三档探针失败');
+check('灰圈令牌按 plate×5/6.9/8.75，r2 峰值 1.1× 强度，落定盘 .8',
+  !!hudModes && Math.abs(parseFloat(hudModes.haloVars.disc) - 133) <= .2
+    && Math.abs(parseFloat(hudModes.haloVars.ring1) - 183.54) <= .2
+    && Math.abs(parseFloat(hudModes.haloVars.ring2) - 232.75) <= .2
+    && hudModes.r2Peak > .44 && /matrix\(0\.8/.test(hudModes.idlePlate),
+  hudModes ? `disc=${hudModes.haloVars.disc} ring1=${hudModes.haloVars.ring1} ring2=${hudModes.haloVars.ring2} 峰值=${hudModes.r2Peak.toFixed(3)} 盘=${hudModes.idlePlate}` : '三档探针失败');
+
+const hudEntrance = await evalJs(`
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const I = window.Island;
+  const e = document.getElementById('hudIsle');
+  window.__nextPauseRefresh(true);
+  I.set({ width: 380, height: 38, detail: 'auto', reduced: false, speed: 1 });
+  await wait(300);
+  I.replayEntrance();
+  await wait(30);
+  const wideTotal = I.debug().timelineMs;
+  const wideMid = +getComputedStyle(e.querySelector('.isle-welcome')).opacity;
+  await wait(1450);
+  const wideEnd = { anims: I.debug().anims, data: +getComputedStyle(e.querySelector('.isle-data')).opacity, plate: getComputedStyle(e.querySelector('.plate')).transform };
+  I.set({ width: 260, height: 30 });
+  await wait(260);
+  I.replayEntrance();
+  await wait(30);
+  const narrowTotal = I.debug().timelineMs;
+  await wait(760);
+  const narrowEnd = { anims: I.debug().anims, data: +getComputedStyle(e.querySelector('.isle-data')).opacity, plate: getComputedStyle(e.querySelector('.plate')).transform, detail: e.dataset.detail };
+  I.set({ width: 320, height: 34, detail: 'auto' });
+  await wait(260);
+  const d320 = e.dataset.detail;
+  I.set({ width: 380, height: 38, detail: 'auto' });
+  await wait(260);
+  const d380 = e.dataset.detail;
+  I.set({ reduced: true });
+  I.replayEntrance();
+  await wait(40);
+  const reduced = { anims: I.debug().anims, data: +getComputedStyle(e.querySelector('.isle-data')).opacity };
+  I.setDefault();
+  window.__nextPauseRefresh(false);
+  return { wideTotal, wideMid, wideEnd, narrowTotal, narrowEnd, d320, d380, reduced };
+`);
+check('入场：宽 1320 / 窄 620，Welcome 擦入、读数遮罩接管、盘落 .8，reduced 无动画',
+  !!hudEntrance && hudEntrance.wideTotal === 1320 && hudEntrance.narrowTotal === 620
+    && hudEntrance.wideEnd.anims === 0 && hudEntrance.wideEnd.data > .8
+    && /matrix\(0\.8/.test(hudEntrance.wideEnd.plate)
+    && hudEntrance.narrowEnd.anims === 0 && hudEntrance.narrowEnd.data > .8
+    && hudEntrance.reduced.anims === 0 && hudEntrance.reduced.data > .8,
+  hudEntrance ? `宽 ${hudEntrance.wideTotal}ms 收尾读数 ${hudEntrance.wideEnd.data} 盘 ${hudEntrance.wideEnd.plate} · 窄 ${hudEntrance.narrowTotal}ms 收尾 ${hudEntrance.narrowEnd.data} · reduced 动画 ${hudEntrance.reduced.anims}` : '入场探针失败');
+check('读数密度自动档：320×34 紧凑（只收微标签）/ 380×38 完整 / 260×30 极简',
+  !!hudEntrance && hudEntrance.d320 === 'compact' && hudEntrance.d380 === 'full' && hudEntrance.narrowEnd.detail === 'minimal',
+  hudEntrance ? `320×34=${hudEntrance.d320} · 380×38=${hudEntrance.d380} · 260×30=${hudEntrance.narrowEnd.detail}` : '密度探针失败');
+
 /* ── ⑩ 交互完之后页面必须回到"干净"（没有残留的遮罩 / 脏草稿） ────────── */
 await sleep(1500);
 const clean = await evalJs(`return {
@@ -1859,8 +2983,16 @@ check('交互后没有残留遮罩 / 脏草稿 / 弹窗',
 const realErrors = errors.filter((e) => !/Not implemented|favicon|net::ERR/i.test(e));
 check('页面无运行时异常', realErrors.length === 0, realErrors.slice(0, 3).join(' | '));
 
-const shot2 = await maybeShot('02-persona-enhance', 2, 1);
-const shot3 = await maybeShot('03-plugins', 5, 3);
+const shot2 = await maybeShot('02-persona-enhance', 3, 3);
+const shot3 = await maybeShot('03-plugins', 6, 3);
+
+/* ── 背景模式清理：别把测试实例留在流光档 ───────────────────────────── */
+await evalJs(`try {
+  localStorage.removeItem('qqbot-bg-mode');
+  localStorage.removeItem('qqbot-bgfx-speed');
+} catch (e) {}
+if (window.ContourBG) window.ContourBG.setMode('contour');
+return true;`);
 
 /* ── 汇总 ───────────────────────────────────────────────────────────── */
 const pass = results.filter((r) => r.ok && !r.skipped).length;

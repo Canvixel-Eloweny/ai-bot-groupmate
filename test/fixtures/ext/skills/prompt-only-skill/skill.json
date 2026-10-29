@@ -1,0 +1,24 @@
+{
+  "id": "prompt-only-skill",
+  "name": "纯提示词示例",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "description": "只有 prompt.sections，不注册工具；用来验证纯提示词 Skill 的入口契约与空载语义。",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "permissions": [],
+  "requires": [],
+  "entry": "index.js",
+  "settings": {},
+  "prompt": {
+    "sections": [
+      {
+        "id": "prompt-only-note",
+        "title": "纯提示词示例",
+        "priority": 30,
+        "content": "这是一条只靠提示词生效的 Skill 指引。"
+      }
+    ]
+  }
+}

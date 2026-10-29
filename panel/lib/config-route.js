@@ -354,30 +354,51 @@ export function makeConfigRoute(deps) {
       //
       // ⚠️ 选择**拒绝整次保存并说清哪几个键**，不做"部分写入" —— 与上面注入闸门同一取向：
       //    部分写入会让用户以为保存成功了（"我明明改了，怎么有一项没生效"）。
-      const psPatch = body.custom?.plugins?.settings;
-      if (psPatch && typeof psPatch === 'object' && !Array.isArray(psPatch)) {
+      const extBody = body.custom?.extensions;
+      const psNamespaces = [];
+      if (extBody && typeof extBody === 'object' && !Array.isArray(extBody)) {
+        for (const [kind, key] of [['plugin', 'plugins'], ['skill', 'skills']]) {
+          const patch = extBody[key]?.settings;
+          if (!patch || typeof patch !== 'object' || Array.isArray(patch)) continue;
+          psNamespaces.push({
+            kind,
+            patch,
+            enabled: cfg.custom?.extensions?.[key]?.enabled || [],
+            current: cfg.custom?.extensions?.[key]?.settings || {},
+          });
+        }
+      } else {
+        const patch = body.custom?.plugins?.settings;
+        if (patch && typeof patch === 'object' && !Array.isArray(patch)) {
+          psNamespaces.push({
+            kind: 'plugin',
+            patch,
+            enabled: cfg.custom?.plugins?.enabled || [],
+            current: cfg.custom?.plugins?.settings || {},
+          });
+        }
+      }
+      for (const ns of psNamespaces) {
         const declaredById = new Map();
-        for (const it of (extensionsOf(cfg.custom?.plugins?.enabled || [], {
-          maxPlugins: cfg.custom?.plugins?.max,
+        for (const it of (extensionsOf(ns.enabled, {
+          maxPlugins: cfg.custom?.extensions?.max ?? cfg.custom?.plugins?.max,
         })?.items || [])) {
+          if (it.kind !== ns.kind) continue;
           // ⚠️ 只把**有默认值**的包纳入闸门。清单只声明了 `configSchema`（没有默认值）的包
           //    在投影里是空对象 —— 拿它当"声明的键的集合"会把用户所有合法输入判成越界。
-          //    实测 13 个真实包**全部**有 `settings`（且与 configSchema 同键），所以这不影响覆盖面；
-          //    写这一句是为了"将来出现 schema-only 包时不会误杀"。
           if (Object.keys(it.settings || {}).length) declaredById.set(it.id, it.settings);
         }
-        const current = cfg.custom?.plugins?.settings || {};
-        for (const [id, patch] of Object.entries(psPatch)) {
+        for (const [id, patch] of Object.entries(ns.patch)) {
           if (!patch || typeof patch !== 'object' || Array.isArray(patch)) continue;
           if (!declaredById.has(id)) continue; // 包不在（还没拷进来）→ 不卡这一步
-          const r = applySettingsPatch({ declared: declaredById.get(id), prev: current[id] || {}, patch });
+          const r = applySettingsPatch({ declared: declaredById.get(id), prev: ns.current[id] || {}, patch });
           if (!r.ok) {
-            pushLog(`✗ 插件设置被拒（${id}）：${r.reason}`);
+            pushLog(`✗ ${ns.kind === 'skill' ? 'Skill' : '插件'}设置被拒（${id}）：${r.reason}`);
             return sendJson(
               res,
               {
                 ok: false,
-                error: `插件「${id}」的设置没有保存：${r.reason}\n` +
+                error: `${ns.kind === 'skill' ? 'Skill' : '插件'}「${id}」的设置没有保存：${r.reason}\n` +
                   '只允许填清单里声明过的键（面板上已经按类型列出来了），值也要与类型相符。',
               },
               400
@@ -385,8 +406,7 @@ export function makeConfigRoute(deps) {
           }
           // ★ 把**强转之后**的那份写回请求体 —— 面板送来的是控件里的字符串（"20"），
           //   不写回的话存的还是字符串，插件读到一个 str 而清单声明的是 number。
-          //   那正是"静默存成错值"：面板上看不出任何异常。
-          psPatch[id] = r.value;
+          ns.patch[id] = r.value;
         }
       }
       cfg.custom = patchCustom(cfg.custom, body.custom);

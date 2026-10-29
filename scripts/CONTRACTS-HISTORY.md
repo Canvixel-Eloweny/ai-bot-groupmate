@@ -1275,3 +1275,356 @@
 //  ③ 段数：159 → **160**；HEAVY_SUB_MIN 新增 ['CI 构建', 5]。
 //  ④ 变异：test/mutations/ci-build-1025.mjs CI1–CI8（8/8 BLOCKED）。
 //  ⑤ 计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §161 · HUD 设置全量（2026-10-25）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：主项目 HUD 设置此前只有 7 项开关 + 4 个参数，而桌面原型 LAB 已有
+//  信息项顺序 / 时间轴 / 灰圈 / 材质 / 强调色 / 字体 / 几何比例 / 调试与导出。
+//  ① 判据：schema 必须出现 22 个设置 id + 10 个比例键 + hudItems/hudMetrics 两个
+//     控件类型；island.js 必须有 13 个真实数据项、不得出现 sent/mock/simAlert；
+//     island.css 必须有 glass/white/black 三档材质与两行读数锚点；
+//     verify.mjs 必须有 HUD 设置页真渲染 + 交互写入断言。
+//  ② 边界：本段只判「能力在不在」，不判具体色值（材质色随主题解析，写死会假失败）。
+//  ③ 段数：160 → **161**；HEAVY_SUB_MIN 新增 ['HUD 设置', 3]。
+//  ④ 变异：test/mutations/hud-settings-1025.mjs H1–H5（5/5 BLOCKED）。
+//  ⑤ 计数见 §125。
+//
+//  ── 2026-10-26 扩写（HUD 动效核全量复刻，不新增段号）────────────────────────
+//  为什么改：§161 原先只钉「设置页能力在不在」，而滚轮 / 三档编排 / 中断融合 /
+//  标题 lockup / 灰圈乘数 / plate .8 都还没有实现锚点（甚至原有一条禁令把滚轮挡住）。
+//  ① 删除 `/_WHEEL_|wheel-track/` 禁令，改为正向断言：WHEEL_BASE=10、WHEEL_COUNT=31、
+//     makeWheel/rollWheel/sameStructure/paintPrimary、420÷倍速、数字判定分支、
+//     结构复用判定；CSS 必须有 wheel-track / wheel-ghost / mask-image。
+//  ② 新增动效锚点：timelineFor + quick/handoff/birth 分支 + 四个基准时长（1500/1440/
+//     1000/1400）、captureInterrupt/blendTo、dataTimeline（stagger/durs）、titleCard、
+//     lockupFor/measureText、字距 .40/.26/.20/.08em、plate*.8、r.radiusB、
+//     halo plate×5/6.9/8.75 与 1.1×/.9× 峰值。
+//  ③ 高级几何 10 → **11** 个比例键（新增 radiusB），`subHit('HUD 设置')` 3 → **6**，
+//     `HEAVY_SUB_MIN` 同步 3 → **6**。
+//  ④ 变异：test/mutations/hud-settings-1025.mjs 追加 H6–H13（8 条，全部 check-wb 层），
+//     与 H1–H5 合计 **13/13 BLOCKED**。
+//  ⑤ 段数不变（仍 162 下限；实跑 163）。计数见 §125。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §162 · 人设原型收口 + 情绪收回项目本体（2026-10-25）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：维护者要求人设域以桌面原型为准；插件目录删除后心情页仍在喊"缺插件"，
+//  MBTI 页也只剩文字头图。这一段把「情绪是项目本体 / mood 段进预算 / MBTI 场景卡与
+//  弹簧 / 扮演规则可编辑 / 心情页不再挂 bot-emotion 设置」钉住。
+//  ① 判据：emotion.js 六个导出 + index.js 两处写口 + Brain 拼 mood 段并尊重 moodOn；
+//     context-budget 有 mood 顺序与 400 预算；prompt-sections 不再把 mood 标成插件；
+//     custom-config 有 moodOn / playRuleItems / resolvePlayRules；
+//     app.js 有 PSN_ART 16 图 / mbti-art-img / psnPageHead 六页 / data-domain 隐藏通用页头 /
+//     psnHelpTip / psnChartTip / radar-sector / donut-hit / line-hover-zone / skip-redraw；
+//     next-page 有 MBTI_ART_NAMES/readMbtiArt，server 有 /assets/mbti 路由；
+//     panel-dom 有场景卡/官方图/页眉/帮助/图表交互/隔离断言；心情页不得再出现 bot-emotion 设置。
+//  ② 段数：MIN 161 → **162**；HEAVY_SUB_MIN ['人设原型'] 4 → **8**。
+//  ③ 变异：persona-six-pages-2026-10-25.mjs M5–M13（M5–M7 smoke，M8–M13 check-wb）。
+//  ④ 计数见 §125。
+//  ⑤ 2026-10-26 追加（维护者要求宽度别收紧、色条/编辑人设按钮照 HTML 复刻）：
+//     内容宽 1136 → **1352**；`.card::before` 左上 40×3 色条 + hover 96px；
+//     页脚 linklike 灰底胶囊 + 中心填充 + 抬升/按压；7 个 `.psn` 根挂 data-psn-page，
+//     --page-lc 跟随 overview/profile/mbti/enhance/mood/prompt；雷达 orbit/点/标签、
+//     柱状、折线补原型时长与延迟。panel-dom 加真渲染宽度/色条/胶囊/动画名，
+//     并用 CDP 真鼠标悬停断言 40→96 与中心填充。变异 M14–M20；
+//     HEAVY_SUB_MIN ['人设原型'] 8 → **11**。段数仍 163。
+//  ⑥ 2026-10-26 晚追加（维护者录屏：二级切换偶尔弹两次、人设页不动也每 3 秒闪）：
+//     根因是 `psnField` 的 `PSN_UID` 无条件自增 —— 同一页每次生成的 input id 都不同，
+//     3 秒轮询的 `html === S.extra.psnHtml` 永远不成立，整页 page-in 每轮重播；
+//     二级切换撞上这一拍就看到"双动画"。修法：`paintPage` 在渲染 persona 前
+//     `PSN_UID = 0`，字段 id 每轮从 1 开始，HTML 逐字稳定；另外非切页重画
+//     （rebuildNav=false）给 `#page` 挂 `psn-no-enter`，CSS 关掉 `.psn` 的 page-in
+//     —— 数据更新只换内容，不闪整页；真正的二级切换仍保留入场。panel-dom 新模式
+//     「人设页轮询稳定」：真点人设页（12 个字段）→ 1.2s 内 page-in 恰 1 次 →
+//     再静置 3.4s 追加 0 次、同节点、同 HTML、`psn-no-enter` 生效。变异 M21/M22；
+//     HEAVY_SUB_MIN 11 → **12**。
+//  ⑦ 2026-10-26 维护者截图追加（情绪柱平面化 + 字段卡紧凑）：
+//     情绪柱删 `.psn .cyl::before` 椭圆帽、去渐变/内阴影；数值用独立 `translate:-50% 0`
+//     居中（避免被 `psn-chart-fade` 末帧 transform 覆盖），bottom 改百分比；
+//     字段卡去掉全局 `.row` 的 border/background 与末卡 space-between，
+//     行距 34→6px、行高 24→22px、卡高 430→276。panel-dom 加平面柱/数字居中/字段卡紧凑
+//     真渲染断言；HEAVY_SUB_MIN ['人设原型'] 12 → **15**；变异 M23–M25。段数仍 163。
+//  ⑧ 2026-10-26 导航切换流畅度：
+//     - 二级切换只同步选中态（syncNav2Selection），不重建 nav1/nav2、不重启动 dock 380ms；
+//     - 切页 nav 先更新，页面内容双 rAF 后再画（pagePaintPending/pagePaintSeq，排队期间轮询让路）；
+//     - psnMountPersona 用 psnGrowAll 批量写→读→写，去掉 12–24 次强制布局；
+//     - dock 动画缓存 navGeom/navDockBoxW，帧内不再 getBoundingClientRect/getComputedStyle，
+//       SVG viewBox/width/height 只在切页写，帧内只更新 path d 与 clip-path；
+//     - 二级页签多到需要横向滚动时，`scrollNav2To` 自己的 scroll 事件不再 instant 跳，
+//       让刚起跑的胶囊弹簧继续跑（`nav2AutoScrollT`；手动横滚仍 instant 贴住）。
+//     panel-dom 加「二级 nav1/nav2 childList 0/0、换域两处 >0」断言；变异 M26–M29；
+//     HEAVY_SUB_MIN ['人设原型'] 15 → **16**。段数仍 163。
+//  ⑨ 同日验收：`panel/next/verify.mjs` 的按压采样由 320ms 延到 560ms（按住态持续，
+//     等过渡落位，判据仍精确 +3/+2）；rAF 泄漏测试在最后一次切换后等 700ms 再量
+//     （二级不再重建后 subs 节点保持附着，最后一下弹簧在途≠泄漏）。没有放宽判据。
+//  ⑩ 2026-10-28 换域切换解耦 · 第 1 步（滚动状态的盖章键）：
+//     keepPageState 原来用 `S.gi + '/' + S.si` 当键，而点击处理器早已把 S.* 改成目标页
+//     ⇒ 拿旧 DOM 采集、却盖上**新页**的键，restore 的守卫形同虚设（「运行」日志 <pre> 的
+//     scrollTop 会被恢复到「人设」同路径节点），而且换域那一帧白遍历一遍旧 DOM（KEEP_SEL
+//     四个选择器 + elPathOf 祖先链）。改成 `S.extra.paintKey`（上一份 DOM 的归属），
+//     commit 里在 restore 之后盖章；换页/换域在遍历之前就返回（与 docs/FRONTEND-V2.md
+//     记的"键里带 gi/si"是同一意图）。§162 加「跨页不恢复旧滚动」「页面归属盖章」；
+//     变异 PS5（test/mutations/persona-switch-decouple-1028.mjs）；
+//     HEAVY_SUB_MIN ['人设原型'] 16 → **18**。段数仍 163。
+//     同批把两处**负载下的假红**改成条件等待（判据不动）：MBTI 拖轴弹簧按帧推进，
+//     900ms 墙钟在慢机上只走到一半（实测读到 16.5%）；柱顶间距会在 psn-chart-fade
+//     中途被 5px 位移污染（实测 5.45 vs 落位后 8）。
+//  ⑪ 2026-10-28 换域切换解耦 · 第 2 步（导航几何只量一次）：
+//     换域那一帧 layoutNavDock 会被调两次（renderNav1 + renderNav2），旧版每次都
+//     readNavGeom（5 次 getComputedStyle）⇒ 后一次纯白读。改成 `if (!navGeom)` 按
+//     resize 记忆化（resize 防抖回调里 `navGeom = null` 作废；断点/触屏档是唯一写点）。
+//     §162 加「dock 几何按 resize 失效」；HEAVY_SUB_MIN ['人设原型'] 18 → **19**。
+//     段数仍 163。行宽没有跟着缓存 —— 滚动条出现会改 .navrow 宽而不改 innerWidth，
+//     缓存它会把 dock 中心推偏（宁少省一次 getBoundingClientRect，不造静默错位）。
+//  ⑫ 2026-10-28 换域切换解耦 · 第 3 步（人设分段渲染，本批主体）：
+//     - 换域进入人设时页面分两段：壳（卡框/文案/图例齐全）+ 图表载荷（雷达/环形/柱/折线，
+//       四个 `data-psn-slot`，空壳按 viewBox 的 aspect-ratio 预留高度）；
+//     - 等 dock 停稳再回填（`navDockSettled` 回调挂在 animateNavDock 的三条终点 +
+//       900ms 兜底），同一刻撤 `#page.psn-stage`（按住 .psn 下所有 animation）并挂
+//       `psn-armed`；`psnInitPriorityReveal` 从 psnMountPersona 移到放行时（壳阶段不揭示）；
+//     - `S.extra.psnHtml` 只存完整趟；待回填载荷在 `psnChartSlots`，轮询 skip-redraw
+//       不许把它冲掉（实测踩到：壳 0/4 但已 psn-armed）；放行不绑 paintSeq（轮询会 ++
+//       但命中 skip，绑它会把壳冻死），只认代号 + 页面仍挂着 psn-stage；
+//     - `psn-page-in` 去掉 `filter:blur(3px)`（祖先 blur 让 10 张 backdrop-filter 卡逐帧重光栅）。
+//     panel-dom 加「分段渲染：壳先图后」「分段渲染：真落图与零位移」两块；§162 加 8 条
+//     app 针 + 3 条样式针 + blur 反向判据；变异 PS1–PS4/PS6；HEAVY_SUB_MIN ['人设原型']
+//     19 → **30**；段数仍 163。
+//     实测（test/panel-perf.mjs，同一台 Mac headless）：dock 停稳前起播的 psn-* 入场
+//     15/53 → **0/53**；页面提交 38.6 → 57.7ms（多了一趟字符串生成，整体仍在导航窗内）；
+//     布局耗时 12.7 → 10.8ms；壳 60ms、放行 427ms（dock 停稳 410ms）、落图前后页高
+//     1715.6→1715.6、卡高逐项相同。帧 p95 在 headless 里没变（大头是背景重画与玻璃合成，
+//     真机 GPU 路径不同）—— 这次修的是"导航窗口里没有内容工作"，不是帧预算。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §163 · 等高线背景（2026-10-26）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：维护者要求默认背景换成「终末地」风格等高线，浅色黑线白底、
+//  深色白线黑底，速度仍为 无/慢/中/快，旧流光必须完整保留；同时要求
+//  低端机可用（视频而非实时重绘，低配/海报兜底）。这不是纯视觉改动：
+//  新增 10MB 级二进制、Range 媒体路由、默认档迁移与旧引擎暂停，
+//  任何一环漏接都表现为"背景没动/白屏/反复下载"，而四层回归原先都碰不到。
+//
+//  ① 判据：层序 `#shaderBg < #contourBg < #customBg` + aria-hidden +
+//     video `muted/playsinline/loop/preload=none` + z=-2/fixed/pointer-events:none；
+//     `qqbot-bg-mode` 默认 contour、`__bgModeBoot` 首帧预绘制、旧 8 预设与
+//     setActive/!active/bgfx:speed 保留；客户端 MEDIA ↔ 服务端 CONTOUR_MEDIA
+//     逐项同源；CSP `media-src 'self'`；server 有 /assets/contour 的
+//     206/416/Content-Range/流式；6 个媒体文件存在且体积在 [floor, cap]，
+//     MP4 `ftyp` 在首且 `moov` 在 `mdat` 前（faststart），JPEG 完整；
+//     panel-dom / verify / panel-boot / smoke 四层各有对应断言。
+//  ② 段数：MIN 162 → **163**（实跑 164）；HEAVY_SUB_MIN 新增
+//     ['等高线背景', 8]（实跑 8 条子判据）。
+//  ③ 变异：test/mutations/contour-bg.mjs C1–C11（11/11 BLOCKED）。
+//  ④ 资产：standard 2560×1440/24fps/≈6.5Mbps，lite 1280×720/20fps/≈1.3Mbps，
+//     30s 无缝循环；海报 2560×1440 JPEG；全套约 60MB（v2 资产，实测为准）。
+//  ⑤ 计数见 §125；视觉预览与生成器在 scripts/contour-bg/（不参与运行时）。
+//
+//  ── 2026-10-27 去灰 + 2K（不新增段号）────────────────────────────────────
+//  维护者要求「整体界面色调更干净，不是灰蒙蒙的，分辨率加高」。
+//  ① §60 底色判据：--c-bg 从青调 #e6f6fc（spread 22 / lum .958）改为中性奶白
+//     #f8f8f8（spread 0 / lum .973）；判据改为通道差 ≤8、亮度 ≥.96。
+//     旧青调值只留作历史，不再当期望值。浅色等高线从白底改为**中性奶白底 + 纯黑细线**，
+//     不带暖纸/偏黄；HUD 三处定位同轮微调（左上 TOPO / 右上 SCAN 下移、
+//     右下罗盘组向角内收），浅/深两套内容都变，客户端统一用 `?v=4` 做缓存淘汰。
+//  ② 面板浅/深令牌去青去紫：底/面/线/文字/阴影/导航/环境层改中性；
+//     单一蓝色强调色、语义色与玻璃结构（alpha/inset）不变。
+//  ③ 等高线资产升 v2：standard 2560×1440、lite 1280×720；全套约 60MB。
+//  ④ 段数、HEAVY_SUB_MIN 与 C1–C11 变异均不变（§163 仍 11/11）。
+//
+//  ── 2026-10-27 夜间 · 导航配色回滚（不新增段号）────────────────────────────
+//  维护者指出二级导航的粉蓝渐变消失；根因是 8b2545d 的「去灰轮」把整组
+//  --c-nav-* 令牌改成中性（结构与 nav2Sweep/弹簧/hover 都在，只是色没了）。
+//  ① 浅/深恢复 8b2545d 前的粉蓝 pill 与 weak 档冷蓝托盘；导航文字/边线/接缝/计数
+//     同步恢复蓝调；页面底、--c-eg-* 玻璃、间距/字号/字重/动效不动。
+//  ② 新增 --c-nav-l2-fg / --c-nav-l2-fg-hover（导航专属，避免改全站 --c-text-*），
+//     .sub / .sub:hover 接线；值取 8b2545d 前产品 --c-text-2/--c-text-1，对比度基线不变。
+//  ③ §131 新增：浅/深 pill-a/b 与 l2-grad-a/b 精确色值 + .sub 接线判据；
+//     verify.mjs 新增浅/深真渲染色值断言（灰化必红）。
+//  ④ 变异：test/mutations/nav-pinkblue-1027.mjs P1–P4（4/4 BLOCKED）；
+//     b29 V1/V6 与本地 review-1004 M1/M2 重锚到新色值。
+//  ⑤ MIN_CONTRACTS 仍 163；HEAVY_SUB_MIN 不变；段数不增。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §164 · 运行总览发言账本与热力网格（2026-10-27）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：总览重制把「今日发言」做成了真实逐条计数，并把 16 周热力网格的
+//  日期键收回后端（H-11①：本地日期键只许由 src/holidays.js 一份实现产生）。
+//  ① 判据：sent-stats.js 唯一出口记账（sendMsg 成功后 n=1，覆盖主动出站/发图/插件 sender）；
+//     sent-report.js 精确/估算日 + 53 周/月份/总计/活跃天数/峰值/连续；state-collector 下发 sent；
+//     apiState 下发 heat: heatOf(stateBody)；app.js 只消费 s.heat.days；
+//     overviewDash/overviewSide + overview.css 已登记；panel-dom 有 3 主节点/112 格/
+//     右栏卡片/折叠 DETAILS/3.4 秒热力节点稳定断言。
+//  ② 段数：MIN 163 → **164**（自证计数 165）；HEAVY_SUB_MIN ['发言账本'] = **5**。
+//  ③ 变异：test/mutations/overview-2026-10-27.mjs M1–M4（全部 check-wb，预期 BLOCKED）。
+//  ④ 备注：历史日期的「按回复轮次估算」只来自 usage.byDay[].agentCalls；
+//     精确日以 sent.exactFrom 为界，两者不混口径。
+//  ⑤ 2026-10-27 用户反馈追加（段数仍 164，只加同一段的判据）：
+//     makeOverviewKpi 发近 14 天逐日序列 + 「较昨日」基数（messages/tokens/cost，
+//     messages 沿用热力的精确/估算口径）；apiState 同时下发 heat 与 kpi。
+//     前端三张 KPI 卡加缩略曲线 / 增幅胶囊 / 悬停扫描条与读数（14 个数据点）；
+//     启动链路连接线改为按节点状态分段（不再是一根贯穿整卡的渐变长线），
+//     进程守护改单列三行、主节点默认展开；「结束本次运行」改空白幽灵按钮
+//     （悬停绿）并排到「拉起协议端」之后；浅色主题遇深底背景档时铺一层浅色底。
+//     变异：M5 昨日取成今天 / M6 撤掉缩略曲线 / M7 改回实心主按钮 / M8 默认收起，
+//     全部 check-wb，预期 BLOCKED。
+//  ⑥ 2026-10-27 今日小结追加（段数仍 164）：
+//     「今日小结」与相邻 .card 同材质（去掉自带渐变/纹理，不再有 ::before/::after 装饰层）；
+//     state-collector 顺带量 /get_login_info 往返并下发 ports.onebotLatencyMs；
+//     bridge.startedAt 与 panel.bootedAt 供前端原位计时；底部三格 = 运行内存（procs 合计）/
+//     网络延迟 / 已运行。三格的值每秒或每轮会变，所以 HTML 只留占位节点，
+//     由 ovPaintFocus 原位刷新 —— 否则 3 秒轮询会整块重建中栏，热力格动画重播
+//     （panel-dom 的「3.4 秒后热力格同一节点」实测抓到过）。
+//     变异：M9 延迟字段改名 / M10 撤掉三格运行信息，check-wb 预期 BLOCKED。
+//  ⑦ 2026-10-27 启动链子项进度（段数仍 164）：
+//     每个子项 = 16px 圆环进度 + 右侧 0/100%；完成 → 绿盘勾 + 文字横线 + 100%；
+//     未完成 0%（不编造中间值）；主节点全部子项完成 → 图标右下角父级勾。
+//     动画只在首次完成/状态翻转时播：_ovSeenDone / _ovSeenGroups + data-anim /
+//     data-justdone，3 秒轮询后直接终态；勾与横线排在 100% 之后。
+//     变异：M11 撤百分比 / M12 撤父级勾 / M13 去掉首次完成判据，check-wb 预期 BLOCKED。
+//  ⑧ 2026-10-27 最终排版追加（段数仍 164）：
+//     KPI 缩略曲线横向起点 0 / 终点 100（ov-kpi-spark 的 -14px 边距 + 不内缩的 xOf），
+//     左右紧贴卡片边框，不再留白缝；空态基线同样 0→100。
+//     四张信息卡改双列：左边 38px 主数字 + 说明，右边两行 18px 副读数
+//     （唤醒/24h、基础/增强、私聊/主人、自动/人工），底部保留轨道/点阵/分账条；
+//     空出来的右侧由真实副读数填满，不再是一行小字靠左。
+//     插件构成修正口径：`ovPluginsOf` 只按 action==='load' 分类，未加载单独一段，
+//     图例计数之和 = 中心总数；百分比用 ovPctParts 最大余数分配，整数相加恒 100。
+//     Gauge 按参考图重做：段间 0.3rad 间隙（圆头不吃掉间隔）、图例 = 圆点/名称/数量/占比，
+//     悬停图例或弧段 → 灰底行 + 中心切到该段读数 + 其余段 opacity .22。
+//     变异：M14 曲线内缩 / M15 撤副读数 / M16 撤悬停联动 / M17 分类重复计数 /
+//     M18 间隙退回 0.016，check-wb 预期 BLOCKED。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §165 · 工厂入口只在二级导航（2026-10-27）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：三个工厂原先由顶栏三颗圆钮 + 空白占位页承载，入口不在 GROUPS 数据里，
+//  加页/改名都不会带上工厂；现在它们是「工厂」的三个 frame 子页，`#page[data-frame]`
+//  是唯一的选帧来源，工厂层由 `body.is-frame-page` 显隐。
+//  ① 判据：schema factory.subs = visual/persona/plugin（各有 frame，无 blank）；
+//     index.html 无三颗圆钮 / factory.toggle；factory-frame.js 按 #page[data-frame]
+//     选帧且无顶栏按钮 id；paintPage 有「同值不写」的 data-frame 同步 + frame 分支；
+//     .factory-host z-index 低于 .navrow，且有 pointer-events 交接。
+//  ② 段数：MIN 164 → **165**（自证计数 166）；HEAVY_SUB_MIN ['工厂二级导航'] = **5**。
+//  ③ 变异：test/mutations/factory-nav-2026-10-27.mjs M1–M5（全部 check-wb，预期 BLOCKED）。
+//  ④ 同轮收紧 §162：NAV_SHORT 的 persona 检查从 `\bpersona\s*:` 改成顶层两空格，
+//     避免把新的 `factory.subs.persona` 误判成 persona 域缩写覆盖。
+//  ⑤ 测试：panel-dom / verify 从圆钮浮层改为导航驱动（三子页、host 几何/层级、
+//     3.6s 不重载不重播、切帧不重载、离开收起、重进保留）；persona-factory-main 同步改写。
+//  ⑥ 人设工厂的「关闭浮层并查看」改为 postMessage `panel.goto` 回「人格 → 总览」，
+//     不再点击已删除的 #factoryBtn。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §166 · 工厂域导航自动上收（2026-10-27）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：维护者要求工厂页的两级导航在过场与 dock 停稳后自动上收；
+//  鼠标移到顶部居中热区（固定 150×30，紧贴玻璃顶栏 +4px，中间小三角）呼出；
+//  离开导航 2.5s 再收；尺寸不随窗口缩放，严格小范围避免误触；离开工厂后恢复常显。
+//  ① 判据：index 的 `#navHotzone` 按钮；CSS `.nav-hotzone` 150×30 / 顶栏 +4px /
+//     小三角 / 隐藏态 translateY(-100%) + opacity 0 + visibility hidden；隐藏态 nav 与 dock 的
+//     pointer-events:none、热区 auto+opacity 1；app 的 NAV_HIDE_DELAY=2500 + hide/show/reset +
+//     paintPage 的 FACTORY_GI 守卫；row.inert=true / hot.tabIndex=0；settings inert 名单含热区。
+//  ② 段数：MIN 165 → **166**（自证计数 167）；HEAVY_SUB_MIN ['工厂导航自动上收'] = **5**。
+//  ③ 变异：test/mutations/nav-autohide-2026-10-27.mjs M1–M5（check-wb，预期 BLOCKED）。
+//  ④ 同轮测试：panel-dom / verify / persona-factory-main 增加上收、呼出、2.5s 再收、
+//     离开复位、重进再上收；页面遍历在工厂页先呼出再点子页（隐藏态 nav 是 inert）。
+//  ⑤ 坑：§162 的「dock 动画不许每帧 getBoundingClientRect」会把 navAutoHide 里的
+//     wrap 量宽误判成动画路径 —— 改用已有 navDockW 缓存，不新增布局读取。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §167 · Skill 扩展域（2026-10-28 · Plugin/Skill 综合优化）
+// ══════════════════════════════════════════════════════════════════════════════
+//  为什么加：维护者要求“插件接口与 Skill 接口的综合优化”，不是再造第二套宿主。
+//  两型共用同一套 loader / 生命周期 / 工具表 / 设置页；kind 只决定**语义策略**。
+//  ① 判据：extension-kind 的 contractOf 把 prompt.sections 只对 skill 计入入口契约，
+//     并算出 promptOnly / mixed；custom.extensions 双命名空间 + legacyPluginAlias 派生；
+//     plugin-host 按 kind 取白名单/设置、empty 计入 promptSections；context-budget 新增
+//     skillExt 段（2000 字）；brain 与 index 按 kind 分流；schema/app 有 Skill 页、
+//     清单、模型可见预览；state-collector 同源算预览；ext-install 有 expectedKind 与
+//     Skill 的 index.js 预检。
+//  ② 段数：MIN 166 → **167**（自证计数 168）；HEAVY_SUB_MIN ['Skill扩展'] = **1**。
+//  ③ 变异：test/mutations/extensions-skill-2026-10-28.mjs M1–M7（check-wb，预期 BLOCKED）；
+//     同轮跟随实现搬动修正旧锚点：cleanup-01 M8/M9/M10、limits-timeout L6、
+//     plugin-limits P10/P13/P14、r20 P4/P8、sec-s12d M6。
+//  ④ 同轮测试：smoke T437–T446（配置迁移 / 双名单共享上限 / 重复 id / 纯提示词 /
+//     入口阻断 / 混合型 / empty 语义 / skillExt 分区与预算）；panel-dom 增加 Skill 页
+//     （两卡、提示词型徽标、预览含工具名、开关只动 skills.enabled）。
+//  ⑤ 实测踩到的缺陷（本条契约现在钉着它）：面板把设置写到 `extensions.plugin`（单数），
+//     而配置命名空间是 `extensions.plugins`（复数）⇒ 保存成功但值没落盘。
+//     §20④ 与 §167⑥ 现在都要求走 `extNsOf(kind)` 换算。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §168 · 全局光标跟随层（2026-10-28）
+// ══════════════════════════════════════════════════════════════════════════════
+//  ① 判据：NEXT_ASSETS 登记 cursor-follow.css/js；CSS 在 style.css 后、JS 在
+//     motion.js 与 app.js 之间；#cfRoot 在 #modal 之后且不在 scrim→modal 之间；
+//     fixed / z81 / 三层 pointer-events:none 且零 cursor 声明；环 26.7px、点 5.3px，
+//     填充 3.5% 弱于描边 24%，悬停保持黑白（不加 --c-accent，只加深中性描边/填充）；
+//     reduced-motion + coarse 双降级；
+//     JS 用 M.springStep、可 cancelAnimationFrame、无 setInterval、MAX_LAG=9、IDLE_MS=650；
+//     document 指针监听 3 个 + documentElement leave 1 个 + 捕获 scroll 1 个；
+//     factory-frame.js 接 CursorFollow.attachFrame；panel-dom 有「光标跟随层」段。
+//  ② 段数：MIN 167 → **168**（自证计数 169）；HEAVY_SUB_MIN ['光标跟随'] = **7**。
+//  ③ 变异：test/mutations/cursor-follow-2026-10-28.mjs M1–M5（check-wb，预期 BLOCKED）。
+//  ④ 同轮测试：panel-dom 增加跟随 / 拖尾钳制 / 静止缩环 / 悬停黑白放大 / 点击穿透 /
+//     工厂 iframe 桥 / 减弱动效重载；真鼠标进工厂另记手动验收（合成事件不证明浏览器路由）。
+//  ⑤ 坑：Y 轴弹簧状态是 {x,v}，写成 py.y 会在首帧 paint 抛 TypeError ——
+//     症状是「点跟手、环完全不动、scale 只跳一帧」；panel-dom 的调试值由此定位。
+//     另一个坑：测试里只派发 pointerout、指针坐标仍停在按钮上，空闲重算会把 hover 拉回
+//     true；真实移出要 out → move → over 到中性点。
+//  ⑥ 2026-10-28 晚调参（维护者看图）：整体缩 1/3（40/8→26.7/5.3，14→9）；触发态
+//     1.65→1.2 且去掉强调色与 3px 柔光，全程黑白；panel-dom 阈值随之为 1.15–1.3，
+//     并新增「hover 的 border/fill 都不是 accent」断言。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §169 · 0.1.5 接口收尾（2026-10-28）
+// ══════════════════════════════════════════════════════════════════════════════
+//  ① 判据：API_ROUTES 新增 github/star（GET）、backgrounds（GET+POST）、
+//     backgrounds/media（GET）、backgrounds/active（POST）、backgrounds/delete（POST）、
+//     extensions/package（只读 POST）；背景三条 POST 在 WRITE_ROUTES，package 在
+//     READ_ONLY_POST；上传用 readBodyToFile + 魔数嗅探；媒体有 Range 206/416；
+//     索引 writeJsonAtomic + 单飞队列 + id/格式囚笼；设置层走 /api/backgrounds 且
+//     保留 IndexedDB 迁移读取、背景路径不再用 blob URL；星标有 UA/5 分钟缓存/502；
+//     扩展投影 category/categories；configSchema label 透传；makeZip 支持二进制；
+//     文件夹导入与模板创建接线；覆盖安装前端重试；boot/dom 覆盖新接口。
+//  ② 段数：MIN 168 → **169**（自证计数 170）。
+//  ③ 变异：test/mutations/interfaces-2026-10-28.mjs M1–M10（check-wb，10/10 BLOCKED）。
+//  ④ 同轮测试：smoke T447–T451；panel-boot 背景 CRUD/Range/413/415/401/403、
+//     星标夹具 200/502、package→install→409→overwrite=1；panel-dom 星标 4,242、
+//     自定义背景上传/启用/取消/删除、工厂分类树、文件夹入口、创造弹窗、中文设置名。
+//  ⑤ 坑：§135 的字段契约体从最后一个 api-fields 到文档末尾 —— 新编号章节必须放在
+//     §41.2 之前，否则 persona/adopt 的四行计数会被新章节污染（本轮实测红过一次）。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §170 · 启动首屏与静态缓存（2026-10-29）
+// ══════════════════════════════════════════════════════════════════════════════
+//  ① 判据：readNextAsset mtime+size 缓存；静态路由 no-cache + ETag/304 + Vary + gzip
+//     + 启动预热，入口仍 no-store；api() GET 并发去重且写后强制刷新绕行；星数在设置层
+//     首次打开才拉；轮询 HTML 逐字未变不重建（带 pageHtmlKey 与 __paintStats）；
+//     __bootGate whenDone/finish + 6.25s watchdog；app/island/contour/factory/shader/
+//     settings 七个接线点；开屏 z-index 严格全站最高；canvas 3.5/1.2MP 预算、bs-lite、
+//     veil 2000ms 延后；Electron 同色底/满速 rAF/首绘前不 show；panel-dom 开屏真渲染。
+//  ② 段数：MIN 169 → **171**（自证计数 171：新增 §170 一段）。
+//  ③ 变异：test/mutations/boot-priority-2026-10-29.mjs M1–M11（check-wb，预期 11/11 BLOCKED）。
+//  ④ 同轮测试：panel-dom 新增首帧/最高层/铺满/canvas/跳过隐藏；panel-splash-perf 记录
+//     开屏 0–5.2s 帧间隔与传输字节；npm run verify 全绿。
+//  ⑤ 坑：check-wb H-02 的 CSP 判据钉的是 `if (asset.name === NEXT_ENTRY)` 字面形状；
+//     改成 isEntry 会假红。沙箱静态资产用 gzip 后 curl 要显式带 Accept-Encoding。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §171 · 界面身份签名与锚点（2026-10-29）
+// ══════════════════════════════════════════════════════════════════════════════
+//  ① 判据：panel/ui-identity.json + .sig 原始字节验签；公钥指纹三方一致
+//     （UPDATE-KEY-INFO / ui-identity.js / check-wb pin）；7 域 / 30 页的
+//     id/label/相对顺序；9 个外壳选择器；4 个渲染入口；refresh() 在
+//     renderBanners() 之前接线；server.js 下发 uiIdentity；paths.js 登记新模块；
+//     纯函数自证「加新页/新域/新选择器放行，删/改名/重排才红」。
+//  ② 段数：MIN 171 → **172**（自证计数 172：新增 §171 一段）；HEAVY_SUB_MIN
+//     ['界面身份'] = 8。
+//  ③ 变异：test/mutations/ui-identity-2026-10-29.mjs M1–M5/M7–M10
+//     （check-wb，9/9 BLOCKED；M6 不单列，渲染入口缺失由 §171⑩ 纯函数自证覆盖）。
+//  ④ 同轮测试：panel-boot 断言 /api/state.uiIdentity 官方态 + 坏清单降级；
+//     panel-dom 官方态无横幅 / 移除外壳报警 / 恢复外壳回官方；npm run verify 全绿。
+//  ⑤ 坑：签名覆盖原始字节，必须 LF（.gitattributes 显式 eol=lf）；公钥指纹 pin
+//     在 check-wb 与 ui-identity.js 两处；负向对照不真改 schema，避免撞
+//     verify.mjs 的 7 域 / check-wb §165 的工厂 5 页 / panel-dom 的 3 frame。

@@ -510,7 +510,7 @@ $ node --input-type=module -e "const m=await import('./src/custom-config.js');
 
 | 缺口 | 现状 | 缺的**那一处** | 值不值得做 |
 |---|---|---|---|
-| 扩展设置项的中文名 | 现在显示的是键名（`injectPrompt`）。**前端已写成 `f.label \|\| f.key`**，后端一补就自动变中文 | `src/plugin-manifest.js` 归一化时只保留了 `schemaKeys`，`configSchema[key].label/description` 被丢了 → 要在清单归一化 + `plugin-host` 的扫描结果 + `plugin-settings` 三处各带一个字段 | 中：三处都在机器人路径上，且归一化的键集有契约盯着，值得单独一轮 |
+| 扩展设置项的中文名 | **已接（2026-10-28）**：`normalizeManifest` 保留 `configSchema` 的 label/description，`settingsSpec` 透传，面板显示中文名 | — | 已完成，契约 §169 与 smoke T450 盯着 |
 | `owner.qq`（谁能叫醒它） | 顶层配置，无控件、**`/api/config` 也不收入参** | 后端加进 `/api/config` 的入参白名单，再加控件 | 低：一个号而已（但睡眠的"叫醒"要靠它才真的能用） |
 | 图库的分类浏览 | 面板只报**张数**（`data/images-lib/index.json` 的条目字段名我们没样本可核） | 先让那个包产出一次数据、确认条目形状，再决定按什么分组 | 低：不猜字段名是**故意**的（猜错会得到一个永远为空的分组） |
 | 知识库检索层 | 目前最接近的是「结构化记忆 + 知识包 + 群友档案」 | 真做要新增：文档切片 + 索引 + 注入预算（旧骨架页说的那一层） | 中高：属新开发，不是接线 |

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import {
   ENHANCE, ENHANCE_KEYS, ENHANCE_GROUPS, PERSONA_KEYS, PLAY_RULES, REPLY_LENGTHS, SCENES,
+  resolvePlayRules,
   SKILL_IN_PROMPT, SKILL_CHARS_IN_PROMPT, MANUAL_MEMORY_IN_PROMPT, SIMILAR_THRESHOLD, readCustom,
 } from '../../src/custom-config.js';
 import {
@@ -28,9 +29,10 @@ import { quotaPlanOf } from '../../src/free-quota.js';
 import { activeBrainOf, brainListOf, visibleFeatureKeysOf } from '../../src/custom-brain.js';
 import { listAutoMemory } from '../../src/memory-store.js';
 import { readHistory } from '../../src/config-history.js';
+import { extensionPlanOf, skillExtPlanOf, extensionPromptMax } from '../../src/extension-prompts.js';
 import {
   CONFIG_FILE, DOCKER, DOCKER_APP, HISTORY_FILE, IS_WIN, MLX_PY, NAPCAT_WEBUI_PORT,
-  PANEL_STATE_DIR, QWENCHAT_SERVER, QWEN_SERVER,
+  PANEL_STATE_DIR, PERSONA_DIR, QWENCHAT_SERVER, QWEN_SERVER,
 } from './paths.js';
 import {
   LOCAL_CHANNELS, LOCAL_MODELS, LOCAL_MODEL_SUPPORTED, LOCAL_MODEL_UNSUPPORTED_WHY,
@@ -48,9 +50,35 @@ import { readConfig } from './config-io.js';
 import { readModelSync } from './model-sync-state.js';
 import { readTrace } from './trace-io.js';
 import { state } from './runtime-state.js';
+// 人设域六页（2026-10-25）：提示词分段与面板显示**同一份文字**。
+// 这三块都是零依赖叶子；面板只负责摆出来，不在前端抄第二份文案。
+import { buildPersonaSections } from '../../src/prompt-sections.js';
+import { MBTI_AXES, MBTI_TYPES, mbtiInfoOf } from '../../src/mbti.js';
+import { STAR_SIGNS, ZODIAC_ANIMALS, birthdayInfoOf } from '../../src/birthday.js';
+import { resolvePersonaFile } from '../../src/user-root.js';
+import { EMO_GROUPS } from '../../src/emotion-keys.js';
+import { moodPromptLines } from '../../src/emotion.js';
 
 /** 开机自启三态每 10 秒最多查一次系统：面板轮询 3 秒一次，不能每轮起 PowerShell/reg。 */
 let autoStartCache = { at: 0, value: null };
+
+/**
+ * 读人格文件正文（只读、尽力而为）。「系统提示词」页要把"文件底子"也算进人物设定段，
+ * 否则界面上的字数会比模型实际收到的少一截。
+ * ⚠️ 只接受相对路径：`..` / 盘符 / 绝对路径一律不读 —— config.json 是用户可编辑输入，
+ *    面板没有理由因为它写了一个路径就去读盘上任意文件。
+ */
+function personaTextOf(cfg) {
+  const raw = String(cfg?.persona?.file || '').trim();
+  if (!raw) return '';
+  if (/^([a-z]:[\\/]|[\\/])/i.test(raw) || raw.split(/[\\/]+/).includes('..')) return '';
+  try {
+    const file = resolvePersonaFile(raw, { personaDir: PERSONA_DIR });
+    return file ? fs.readFileSync(file, 'utf8').trim() : '';
+  } catch {
+    return '';
+  }
+}
 function autoStartStateOf() {
   const now = Date.now();
   if (autoStartCache.value && now - autoStartCache.at < 10000) return autoStartCache.value;
@@ -125,7 +153,7 @@ export function onebotSelfReport(verRes, statRes, now = Date.now()) {
  * ══════════════════════════════════════════════════════════════════════════
  * 层号 **L3**：依赖 L2 的 `models.js` / `proc.js`，也是本仓 lib 最深一层。
  *
- * ⚠️ **十一个判据全部是注入的，不是搬进来的**（理由与 `config-route.js` 同形）：
+ * ⚠️ **这些依赖全部是注入的，不是搬进来的**（理由与 `config-route.js` 同形）：
  * 它们在主文件里各自还有别的调用点，而 ESM 的 import 绑定在**外部只读**
  * ——搬进来就得在主文件留一份壳，两份实现各活一份、后改的那份不生效。
  *
@@ -140,11 +168,62 @@ export function onebotSelfReport(verRes, statRes, now = Date.now()) {
  * @param {object} deps 主文件注入的判据（见上面的清单）
  * @returns {Promise<object>} 可直接 JSON.stringify 的状态对象
  */
+/**
+ * 面板的“模型可见预览”：与 brain 共用 skillExtPlanOf / extensionPlanOf。
+ *
+ * 运行态优先用 effective 快照（有工具真实名）；机器人没跑时退回磁盘静态清单，
+ * 并明确标 source='static'——静态预览不是“此刻注入”，UI 必须把这句话写出来。
+ */
+function extensionPromptPreviewOf(snapshot, eff) {
+  const staticById = new Map();
+  for (const it of (snapshot?.items || [])) {
+    if (!it || it.action !== 'load') continue;
+    staticById.set(it.id, it);
+  }
+  const rtById = new Map();
+  if (eff?.alive && Array.isArray(eff?.extensions?.items)) {
+    for (const it of eff.extensions.items) {
+      if (!it || it.state !== 'loaded') continue;
+      rtById.set(it.id, it);
+    }
+  }
+  const pick = (kind) => {
+    const out = [];
+    let fromRuntime = 0;
+    const ids = new Set([...staticById.keys(), ...rtById.keys()]);
+    for (const id of ids) {
+      const st = staticById.get(id);
+      const rt = rtById.get(id);
+      const itemKind = (rt?.kind || st?.kind) === 'skill' ? 'skill' : 'plugin';
+      if (itemKind !== kind) continue;
+      const sections = (rt && Array.isArray(rt.promptSections) && rt.promptSections.length)
+        ? rt.promptSections : st?.promptSections;
+      if (!Array.isArray(sections) || !sections.length) continue;
+      const tools = Array.isArray(rt?.tools) ? rt.tools : [];
+      if (rt && Array.isArray(rt.promptSections) && rt.promptSections.length) fromRuntime += 1;
+      for (const s of sections) out.push({ ...s, tools });
+    }
+    return { sections: out, fromRuntime };
+  };
+  const skill = pick('skill');
+  const plugin = pick('plugin');
+  const skillPlan = skillExtPlanOf(skill.sections, { maxChars: extensionPromptMax() });
+  const pluginPlan = extensionPlanOf(plugin.sections);
+  return {
+    source: (skill.fromRuntime || plugin.fromRuntime) ? 'runtime' : 'static',
+    skill: {
+      lines: skillPlan.lines, used: skillPlan.used, dropped: skillPlan.dropped,
+      maxChars: skillPlan.maxChars, sections: skillPlan.sections.length,
+    },
+    plugin: { lines: pluginPlan.lines, used: pluginPlan.used, sections: plugin.sections.length },
+  };
+}
+
 export function makeStateCollector(deps) {
   const {
     IMPORTABLE_KEYS, bridgeRunning, countBridgeInstances, memoryRecordsOf,
     napcatToken, panelInfo, readBridgeLock, readDebugFlag, readEffective,
-    readThinking, readUsage, winMemory,
+    readThinking, readUsage, readSent, winMemory,
   } = deps;
 
   return async function collectState() {
@@ -174,8 +253,18 @@ export function makeStateCollector(deps) {
     //    协议端在不在，只有一个正确的判据 —— 问它本人。
     // 2026-10-20 追加两条回读（`/get_version_info`、`/get_status`）：同一次并行探测，
     // 不额外增加延迟（三条都在同一个 Promise.all 里，各自 2.5s 上限，答不上就空）。
+    // 顺带量一次 `/get_login_info` 的往返耗时（总览「网络延迟」用）。
+    // 只量这一条 HTTP，不和 wsProbe 的等待取最大值 —— 否则延迟会被 WS 探活时间污染。
+    let onebotLatencyMs = null;
+    const infoProbe = (() => {
+      const t0 = Date.now();
+      return httpGet(onebot.httpPort, '/get_login_info').then((r) => {
+        if (r.ok) onebotLatencyMs = Date.now() - t0;
+        return r;
+      });
+    })();
     const [infoRes, verRes, statRes, wsRes, p6099] = await Promise.all([
-      httpGet(onebot.httpPort, '/get_login_info'),
+      infoProbe,
       httpGet(onebot.httpPort, '/get_version_info'),
       httpGet(onebot.httpPort, '/get_status'),
       wsProbe(onebot.wsPort),
@@ -288,6 +377,28 @@ export function makeStateCollector(deps) {
     // 算两遍不只是浪费 —— 两份归一化结果一旦因为入参不同而分叉，就会出现
     // "页面上显示已启用、机器人却不认"这种没法复现的差异（本项目最怕的形状）。
     const custom = readCustom(cfg);
+    // 人设域六页（2026-10-25）：插件数据只读一次 —— `personaPrompt` 与末尾的
+    // `...botData` 必须看同一份快照，否则"提示词页说已接入、心情页说没数据"。
+    const botData = readBotData();
+    const mbtiInfo = mbtiInfoOf(custom.mbti);
+    const birthdayInfo = birthdayInfoOf(custom);
+    // 情绪段与模型收到的必须逐字一致：用面板已读到的同一份状态喂给唯一实现，
+    // 不再让面板自己拼一段"看起来像"的文字。
+    const emotionMap = Object.fromEntries((botData.emotion?.spectrum || []).map(([k, v]) => [k, v]));
+    const moodLines = botData.emotion?.ok
+      ? moodPromptLines({ ...botData.emotion, emotions: emotionMap })
+      : [];
+    const personaPrompt = buildPersonaSections({
+      custom,
+      personaName: cfg?.persona?.name || '',
+      replyLengthHint: (REPLY_LENGTHS[custom.replyStyle?.length] || REPLY_LENGTHS.normal).hint,
+      maxChunks: cfg?.reply?.maxChunks,
+      personaText: personaTextOf(cfg),
+      enhanceTable: ENHANCE,
+      rules: resolvePlayRules(custom),
+      emotionOk: !!botData.emotion?.ok,
+      moodLines,
+    });
 
     // ── 内存那一段（2026-10-09 · 第 53 轮 · B2）─────────────────────────────
     // macOS：`cachedMemory()` 走 `vm_stat` / `sysctl` / `ps -Ao`。
@@ -299,6 +410,20 @@ export function makeStateCollector(deps) {
     //    不可能想到"这个数根本没采到"）。
     const memory = (await cachedMemory())
       ?? (IS_WIN && winMemory ? winMemoryOf(await winMemory()) : null);
+
+    const extSnapshot = extensionsOf(
+      {
+        plugin: custom.extensions?.plugins?.enabled || [],
+        skill: custom.extensions?.skills?.enabled || [],
+      },
+      {
+        userSettingsByKind: {
+          plugin: custom.extensions?.plugins?.settings || {},
+          skill: custom.extensions?.skills?.settings || {},
+        },
+        maxPlugins: custom.extensions?.max,
+      }
+    );
 
     return {
       // 面板自己的版本自检（页面据此判断"是不是在跟一个跑着旧代码的后端说话"）
@@ -319,6 +444,7 @@ export function makeStateCollector(deps) {
       ports: {
         onebotHttp: infoRes.ok,
         onebotWs: wsRes.ok,
+        onebotLatencyMs,
         webui: p6099,
         // 探的是哪两个端口（第 53 轮：端口改从配置解析，界面要能核对"我探的是不是它"）。
         // ⚠️ 下发这四个数字是为了**排错**：端口对不上时，用户一眼能看出面板在探哪儿。
@@ -372,6 +498,7 @@ export function makeStateCollector(deps) {
         })),
       },
       usage: readUsage(),
+      sent: readSent(),
       // 可撤销的次数（B10b · O-CFGHIST）。只下發**条数**，不下发历史内容 ——
       // 那份文件里是完整的 config.json（含 API Key），不该被轮询反复搬来搬去。
       configHistory: readHistory(HISTORY_FILE).length,
@@ -393,6 +520,7 @@ export function makeStateCollector(deps) {
       bridge: {
         running: bridgeRunning(),
         pid: state.bridge?.pid || state.bridgePid || null,
+        startedAt: state.bridge ? state.bridgeStartedAt : null,
         uptimeMs: state.bridge ? Date.now() - state.bridgeStartedAt : 0,
         lastExit: state.lastExit,
         // 系统里**实际**有几个实例（≥2 就是"在抢同一条群消息"）。null = 这次没扫出来。
@@ -503,6 +631,9 @@ export function makeStateCollector(deps) {
            下发的是**毫秒原值**：换算成分钟只发生在前端控件那一处（`scale`）。 */
         interjectCooldownMs: cfg?.trigger?.interjectCooldownMs ?? 300000,
         personaName: cfg?.persona?.name || '',
+        // 人设文件路径（2026-10-25）：只在页面上**只读展示** —— 写入口仍在 config.json。
+        // 不下发文件正文：提示词页需要的那份已经在 `personaPrompt` 里算进去了。
+        personaFile: cfg?.persona?.file || '',
         // 分段标记（第 53 轮 · B4）：以前面板上一个入口都没有，于是它坏掉（空串）时
         // 用户**看不见也改不了** —— 而空串的后果是"一条回复被逐字发出去"。
         // 下发给页面是 `""` 时界面按"要用默认值"提示（后端 normalizeSplitToken 已兜底）。
@@ -527,6 +658,11 @@ export function makeStateCollector(deps) {
       // 「自定义工作台」那一整块。归一化逻辑在 src/custom-config.js（与机器人共用一份），
       // 面板只负责渲染 —— 不自己写默认值，才不会出现"面板上填了、机器人没读"。
       custom,
+      // 人设六页（2026-10-25）：MBTI / 生日彩蛋的派生值与提示词分段。
+      // 三者都由后端算好，前端不重复推导 —— 页面与真正注入的提示词必须同源。
+      mbtiInfo,
+      birthdayInfo,
+      personaPrompt,
       // 角色卡分级（十维）：面板只渲染，判据在 src/persona-grade.js。
       // 只算 `kind:'persona'` 的卡；`custom.skills` 里没有卡就是空数组。
       personaCards: (custom.skills || [])
@@ -543,13 +679,21 @@ export function makeStateCollector(deps) {
         scenes: SCENES,
         replyLengths: REPLY_LENGTHS,
         similarThreshold: SIMILAR_THRESHOLD,
-        // 扮演规则的清单（只读）。放在后端是为了让"提示词里到底写了哪几条"
-        // 和"面板上给你看的是哪几条"永远出自同一份 —— 前端不用也不会再抄一份。
-        playRules: PLAY_RULES,
+        // 这一轮真正会注入的扮演规则：用户改过就用改过的那份，否则用默认 10 条。
+        // 前端不抄第二份；`defaultPlayRules` 只给「恢复默认」按钮做对照。
+        playRules: resolvePlayRules(custom),
+        defaultPlayRules: PLAY_RULES,
         // 增强 12 项：字段名 / 中文标签 / 提示 / 示例 / 分组，全部由后端给。
         // 前端只负责按分组摆出来 —— 它不再自存任何一个中文名（本项目"一份数据
         // 维护两遍"踩过四次，每一次都是这样开始的）。
         enhance: { table: ENHANCE, keys: ENHANCE_KEYS, groups: ENHANCE_GROUPS },
+        // MBTI 的四轴与 16 型描述（2026-10-25）。前端只做配色与排版，
+        // 类型名 / 演法 / 特质一律读这里 —— 不许在 app.js 再抄一份中文表。
+        mbti: { axes: MBTI_AXES, types: MBTI_TYPES },
+        // 生日彩蛋的生肖 / 星座表：同样是"一份数据两处用"（提示词与页面）。
+        birthday: { animals: ZODIAC_ANIMALS, signs: STAR_SIGNS },
+        // 21 项情绪的中文名与分组：面板画柱子用，提示词侧读状态键名用。
+        emotion: { groups: EMO_GROUPS },
         // 人格 12 项 / 增强 12 项的**键名**，供「套用角色卡」按归属分派用
         // （2026-10-15 · B3 / Issue #5）。角色卡里那份快照是「人格 12 + 增强 12 +
         // 场景 9」混在一个扁平对象里，前端必须知道每个键该写回 `persona.*` 还是
@@ -635,10 +779,8 @@ export function makeStateCollector(deps) {
       //    `{now, force, userSettings}` ⇒ `userSettings` 恒为 `{}` ⇒ 面板永远显示
       //    清单默认值，用户填的值存进了 config 却在刷新后"消失"。这是"设置存不上"
       //    的第二条真因（第一条是 app.js 的 change 分支缺失）。
-      extensions: extensionsOf(custom.plugins.enabled, {
-        userSettings: custom.plugins.settings,
-        maxPlugins: custom.plugins.max,
-      }),
+      extensions: extSnapshot,
+      extensionPrompt: extensionPromptPreviewOf(extSnapshot, eff),
       // ── 插件写的数据（2026-10-02）─────────────────────────────────────
       // 情绪 / 群友档案 / 图库张数 / 免费额度情报 —— 这四份数据**一直是插件在写**，
       // 但从来没有出口，所以页面只能摆一张写着"未实现"的骨架。
@@ -647,7 +789,7 @@ export function makeStateCollector(deps) {
       //    用户最想看这些数据的时候（让他先起机器人才能看心情，是本末倒置）。
       // ⚠️ 读失败**不抛**（这里每 3 秒被拉一次，抛一次整份快照就 500）；形状与纪律
       //    全在 `lib/bot-data.js`（白名单投影 / 认不出不猜 / 不下发绝对路径）。
-      ...readBotData(),
+      ...botData,
     };
   };
 }

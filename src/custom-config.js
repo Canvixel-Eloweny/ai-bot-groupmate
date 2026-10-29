@@ -44,6 +44,13 @@ import { WAIT_DEFAULTS, waitTuningOf } from './waiting.js';
 // 闭集合 `REMINDER_ON` 也归 `reminder.js` —— 这里只取用，不自己再写一份名单。
 import { parseIsoDay, normalizeHolidays } from './holidays.js';
 import { REMINDER_ON } from './reminder.js';
+// 人设域六页（2026-10-25）：MBTI 与生日彩蛋的形状 / 判据住各自零依赖叶子，
+// 这里只做配置面归一化。⚠️ 两处都**不许**再手写一份轴默认值或星座表。
+import { MBTI_DEFAULT_AXES, normalizeMbti } from './mbti.js';
+import { normalizeBirthday } from './birthday.js';
+// 可被「系统提示词」页覆盖的分段白名单。文案实现在 prompt-sections.js，
+// 这里只取 id 集合做配置面白名单 —— 白名单还漏了某段，覆盖就静默不生效。
+import { PROMPT_SECTION_IDS } from './prompt-sections.js';
 
 /** 昵称等纯文本字段的长度上限，防止有人把整篇文章贴进来把提示词撑爆 */
 const TEXT_MAX = 300;
@@ -69,7 +76,12 @@ const SKILL_BG_MAX = 1500;
  * 前 7 个是短字段（一句话能说完），后 5 个是叙述型（天生要写一段）。
  */
 export const PERSONA_KEYS = ['age', 'role', 'world', 'traits', 'tone', 'catch', 'desire', 'fear', 'logic', 'attitude', 'status'];
-const PERSONA_LONG_KEYS = ['desire', 'fear', 'logic', 'attitude', 'status'];
+export const PERSONA_LONG_KEYS = ['desire', 'fear', 'logic', 'attitude', 'status'];
+
+/** 人设工厂与运行时共用的字段上限；页面不许再抄第二份。 */
+export const PERSONA_FIELD_LIMITS = Object.freeze({
+  name: 40, short: TEXT_MAX, long: TEXT_LONG, scene: 500, mbtiNote: 500,
+});
 
 /**
  * ══════════════════════════════════════════════════════════════════════
@@ -189,6 +201,32 @@ export const PLAY_RULES = [
   { id: 'allAges', text: '全年龄向，不碰政治、不碰低俗。', safety: true },
   { id: 'noSpam', text: '主动找话题可以，但不刷屏、不抢话。', safety: true },
 ];
+
+/**
+ * 用户改过的那份扮演规则。`null` = 没改过，用 `PLAY_RULES`。
+ *
+ * 为什么允许逐条编辑（2026-10-25 维护者要求，照桌面原型搬）：
+ * 原型里「增强项」页给了 ! 解锁 + 增删改 + 恢复默认。之前这里刻意只读，
+ * 是因为逐条改可能改出互相矛盾的规则；现在保留总开关，并把
+ * 「空列表 = 一条都不注入」当成合法状态 —— 由用户自己为改坏负责。
+ */
+function normalizeRuleItems(raw) {
+  if (!Array.isArray(raw)) return null;
+  const out = [];
+  for (const item of raw.slice(0, 40)) {
+    const text = String(item && typeof item === 'object' ? item.text : item ?? '').trim().slice(0, 200);
+    if (!text) continue;
+    out.push(item && item.safety === true ? { text, safety: true } : { text });
+  }
+  return out;
+}
+
+/** 这一轮真正要注入的规则：用户改过就用用户的，否则用默认 10 条。 */
+export function resolvePlayRules(custom) {
+  const list = custom?.playRuleItems;
+  return Array.isArray(list) ? list : PLAY_RULES;
+}
+
 /**
  * 一轮里最多注入几条技能 —— 再多就会盖过人格本身。
  * 默认值住在 `field-schema.js` 的 `skillPromptMax`（2026-10-23 起可配），
@@ -337,6 +375,32 @@ const CUSTOM_DEFAULTS = {
    */
   personaResetOnChange: true,
   /**
+   * MBTI 辅助层（2026-10-25）。默认**关**：不替用户决定注入。
+   * `axes` 的四轴默认值与类型描述住在 `src/mbti.js`（与提示词、面板共用一份）。
+   */
+  mbti: { on: false, axes: { ...MBTI_DEFAULT_AXES }, note: '' },
+  /**
+   * 生日彩蛋（2026-10-25）。`month = 0` / `day = 0` = 没填。
+   * 生肖只展示；星座在 `astroOn` 打开时最多两句进提示词。
+   */
+  birthday: { age: 0, month: 0, day: 0 },
+  astroOn: false,
+  /**
+   * 情绪状态是否写进提示词（2026-10-25）。默认开：状态是项目本体内建的，
+   * 不再依赖插件；没有状态文件时这一段自然为空，不影响旧配置。
+   */
+  moodOn: true,
+  /**
+   * 用户逐条改过的扮演规则；`null` = 用内置的 PLAY_RULES。
+   */
+  playRuleItems: null,
+  /**
+   * 「系统提示词」页的分段覆盖（2026-10-25）。
+   * 键 = `PROMPT_SECTION_IDS` 里的段 id，值 = 用户改过的全文；
+   * 缺键 / null = 用自动生成的那一份。空串是**合法覆盖**（明确要这段为空）。
+   */
+  promptSections: {},
+  /**
    * 是否把「AI 扮演规则」那 12 条写进提示词。默认开。
    * 关掉只影响"扮演的规矩"，不动人设本身 —— 所以它是独立开关，不是 personas 的一部分。
    */
@@ -379,6 +443,19 @@ const CUSTOM_DEFAULTS = {
    * 合成一份会让"升级包之后新键从哪来"说不清。
    */
   plugins: { enabled: [], settings: {}, max: PLUGIN_MAX, hookTimeoutMs: numDefault('hookTimeoutMs') },
+  /**
+   * 扩展宿主的规范命名空间（2026-10-28 · Plugin/Skill 综合优化）。
+   *
+   * ⚠️ `custom.skills` 是**知识包/角色卡数据**，与这里的 `extensions.skills`
+   *    （磁盘 `skills/` 目录里的代码扩展）不是同一件事。两者永不共用一份配置。
+   * ⚠️ `plugins` 旧键保留为派生别名（见 readCustom），不是第二真相。
+   */
+  extensions: {
+    plugins: { enabled: [], settings: {} },
+    skills: { enabled: [], settings: {} },
+    max: PLUGIN_MAX,
+    hookTimeoutMs: numDefault('hookTimeoutMs'),
+  },
   /**
    * 工具注册上限（2026-10-23）。工具 schema 会进每一轮请求前缀，所以它有一个
    * **可配的上限**而不是写死的 24；默认值与天花板由 `tool-registry.js` 拥有。
@@ -530,6 +607,22 @@ function mergeDeep(base, over) {
 
 const str = (v, max = TEXT_MAX) => String(v ?? '').slice(0, max);
 const bool = (v) => v === true;
+
+/**
+ * `custom.promptSections` 的白名单投影。
+ * 只认 `PROMPT_SECTION_IDS` 里的键，只收字符串（含空串）；`null` 视为"清掉覆盖"。
+ * 上限 6000 字/段：一段比人格字段（1200）宽得多，但仍要封住"把整本书贴进来"。
+ */
+function promptSectionOverrides(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  for (const id of PROMPT_SECTION_IDS) {
+    if (!Object.prototype.hasOwnProperty.call(raw, id)) continue;
+    const v = raw[id];
+    if (typeof v === 'string') out[id] = v.slice(0, 6000);
+  }
+  return out;
+}
 const num = (v, def, min, max) => {
   const n = Number(v);
   if (!Number.isFinite(n)) return def;
@@ -747,17 +840,49 @@ function pluginSettings(v, enabled = []) {
   return out;
 }
 
-/** `custom.plugins` 的**唯一归一化口**（白名单 + 各包设置）。 */
-function pluginFields(v) {
+/** 单个 kind 的白名单 + 设置（不含共享的 max / hookTimeoutMs）。 */
+function extensionKindFields(v) {
   const enabled = pluginIds(v?.enabled);
-  // 上限是**可配的**：缺省取 `PLUGIN_MAX`，坏值 / 越界一律钳回合法区间。
-  // 不改写用户原值（config.json 里写 5000 仍是 5000），只在生效值上钳 ——
-  // 面板显示的是生效值，回写时才由 draft 提交。
-  const max = Math.max(1, Math.min(PLUGIN_MAX_LIMIT, Math.trunc(Number(v?.max)) || PLUGIN_MAX));
-  // 钩子单条超时（2026-10-23）：与 max 同一取法 —— 坏值 / 越界钳回合法区间，
-  // 不改写用户原值，只在生效值上钳。
-  const hookTimeoutMs = numOr('hookTimeoutMs', v?.hookTimeoutMs);
-  return { enabled, settings: pluginSettings(v?.settings, enabled), max, hookTimeoutMs };
+  return { enabled, settings: pluginSettings(v?.settings, enabled) };
+}
+
+/**
+ * 扩展宿主的唯一归一化口。
+ *
+ * `raw` 只接受**原始 config.json 里真的存在**的 `extensions`；调用方用
+ * `raw?.custom?.extensions` 判断，不能用 mergeDeep 后的默认值判断 ——
+ * 否则“新配置存在但只写了 skills”会被误判成“旧配置”，又把 plugins 白名单
+ * 回落一遍，清空的条目会复活。
+ */
+function extensionFields(raw, legacyPlugins) {
+  const has = raw && typeof raw === 'object' && !Array.isArray(raw);
+  const legacy = legacyPlugins && typeof legacyPlugins === 'object' && !Array.isArray(legacyPlugins)
+    ? legacyPlugins : {};
+  const pluginSrc = has ? raw.plugins : legacy;
+  const skillSrc = has ? raw.skills : legacy;
+  const maxRaw = has ? raw.max : legacy.max;
+  const hookRaw = has ? raw.hookTimeoutMs : legacy.hookTimeoutMs;
+  const max = Math.max(1, Math.min(PLUGIN_MAX_LIMIT, Math.trunc(Number(maxRaw)) || PLUGIN_MAX));
+  return {
+    plugins: extensionKindFields(pluginSrc),
+    skills: extensionKindFields(skillSrc),
+    max,
+    hookTimeoutMs: numOr('hookTimeoutMs', hookRaw),
+  };
+}
+
+/** 旧 `custom.plugins` 是派生别名：两 kind 的并集/设置合并，不是第二真相。 */
+function legacyPluginAlias(extensions) {
+  const enabled = [...new Set([
+    ...(extensions.plugins?.enabled || []),
+    ...(extensions.skills?.enabled || []),
+  ])];
+  return {
+    enabled,
+    settings: { ...(extensions.skills?.settings || {}), ...(extensions.plugins?.settings || {}) },
+    max: extensions.max,
+    hookTimeoutMs: extensions.hookTimeoutMs,
+  };
 }
 
 /** 免打扰时段：整数小时。**区间与默认值都取自 src/field-schema.js**，这里不写第二份数字。
@@ -777,6 +902,12 @@ function quietHours(v) {
  */
 export function readCustom(raw) {
   const c = mergeDeep(CUSTOM_DEFAULTS, raw?.custom);
+  // ⚠️ 命名空间存在性必须看**原始 raw**，不能看 mergeDeep 后的 c.extensions：
+  //    默认结构里永远有 extensions，看 c 会把“旧配置”误判成“新配置”，
+  //    旧 plugins.enabled 就不会迁移，已启用的包会静默消失。
+  const rawExt = raw?.custom?.extensions;
+  const hasExtensions = rawExt && typeof rawExt === 'object' && !Array.isArray(rawExt);
+  const extensions = extensionFields(hasExtensions ? c.extensions : null, hasExtensions ? null : c.plugins);
 
   const length = Object.keys(REPLY_LENGTHS).includes(c.replyStyle.length) ? c.replyStyle.length : 'normal';
 
@@ -786,6 +917,14 @@ export function readCustom(raw) {
     enhance: enhanceFields(c.enhance),
     personaResetOnChange: c.personaResetOnChange !== false,
     playRules: c.playRules !== false,
+    playRuleItems: normalizeRuleItems(c.playRuleItems),
+    moodOn: c.moodOn !== false,
+    // MBTI / 生日彩蛋 / 分段覆盖（2026-10-25）：
+    // 归一化归各自叶子，这里只负责"从 c 取出来喂进去" —— 与 browseLock / sleep 同一条纪律。
+    mbti: normalizeMbti(c.mbti),
+    birthday: normalizeBirthday(c.birthday),
+    astroOn: c.astroOn === true,
+    promptSections: promptSectionOverrides(c.promptSections),
     // 技能条目本身不再截断；真正进提示词的条数 / 字数由 skillPrompt 决定。
     skills: skillItems(c.skills),
     // ⚠️ 必须出现在这个返回对象里：readCustom 是白名单投影，漏了它，
@@ -794,11 +933,10 @@ export function readCustom(raw) {
       max: numOr('skillPromptMax', c.skillPrompt?.max),
       chars: numOr('skillPromptChars', c.skillPrompt?.chars),
     },
-    // 扩展包白名单（EX-PLUGIN）。**只有这里有值，别处不许再解析一遍** ——
-    // 消费方 `src/plugin-host.js` 的 `loadExtensions({enabled})` 直接吃这个数组。
-    // `settings` 依赖 `enabled` 的结果（没启用的包不留设置）—— 所以先算出 enabled，
-    // 一个变量只承担一个用途（第 49 轮那条纪律）。
-    plugins: pluginFields(c.plugins),
+    // 扩展宿主：规范命名空间 + 旧 plugins 派生别名。
+    // 别名只给旧代码/降级版本读；写路径统一走 extensions（patchCustom 会归一化）。
+    extensions,
+    plugins: legacyPluginAlias(extensions),
     // 工具注册上限（2026-10-23）：可配，默认 / 天花板归 `tool-registry.js`。
     // 与 plugins.max 同一条纪律 —— 钳生效值，不改用户原值。
     tools: {
@@ -881,7 +1019,13 @@ export function readCustom(raw) {
  * 表现是"我只动了敏感词，人格怎么没了"—— 而且是静默的。
  */
 export function patchCustom(existing, patch) {
-  return readCustom({ custom: mergeDeep(existing || {}, patch || {}) });
+  // 旧面板/降级版本仍可能只提交 plugins：把它映射进 extensions.plugins，
+  // 但**只动 plugins 这一档**，不会把用户已关闭的 Skill 重新拉起来。
+  let p = patch;
+  if (p && typeof p === 'object' && p.plugins && !p.extensions) {
+    p = { ...p, extensions: { ...(existing?.extensions || {}), plugins: p.plugins } };
+  }
+  return readCustom({ custom: mergeDeep(existing || {}, p || {}) });
 }
 
 /**
@@ -951,6 +1095,10 @@ export function personaFingerprint(custom, personaName) {
     // 扮演规则也算进指纹：关掉"不替用户说话"之后，模型前几轮按旧规矩说过的话
     // 同样会被它继续模仿 —— 和人设、技能背景是同一个道理。
     `playRules=${c.playRules !== false}`,
+    `playRuleItems=${Array.isArray(c.playRuleItems) ? JSON.stringify(c.playRuleItems) : 'default'}`,
+    // MBTI 与生日彩蛋同样会改变"它是谁"的表达倾向 —— 改完也该丢旧口吻的发言。
+    `mbti=${c.mbti?.on === true}:${JSON.stringify(c.mbti?.axes || {})}:${c.mbti?.note || ''}`,
+    `birthday=${JSON.stringify(c.birthday || {})}:${c.astroOn === true}`,
     ...Object.keys(SCENES).map((k) => `${k}=${c.scenes?.[k] || ''}`),
     ...(c.skills || [])
       .filter((s) => s && s.enabled)

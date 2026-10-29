@@ -7,6 +7,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import { spawn, execFile, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 // 「自定义工作台」的配置结构 —— 与机器人进程共用同一份，
@@ -57,7 +58,7 @@ import { parseLock } from '../src/bridge-lock.js';
 //    与其在函数里再硬编码一遍同一段路径，不如把 paths.js 的常量接回来 —— 路径只推导一次。
 import { readHistory, configAt, popHistory } from '../src/config-history.js';
 import { thinkingIsLive } from '../src/ephemeral.js';
-import { sweepStaleTemps } from '../src/atomic-write.js';
+import { sweepStaleTemps, renameWithRetry } from '../src/atomic-write.js';
 // 窗口记忆（2026-10-16）：窗口几何的**值域判据**与落点只有 `src/launch-mode.js` 一份 ——
 // 面板只做"收下 → 过判据 → 写盘"，不许在这里再写一遍范围检查（两份必然漂移）。
 import {
@@ -83,11 +84,12 @@ import {
   DOCKER,
   CONFIG_FILE,
   EFFECTIVE_FILE, THINKING_FILE, HISTORY_FILE, TOKEN_FILE,
-  TRACE_FILE, USAGE_DIR, USAGE_FILE_RE, PIDFILE, BRIDGE_LOG, LOCAL_LOG, PANEL_LOG,
+  TRACE_FILE, USAGE_DIR, USAGE_FILE_RE, SENT_DIR, SENT_FILE_RE, PIDFILE, BRIDGE_LOG, LOCAL_LOG, PANEL_LOG,
   BRIDGE_LOCK_FILE,
   DEBUG_FLAG,
 } from './lib/paths.js';
 import { createUpdater } from './lib/update.js';
+import { uiIdentityState } from './lib/ui-identity.js';
 import { makeUpdateRoute } from './lib/update-routes.js';
 import { makeOfflineInstallerRoute, makeOfflinePrepareRoute } from './lib/update-offline.js';
 // 假 QQ 会话（2026-10-21 · Win-v0.1.2 移植）：面板侧的进程壳，会话逻辑仍在 scripts/fake-qq.mjs。
@@ -100,8 +102,17 @@ import { fakeSnapshot, fakeStart, fakeSend, fakeStop, fakeDispose } from './lib/
 //
 // ⚠️ 资产路径 → 资产名的映射**在叶子里派生**（`assetNameForRootPath`，与白名单同源），
 //    路由这里不摆第二张"允许的路径"表 —— 两张表会漂，而多一条路径是**静默**多一个入口。
-import { readNextAsset, NEXT_ENTRY, assetNameForRootPath, PANEL_CSP } from './lib/next-page.js';
+import {
+  readNextAsset, readMbtiArt, resolveContourMedia, parseByteRange,
+  NEXT_ENTRY, NEXT_ASSETS, assetNameForRootPath, PANEL_CSP,
+} from './lib/next-page.js';
 import { extensionsOf } from './lib/extensions.js';
+// 0.1.5 接口收尾（2026-10-28）：自定义背景存储 / 扩展包模板与文件夹打包 / GitHub 星数。
+import {
+  createBackgroundStore, sniffBackground, sanitizeBackgroundName, BG_LIMITS,
+} from './lib/backgrounds.js';
+import { packExtension, PACK_REQUEST_MAX } from './lib/ext-package.js';
+import { createGithubStar } from './lib/github-star.js';
 // 会话 / 存档的聚合判据（P1 分区重构）。**纯函数在 lib 里**，这里只做读盘 + 传参 ——
 // 判据不落在路由里，"列表怎么算"才能被断言直接喂（本项目对判据的一贯要求）。
 import { sessionsFromTrace, sessionRecordsOf, chatsFromArchive, chatDetailOf } from './lib/sessions.js';
@@ -120,7 +131,7 @@ import panelDiscovery from '../src/panel-discovery.cjs';
 import { state, logDropped, pushLog, clearLogs, onLog } from './lib/runtime-state.js';
 // D21：`readBodyBuffer` 是"原样收字节"的读法（ZIP 上传用）—— 与 `readBody` 同模块，
 // 但**不动** `readBody` 的 JSON 语义与 1e6 上限（全部写路由共用它，改它等于改全局）。
-import { sendJson, readBody, readBodyBuffer } from './lib/http-io.js';
+import { sendJson, readBody, readBodyBuffer, readBodyToFile } from './lib/http-io.js';
 // 原生 NapCat（Windows 便携包）—— 定位 / 起停 / token / 本地二维码图。
 // ⚠️ 为什么面板要知道"原生"这一支：便携包**不打 Docker**，协议端是被解压到
 //    `app\napcat\` 的原生进程。面板原来只认 docker exec ⇒ 便携包上二维码永远裂图、
@@ -156,6 +167,7 @@ import {
 // ── 第 22 轮 H-10：审计与用量两族整块搬进 lib（实现只在新家一份）────────────
 import { makeBeginAudit, readAudit, readArchive } from './lib/audit-log.js';
 import { makeUsageReport } from './lib/usage-report.js';
+import { makeSentReport, makeOverviewHeat, makeOverviewKpi } from './lib/sent-report.js';
 
 import { makeStateCollector } from './lib/state-collector.js';
 import { maybeSyncModelCatalog } from './lib/model-sync.js';
@@ -251,6 +263,8 @@ const READ_ONLY_POST = new Set([
   // （`recallForPrompt` 明文保证"检索不算复证、samples 一条不加"）。
   // 放这里而不是 WRITE_ROUTES：那是给"会改变状态"的请求准备的。
   '/api/memory/search',
+  // 0.1.5：扩展包打包只构建 ZIP 字节、不落盘 ⇒ 与 /api/try 同类。
+  '/api/extensions/package',
 ]);
 
 /** 写路由：🔴 写配置 / 进程控制 ／ 🟡 破坏性写 */
@@ -300,6 +314,8 @@ const WRITE_ROUTES = new Set([
   // 假 QQ：起 / 说 / 停 = 进程控制，且会写数据（沙箱时写临时目录）。
   // 少了这三行会绕过鉴权与审计（isWriteRequest 是两者的共同判据）。
   '/api/fake-qq/start', '/api/fake-qq/send', '/api/fake-qq/stop',
+  // 0.1.5：自定义背景的上传 / 启用 / 删除都写用户数据目录（媒体文件 + index.json）。
+  '/api/backgrounds', '/api/backgrounds/active', '/api/backgrounds/delete',
 ]);
 
 /** 这次请求是不是"一次改动"。审计与将来的鉴权共用它。 */
@@ -575,6 +591,37 @@ function resolvePanelToken() {
 }
 
 const PANEL_TOKEN = resolvePanelToken();
+/* 入口页的 ETag 要跟 token 走：同一份 HTML 注入不同 token 后是两个表示。 */
+const PANEL_TOKEN_TAG = createHash('sha1').update(PANEL_TOKEN.token).digest('hex').slice(0, 8);
+
+/* 静态资产的 gzip / ETag 进程内缓存。键 = 资产名；内容指纹（mtimeMs+size）变了才重算。 */
+const ASSET_BUNDLES = new Map();
+
+function assetHttpBundle(asset, body) {
+  const isEntry = asset.name === NEXT_ENTRY;
+  const etag = isEntry ? asset.etag.slice(0, -1) + '|t' + PANEL_TOKEN_TAG + '"' : asset.etag;
+  const hit = ASSET_BUNDLES.get(asset.name);
+  if (hit && hit.etag === etag) return hit;
+  const buf = Buffer.from(body, 'utf8');
+  const bundle = {
+    etag,
+    gzipEtag: etag.slice(0, -1) + '|gz"',
+    buf,
+    gzip: gzipSync(buf, { level: 6 }),
+  };
+  ASSET_BUNDLES.set(asset.name, bundle);
+  return bundle;
+}
+
+function warmAssetBundles() {
+  for (const name of Object.keys(NEXT_ASSETS)) {
+    try {
+      const asset = readNextAsset(name);
+      const body = asset.name === NEXT_ENTRY ? injectPanelToken(asset.raw, PANEL_TOKEN.token) : asset.raw;
+      assetHttpBundle(asset, body);
+    } catch { /* 单个资产坏了不阻断启动；请求时仍会报 404/500 */ }
+  }
+}
 
 /**
  * 要不要把 token 的**正文**打进启动横幅（L-02 · 2026-10-05 · 第 12 轮 · 开源前审查）。
@@ -961,6 +1008,11 @@ const usage = makeUsageReport({
   quotaOf, QUOTA_KIND, isLocalBase, dayKeyOf, USAGE_SOURCES,
 });
 const { listUsageFiles, readUsage, resetUsageCache } = usage;
+// 发言账本：与用量账本分开读、分开缓存；写口只在机器人进程（`src/sent-stats.js`）。
+const sent = makeSentReport({ SENT_DIR, SENT_FILE_RE, dayKeyOf });
+const { readSent } = sent;
+const heatOf = makeOverviewHeat({ dayKeyOf, weeks: 53 });
+const kpiOf = makeOverviewKpi({ dayKeyOf, days: 14 });
 
 // 「导出当前配置」的实现已搬进 `lib/export-bundle.js`（第 19 轮 · H-10 第二半）。
 // 它没有任何 `server.js` 顶层依赖，所以这里不需要注入 —— 只留一次工厂调用。
@@ -1065,6 +1117,7 @@ const collectState = makeStateCollector({
   IMPORTABLE_KEYS, bridgeRunning, countBridgeInstances, memoryRecordsOf,
   napcatToken, panelInfo, readBridgeLock, readDebugFlag, readEffective,
   readThinking, readUsage,
+  readSent,
   // B2（第 53 轮）：Windows 上没有 `vm_stat`/`sysctl`/`ps -Ao` ⇒「健康与占用」那张卡片
   // 在那边整张是 0。这份快照就是补它的。**注入而不是搬进 collector** 的理由与
   // `readUsage` / `countBridgeInstances` 同款：取数要 IO 与缓存（起 PowerShell、限频），
@@ -2141,8 +2194,14 @@ async function apiState(req, res, url) {
   if (!SANDBOX) maybeSyncModelCatalog();
   // P11：协议端"装没装 + 该放哪儿"必须**每次轮询都现算**（页面每 3 秒拉一次），
   // 不能只在启动时 pushLog 一句 —— 用户装好后不重启面板也要立刻看到状态翻转。
+  const stateBody = await collectState();
+  const heat = heatOf(stateBody);
   return sendJson(res, {
-    ...(await collectState()),
+    ...stateBody,
+    /* 53 周发言网格与 KPI 近 14 天序列都在后端生成：日期键只由
+       `src/holidays.js` 一份实现产生，前端不再自己拼 `YYYY-MM-DD`（H-11①）。 */
+    heat,
+    kpi: kpiOf({ ...stateBody, heat }),
     // 关于页只显示有来源的字段：版本/运行时来自本进程，仓库地址来自 package.json。
     appMeta: {
       version: APP_VERSION,
@@ -2150,6 +2209,9 @@ async function apiState(req, res, url) {
       platform: process.platform,
       repo: APP_HOMEPAGE,
     },
+    /* 核心界面身份：签名清单验签 + 给前端比对 DOM 用的核心锚点。
+       official / unofficial / unknown 三态；永不因为身份文件缺失让读路由 500。 */
+    uiIdentity: uiIdentityState(),
     napcat: { present: nativePresent(), dir: NAPCAT_DIR, win32: IS_WIN },
     protocolGuard: protocolGuard.stateOf(),
     update: UPDATE.snapshot(),
@@ -3179,16 +3241,26 @@ async function apiExtensionsInstall(req, res, url) {
     );
   }
   const overwrite = url.searchParams.get('overwrite') === '1';
-  const r = installArchive({ bytes: got.buf, roots: extensionRoots(USER_ROOT), overwrite });
+  const kindRaw = url.searchParams.get('kind');
+  const expectedKind = kindRaw === 'skill' || kindRaw === 'plugin' ? kindRaw : null;
+  if (kindRaw && !expectedKind) {
+    return sendJson(res, { ok: false, error: '安装 kind 只能是 skill 或 plugin' }, 400);
+  }
+  const r = installArchive({ bytes: got.buf, roots: extensionRoots(USER_ROOT), overwrite, expectedKind });
   if (!r.ok) {
-    pushLog(`· 插件安装失败：${r.error}`);
+    pushLog(`· 扩展安装失败：${r.error}`);
     return sendJson(res, { ok: false, error: r.error }, r.code || 400);
   }
   // 装完立刻刷一次扩展快照（模块内有 10 秒 TTL 缓存）—— 不为它新开一个 force 接口。
   const cfgNow = readConfig() || {};
-  extensionsOf(cfgNow.custom?.plugins?.enabled || [], {
+  const exNow = cfgNow.custom?.extensions;
+  const hasExNow = exNow && typeof exNow === 'object' && !Array.isArray(exNow);
+  extensionsOf(hasExNow
+    ? { plugin: exNow.plugins?.enabled || [], skill: exNow.skills?.enabled || [] }
+    : { plugin: cfgNow.custom?.plugins?.enabled || [], skill: cfgNow.custom?.plugins?.enabled || [] },
+  {
     force: true,
-    maxPlugins: cfgNow.custom?.plugins?.max,
+    maxPlugins: cfgNow.custom?.extensions?.max ?? cfgNow.custom?.plugins?.max,
   });
   pushLog(`· 插件已安装：${r.dir} → ${r.root}/（${r.files} 个文件${r.replaced ? '，已覆盖旧版' : ''}；未自动启用）`);
   return sendJson(res, {
@@ -3960,6 +4032,220 @@ async function apiFakeStop(req, res, url) {
   return sendJson(res, fakeStop());
 }
 
+/* ── 0.1.5 接口收尾（2026-10-28）：背景 / 星标 / 扩展包 ───────────────── */
+const BACKGROUNDS = createBackgroundStore({
+  dir: path.join(DATA_DIR, 'backgrounds'),
+  logger: { warn: (msg) => pushLog(`· ${msg}`) },
+});
+const STAR = createGithubStar({
+  homepage: APP_HOMEPAGE,
+  cacheFile: path.join(PANEL_STATE_DIR, 'github-star.json'),
+  userAgent: `EstrellaBot-Panel/${APP_VERSION}`,
+  logger: { warn: (msg) => pushLog(`· ${msg}`) },
+});
+
+/** 只看文件头，不把 24 MB 视频整份读进内存。 */
+function readFileHead(file, n = 256) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(n);
+    const got = fs.readSync(fd, buf, 0, n, 0);
+    return buf.subarray(0, got);
+  } finally {
+    try { fs.closeSync(fd); } catch { /* 已关 */ }
+  }
+}
+
+async function apiGithubStar(req, res, url) {
+  const r = await STAR.get();
+  if (r.ok) {
+    return sendJson(res, {
+      ok: true,
+      count: r.count,
+      cached: r.cached === true,
+      fetchedAt: Number.isFinite(r.fetchedAt) ? r.fetchedAt : Date.now(),
+    });
+  }
+  return sendJson(res, { ok: false, reason: r.reason || 'upstream_unavailable' }, 502);
+}
+
+async function apiBackgroundsList(req, res, url) {
+  return sendJson(res, { ok: true, ...BACKGROUNDS.list() });
+}
+
+async function apiBackgroundsMedia(req, res, url) {
+  let media;
+  try {
+    media = BACKGROUNDS.media(url.searchParams.get('id'), url.searchParams.get('v') || 'original');
+  } catch (e) {
+    return sendJson(res, { ok: false, error: e.message }, e.status || 404);
+  }
+  let stat;
+  try { stat = fs.statSync(media.abs); } catch {
+    return sendJson(res, { ok: false, error: '背景文件不存在' }, 404);
+  }
+  if (!stat.isFile()) return sendJson(res, { ok: false, error: '背景文件不存在' }, 404);
+
+  const range = parseByteRange(req.headers.range, stat.size);
+  const headers = {
+    'Content-Type': media.type,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'private, max-age=31536000, immutable',
+    'X-Content-Type-Options': 'nosniff',
+  };
+  if (range && range.invalid) {
+    res.writeHead(416, { ...headers, 'Content-Range': `bytes */${stat.size}`, 'Content-Length': '0' });
+    return res.end();
+  }
+  const sendStream = (start, end, status, extra) => {
+    res.writeHead(status, { ...headers, ...extra });
+    const stream = fs.createReadStream(media.abs, start == null ? undefined : { start, end });
+    stream.on('error', (e) => {
+      pushLog(`✗ 背景媒体发送失败：${e.message}`);
+      res.destroy();
+    });
+    res.on('close', () => stream.destroy());
+    return stream.pipe(res);
+  };
+  if (range) {
+    return sendStream(range.start, range.end, 206, {
+      'Content-Range': `bytes ${range.start}-${range.end}/${stat.size}`,
+      'Content-Length': String(range.end - range.start + 1),
+    });
+  }
+  return sendStream(null, null, 200, { 'Content-Length': String(stat.size) });
+}
+
+async function handleBackgroundDisplay(req, res, url) {
+  const id = String(url.searchParams.get('id') || '');
+  const meta = BACKGROUNDS.get(id);
+  if (!meta) return sendJson(res, { ok: false, error: '背景不存在' }, 404);
+  if (meta.type !== 'image') return sendJson(res, { ok: false, error: '只有图片能调整画面' }, 400);
+
+  const tmp = BACKGROUNDS.tmpPathFor('display');
+  const got = await readBodyToFile(req, { file: tmp, maxBytes: BG_LIMITS.display });
+  if (!got.ok) {
+    const tooBig = got.error === 'too-large';
+    return sendJson(res, { ok: false, error: tooBig ? '裁切图超过 2 MB' : '上传中断' }, tooBig ? 413 : 400);
+  }
+  let sniff = null;
+  try { sniff = sniffBackground(readFileHead(tmp)); } catch { /* 下面按 415 处理 */ }
+  if (!sniff || sniff.format !== 'jpg') {
+    fs.rmSync(tmp, { force: true });
+    return sendJson(res, { ok: false, error: '裁切图必须是 JPEG' }, 415);
+  }
+  const crop = {
+    zoom: Number(url.searchParams.get('zoom')),
+    x: Number(url.searchParams.get('x')),
+    y: Number(url.searchParams.get('y')),
+  };
+  try {
+    const r = await BACKGROUNDS.setDisplay({
+      id,
+      bytes: got.size,
+      crop,
+      saveFile: (abs) => renameWithRetry(tmp, abs),
+    });
+    return sendJson(res, { ok: true, item: r.item });
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    return sendJson(res, { ok: false, error: e.message }, e.status || 400);
+  }
+}
+
+async function apiBackgroundsUpload(req, res, url) {
+  if (url.searchParams.get('slot') === 'display') return handleBackgroundDisplay(req, res, url);
+
+  const name = sanitizeBackgroundName(url.searchParams.get('name'));
+  const sourceKey = url.searchParams.get('sourceKey') || '';
+  const tmp = BACKGROUNDS.tmpPathFor('original');
+  const got = await readBodyToFile(req, { file: tmp, maxBytes: BG_LIMITS.video });
+  if (!got.ok) {
+    const tooBig = got.error === 'too-large';
+    return sendJson(res, { ok: false, error: tooBig ? '视频超过 24 MB' : '上传中断' }, tooBig ? 413 : 400);
+  }
+  let sniff = null;
+  try { sniff = sniffBackground(readFileHead(tmp)); } catch { /* 下面按 415 处理 */ }
+  if (!sniff) {
+    fs.rmSync(tmp, { force: true });
+    return sendJson(res, {
+      ok: false,
+      error: '只支持 JPG/PNG/WEBP/GIF/AVIF/BMP 与 MP4/WEBM（SVG/MOV/MKV 不支持）',
+    }, 415);
+  }
+  if (got.size > BG_LIMITS[sniff.type]) {
+    fs.rmSync(tmp, { force: true });
+    return sendJson(res, {
+      ok: false,
+      error: `${sniff.type === 'video' ? '视频' : '图片'}超过 ${Math.round(BG_LIMITS[sniff.type] / 1024 / 1024)} MB`,
+    }, 413);
+  }
+  try {
+    const r = await BACKGROUNDS.add({
+      format: sniff.format,
+      type: sniff.type,
+      name,
+      bytes: got.size,
+      sourceKey,
+      saveFile: (abs) => renameWithRetry(tmp, abs),
+    });
+    if (r.deduped) fs.rmSync(tmp, { force: true });
+    return sendJson(res, { ok: true, item: r.item, deduped: r.deduped === true });
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    return sendJson(res, { ok: false, error: e.message }, e.status || 400);
+  }
+}
+
+async function apiBackgroundsActive(req, res, url) {
+  const body = await readBody(req);
+  try {
+    const activeId = await BACKGROUNDS.setActive(body.id == null ? null : String(body.id));
+    return sendJson(res, { ok: true, activeId });
+  } catch (e) {
+    return sendJson(res, { ok: false, error: e.message }, e.status || 400);
+  }
+}
+
+async function apiBackgroundsDelete(req, res, url) {
+  const body = await readBody(req);
+  try {
+    const r = await BACKGROUNDS.remove(String(body.id || ''));
+    return sendJson(res, { ok: true, activeId: r.activeId });
+  } catch (e) {
+    return sendJson(res, { ok: false, error: e.message }, e.status || 400);
+  }
+}
+
+async function apiExtensionsPackage(req, res, url) {
+  const got = await readBodyBuffer(req, { maxBytes: PACK_REQUEST_MAX });
+  if (!got.ok) {
+    return sendJson(res, {
+      ok: false,
+      error: got.error === 'too-large' ? '打包请求太大（上限 6 MB）' : '上传中断',
+    }, got.error === 'too-large' ? 413 : 400);
+  }
+  let body;
+  try {
+    body = JSON.parse(got.buf.toString('utf8') || '{}');
+  } catch {
+    return sendJson(res, { ok: false, error: '请求不是合法 JSON' }, 400);
+  }
+  try {
+    const r = packExtension(body && typeof body === 'object' ? body : {});
+    return sendJson(res, {
+      ok: true,
+      kind: r.kind,
+      root: r.root,
+      files: r.files,
+      zipBytes: r.zip.length,
+      zipBase64: r.zip.toString('base64'),
+    });
+  } catch (e) {
+    return sendJson(res, { ok: false, error: e.message }, e.status || 400);
+  }
+}
+
 const apiUpdateState = makeUpdateRoute({ updater: UPDATE, action: 'state' });
 const apiUpdateCheck = makeUpdateRoute({ updater: UPDATE, action: 'check' });
 const apiUpdateDownload = makeUpdateRoute({ updater: UPDATE, action: 'download' });
@@ -4041,6 +4327,14 @@ const API_ROUTES = [
   { path: '/api/fake-qq/start', method: 'POST', handler: apiFakeStart },
   { path: '/api/fake-qq/send', method: 'POST', handler: apiFakeSend },
   { path: '/api/fake-qq/stop', method: 'POST', handler: apiFakeStop },
+  // 0.1.5 接口收尾（2026-10-28）：星标 / 自定义背景 / 扩展包构建。
+  { path: '/api/github/star', handler: apiGithubStar },
+  { path: '/api/backgrounds', handler: apiBackgroundsList },
+  { path: '/api/backgrounds/media', handler: apiBackgroundsMedia },
+  { path: '/api/backgrounds', method: 'POST', handler: apiBackgroundsUpload },
+  { path: '/api/backgrounds/active', method: 'POST', handler: apiBackgroundsActive },
+  { path: '/api/backgrounds/delete', method: 'POST', handler: apiBackgroundsDelete },
+  { path: '/api/extensions/package', method: 'POST', handler: apiExtensionsPackage },
 ];
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${ACTUAL_PORT || PORT}`);
@@ -4092,6 +4386,90 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
+    // ── MBTI 官方场景图（2026-10-26）────────────────────────────────────
+    // 页面在 `/`，所以相对引用落在 `/assets/mbti/<file>`；不能写 `/next/assets/…`
+    // （那会被下面的旧地址兼容分支当 302 处理）。只发 16 张白名单 jpg，
+    // 名字校验与路径囚笼在 `readMbtiArt()` 里，不在这里再抄一份名单。
+    if (p.startsWith('/assets/mbti/')) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return sendJson(res, { error: 'method not allowed' }, 405);
+      }
+      try {
+        const art = readMbtiArt(p.slice('/assets/mbti/'.length));
+        res.writeHead(200, {
+          'Content-Type': art.type,
+          'Cache-Control': 'public, max-age=86400',
+          'X-Content-Type-Options': 'nosniff',
+        });
+        return res.end(req.method === 'HEAD' ? undefined : art.raw);
+      } catch (e) {
+        return sendJson(res, { error: `MBTI 场景图取不到：${e.message}` }, 404);
+      }
+    }
+
+    // ── 等高线背景媒体（2026-10-26）──────────────────────────────────────
+    // 10MB 级视频必须支持 Range：没有 Accept-Ranges 时浏览器会重复整段请求，
+    // 循环/换主题都会重新下载；全量 readFileSync 也会把整段视频常驻服务端内存。
+    // 名字白名单与路径囚笼在 `resolveContourMedia()` 里，不在这里再抄一份。
+    if (p.startsWith('/assets/contour/')) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return sendJson(res, { error: 'method not allowed' }, 405);
+      }
+      let media;
+      try {
+        media = resolveContourMedia(p.slice('/assets/contour/'.length));
+      } catch (e) {
+        return sendJson(res, { error: `等高线媒体取不到：${e.message}` }, 404);
+      }
+      let stat;
+      try {
+        stat = fs.statSync(media.abs);
+      } catch (e) {
+        return sendJson(res, { error: `等高线媒体取不到：${e.message}` }, 404);
+      }
+      if (!stat.isFile()) return sendJson(res, { error: 'not found' }, 404);
+      const range = parseByteRange(req.headers.range, stat.size);
+      const baseHeaders = {
+        'Content-Type': media.type,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        'X-Content-Type-Options': 'nosniff',
+      };
+      if (range && range.invalid) {
+        res.writeHead(416, {
+          ...baseHeaders,
+          'Content-Range': `bytes */${stat.size}`,
+          'Content-Length': '0',
+        });
+        return res.end();
+      }
+      const sendStream = (start, end, headers) => {
+        res.writeHead(headers.status, headers.headers);
+        if (req.method === 'HEAD') return res.end();
+        const stream = fs.createReadStream(media.abs, start == null ? undefined : { start, end });
+        stream.on('error', (e) => {
+          pushLog(`✗ 等高线媒体发送失败：${e.message}`);
+          res.destroy();
+        });
+        res.on('close', () => stream.destroy());
+        return stream.pipe(res);
+      };
+      if (range) {
+        return sendStream(range.start, range.end, {
+          status: 206,
+          headers: {
+            ...baseHeaders,
+            'Content-Range': `bytes ${range.start}-${range.end}/${stat.size}`,
+            'Content-Length': String(range.end - range.start + 1),
+          },
+        });
+      }
+      return sendStream(null, null, {
+        status: 200,
+        headers: { ...baseHeaders, 'Content-Length': String(stat.size) },
+      });
+    }
+
     // ── 控制台页面：**只有一套**，挂在根上（2026-10-02）──────────────────
     //
     // 路径 → 资产名的对应**全部由叶子派生**（`assetNameForRootPath`，白名单是安全主闸）：
@@ -4118,12 +4496,29 @@ const server = http.createServer(async (req, res) => {
       //    抽变量不是错，但会让那条**与本次改动无关**的判据假红 —— 而假红会逼人
       //    去改松判据（本项目 §3.7「改动范围只覆盖本批任务」的由来）。
       const body = asset.name === NEXT_ENTRY ? injectPanelToken(asset.raw, PANEL_TOKEN.token) : asset.raw;
+      const bundle = assetHttpBundle(asset, body);
+      const useGzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+      const etag = useGzip ? bundle.gzipEtag : bundle.etag;
+      const payload = useGzip ? bundle.gzip : bundle.buf;
+      const isEntry = asset.name === NEXT_ENTRY;
       const headers = {
         'Content-Type': asset.type,
-        'Cache-Control': 'no-store',
+        // 资产允许浏览器存，但每次必须回源协商（ETag/304）；入口页带 token，仍不落盘。
+        'Cache-Control': isEntry ? 'no-store' : 'no-cache',
         // 类型是上面那张表按扩展名写死的，不许浏览器再嗅探一遍（H-02 的配套加固）
         'X-Content-Type-Options': 'nosniff',
+        'ETag': etag,
+        'Vary': 'Accept-Encoding',
+        'Content-Length': String(payload.length),
       };
+      if (useGzip) headers['Content-Encoding'] = 'gzip';
+      const inm = String(req.headers['if-none-match'] || '');
+      if (!isEntry && inm.split(',').map((s) => s.trim()).includes(etag)) {
+        delete headers['Content-Length'];
+        delete headers['Content-Encoding'];
+        res.writeHead(304, headers);
+        return res.end();
+      }
       // CSP **只发入口页**（2026-10-05 · 开源前审查第 10 轮 · H-02）。
       // 两条理由（完整版见 `PANEL_CSP` 的注释，别在这儿再抄一遍）：
       //   ① CSP 只对**文档**生效 —— JS/CSS 资产不是文档，发了没有意义；
@@ -4131,7 +4526,7 @@ const server = http.createServer(async (req, res) => {
       //      套同一份策略会把它们当场打坏（而它们是"判据的可视化"，要能双击打开）。
       if (asset.name === NEXT_ENTRY) headers['Content-Security-Policy'] = PANEL_CSP;
       res.writeHead(200, headers);
-      return res.end(body);
+      return res.end(payload);
     }
 
     // 老地址兼容：新版页面在 2026-10-02 之前挂在 `/next/` —— 书签、浏览器里开着的标签、
@@ -4204,6 +4599,9 @@ server.listen(PORT, '127.0.0.1', async () => {
     process.exit(1);
   }
 
+  // 静态资产的 gzip/ETag 缓存：延后 100ms 预热，先让发现文件与健康检查拿到响应。
+  setTimeout(warmAssetBundles, 100).unref?.();
+
   // 新面板已经把旧面板接回来了；重启看门狗的使命结束，删掉 intent 免得下次退出时误杀。
   try { fs.rmSync(path.join(PANEL_STATE_DIR, '.restart.json'), { force: true }); } catch { /* 没有就算了 */ }
   // 第 58 轮 · **预热 Windows 进程快照**。
@@ -4218,7 +4616,10 @@ server.listen(PORT, '127.0.0.1', async () => {
   // 判据（"不是我的 && 够旧"）保证不会删掉另一个**活着**进程正在写的那一份。
   // ⚠️ 清扫面**必须含插件的两个根**（D21）：插件安装的 staging / 备份临时目录
   //    就落在 `plugins/` 与 `skills/` 里（与目标同根同级，rename 才是原子的）。
-  const swept = sweepStaleTemps([PANEL_STATE_DIR, DATA_DIR, UPDATE_DIR, ...extensionRoots(USER_ROOT).map((r) => r.dir)]);
+  const swept = sweepStaleTemps([
+    PANEL_STATE_DIR, DATA_DIR, path.join(DATA_DIR, 'backgrounds'), UPDATE_DIR,
+    ...extensionRoots(USER_ROOT).map((r) => r.dir),
+  ]);
   if (swept.length) pushLog(`清理了 ${swept.length} 个残留的原子写临时文件（上次被强杀时留下的）`);
 
   await adoptExistingBridge();

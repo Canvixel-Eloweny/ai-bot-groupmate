@@ -146,9 +146,15 @@
     "personaResetOnChange": true,
     "playRules": true,
     "skills": [],
-    "plugins": {
-      "enabled": [],
-      "settings": {},
+    "extensions": {
+      "plugins": {
+        "enabled": [],
+        "settings": {}
+      },
+      "skills": {
+        "enabled": [],
+        "settings": {}
+      },
       "max": 256,
       "hookTimeoutMs": 5000
     },

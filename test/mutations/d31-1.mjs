@@ -56,8 +56,6 @@ const GATE = `    if (sleepSnap?.asleep) {
  *  加了第四个参数（`{ repliedToMe }`，把"引用了我的话"算进"被叫到"）。
  *  M4 的"把门禁搬到 decide 之后"靠它定位，对不上就整条空转。 */
 const DECIDE_LINE = '    const decision = brain.decide(session, evt, parsed, { repliedToMe });';
-/** tickProactive 里的睡眠闸（一行） */
-const GATE_TP = '    if (sleepSnap?.asleep) return;';
 
 export default [
   {

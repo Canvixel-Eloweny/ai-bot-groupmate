@@ -15,7 +15,9 @@
      CSP 只允许同源脚本（script-src 'self'），所以不能写成内联。 -->
 <script src="./splash.js"></script>
 <link rel="stylesheet" href="./style.css" />
-<!-- HUD 信息岛样式：仅玻璃材质（跟随主题自动切换，无 HUD 核）。 -->
+<!-- 全局光标跟随层：纯装饰、不替换原生光标；颜色只取 style.css 的令牌。 -->
+<link rel="stylesheet" href="./cursor-follow.css" />
+<!-- HUD 信息岛样式：玻璃跟随主题，另有 HUD 白 / 黑两种固定底色。 -->
 <link rel="stylesheet" href="./island.css" />
 <!-- 动效组件样式。⚠️ **必须在 style.css 之后**：它的规则要能覆盖令牌默认值
      （如 .liq-track 的尺寸、mini 档的 --liq-thumb）。
@@ -33,8 +35,29 @@
 <link rel="stylesheet" href="./glass-scrim.css">
 <!-- 左下角设置层（2026-10-23 · P2）：必须在 style.css 之后，用现有令牌覆盖。 -->
 <link rel="stylesheet" href="./settings.css">
+<!-- 最终版启动开屏（M7）：双球 + 翻转 + 格栅；真实面板在下面。 -->
+<link rel="stylesheet" href="./boot-splash.css" />
+<!-- 人设域六页（2026-10-25）：整套规则作用域在 .psn 之下，最后加载以确保
+     这套页面自己的令牌与卡片规则不被主面板同名类覆盖。 -->
+<link rel="stylesheet" href="./persona.css">
+<!-- 工厂帧层（2026-10-27）：只补 .factory-pane 的绝对定位与切换入场，
+   不重写 style.css 里的 .factory-host 规则。 -->
+<link rel="stylesheet" href="./persona-entry.css">
+<!-- 运行总览（2026-10-27）：热力网格 / KPI 缩略曲线 / 启动链进度 / 插件 Gauge。
+     只补 .ov* 规则；浅色与深色都由主题令牌驱动。 -->
+<link rel="stylesheet" href="./overview.css">
 </head>
 <body>
+
+<!-- 真实启动层（最终版 M7）：必须是 <body> 的第一个可见层。
+     ⚠️ 不要加 `hidden`、也不要等 settings.js —— splash.js 在 <head> 里同步写
+     `html.boot-on`，这里从首帧就由 CSS 显示，boot-splash.js 紧随其后立即播放。
+     否则 400KB 的 app.js 模块会先把控制台画出来，开屏再盖上去，启动会先闪一下控制台。 -->
+<div class="boot-splash" id="bootSplash" aria-hidden="true">
+  <div class="grid-veil" id="bootGridVeil" hidden aria-hidden="true"></div>
+  <div class="intro" id="bootSplashStage"></div>
+</div>
+<script src="./boot-splash.js"></script>
 
 <!-- 设置层图标（内联 SVG，零依赖；与 tabler/Lucide 同 24 网格） -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
@@ -56,6 +79,9 @@
     <symbol id="si-github" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.1-1.47-1.1-1.47-.9-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0 1 12 6.8c.85 0 1.7.11 2.5.33 1.9-1.29 2.74-1.02 2.74-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></symbol>
     <symbol id="si-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.6v12.8a.7.7 0 0 0 1.07.6l10.2-6.4a.7.7 0 0 0 0-1.2L9.07 5a.7.7 0 0 0-1.07.6z"/></symbol>
     <symbol id="si-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7L4 12l5 5"/><path d="M4 12h9a6 6 0 0 1 0 12h-1"/></symbol>
+    <symbol id="si-badge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10.5" r="2.1"/><path d="M5.8 16c.5-1.8 1.7-2.8 3.2-2.8s2.7 1 3.2 2.8"/><path d="M14.5 9.5h3.2M14.5 13h2.4"/></symbol>
+    <symbol id="si-star5" viewBox="0 0 24 24" fill="currentColor"><path clip-rule="evenodd" fill-rule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.006 5.404.434c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.434 2.082-5.005Z"/></symbol>
+    <symbol id="si-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14-4.6L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14 4.6L20 16"/><path d="M20 20v-4h-4"/></symbol>
   </defs>
 </svg>
 
@@ -73,6 +99,22 @@
         `.aurora-grid`（64px 方格网）更早已删（B28 批次4），不复活。 -->
 <canvas id="shaderBg" class="shader-bg" aria-hidden="true"></canvas>
 
+<!-- 等高线背景层（2026-10-26）：默认档。层序在旧 canvas 之后、自定义背景之前；
+     视频/海报都由 contour-bg.js 按主题与设备能力懒加载，HTML 不写 src/poster。
+     `preload="none"` 是硬要求：reduced-motion / saveData 用户一个字节视频都不下。 -->
+<div class="contour-bg" id="contourBg" aria-hidden="true">
+  <div class="contour-poster" id="contourPoster"></div>
+  <video class="contour-video" id="contourVideo" muted playsinline loop preload="none" disablepictureinpicture></video>
+</div>
+
+<!-- 自定义背景层：图片 / 双视频轮播。与 shaderBg 同层，激活时把 canvas 淡出。
+     素材是用户本机文件，存在浏览器 IndexedDB；不进配置、不进发布包。 -->
+<div class="custom-bg" id="customBg" aria-hidden="true">
+  <img class="cbg-media-img" id="cbgImage" alt="">
+  <video class="cbg-media-video" id="cbgVideoA" muted playsinline preload="auto"></video>
+  <video class="cbg-media-video" id="cbgVideoB" muted playsinline preload="auto"></video>
+</div>
+
 <!-- ══════════════ 顶栏：全局状态 + 全站动作 ══════════════ -->
 <header class="topbar">
   <div class="tb-brand">
@@ -86,7 +128,7 @@
     </div>
   </div>
 
-  <!-- 顶栏状态岛：由 island.js 挂载（仅玻璃材质，跟随主题；无 HUD 核）。
+  <!-- 顶栏状态岛：由 island.js 挂载（材质 / 强调色 / 字体 / 几何 / 密度可调）。
        原来的五颗状态胶囊已并入岛内，可在「维护 → HUD调整」里选择轮播项。 -->
   <div class="tb-pills" id="tbPills" aria-live="polite"></div>
 
@@ -96,8 +138,8 @@
          留一个指向不存在页面的链接，比没有链接更糟（点下去是 404，而看起来一切正常）。
          ⚠️ 页面上**不再有任何跨版本跳转**：控制台只有这一套。 -->
     <!-- 主题 / 字体 / 背景 / 流速已迁到左下角设置（2026-10-23 · P2）。
-         顶栏只留"会改运行时状态"的启停动作；吸顶带因此不再需要为色板预留宽度。 -->
-    <span class="tb-sep" aria-hidden="true"></span>
+         顶栏只留"会改运行时状态"的启停动作；吸顶带因此不再需要为色板预留宽度。
+         工厂入口已迁到一级「工厂」的二级导航（2026-10-27），顶栏不再有工厂圆钮。 -->
     <button class="btn btn-fill btn-fill-accent" data-a="onekey-start">一键启动</button>
     <button class="btn btn-danger btn-fill" data-a="onekey-stop">结束本次运行</button>
   </div>
@@ -116,17 +158,25 @@
     <div class="nav-dock" id="navDock">
       <nav class="nav1" id="nav1">
         <div class="nav-inner" id="navInner" role="tablist" aria-label="功能域">
-          <span class="nav-ind" id="navInd" aria-hidden="true"></span>
+          <span class="nav-glider" id="navGlider" aria-hidden="true"><i class="nav-glider-core"></i></span>
+          <span class="nav-ind" id="navInd" aria-hidden="true"><i class="nav-ind-core"></i></span>
+          <span class="nav-press" id="navPress" aria-hidden="true"><i class="nav-press-core"></i></span>
         </div>
       </nav>
       <div class="nav2wrap" id="nav2wrap">
+        <span class="nav2-tint" id="nav2Tint" aria-hidden="true"></span>
         <span class="nav2-ind" id="nav2Ind" aria-hidden="true"></span>
         <nav class="nav2" id="nav2" role="tablist" aria-label="页面"></nav>
       </div>
     </div>
     <svg class="nav-dock-edge" id="navDockEdge" aria-hidden="true"><path d=""></path></svg>
   </div>
+  <span class="nav-burst" id="navBurst" aria-hidden="true"></span>
 </div>
+
+<!-- 工厂域导航热区（2026-10-27）：只在工厂页导航自动上收后接收指针/键盘，
+     把两级导航呼出；平时 pointer-events:none、tabindex=-1，不挡页面。 -->
+<button class="nav-hotzone" id="navHotzone" type="button" tabindex="-1" aria-label="显示导航" title="显示导航"></button>
 
 <!-- ══════════════ 告警条（按需出现，平时不占位置）══════════════
      ⚠️ 2026-10-03 B29 从顶栏与灵动岛之间**下移到灵动岛之下**。
@@ -144,22 +194,27 @@
   <span id="footStat" class="foot-stat"></span>
 </footer>
 
-<!-- ══════════════ 左下角设置层（2026-10-23 · P2）══════════════════════════
-     一个入口收拢外观 / 启动 / 关于 / 数据。外观只写 localStorage；启动与
-     关闭行为写 config.json（启动器、shell、面板读同一份）。 -->
+<!-- ══════════════ 左下角设置层（2026-10-23 · P2；2026-10-26 预览版复刻）════
+     一个入口收拢外观 / 启动 / 关于 / 鸣谢 / 数据。外观只写 localStorage；
+     启动与关闭行为写 config.json（启动器、shell、面板读同一份）。
+     齿轮 32px 是视觉直径，::after 把命中区补到 44px；缓光是独立层。 -->
 <button class="set-fab" id="setGear" type="button" aria-label="打开设置" aria-expanded="false" aria-controls="settingsPanel" title="设置">
   <span class="set-fab-rot" id="setGearRot"><svg aria-hidden="true"><use href="#si-gear"/></svg></span>
   <span class="set-fab-label">设置</span>
 </button>
+<span class="gear-aura" aria-hidden="true"></span>
 
 <div class="settings-layer" id="settingsLayer" data-open="false">
   <div class="settings-backdrop" id="settingsBackdrop" aria-hidden="true"></div>
+  <div class="settings-shadow" aria-hidden="true"></div>
+
   <section class="settings-panel" id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" tabindex="-1">
+    <!-- 点阵背景：DSH-chat-background 的 Elastic Dot Grid 核心手感（24px / baseR .6 / hoverR 2 / influence 130）。 -->
+    <canvas class="panel-dots" id="panelDots" aria-hidden="true"></canvas>
     <header class="set-head">
-      <span class="set-head-icon" aria-hidden="true"><svg><use href="#si-gear"/></svg></span>
-      <div class="set-head-txt">
+      <div class="set-title">
         <h2 id="settingsTitle">设置</h2>
-        <p id="setHeadSub">外观、启动、关于与数据，都从这里进</p>
+        <span class="set-sub">外观 · 启动 · 关于 · 鸣谢 · 数据</span>
       </div>
       <span class="spacer"></span>
       <span class="set-chip"><i aria-hidden="true"></i><span id="setChip">海蓝 · 日间</span></span>
@@ -167,60 +222,242 @@
     </header>
 
     <div class="set-body">
+      <!-- 一级栏：深蓝选中底；二级栏的浅色滑动高亮由 settings.js 测量后驱动。 -->
       <nav class="set-rail" id="setRail" aria-label="设置分类">
-        <button class="set-rail-item is-active" type="button" data-target="sec-appearance"><svg aria-hidden="true"><use href="#si-palette"/></svg>外观</button>
-        <button class="set-rail-item" type="button" data-target="sec-startup"><svg aria-hidden="true"><use href="#si-power"/></svg>启动</button>
-        <button class="set-rail-item" type="button" data-target="sec-about"><svg aria-hidden="true"><use href="#si-info"/></svg>关于</button>
-        <button class="set-rail-item" type="button" data-target="sec-data"><svg aria-hidden="true"><use href="#si-db"/></svg>数据</button>
+        <span class="set-rail-hp" aria-hidden="true"></span>
+        <button class="set-rail-item is-active" type="button" data-target="sec-appearance">
+          <span class="set-rail-icon" aria-hidden="true"><svg><use href="#si-palette"/></svg></span>
+          <span class="set-rail-label">外观</span>
+          <span class="set-rail-en" aria-hidden="true"><span>APPEARANCE</span></span>
+          <span class="set-rail-dot" aria-hidden="true"></span>
+        </button>
+        <button class="set-rail-item" type="button" data-target="sec-startup">
+          <span class="set-rail-icon" aria-hidden="true"><svg><use href="#si-power"/></svg></span>
+          <span class="set-rail-label">启动</span>
+          <span class="set-rail-en" aria-hidden="true"><span>STARTUP</span></span>
+          <span class="set-rail-dot" aria-hidden="true"></span>
+        </button>
+        <button class="set-rail-item" type="button" data-target="sec-about">
+          <span class="set-rail-icon" aria-hidden="true"><svg><use href="#si-info"/></svg></span>
+          <span class="set-rail-label">关于</span>
+          <span class="set-rail-en" aria-hidden="true"><span>ABOUT</span></span>
+          <span class="set-rail-dot" aria-hidden="true"></span>
+        </button>
+        <button class="set-rail-item" type="button" data-target="sec-supporters">
+          <span class="set-rail-icon" aria-hidden="true"><svg><use href="#si-badge"/></svg></span>
+          <span class="set-rail-label"><span class="set-rail-label-full">鸣谢名单</span><span class="set-rail-label-short">鸣谢</span></span>
+          <span class="set-rail-en" aria-hidden="true"><span>CREDITS</span></span>
+          <span class="set-rail-dot" aria-hidden="true"></span>
+        </button>
+        <button class="set-rail-item" type="button" data-target="sec-data">
+          <span class="set-rail-icon" aria-hidden="true"><svg><use href="#si-db"/></svg></span>
+          <span class="set-rail-label">数据</span>
+          <span class="set-rail-en" aria-hidden="true"><span>DATA</span></span>
+          <span class="set-rail-dot" aria-hidden="true"></span>
+        </button>
         <span class="set-rail-version" id="setRailVersion">v—</span>
       </nav>
 
       <div class="set-scroll" id="settingsScroll">
+        <!-- 外观 -->
         <section class="set-section" id="sec-appearance">
-          <div class="set-sechead"><div><h3>外观</h3><p>只影响这台机器的控制台，不改机器人的任何行为</p></div></div>
+          <div class="set-sechead">
+            <div><h3>外观</h3><p>只影响这台机器的控制台，不改机器人的任何行为</p></div>
+          </div>
 
-          <div class="set-card">
+          <div class="set-card" id="card-appearance-mode">
             <div class="set-cardhead">
               <div><h4>显示模式</h4><p>日间与夜间各有一套独立令牌</p></div>
               <span class="spacer"></span>
-              <div class="set-seg" id="setThemeSeg" role="group" aria-label="显示模式">
+              <div class="set-seg" id="setThemeSeg" data-mode="light" role="group" aria-label="显示模式">
+                <span class="set-seg-thumb" aria-hidden="true"></span>
                 <button type="button" data-theme-opt="light" aria-pressed="true"><svg aria-hidden="true"><use href="#si-sun"/></svg>日间</button>
                 <button type="button" data-theme-opt="dark" aria-pressed="false"><svg aria-hidden="true"><use href="#si-moon"/></svg>夜间</button>
               </div>
             </div>
-          </div>
-
-          <div class="set-card">
-            <div class="set-cardhead"><div><h4>主题色</h4><p>主按钮、选中态与开关共用同一个强调色</p></div><span class="spacer"></span><span class="set-tag" id="setAccentName">海蓝</span></div>
-            <div class="set-cardbody"><div class="set-acc-grid" id="accentGrid" role="group" aria-label="主题色"></div></div>
-          </div>
-
-          <div class="set-card">
-            <div class="set-cardhead"><div><h4>背景</h4><p>八套流动色团，保持安静仪表盘的底子</p></div><span class="spacer"></span><span class="set-tag" id="setBgName">海雾</span></div>
             <div class="set-cardbody">
-              <div class="bgpick" id="bgPick"><div class="bgpick-list" id="bgPickList" role="radiogroup" aria-label="背景流光样式"></div></div>
-              <div class="set-row set-row-inline">
-                <div class="txt"><b>流动速度</b><span>「无」会真正停掉背景重绘，不是把速度调到最小</span></div>
-                <div class="set-speed" id="bgSpeed" role="group" aria-label="背景流动速度"></div>
+              <p class="set-hint" style="margin-top:0">当前的联动范围：面板底色、卡片、导航玻璃、文字与控件。切换时从按钮圆心圆形揭开。</p>
+            </div>
+          </div>
+
+          <div class="set-card" id="card-appearance-accent">
+            <div class="set-cardhead">
+              <div><h4>主题色</h4><p>主按钮、选中态与开关共用同一个强调色</p></div>
+              <span class="spacer"></span><span class="set-tag" id="setAccentName">海蓝</span>
+            </div>
+            <div class="set-cardbody">
+              <div class="set-acc-grid" id="accentGrid" role="group" aria-label="主题色"></div>
+              <p class="set-hint">浅色档取深色强调（白字过 AA），夜间档自动换成同色系的亮档（深字过 AA）。</p>
+            </div>
+          </div>
+
+          <!-- 转场动画（2026-10-27）：与「启动 · 开屏动画」同一套卡片布局与 .set-switch；
+               左侧小框播放抠绿后的工厂转场（纯白底，不播绿幕），右侧是开关。
+               只写 localStorage（next-factory-wipe），不碰 config.json。
+               位置：主题色之下、背景之上（与二级目录顺序一致）。 -->
+          <div class="set-card" id="card-appearance-motion">
+            <div class="set-cardhead">
+              <div><h4>转场动画</h4><p>一级导航进出「工厂」时的过场</p></div>
+              <span class="spacer"></span>
+              <button class="btn btn-ghost btn-sm" id="replayFactoryWipe" type="button" title="重播转场动画"><svg width="13" height="13" aria-hidden="true"><use href="#si-play"/></svg>重播</button>
+            </div>
+            <div class="set-cardbody">
+              <div class="splash-wrap">
+                <div class="fx-preview-stage" id="fxPreviewStage" aria-label="工厂转场动画预览">
+                  <div class="fxp" aria-hidden="true">
+                    <div class="fx-wipe-train">
+                      <div class="fx-wipe-layer is-light"></div>
+                      <div class="fx-wipe-layer is-medium"></div>
+                      <div class="fx-wipe-layer is-dark"></div>
+                      <div class="fx-wipe-hatch"></div>
+                    </div>
+                    <div class="fx-wipe-band"><span class="fx-wipe-text">FACTORY</span></div>
+                  </div>
+                  <span class="fx-preview-watermark" aria-hidden="true">预览页面</span>
+                </div>
+                <div class="splash-side">
+                  <div class="set-row">
+                    <div class="txt"><b>工厂域转场</b><span>进入工厂从左往右，离开工厂从右往左；关闭后切页瞬时完成</span></div>
+                    <button class="set-switch" id="setFactoryWipe" type="button" role="switch" aria-checked="true" data-set="factoryWipe" aria-label="播放工厂域转场动画"></button>
+                  </div>
+                  <p class="set-hint">预览只在设置里播放，不改变页面；关闭后只跳过过场，页面照常切换。</p>
+                </div>
               </div>
             </div>
           </div>
 
-          <div class="set-card">
+          <div class="set-card" id="card-appearance-bg">
+            <div class="set-cardhead">
+              <div><h4>背景</h4><p>等高线地形图，或八套流动色团；也可以换成下面的自定义图片 / 视频</p></div>
+              <span class="spacer"></span><span class="set-tag" id="setBgName">等高线</span>
+            </div>
+            <div class="set-cardbody">
+              <div class="set-row set-row-inline">
+                <div class="txt"><b>背景模式</b><span>等高线随日间/夜间切换黑白；低配置自动降为轻量视频或静态海报</span></div>
+                <div class="set-seg" id="setBgMode" data-bgmode="contour" role="group" aria-label="背景模式">
+                  <span class="set-seg-thumb" aria-hidden="true"></span>
+                  <button type="button" data-bgmode-opt="contour" aria-pressed="true">等高线</button>
+                  <button type="button" data-bgmode-opt="shader" aria-pressed="false">流光</button>
+                </div>
+              </div>
+              <div class="bgpick" id="bgPick" hidden><div class="bgpick-list" id="bgPickList" role="radiogroup" aria-label="背景流光样式"></div></div>
+              <div class="set-row set-row-inline">
+                <div class="txt"><b>背景速度</b><span>「无」会真正停掉背景重绘/视频播放，不是把速度调到最小</span></div>
+                <div class="set-speed" id="bgSpeed" role="group" aria-label="背景速度"></div>
+              </div>
+              <p class="set-hint">背景只改变环境光，不改变卡片与文字的对比度。</p>
+            </div>
+          </div>
+
+          <div class="set-card" id="card-appearance-cbg">
+            <div class="set-cardhead">
+              <div><h4>自定义背景</h4><p>本机图片与视频；图片可裁切，视频会按队列轮播</p></div>
+              <span class="spacer"></span><span class="set-tag" id="cbgTag">未启用</span>
+            </div>
+            <div class="set-cardbody">
+              <!-- 文件夹动效移植自 Rare UI（MIT + Commons Clause + attribution）：
+                   https://rareui.com/components/foldercomponent · Copyright (c) 2026 Swami Malode -->
+              <div class="cbg-drop" id="cbgDrop" role="button" tabindex="0" aria-label="拖入或点击选择图片与视频" aria-describedby="cbgDropHint">
+                <div class="cbg-drop-copy">
+                  <b><span class="cbg-title-idle"><span class="cbg-title-full">把图片或视频拖到这里</span><span class="cbg-title-short">拖入图片或视频</span></span><span class="cbg-title-active">松开即可添加</span></b>
+                  <span class="cbg-drop-hint" id="cbgDropHint">静态图按 16:9 取景 · 视频自动轮播 · <span class="cbg-nowrap">也可以点击选择</span></span>
+                  <span class="cbg-ratio" aria-hidden="true">16:9</span>
+                </div>
+                <div class="cbg-folder" id="cbgFolder" aria-hidden="true"></div>
+                <div class="cbg-formats" aria-hidden="true">
+                  <span class="cbg-fmt">JPG</span><span class="cbg-fmt">PNG</span><span class="cbg-fmt">WEBP</span><span class="cbg-fmt">MP4</span><span class="cbg-fmt">WEBM</span>
+                </div>
+              </div>
+              <p class="cbg-credit">文件夹动效 · <a href="https://rareui.com/components/foldercomponent" target="_blank" rel="noopener noreferrer">Rare UI</a></p>
+              <div class="cbg-actions">
+                <button class="btn btn-sm" type="button" id="cbgAddImages">添加图片</button>
+                <button class="btn btn-sm" type="button" id="cbgAddVideos">添加视频</button>
+                <span class="cbg-note">视频默认静音；添加后可在下方选择或裁切。</span>
+                <input type="file" id="cbgImageInput" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" multiple hidden>
+                <input type="file" id="cbgVideoInput" accept="video/mp4,video/webm" multiple hidden>
+                <input type="file" id="cbgAnyInput" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp,video/mp4,video/webm" multiple hidden>
+              </div>
+              <div class="cbg-grid" id="cbgGrid"></div>
+              <div class="cbg-bar">
+                <span class="cbg-status" id="cbgStatus" aria-live="polite">还没有自定义背景</span>
+                <span class="spacer"></span>
+                <button class="btn btn-sm" type="button" id="cbgCropBtn" disabled>调整画面</button>
+                <button class="btn btn-sm" type="button" id="cbgClearBtn" disabled>取消自定义</button>
+              </div>
+
+              <div class="crop-editor" id="cropEditor" hidden>
+                <div class="crop-head">
+                  <b>调整画面</b><span class="crop-name" id="cropName"></span>
+                  <span class="spacer"></span><span class="set-tag">16:9 取景</span>
+                </div>
+                <div class="crop-stage" id="cropStage">
+                  <img id="cropImg" alt="" draggable="false">
+                  <span class="crop-thirds" aria-hidden="true"></span>
+                </div>
+                <div class="crop-tools">
+                  <label class="crop-zoom"><span>缩放</span><input type="range" id="cropZoom" min="1" max="2.6" step=".01" value="1"></label>
+                  <button class="btn btn-sm" type="button" id="cropReset">重置</button>
+                  <span class="crop-tip">拖动画面取景 · 滚轮缩放</span>
+                  <span class="spacer"></span>
+                  <button class="btn btn-sm" type="button" id="cropCancel">取消</button>
+                  <button class="btn btn-sm btn-primary" type="button" id="cropApply">应用裁切</button>
+                </div>
+              </div>
+
+              <p class="set-hint">图片按 16:9 取景后铺满控制台；多段视频会在当前视频播完后自动切到下一段。素材保存在本机用户数据目录（data/backgrounds），换浏览器不丢；删除请用素材卡上的 ×。支持 JPG/PNG/WEBP/GIF/AVIF/BMP 与 MP4/WEBM。</p>
+            </div>
+          </div>
+
+          <div class="set-card" id="card-appearance-font">
             <div class="set-cardhead"><div><h4>字体</h4><p>只影响控制台，不影响机器人回复</p></div></div>
             <div class="set-cardbody">
               <div class="set-font-grid" id="fontGrid" role="group" aria-label="字体风格">
                 <button class="set-font" type="button" data-font-opt="sans" aria-pressed="true"><span class="sample">星星正在读群里的消息。</span><small>无衬线 · 系统字体</small><span class="state"><svg aria-hidden="true"><use href="#si-check"/></svg>正在使用</span></button>
                 <button class="set-font" type="button" data-font-opt="serif" aria-pressed="false"><span class="sample">星星正在读群里的消息。</span><small>衬线 · 阅读档</small><span class="state"><svg aria-hidden="true"><use href="#si-check"/></svg>正在使用</span></button>
               </div>
+              <div class="set-font-preview">预览：把今天的群聊写成一段简短摘要。</div>
             </div>
           </div>
         </section>
 
-        <section class="set-section" id="sec-startup">
-          <div class="set-sechead"><div><h3>启动</h3><p>控制台与协议端的启动方式；改完下次启动生效</p></div></div>
+        <!-- 启动 -->
+        <section class="set-section" id="sec-startup" hidden>
+          <div class="set-sechead">
+            <div><h3>启动</h3><p>控制台与协议端的启动方式；改完下次启动生效</p></div>
+          </div>
 
-          <div class="set-card">
+          <div class="set-card" id="card-startup-splash">
+            <div class="set-cardhead">
+              <div><h4>开屏动画</h4><p>启动控制台时的第一屏</p></div>
+              <span class="spacer"></span>
+              <button class="btn btn-ghost btn-sm" id="replaySplash" type="button"><svg width="13" height="13" aria-hidden="true"><use href="#si-play"/></svg>重播</button>
+            </div>
+            <div class="set-cardbody">
+              <div class="splash-wrap">
+                <div class="splash-stage" id="splashStage" aria-label="开屏动画预览">
+                  <div class="splash-mini" aria-hidden="true">
+                    <span class="splash-mini-orb splash-mini-orb-l"></span>
+                    <span class="splash-mini-orb splash-mini-orb-r"></span>
+                    <span class="splash-mini-copy">
+                      <span class="splash-mini-eyebrow">✦ LOCAL AI CONSOLE</span>
+                      <span class="splash-mini-title">Welcome to</span>
+                      <span class="splash-mini-word" id="splashMiniHost">macOS</span>
+                      <span class="splash-mini-tag">本机控制台 · 已就绪</span>
+                    </span>
+                  </div>
+                </div>
+                <div class="splash-side">
+                  <div class="set-row">
+                    <div class="txt"><b>启动时播放</b><span>约 4.3 秒，本会话首次启动播放一次</span></div>
+                    <button class="set-switch" id="setSplash" type="button" role="switch" aria-checked="true" data-set="splash" aria-label="启动时播放开屏动画"></button>
+                  </div>
+                  <p class="set-hint">动画不阻塞控制台加载；协议端与模型状态在后台继续就绪。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="set-card" id="card-startup-mode">
             <div class="set-cardhead"><div><h4>打开方式</h4><p>双击启动器 / 桌面图标时控制台以什么形态出现</p></div></div>
             <div class="set-cardbody">
               <div class="set-seg set-seg-wide" id="setModeSeg" role="group" aria-label="打开方式">
@@ -231,7 +468,7 @@
             </div>
           </div>
 
-          <div class="set-card">
+          <div class="set-card" id="card-startup-prefs">
             <div class="set-cardhead"><div><h4>启动偏好</h4><p>下次启动控制台时生效</p></div></div>
             <div class="set-cardbody set-cardbody-tight">
               <div class="set-row">
@@ -249,7 +486,7 @@
             </div>
           </div>
 
-          <div class="set-card">
+          <div class="set-card" id="card-startup-close">
             <div class="set-cardhead"><div><h4>关闭窗口时</h4><p>决定关闭按钮 / Alt+F4 的行为</p></div></div>
             <div class="set-cardbody">
               <div class="set-seg set-seg-wide" id="setCloseSeg" role="group" aria-label="关闭窗口时">
@@ -260,16 +497,19 @@
             </div>
           </div>
 
-          <div class="set-card">
+          <div class="set-card" id="card-startup-last">
             <div class="set-cardhead"><div><h4>上次启动</h4><p>哪个入口、用什么形态、有没有回落</p></div></div>
             <div class="set-cardbody"><dl class="set-kv" id="setLastLaunch"><dt>记录</dt><dd>启动一次后这里会出现</dd></dl></div>
           </div>
         </section>
 
-        <section class="set-section" id="sec-about">
-          <div class="set-sechead"><div><h3>关于</h3><p>版本、仓库与反馈入口</p></div></div>
+        <!-- 关于 -->
+        <section class="set-section" id="sec-about" hidden>
+          <div class="set-sechead">
+            <div><h3>关于</h3><p>版本、仓库与意见箱</p></div>
+          </div>
 
-          <div class="set-card">
+          <div class="set-card" id="card-about-version">
             <div class="set-cardhead"><div><h4>版本情况</h4><p>只显示有来源的字段，不伪造构建日期</p></div></div>
             <div class="set-cardbody">
               <div class="set-verhero">
@@ -281,14 +521,23 @@
                 <dt>更新通道</dt><dd>稳定版</dd>
                 <dt>运行时</dt><dd id="aboutRuntime">—</dd>
                 <dt>桌面壳</dt><dd id="aboutShell">—</dd>
+                <dt>界面身份</dt><dd id="aboutUiIdentity">—</dd>
                 <dt>上次检查</dt><dd id="aboutUpdateState">以「维护 → 面板维护」的更新卡为准</dd>
               </dl>
               <p class="set-hint">下载、校验与安装仍在「维护 → 面板维护」的更新卡里完成；这里只发起同一次检查，不复制第二套安装流程。</p>
             </div>
           </div>
 
-          <div class="set-card">
-            <div class="set-cardhead"><div><h4>GitHub</h4><p>源码、更新日志与问题跟踪</p></div></div>
+          <div class="set-card" id="card-about-github">
+            <div class="set-cardhead">
+              <div><h4>GitHub</h4><p>源码、更新日志与问题跟踪</p></div>
+              <span class="spacer"></span>
+              <a class="repo-star" id="repoStar" href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/stargazers" target="_blank" rel="noopener noreferrer" aria-label="在 GitHub 查看 Star 数" title="GitHub Star · 正在读取" aria-busy="true">
+                <span class="repo-star-shine" aria-hidden="true"></span>
+                <svg class="repo-star-icon" aria-hidden="true"><use href="#si-star5"/></svg>
+                <span class="repo-star-count" id="repoStars">—</span>
+              </a>
+            </div>
             <div class="set-cardbody">
               <div class="set-repo">
                 <span class="set-repo-icon" aria-hidden="true"><svg><use href="#si-github"/></svg></span>
@@ -300,12 +549,54 @@
                 <a class="btn btn-sm btn-ghost" id="repoIssues" href="#" target="_blank" rel="noopener noreferrer">报告问题</a>
                 <a class="btn btn-sm btn-ghost" id="repoReleases" href="#" target="_blank" rel="noopener noreferrer">更新日志</a>
               </div>
-              <p class="set-hint">意见箱只开 GitHub Issues 外链：不在这里收集内容、不上传任何数据，也不需要额外凭据。</p>
+              <p class="set-hint">星数由同源接口读取；暂时连不上 GitHub 时显示缓存值或 —。意见箱只打开 GitHub Issue 预填页，面板本身不上传、不保存。</p>
+            </div>
+          </div>
+
+          <div class="set-card" id="card-about-feedback">
+            <div class="set-cardhead"><div><h4>意见箱</h4><p>哪里别扭、想要什么，都可以写在这里</p></div></div>
+            <div class="set-cardbody">
+              <form id="feedbackForm" novalidate>
+                <div class="chips" role="group" aria-label="意见类型">
+                  <button class="chip" type="button" data-fb-type="suggestion" aria-pressed="true">建议</button>
+                  <button class="chip" type="button" data-fb-type="problem" aria-pressed="false">问题</button>
+                  <button class="chip" type="button" data-fb-type="other" aria-pressed="false">其他</button>
+                </div>
+                <div class="field">
+                  <label for="fbText">想说的话</label>
+                  <textarea id="fbText" maxlength="500" placeholder="例如：设置抽屉展开的方向很顺，但希望主题色能预览在主按钮上的样子……" aria-describedby="fbHint"></textarea>
+                  <div class="meta-row">
+                    <span id="fbHint">请尽量写清「在哪一步、看到什么、期望什么」</span>
+                    <span id="fbCount">0 / 500</span>
+                  </div>
+                  <div class="form-error" id="fbError" hidden>至少写 4 个字再发送。</div>
+                </div>
+                <div class="field">
+                  <label for="fbContact">联系方式（可选）</label>
+                  <input class="input" id="fbContact" type="text" maxlength="80" placeholder="QQ / 邮箱，方便回访" />
+                </div>
+                <div class="form-actions">
+                  <button class="btn btn-primary" id="fbSubmit" type="submit" disabled><span class="btn-label">发送意见</span></button>
+                  <p class="set-hint">点击后会打开 GitHub Issue 预填页；面板不会上传内容，也不会写入本机。</p>
+                </div>
+              </form>
             </div>
           </div>
         </section>
 
-        <section class="set-section" id="sec-data">
+        <!-- 鸣谢名单 -->
+        <section class="set-section" id="sec-supporters" hidden>
+          <div class="set-sechead supporters-head">
+            <div><h3>鸣谢名单</h3><p>一起把这件事做下去的人</p></div>
+            <div class="sup-meta"><span class="set-tag">只读</span><span class="set-tag" id="supporterCount">共 6 位</span></div>
+          </div>
+          <ul class="supporters-grid" id="supportersGrid" role="list" aria-label="鸣谢名单"></ul>
+          <p class="set-hint supporters-note">名单随版本发布更新 · 面板内只读，不写入本机设置。</p>
+          <p class="set-hint supporters-note supporters-credit">动效致谢：文件夹与索引交互 · <a href="https://rareui.com/components/foldercomponent" target="_blank" rel="noopener noreferrer">Rare UI</a></p>
+        </section>
+
+        <!-- 数据 -->
+        <section class="set-section" id="sec-data" hidden>
           <div class="set-sechead"><div><h3>数据</h3><p>把这一版的数据带走，或换机器时再导入</p></div></div>
 
           <div class="set-card">
@@ -331,7 +622,6 @@
                 <div><b>诊断包</b><span>固定清单：壳日志、退出记录、更新日志；自动脱敏。</span></div>
                 <button class="btn btn-ghost" type="button" data-a="export.diag">导出诊断包</button>
               </div>
-              <p class="set-hint">按范围导出会在后续批次接到同一入口；现在不显示没有后端数据源的勾选项。</p>
             </div>
           </div>
         </section>
@@ -357,7 +647,34 @@
 
 <!-- ══════════════ 反馈 ══════════════ -->
 <div class="toasts" id="toasts" aria-live="polite"></div>
-<div class="busy" id="busy" hidden><span class="spin"></span><span id="busyTxt">处理中…</span></div>
+<!-- 全屏处理中遮罩（2026-10-23）：动效取自 Uiverse.io 的 dexter-st/popular-puma-86
+     （旋转光晕环 + 逐字呼吸 + 星点），字母改为「Loading」，配色由 style.css 按主题切换。
+     ⚠️ 字母/星点/光环全是装饰（aria-hidden），可读文案仍由 #busyTxt 提供 ——
+        动效再好看也不能把「正在保存什么」这条信息弄丢。 -->
+<div class="busy" id="busy" role="status" hidden>
+  <div class="busy-box">
+    <div class="loader-wrapper" aria-hidden="true">
+      <span class="loader-letter">L</span>
+      <span class="loader-letter">o</span>
+      <span class="loader-letter">a</span>
+      <span class="loader-letter">d</span>
+      <span class="loader-letter">i</span>
+      <span class="loader-letter">n</span>
+      <span class="loader-letter">g</span>
+
+      <div class="loader"></div>
+
+      <div class="star"></div>
+      <div class="star"></div>
+      <div class="star"></div>
+      <div class="star"></div>
+      <div class="star"></div>
+      <div class="star"></div>
+      <div class="star"></div>
+    </div>
+    <span id="busyTxt">处理中…</span>
+  </div>
+</div>
 <!-- 渐进模糊：三层 backdrop-filter + 径向 mask。必须紧挨在 #modal 之前（相邻兄弟），
      由 glass-scrim.css 的 `.glass-scrim:not([hidden]) + .modal` 接管 .modal 的 scrim；
      放进 .modal 内部会让 .modal 成为背景根（契约 §60 G11 的反面）。 -->
@@ -368,6 +685,14 @@
   <span class="gsc-tint"></span>
 </div>
 <div class="modal" id="modal" hidden><div class="modal-box" id="modalBox"></div></div>
+
+<!-- 全局光标跟随层（2026-10-28）：body 直接子节点，必须在 #modal 之后
+     （#glassScrim → #modal 的相邻关系由契约 §136④ 钉住，不能插进去）。
+     z 81 压过设置层 76 / 齿轮 78 / 弹窗 80，让位给浮层 90 / 开屏 95 / 提示 140。 -->
+<div class="cf-root" id="cfRoot" aria-hidden="true" data-on="false" data-hover="false" data-idle="true">
+  <span class="cf-ring"></span>
+  <span class="cf-dot"></span>
+</div>
 
 <!-- ══════════════ 液态玻璃引擎（2026-10-03）══════════════════════════════
      ⚠️ 它排在 `app.js` **之前**，且内部**只在文件尾部自行执行一次**：
@@ -398,12 +723,21 @@
      它启动时读 window.Motion，反了就是一句 warn 之后整个模块不挂 ——
      页面照常工作、卡片照常点，只是鼠标扫过去没有任何倾斜与反光，且**不抛异常**。 -->
 <script src="./tilt.js"></script>
+<!-- 全局光标跟随层（2026-10-28）。⚠️ 必须在 motion.js 之后（启动时读 window.Motion），
+     且要在 app.js 之前 —— 工厂帧控制器会在帧 load 时调用 CursorFollow.attachFrame。 -->
+<script src="./cursor-follow.js"></script>
 
 <!-- 背景引擎（2026-10-04）。⚠️ 自执行模块：自己找 #shaderBg 自己起循环、自己建
      #bgPickList 里的 swatch。排在 app.js 之前或之后都成立（不依赖 Motion），
      放这里与其它动效层同区。 -->
 <script src="./shader-bg.js"></script>
+<!-- 等高线背景（2026-10-26）：默认档。必须在 shader-bg.js 之后 —— 它要在
+     解析阶段把旧引擎 setActive(false)，并复用 ShaderBG.SPEEDS 作为速度唯一来源。 -->
+<script src="./contour-bg.js"></script>
 
 <script type="module" src="./app.js"></script>
+<!-- 工厂浮层（2026-10-26）：顶栏圆钮控制常驻 iframe 的预热/显隐。
+     独立外观（不再 embed）；独立模块，不掺 app.js 的渲染主链。 -->
+<script type="module" src="./factory-frame.js"></script>
 </body>
 </html>

@@ -14,7 +14,6 @@
 
 import fs from 'node:fs';
 import os from 'node:os';
-import net from 'node:net';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';

@@ -312,10 +312,10 @@ const V14 = {
     + '只要 ≥3）也用它，**一个令牌扛不住两种门槛**：把 accent 调浅到 3.x 时'
     + '图形还合格、文字已经塌了。表现为"选中项文字偏浅"。'
     + '预期 BLOCKED（§60⑧N13 选中文字与下划线必须两个令牌）',
-  anchor: /--c-sub-on:\s*#26457f;/,
+  anchor: /--c-sub-on:\s*#2f509b;/,
   count: 1,
   file: CSS,
-  apply: (s) => s.replace(/\n  --c-sub-on:\s*#26457f;[^\n]*\n/, '\n'),
+  apply: (s) => s.replace(/\n  --c-sub-on:\s*#2f509b;[^\n]*\n/, '\n'),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };

@@ -174,7 +174,7 @@ export function buildApi({ manifest, log, now, registerTool, isActive, fetch, se
   // "lint" 写的）：拿真实样本核过 ——
   //   · src/skills/manifest.js:37 原话：「这只是**语义归类**，不是能力限制」；
   //   · src/plugin-loader.js:70 createSkillApi 对两种型给同一个 registerTool；
-  //   · 真实包「本体情绪」就放在 plugins/ 下、注册 2 个工具 + 4 个钩子。
+  //   · 真实扩展包放在 plugins/ 下（如复读拦截、定时文案推送），可同时注册工具与钩子。
   // plugins/（确定性型）与 skills/（LLM 型）的区别只是"默认怎么被触发"，
   // 不是"能不能注册工具"。撞名防护由注册表统一管（owner 前缀 + 撞名拒绝）。
   api.registerTool = (def) => {

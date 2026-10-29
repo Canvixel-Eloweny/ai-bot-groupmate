@@ -34,7 +34,6 @@
  */
 const CWB = 'scripts/check-wb.mjs';
 const CTRL = 'panel/lib/control.js';
-const MODELS = 'panel/lib/models.js';
 // 第 18 轮新增：「保存配置」路由的新家。
 const CR = 'panel/lib/config-route.js';
 // 第 19 轮新增：「面板状态」聚合的新家（M4 第 19 轮改打它，见该条注释）。

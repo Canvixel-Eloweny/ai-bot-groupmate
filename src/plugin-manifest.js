@@ -293,6 +293,17 @@ export function normalizeManifest(raw, { fallbackId = '', kind = null } = {}) {
   /** 设置项**键名**（给面板/运行态快照用）：声明式 schema 的键 ∪ 默认值的键，去重 */
   const settingsKeys = [...new Set([...schemaKeys, ...Object.keys(settings)])];
 
+  /* 2026-10-28：configSchema 里的 label/description 以前被整块丢掉，面板只能显示键名。
+     这里只保留展示用的两个字符串字段，默认值仍只认 `settings`（不改变设置语义）。 */
+  const configSchema = raw.configSchema && typeof raw.configSchema === 'object' && !Array.isArray(raw.configSchema)
+    ? Object.fromEntries(Object.entries(raw.configSchema).slice(0, 64).map(([key, v]) => {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return [key, {}];
+      const label = typeof v.label === 'string' ? v.label.trim().slice(0, 80) : '';
+      const description = typeof v.description === 'string' ? v.description.trim().slice(0, 200) : '';
+      return [key, { label, description }];
+    }))
+    : {};
+
   // 既然已经致命了就不必再收细节字段 —— 返回的 manifest 只做排障用，不该被当真。
   const manifest = {
     id,
@@ -314,6 +325,8 @@ export function normalizeManifest(raw, { fallbackId = '', kind = null } = {}) {
     entry,
     /** 声明式 schema 的键名（`configSchema` 那一套）。 */
     schemaKeys,
+    /** `configSchema[key]` 的展示字段（label / description），只用于面板；默认值仍走 settings。 */
+    configSchema,
     /**
      * 清单自带的**默认设置**（生态真实用法）。**必须带出去** ——
      * `settingsOf()` 以它打底、面板用它列出"这个包有哪些键可填"。
@@ -352,19 +365,30 @@ export function normalizeManifest(raw, { fallbackId = '', kind = null } = {}) {
  *        `action`：`load`（可加载）｜`skip`（发现了但没启用，**不是错误**）｜`reject`（有问题）
  *        `reason`：`enabled` / `not-enabled` / `no-manifest` / 或 fatal[0].code
  */
-export function planLoad(entries, enabledIds, { max = PLUGIN_MAX } = {}) {
-  const orderOf = new Map();
-  for (const [i, x] of (Array.isArray(enabledIds) ? enabledIds : []).entries()) {
-    const s = String(x);
-    if (!orderOf.has(s)) orderOf.set(s, i);
-  }
-  const want = new Set(orderOf.keys());
+export function planLoad(entries, enabledIds, { max = PLUGIN_MAX, enabledByKind = null } = {}) {
+  const legacy = Array.isArray(enabledIds) ? enabledIds : [];
+  const byKind = enabledByKind && typeof enabledByKind === 'object' && !Array.isArray(enabledByKind)
+    ? enabledByKind : null;
+  const maps = new Map();
+  const orderMapFor = (kind) => {
+    const key = kind === 'skill' ? 'skill' : 'plugin';
+    if (maps.has(key)) return maps.get(key);
+    const list = byKind ? (Array.isArray(byKind[key]) ? byKind[key] : []) : legacy;
+    const m = new Map();
+    for (const [i, x] of list.entries()) {
+      const s = String(x);
+      if (!m.has(s)) m.set(s, i);
+    }
+    maps.set(key, m);
+    return m;
+  };
 
   const out = [];
   for (const e of entries || []) {
     if (!e) continue;
     const dirName = String(e.dirName || '');
     const id = e.manifest?.id || dirName;
+    const orderOf = orderMapFor(e.kind);
     // `detail` 是**给人看的那一句**：`reason` 是给机器判的 code，两者都要有。
     // 只给 code 的后果是日志里写着 `reject: bad-entry`，用户得回来翻源码才知道哪里错了。
     // `manifest` 一起带出去：报告里要能报版本 / 名称，不能只留一个 id。
@@ -400,7 +424,7 @@ export function planLoad(entries, enabledIds, { max = PLUGIN_MAX } = {}) {
 
     // ③ 没在白名单里 → skip。**这不是错误**，是正常状态：
     //    用户把包拷进来只是"我装了"，启用与否是配置里的事。
-    if (!want.has(id)) {
+    if (!orderOf.has(id)) {
       out.push({ ...base, action: 'skip', reason: 'not-enabled', detail: '未在 config 的白名单里启用' });
       continue;
     }
@@ -408,7 +432,26 @@ export function planLoad(entries, enabledIds, { max = PLUGIN_MAX } = {}) {
     out.push({ ...base, action: 'load', reason: 'enabled', detail: '已启用' });
   }
 
-  // ④ 上限：按**白名单次序**取前 N 个可加载项，其余标 `over`（不是 reject）。
+  // ④ 同一个 id 在两个根都启用 → 两条都拒绝。
+  //    以前只有一份白名单、两个根，重复 id 会被静默地“后加载覆盖前一个”；
+  //    现在两套开关独立，必须让冲突可见，不能靠目录顺序决定谁生效。
+  const loadById = new Map();
+  for (const p of out) {
+    if (p.action !== 'load') continue;
+    if (!loadById.has(p.id)) loadById.set(p.id, []);
+    loadById.get(p.id).push(p);
+  }
+  for (const [id, list] of loadById) {
+    if (list.length < 2) continue;
+    const roots = list.map((p) => p.kind === 'skill' ? 'skills/' : 'plugins/').join(' + ');
+    for (const p of list) {
+      p.action = 'reject';
+      p.reason = 'duplicate-id';
+      p.detail = `同一 id「${id}」在 ${roots} 同时启用 —— 只能保留一个来源`;
+    }
+  }
+
+  // ⑤ 上限：按**白名单次序**取前 N 个可加载项，其余标 `over`（不是 reject）。
   //    · 不用 `reject`：面板把 reject 当"这个包坏了"并禁用开关，而超限只是"这次没轮到"；
   //    · 不静默截断：`over` 会进 sum / 日志 / effective，面板显示「超上限·未加载」；
   //    · 用户把上限调大或把别的包取消勾选后，这些条目会自动回到 load。

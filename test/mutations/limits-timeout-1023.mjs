@@ -70,10 +70,10 @@ export default [
     id: 'L6',
     note: 'index.js 不把 hookTimeoutMs 注入总线 —— §145③ 必须变红。预期 BLOCKED',
     file: 'src/index.js',
-    anchor: /createHookBus\(\{ log, timeoutMs: cfg\.custom\?\.plugins\?\.hookTimeoutMs \}\)/,
+    anchor: /createHookBus\(\{\n\s*log,\n\s*timeoutMs: cfg\.custom\?\.extensions\?\.hookTimeoutMs \?\? cfg\.custom\?\.plugins\?\.hookTimeoutMs,\n\s*\}\)/,
     count: 1,
     apply: (s) => s.replace(
-      'createHookBus({ log, timeoutMs: cfg.custom?.plugins?.hookTimeoutMs })',
+      /createHookBus\(\{\n\s*log,\n\s*timeoutMs: cfg\.custom\?\.extensions\?\.hookTimeoutMs \?\? cfg\.custom\?\.plugins\?\.hookTimeoutMs,\n\s*\}\)/,
       'createHookBus({ log })'
     ),
     layer: 'check-wb',

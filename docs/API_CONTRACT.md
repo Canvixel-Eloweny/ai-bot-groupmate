@@ -80,6 +80,9 @@ token 的注入落点**只有这一处**（`injectPanelToken`，只替换 `<meta
   - `panel`（pid/bootedAt/codeMtime/codeMtimeNow/**stale**）—— 用于检测「面板进程跑旧代码」
   - `appMeta`（`version` / `runtime` / `platform` / `repo`）—— 关于页的唯一来源；`runtime` 是本进程的 Node 版本，
     `repo` 来自程序根 `package.json` 的 `homepage`，前端不手抄第二份 URL。
+  - `uiIdentity`（`state` / `reason` / `checkedAt` / `anchors` / `manifest.sha256` / `key.fingerprint`）——
+    `official` = 签名清单与当前界面骨架一致；`unofficial` = 整体替换/签名不符；`unknown` = 清单或公钥缺失/旧后端。
+    `anchors` 只含核心域/页/外壳选择器/渲染入口，前端据此检查本地 DOM；加新页面/新插件不受影响。
   - **第 53 轮（Windows 适配）新增 / 改动的几项**（2026-10-09）：
     · `container.applicable` —— **这台机器走没走"容器"这条路**。`false` = 原生 NapCat
       （Windows 便携版不装 Docker）⇒ 页面**不许**把"容器没跑"当故障显示（那是假警报，
@@ -494,16 +497,19 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 
 ---
 
-## 28. POST `/api/extensions/install?overwrite=1`
+## 28. POST `/api/extensions/install?overwrite=1&kind=plugin|skill`
 
-插件 ZIP 导入（落目录到 `plugins/` 或 `skills/`）。
+扩展包 ZIP 导入（落目录到 `plugins/` 或 `skills/`）。
 
 - **入参**：**原始字节**（不是 base64）；上限 `ZIP_UPLOAD_MAX`。查询串 `overwrite=1` 才允许覆盖已有包。
+  `kind` 可选：带上时校验包与声明一致（`expectedKind`），且 Skill 包必须有 `index.js`
+  （纯提示词 Skill 也一样，内容可为 `export {}`）。
 - **出参**：成功 `{ ok, id, kind, dir, files, replaced }`；失败 `{ ok:false, error }`；
   **ZIP 过大 → 413**（与"上传中断"的 400 分开）。
-- **副作用**：语义三步 —— 先在内存里**全部校验**（路径 / 符号链接 / 体积 / 清单）→ 备份 → 替换（失败回滚）；
-  装完刷新一次扩展快照。⚠️ **装完不自动启用**：目录里有 ≠ 会生效，勾选仍由用户在扩展列表上点，
-  这里**一个字节都不写** `custom.plugins.enabled`。
+- **副作用**：语义三步 —— 先在内存里**全部校验**（路径 / 符号链接 / 体积 / 清单 / 双清单 /
+  kind 一致性）→ 备份 → 替换（失败回滚）；装完刷新一次扩展快照。
+  ⚠️ **装完不自动启用**：目录里有 ≠ 会生效，勾选仍由用户在扩展列表上点，
+  这里**一个字节都不写** `custom.extensions.plugins.enabled` / `custom.extensions.skills.enabled`。
 - **幂等**：否（`overwrite=1` 时覆盖旧版）。🟡 **写路由**（会新建、可覆盖）。
 
 ---
@@ -681,8 +687,9 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 
 ## 41. 补充路由契约（2026-10-22）
 
-> 63 条 API 中，39 条已在 §1–§40 有独立字段章节；剩下的 **24 条**在本节补字段级契约
+> 70 条 API 中，46 条已在 §1–§40 有独立字段章节；剩下的 **24 条**在本节补字段级契约
 > （其中 19 条此前连独立小节都没有，另外 5 条此前只在表格/导语里出现过）。
+> 2026-10-28 的 7 条新路由放在 §42–§48（都有独立编号章节，不占这 24 条字段契约）。
 > 写路由仍统一走 token + 审计（`WRITE_ROUTES`）；业务失败通常是 **HTTP 200 + `ok:false`**，
 > 只有参数/传输/鉴权失败才用 4xx/5xx。
 
@@ -757,7 +764,94 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 | POST | `/api/fake-qq/start` |
 | POST | `/api/fake-qq/send` |
 | POST | `/api/fake-qq/stop` |
+| GET | `/api/github/star` |
+| GET | `/api/backgrounds` |
+| GET | `/api/backgrounds/media` |
+| POST | `/api/backgrounds` |
+| POST | `/api/backgrounds/active` |
+| POST | `/api/backgrounds/delete` |
+| POST | `/api/extensions/package` |
 <!-- api-inventory:end -->
+
+---
+
+> 2026-10-28 新增的 §42–§48 放在 §41.2 之前：§135 的字段契约体是「最后一个 api-fields 标记到文档末尾」，
+> 新章节若放在 41.2 之后会把 persona/adopt 的四行计数污染成 8。
+
+## 42. GET `/api/github/star`
+
+设置 → 关于 → 星标胶囊的实时星数。浏览器不直连 GitHub（CSP `connect-src 'self'`），由面板同源代理。
+
+- **入参**：无。
+- **出参**：`{ok:true, count:number, cached:boolean, fetchedAt:number}`；上游不可用 **502** `{ok:false, reason:'upstream_unavailable'}`（不在 200 里伪装成功）。
+- **副作用**：服务端 GET `api.github.com/repos/<owner>/<repo>`（固定 URL、4 秒超时、64 KB 上限、带 User-Agent），成功时写 `PANEL_STATE_DIR/github-star.json` 缓存 5 分钟。
+- **幂等**：是（读接口；缓存命中时不发上游请求）。
+
+---
+
+## 43. GET `/api/backgrounds`
+
+自定义背景列表与当前启用项。
+
+- **入参**：无。
+- **出参**：`{ok:true, activeId:string|null, limits:{image,video,display,items,totalBytes}, items:[{id,type,name,format,bytes,createdAt,crop,url,displayUrl}]}`。
+- **副作用**：读 `DATA_DIR/backgrounds/index.json`；不写盘。
+- **幂等**：是。
+
+---
+
+## 44. GET `/api/backgrounds/media?id=…&v=original|display&rev=…`
+
+自定义背景媒体（图片/视频）的同源读取口。
+
+- **入参**：query `id`（服务端生成）、`v=original|display`（缺省 original）、`rev`（仅用于缓存 bust，不参与查找）。
+- **出参**：二进制；`Content-Type` 按格式白名单；支持单段 `Range`（206 + `Content-Range`），乱码/越界 416；不存在 404。
+- **副作用**：无；响应带 `Accept-Ranges`、`X-Content-Type-Options: nosniff`、`Cache-Control: private, max-age=31536000, immutable`。
+- **幂等**：是。
+
+---
+
+## 45. POST `/api/backgrounds?slot=original|display`
+
+上传背景原文件或 16:9 裁切图（raw body，不是 JSON/base64）。
+
+- **入参**：`slot=original` 时 query `name`、可选 `sourceKey`（迁移幂等键）；`slot=display` 时 query `id`、`zoom`、`x`、`y`（裁切参数）。原文件只认魔数：JPG/PNG/WEBP/GIF/AVIF/BMP 与 MP4/WEBM。
+- **出参**：`{ok:true, item, deduped?}`；超过 8/24 MB 或 2 MB（display）→ 413；不支持的格式 → 415；索引损坏 → 500。
+- **副作用**：原图/视频写入 `DATA_DIR/backgrounds/<id>.<ext>`；裁切图写 `<id>.display.jpg`；更新 `index.json`（原子写 + 进程内串行）。写索引失败会删媒体回滚。
+- **幂等**：original 带相同 `sourceKey` 时复用已有条目；display 重复上传为覆盖（rev 更新）。
+
+---
+
+## 46. POST `/api/backgrounds/active`
+
+启用 / 停用自定义背景。
+
+- **入参**：`{id:string|null}`。
+- **出参**：`{ok:true, activeId:string|null}`；id 不存在 404。
+- **副作用**：写 `index.json.activeId`。
+- **幂等**：是（同值重复写 = 覆盖同样内容）。
+
+---
+
+## 47. POST `/api/backgrounds/delete`
+
+删除一条自定义背景（含原文件与裁切图）。
+
+- **入参**：`{id:string}`。
+- **出参**：`{ok:true, activeId:string|null}`；删除的是当前启用项时 `activeId` 清空。
+- **副作用**：先改索引，再 best-effort 删除媒体文件（Windows 被占用时可能留文件，不影响列表）。
+- **幂等**：否；重复删除同一 id 返回 404。
+
+---
+
+## 48. POST `/api/extensions/package`
+
+插件工厂的模板创建 / 文件夹打包：只构建 ZIP 字节，**不落盘**；安装仍走 §28 的唯一安装接口。
+
+- **入参**：`{mode:'create'|'folder', meta?, kind?, root?, files?}`；`create` 的 `meta` 含 `{kind,id,name,description?,category?,toolName?,toolDescription?,prompt?}`；`folder` 的 `files` 是 `[{path,contentBase64}]`。
+- **出参**：`{ok:true, kind, root, files:[{path,bytes,text?}], zipBytes, zipBase64}`；路径/体积/清单不合法 400，超过 6 MB 请求或 3 MB 内容 413。
+- **副作用**：无（内存中调 `makeZip`；校验复用 `isSafeRelPath` / `normalizeManifest`）。
+- **幂等**：是（同样的输入产出同样的 ZIP；不写任何状态）。
 
 ### 41.2 字段契约（24 条）
 

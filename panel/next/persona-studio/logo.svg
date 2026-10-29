@@ -1,0 +1,10 @@
+<svg viewBox="0 0 1024 1024">
+ <defs>
+  <linearGradient id="pf-brand-grad" x1="170" y1="130" x2="846" y2="890" gradientUnits="userSpaceOnUse"><stop stop-color="#96CFFF"/><stop offset=".36" stop-color="#648DFF"/><stop offset=".72" stop-color="#7566E8"/><stop offset="1" stop-color="#B99CF6"/></linearGradient>
+  <linearGradient id="pf-brand-edge" x1="200" y1="180" x2="800" y2="800" gradientUnits="userSpaceOnUse"><stop stop-color="white" stop-opacity=".8"/><stop offset=".48" stop-color="white" stop-opacity=".08"/><stop offset="1" stop-color="white" stop-opacity=".3"/></linearGradient>
+ </defs>
+ <path d="M512 100C282 100 112 249 112 461c0 119 52 214 147 280l-17 162c-2 21 21 34 38 22l165-112c22 3 44 4 67 4 230 0 400-149 400-356S742 100 512 100Z" fill="url(#pf-brand-grad)"/>
+ <path d="M512 102C283 102 114 250 114 461c0 119 52 214 147 279l-17 163c-2 19 19 31 35 20l166-112c22 3 44 4 67 4 229 0 398-148 398-354S741 102 512 102Z" fill="none" stroke="url(#pf-brand-edge)" stroke-width="4"/>
+ <path d="M520 237c21 133 60 176 197 211-137 35-176 78-197 211-22-133-61-176-198-211 137-35 176-78 198-211Z" fill="#fff"/>
+ <circle cx="730" cy="280" r="29" fill="#fff" fill-opacity=".94"/>
+</svg>

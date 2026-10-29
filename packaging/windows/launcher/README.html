@@ -87,26 +87,49 @@
   注意：它不会自己开口说话 —— 要你在控制台里点一次「一键启动」（这是刻意的设计，不是坏了）。
 </div>
 
-<h2>二、这个文件夹里都有什么</h2>
+<h2>二、Windows 提示「已保护你的电脑」怎么办</h2>
+<div class="card">
+  <p>本包<b>没有购买商业代码签名证书</b>，所以第一次运行安装器或包里的小工具时，
+    Windows SmartScreen 可能弹出「Windows 已保护你的电脑」，或把发布者显示为「未知发布者」。
+    这是<b>预期现象</b>，不等于文件有毒；不要因此直接关闭 Defender / 杀软。</p>
+  <p><b>先核对哈希，再决定是否运行：</b></p>
+  <ol>
+    <li>找到同一个包里的 <code>SHA256SUMS.txt</code>。只核对同一个来源下载的文件；
+      哈希对不上就不要运行。</li>
+    <li>在文件所在文件夹打开<b>命令提示符 / PowerShell</b>
+      （Win11 也可按住 Shift + 右键 →「在终端中打开」），
+      执行 <code>certutil -hashfile &lt;文件名&gt; SHA256</code>，
+      把输出与 <code>SHA256SUMS.txt</code> 里对应那一行对比。</li>
+    <li>哈希一致时，再点「<b>更多信息</b>」→「<b>仍要运行</b>」。
+      只对这一次运行放行；不要关闭系统防护，也不要把整个磁盘加白。</li>
+  </ol>
+  <p class="muted">如果 360 / 腾讯管家拦截：先按上面的方法核对哈希，确认来源无误后，
+    再选择「允许本次运行」或把本文件夹加入信任。更新包的完整性由 Ed25519 清单签名校验，
+    与这里的「未知发布者」是两件事。</p>
+</div>
+
+<h2>三、这个文件夹里都有什么</h2>
 <table>
   <tr><th>文件</th><th>干什么用</th></tr>
   <tr><td><b>一键安装.bat</b></td><td>★ 第一次就双击它（旧的 <code>1-SETUP.bat</code> 仍可用，一般用不到）</td></tr>
   <tr><td><code>2-START.bat</code></td><td>日常启动（和双击桌面图标等价）</td></tr>
   <tr><td><code>3-START-NAPCAT.bat</code></td><td>单独启动 QQ 协议端（排错时才用；它不显示窗口，看控制台即可）</td></tr>
   <tr><td><code>4-DIAG.bat</code></td><td>一键收集诊断信息（只读、不改任何东西）—— 出问题时先跑它</td></tr>
+  <tr><td><code>7-VERIFY.bat</code></td><td>自检（十项功能检查和 smoke），排错时用；不联网</td></tr>
+  <tr><td><code>SHA256SUMS.txt</code></td><td>本包文件哈希清单，核对文件有没有被改过</td></tr>
   <tr><td><code>README.html</code></td><td>本说明（离线单文件，可断网打开）</td></tr>
   <tr><td><code>app\</code> <code>tools\</code> <code>runtime\</code></td><td>程序本体 / 脚本 / 自带 Node —— 都不用动</td></tr>
 </table>
 <div class="muted">只需要动上面这几个文件；<code>app</code> 文件夹里的任何 bat 都不要点（那是源码版入口，会报找不到 node）。</div>
 
-<h2>三、怎么关 / 怎么删</h2>
+<h2>四、怎么关 / 怎么删</h2>
 <div class="card">
   <p>控制台是<b>后台</b>跑的（没有黑窗口）：关掉浏览器标签 ≠ 关掉控制台。</p>
   <p>要真正停下来：到控制台的「终端」页点 <b>「退出控制台」</b> ——
     进程退出后，整个文件夹就可以直接删掉了。</p>
 </div>
 
-<h2>四、卡住了？先看这里</h2>
+<h2>五、卡住了？先看这里</h2>
 <table>
   <tr><th>现象</th><th>先做什么</th></tr>
   <tr><td>一直不出二维码 / 登录总失败</td>
@@ -132,20 +155,24 @@
           它看到本地已有一份就直接解压继续，<b>不再联网</b>。<br>
           已经解压过的：把里面的东西<b>平铺</b>进 <code>app\napcat\</code>
           （让 <code>launcher-user.bat</code> 直接出现在这个目录里），安装器会直接跳过下载。</td></tr>
+  <tr><td>Windows 提示「已保护你的电脑 / 未知发布者」</td>
+      <td>先按「二、Windows 提示…」核对 <code>SHA256SUMS.txt</code>；
+          哈希一致后点「更多信息 → 仍要运行」。不要关闭 Defender / 杀软。</td></tr>
   <tr><td>杀软 / QQ 报「可疑」</td>
-      <td>把整个文件夹加入信任 —— 包里带 node.exe 与协议端，被误报很常见。</td></tr>
+      <td>先核对 <code>SHA256SUMS.txt</code>；确认来源无误后，再把整个文件夹加入信任 ——
+          包里带 node.exe 与协议端，被误报很常见。不要直接关闭防护。</td></tr>
   <tr><td>想彻底重来</td>
       <td>删掉整个文件夹，重新解压 + 双击 <code>一键安装.bat</code>。</td></tr>
 </table>
 
-<h2>五、关于「激活 / 授权」</h2>
+<h2>六、关于「激活 / 授权」</h2>
 <div class="card">
   <p>没有激活码，不用注册，不联网校验，不绑定机器，装上就能用。</p>
   <p>唯一要做的「授权」是<b>扫一次码登录你自己的 QQ 小号</b> ——
     那是腾讯对 QQ 账号的要求，任何第三方协议端都一样，绕不过去。</p>
 </div>
 
-<h2>六、安全与隐私（请认真读）</h2>
+<h2>七、安全与隐私（请认真读）</h2>
 <div class="card">
   <ul>
     <li><b>一定用小号。</b>第三方协议端存在封号风险，别拿主号冒险。</li>
@@ -156,7 +183,7 @@
   </ul>
 </div>
 
-<h2>七、许可</h2>
+<h2>八、许可</h2>
 <div class="card">
   <p>本程序为 Apache-2.0 开源软件（见 <code>app\LICENSE</code>）。</p>
   <p>QQ 协议端 <b>NapCat</b> 是<b>独立的第三方项目</b>（版权归其作者所有），与本程序

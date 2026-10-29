@@ -48,7 +48,7 @@ function isIgnorableEntry(name) {
  *            files:Array<{rel:string, data:Buffer}>, manifest:object}
  *          | {ok:false, error:string}}
  */
-export function planInstall(entries, { roots = [] } = {}) {
+export function planInstall(entries, { roots = [], expectedKind = null } = {}) {
   const usable = (Array.isArray(entries) ? entries : []).filter((e) => !isIgnorableEntry(e?.name));
   const files0 = usable.filter((e) => !e.dir);
   if (!files0.length) return { ok: false, error: '这个 ZIP 里没有文件' };
@@ -68,7 +68,7 @@ export function planInstall(entries, { roots = [] } = {}) {
   }
   const pkgDir = tops[0];
   // ⚠️ 目录名**不要求英文**（2026-09-29 量数推翻第一版）：真实生态里目录名全是中文
-  //    （`复读拦截` / `定时文案推送` / `本体情绪`…），英文那个是清单里的 `id`。
+  //    （`复读拦截` / `定时文案推送`…），英文那个是清单里的 `id`。
   //    第一版拿 `isValidPluginId(pkgDir)` 当判据 → **会把所有真实扩展包拒掉**。
   //    目录名只需"安全的相对路径"这一点（上面已逐条校验过）。
   if (!pkgDir || pkgDir.length > 80) {
@@ -82,23 +82,37 @@ export function planInstall(entries, { roots = [] } = {}) {
     files.push({ rel, data: e.data });
   }
 
-  // ③ 清单：按既有的优先序取第一份存在的，用它决定 kind 与目标根。
+  // ③ 清单：按既有优先序取第一份存在的，用它决定 kind 与目标根。
+  // 双清单（skill.json + plugin.json 同时存在）在安装口一律拒绝：加载器可以取优先序，
+  // 但安装时“这份 ZIP 到底算哪一档”不能靠猜；页面上的 kind 就是用户的意图。
+  const manifestHits = MANIFEST_FILES
+    .map((mf) => files.find((f) => f.rel === mf))
+    .filter(Boolean);
+  if (manifestHits.length > 1) {
+    return { ok: false, error: `包里同时有 ${MANIFEST_FILES.join(' 与 ')} —— 请只保留一份清单，再重新打包` };
+  }
   let kind = '';
   let raw = null;
   let badJson = '';
-  for (const mf of MANIFEST_FILES) {
-    const hit = files.find((f) => f.rel === mf);
-    if (!hit) continue;
-    kind = mf === MANIFEST_FILES[0] ? 'skill' : 'plugin';
+  const hit = manifestHits[0];
+  if (hit) {
+    kind = hit.rel === MANIFEST_FILES[0] ? 'skill' : 'plugin';
     try {
       raw = JSON.parse(stripBom(String(hit.data.toString('utf8'))));
     } catch (e) {
       badJson = e?.message ?? String(e);
     }
-    break;
   }
   if (!kind) return { ok: false, error: `包里没有 ${MANIFEST_FILES.join(' / ')} —— 这不是一个扩展包` };
   if (badJson) return { ok: false, error: `${kind === 'skill' ? 'skill.json' : 'plugin.json'} 不是合法 JSON：${badJson}` };
+  if (expectedKind && kind !== expectedKind) {
+    const want = expectedKind === 'skill' ? 'Skill' : '插件';
+    const got = kind === 'skill' ? 'Skill' : '插件';
+    return { ok: false, error: `${want}页只接受${want}包，这个 ZIP 是${got}包（清单为 ${hit.rel}）—— 请到对应页面安装` };
+  }
+  if (kind === 'skill' && !files.some((f) => f.rel === 'index.js')) {
+    return { ok: false, error: 'Skill 包缺少 index.js —— 纯提示词 Skill 也需要入口文件，内容写 export {} 即可' };
+  }
 
   const root = (Array.isArray(roots) ? roots : []).find((r) => r?.kind === kind);
   if (!root?.dir) return { ok: false, error: `找不到 ${kind} 的安装目录` };
@@ -146,11 +160,11 @@ const textOf = (w) => String(
  * @returns {{ok:true, id:string, kind:string, dir:string, root:string, files:number, replaced:boolean}
  *          | {ok:false, code:number, error:string}}
  */
-export function installArchive({ bytes, roots = [], overwrite = false, io = REAL_IO } = {}) {
+export function installArchive({ bytes, roots = [], overwrite = false, io = REAL_IO, expectedKind = null } = {}) {
   const z = readZip(bytes);
   if (!z.ok) return { ok: false, code: 400, error: z.error };
 
-  const plan = planInstall(z.entries, { roots });
+  const plan = planInstall(z.entries, { roots, expectedKind });
   if (!plan.ok) return { ok: false, code: 400, error: plan.error };
 
   const target = path.join(plan.root.dir, plan.pkgDir);

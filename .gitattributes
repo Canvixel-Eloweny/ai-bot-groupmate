@@ -22,8 +22,14 @@
 *.icns binary
 *.jpg  binary
 *.jpeg binary
+*.mp4  binary
+*.webm binary
 *.gif  binary
 *.ico  binary
 *.zip  binary
 *.woff binary
 *.woff2 binary
+
+# UI 身份清单必须 LF：签名覆盖原始字节，CRLF 会让验签失败。
+panel/ui-identity.json text eol=lf
+panel/ui-identity.json.sig text eol=lf

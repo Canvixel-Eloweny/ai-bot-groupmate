@@ -40,14 +40,14 @@ const M1 = {
 };
 
 // ── M2：H-11① —— 补零被摘（唯一实现在，但行为退化）───────────────────────────
-const H_DAYKEY_BODY = '  return isoOf({ y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() });';
+const H_DAYKEY_BODY = '  return isoOf({ y: p.y, m: p.m, d: p.d });';
 const M2 = {
   id: 'M2',
   note: '把 dayKeyOf 的补零摘掉（`2026-9-18` 与面板/账本的 `2026-09-18` 差一格）——',
-  anchor: /  return isoOf\(\{ y: d\.getFullYear\(\), m: d\.getMonth\(\) \+ 1, d: d\.getDate\(\) \}\);/,
+  anchor: /  return isoOf\(\{ y: p\.y, m: p\.m, d: p\.d \}\);/,
   count: 1,
   file: 'src/holidays.js',
-  apply: (s) => s.replace(H_DAYKEY_BODY, "  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;"),
+  apply: (s) => s.replace(H_DAYKEY_BODY, "  return `${p.y}-${p.m}-${p.d}`;"),
   layer: 'smoke',
   expect: 'BLOCKED',
 };

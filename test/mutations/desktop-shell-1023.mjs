@@ -140,11 +140,13 @@ export default [
   },
   {
     id: 'D13',
-    note: '删掉 40 DIP titleBarOverlay —— §148① 必须变红（原生按钮/Snap 方案丢失）',
+    note: '把原生窗口框改回 hidden overlay —— §148 必须变红（系统按钮会压进网页顶栏）',
     file: MAIN,
-    anchor: /titleBarOverlay: \{ height: 40/,
+    anchor: /frame: true,/,
     count: 1,
-    apply: (s) => s.replace('titleBarOverlay: { height: 40', 'overlayDisabled: { height: 40'),
+    apply: (s) => s.replace(
+      'frame: true,',
+      "frame: true,\n    titleBarStyle: 'hidden',\n    titleBarOverlay: { height: 40, color: '#050812' },"),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

@@ -1,0 +1,936 @@
+/* 最终版启动开屏：真实面板在下面，格栅洞透出真实控制台。
+   ⚠️ 默认 display:none，只有 splash.js 在 <head> 同步写上的 `html.boot-on`
+   才允许它从首帧显示（见 index.html 顶部注释）。 */
+.boot-splash {
+  position: fixed; inset: 0; z-index: 200;
+  display: none; background: transparent;
+  opacity: 1; transition: opacity 420ms var(--ease, cubic-bezier(.4,0,.2,1));
+}
+html.boot-on .boot-splash:not([hidden]) { display: block; }
+.boot-splash[hidden] { display: none; }
+.boot-splash.is-out { opacity: 0; pointer-events: none; }
+
+/* boot-splash.js 还没执行时的首帧底：与 .cos-base 同一张渐变，
+   保证在 20KB 的开屏脚本到达前也不会透出下面的控制台。 */
+#bootSplash::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 66% 58% at 50% 16%, var(--cos-base-1), transparent 68%),
+    linear-gradient(180deg, var(--cos-base-0), var(--cos-base-0));
+}
+#bootSplash.is-ready::before { display: none; }
+
+#bootSplash .intro { font-family: var(--font); }
+
+#bootSplash {
+  color-scheme: light;
+  --c-bg: #e6f6fc;
+  --c-surface: #ffffff;
+  --c-surface-2: #f4fbfd;
+  --c-sunken: #dfeef5;
+  --c-hover: #e9f5fa;
+  --c-line: #d8e6ee;
+  --c-line-soft: #e5f0f6;
+  --c-line-strong: #c2d4de;
+  --c-text-1: #31446c;
+  --c-text-2: rgba(49, 68, 108, .86);
+  --c-text-3: rgba(49, 68, 108, .76);
+  --c-accent: #2f509b;
+  --c-accent-hover: #4574c2;
+  --c-accent-weak: rgba(157, 191, 235, .34);
+  --c-accent-line: #9dbfeb;
+  --c-accent-ring: #07a0df;
+  --c-on-accent: #ffffff;
+  --c-ok: #067647;
+  --c-info: #026aa2;
+  --c-shadow-1: rgba(49, 68, 108, .05);
+  --c-shadow-2: rgba(49, 68, 108, .08);
+  --c-shadow-3: rgba(49, 68, 108, .12);
+  --c-shadow-4: rgba(49, 68, 108, .20);
+  --c-scrim-soft: rgba(230, 246, 252, .66);
+  --r-sm: 6px;
+  --r1: 8px;
+  --r2: 10px;
+  --r3: 14px;
+  --r-pill: 999px;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
+  --t-xs: 11px; --t-sm: 12px; --t-md: 13px; --t-lg: 15px; --t-xl: 19px; --t-2xl: 24px;
+  --lh-1: 1.25; --lh-2: 1.55; --lh-3: 1.7;
+  --h-ctl: 32px;
+  --dur: .16s;
+  --ease: cubic-bezier(.4, 0, .2, 1);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+
+  --grid-grad-a: #3b6ef6;        /* 浅色：蓝 */
+  --grid-grad-b: #ff6fa8;        /* 浅色：粉 */
+  --grid-stop-0: #eef7ff;
+  --grid-stop-1: #c6ddff;        /* 蓝 tint */
+  --grid-stop-2: #ffd1e6;        /* 粉 tint */
+  --grid-stop-3: #f3bed8;
+  --grid-stroke: rgba(72, 100, 156, .40);
+  --grid-scrim: rgba(255, 255, 255, .38);
+  --grid-skip-bg: rgba(255, 255, 255, .72);
+  --grid-skip-line: rgba(72, 100, 156, .24);
+  --grid-veil: rgba(255, 250, 253, .04);  /* 只给瓦片洞里的主页加一点玻璃色 */
+  --grid-blur: 10px;                     /* 格栅阶段真实面板的磨砂半径；消解时随 veil 透明度淡出 */
+
+  --cos-base-1: #fff4ff;
+  --cos-base-0: #dfeeff;
+  --cos-left-1: #ffe1b5;
+  --cos-left-2: #ffb1ce;
+  --cos-left-3: #b6a4ff;
+  --cos-left-4: #e4d4ff;
+  --cos-right-1: #ffe6b8;
+  --cos-right-2: #ffb08a;
+  --cos-right-3: #ff9ec9;
+  --cos-right-4: #bda9ff;
+  --cos-rim: rgba(255, 255, 255, .90);
+  --cos-text-glow: rgba(56, 90, 160, .18);
+}
+
+html[data-theme="dark"] #bootSplash {
+  color-scheme: dark;
+  --c-bg: #0b1226;
+  --c-surface: #1e2d4e;
+  --c-surface-2: #243560;
+  --c-sunken: #0e1a33;
+  --c-hover: #2a3d6b;
+  --c-line: rgba(157, 191, 235, .30);
+  --c-line-soft: rgba(157, 191, 235, .16);
+  --c-line-strong: rgba(157, 191, 235, .42);
+  --c-text-1: #e2ebf8;
+  --c-text-2: rgba(198, 214, 238, .68);
+  --c-text-3: rgba(157, 191, 235, .50);
+  --c-accent: #9dbfeb;
+  --c-accent-hover: #b8d3f2;
+  --c-accent-weak: rgba(157, 191, 235, .16);
+  --c-accent-line: rgba(157, 191, 235, .42);
+  --c-accent-ring: #07a0df;
+  --c-on-accent: #0b1226;
+  --c-ok: #5fd39b;
+  --c-info: #6cc0e8;
+  --c-shadow-1: rgba(0, 0, 0, .30);
+  --c-shadow-2: rgba(0, 0, 0, .40);
+  --c-shadow-3: rgba(0, 0, 0, .52);
+  --c-shadow-4: rgba(0, 0, 0, .66);
+  --c-scrim-soft: rgba(11, 18, 38, .66);
+
+
+  --grid-grad-a: #7cc8ff;        /* 深色：天蓝 */
+  --grid-grad-b: #b07cff;        /* 深色：紫 */
+  --grid-stop-0: #060a16;
+  --grid-stop-1: #0b1832;        /* 天蓝 tint */
+  --grid-stop-2: #1b1747;        /* 靛 */
+  --grid-stop-3: #2e1a59;        /* 紫 tint */
+  --grid-stroke: rgba(156, 199, 255, .30);
+  --grid-scrim: rgba(6, 10, 22, .44);
+  --grid-skip-bg: rgba(11, 18, 38, .62);
+  --grid-skip-line: rgba(156, 199, 255, .28);
+  --grid-veil: rgba(8, 12, 28, .06);
+
+  --cos-base-1: #1a1546;
+  --cos-base-0: #050812;
+  --cos-left-1: #d3b0ff;
+  --cos-left-2: #8f5bff;
+  --cos-left-3: #ff5a1f;
+  --cos-left-4: #ffb84d;
+  --cos-right-1: #ffc46b;
+  --cos-right-2: #ff6a1f;
+  --cos-right-3: #a34dff;
+  --cos-right-4: #4a2a9e;
+  --cos-rim: rgba(235, 220, 255, .55);
+  --cos-text-glow: rgba(0, 0, 0, .35);
+}
+
+@property --chromatic-sweep {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: -14%;
+}
+
+#bootSplash [hidden] { display: none !important; }
+
+#bootSplash .sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+#bootSplash .intro {
+
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  isolation: auto;
+  opacity: 1;
+  transform: none;
+
+}
+#bootSplash .intro.is-leaving {
+
+  opacity: 0;
+  transform: scale(1.012);
+  transition:
+    opacity .36s cubic-bezier(.4, 0, 1, 1),
+    transform .36s cubic-bezier(.4, 0, 1, 1);
+
+}
+#bootSplash /* 共享文字入场（格栅标题/眉题使用） */
+.eyebrow {
+
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0;
+  color: var(--c-text-2);
+  font: var(--t-xs)/1 var(--mono);
+  letter-spacing: .22em;
+  opacity: 0;
+  animation: bs-rise-in .52s var(--ease) 60ms both;
+
+}
+#bootSplash .eyebrow .spark {
+ color: var(--c-accent); font-size: 12px; letter-spacing: 0; 
+}
+#bootSplash .ch {
+
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(.5em);
+  filter: blur(8px);
+  animation:
+    bs-char-opacity 700ms cubic-bezier(.16, 1, .3, 1) both,
+    bs-char-blur 900ms cubic-bezier(.16, 1, .3, 1) both,
+    bs-char-rise 700ms cubic-bezier(.16, 1, .3, 1) both;
+
+}
+@keyframes bs-char-opacity {
+ from { opacity: 0; } to { opacity: 1; } 
+}
+@keyframes bs-char-blur {
+ from { filter: blur(8px); } to { filter: blur(0); } 
+}
+@keyframes bs-char-rise {
+ from { transform: translateY(.5em); } to { transform: translateY(0); } 
+}
+@keyframes bs-rise-in {
+
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+
+}
+#bootSplash .grid-veil {
+
+  position: fixed;
+  inset: 0;
+  z-index: 79;
+  background: var(--grid-veil);
+  /* 预览版里由 .mock.is-grid-behind 的 filter: blur(10px) saturate(.96) 负责；
+     真实面板不能直接 filter，改由这层 backdrop-filter 模糊它。
+     JS 在消解段只把 opacity 1→0，模糊随整层一起淡出 = 逐渐清晰。 */
+  -webkit-backdrop-filter: blur(var(--grid-blur)) saturate(.96);
+  backdrop-filter: blur(var(--grid-blur)) saturate(.96);
+  opacity: 1;
+  pointer-events: none;
+
+}
+#bootSplash .grid-veil[hidden] {
+ display: none; 
+}
+#bootSplash .grid-veil.is-out {
+
+  opacity: 0 !important;
+  transition: opacity .38s cubic-bezier(.4, 0, 1, 1);
+
+}
+#bootSplash .grid-canvas {
+
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+
+}
+#bootSplash .grid-copy {
+
+  position: relative;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  width: min(980px, 100%);
+  min-width: 0;
+  padding: 0 var(--s5);
+  text-align: center;
+  pointer-events: none;
+
+}
+#bootSplash .grid-copy::before {
+
+  content: "";
+  position: absolute;
+  inset: -80px -130px -40px;
+  z-index: 0;
+  border-radius: 50%;
+  background: radial-gradient(ellipse 58% 60% at 50% 48%, var(--grid-scrim), transparent 72%);
+  pointer-events: none;
+
+}
+#bootSplash .grid-copy > * {
+ position: relative; z-index: 1; 
+}
+#bootSplash .grid-title {
+
+  margin: var(--s3) 0 0;
+  color: var(--c-text-1);
+  font-size: clamp(60px, 8.2vw, 106px);
+  font-weight: 600;
+  line-height: 1.03;
+  letter-spacing: -.035em;
+  animation: bs-chromatic-sweep 1.2s cubic-bezier(.77, 0, .175, 1) 1560ms both;
+
+}
+#bootSplash .grid-line-1 {
+
+  margin-bottom: 14px;
+  color: var(--c-text-2);
+  font-size: .42em;
+  font-weight: 500;
+  letter-spacing: .01em;
+
+}
+@keyframes bs-chromatic-sweep {
+
+  from { --chromatic-sweep: -14%; }
+  to { --chromatic-sweep: 114%; }
+
+}
+#bootSplash .grid-line {
+ display: block; white-space: nowrap; 
+}
+#bootSplash .grid-line-2 {
+ position: relative; color: var(--c-accent); 
+}
+#bootSplash /* 渐变直接落在每个字符上：所有字符共享同一张渐变切片，
+   从入场第一帧就是蓝紫，不再先纯色再叠一层渐变。 */
+.grid-line-2 .ch {
+
+  color: transparent;
+  background-image: linear-gradient(90deg, var(--grid-grad-a), var(--grid-grad-b));
+  -webkit-background-clip: text;
+  background-clip: text;
+  background-repeat: no-repeat;
+
+}
+#bootSplash /* 词条翻转：150ms 上飘出场、300ms 下落入场，2:1 非对称。
+   两个词面同格叠放，宽度取较宽的一面，长主机名只缩字号不撑版。 */
+.grid-flip {
+
+  display: inline-grid;
+  justify-items: center;
+  align-items: center;
+  height: 1.03em;
+  vertical-align: top;
+  white-space: nowrap;
+
+}
+#bootSplash .grid-flip > * {
+ grid-area: 1 / 1; 
+}
+#bootSplash .grid-flip-front, #bootSplash .grid-flip-back {
+
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+
+}
+#bootSplash .grid-flip-front {
+
+  transition: opacity 150ms cubic-bezier(.4, 0, 1, 1), transform 150ms cubic-bezier(.4, 0, 1, 1);
+
+}
+#bootSplash .grid-flip.is-flipping .grid-flip-front {
+
+  opacity: 0;
+  transform: translateY(-12px);
+
+}
+#bootSplash .grid-flip-back {
+
+  opacity: 0;
+  transform: translateY(-12px);
+  transition: opacity 300ms cubic-bezier(.16, 1, .3, 1), transform 300ms cubic-bezier(.16, 1, .3, 1);
+  pointer-events: none;
+
+}
+#bootSplash .grid-flip.is-flipped .grid-flip-back {
+
+  opacity: 1;
+  transform: translateY(0);
+
+}
+#bootSplash .grid-flip-word {
+
+  position: relative;
+  display: inline-block;
+  color: transparent;
+  background-image: linear-gradient(90deg, var(--grid-grad-a), var(--grid-grad-b));
+  -webkit-background-clip: text;
+  background-clip: text;
+  white-space: nowrap;
+
+}
+#bootSplash /* 主角词容器：只负责翻转层，玻璃板已按反馈撤掉。 */
+.grid-hero {
+
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+
+}
+#bootSplash .grid-hero .grid-flip-word, #bootSplash .grid-hero .grid-line-2 {
+ z-index: 1; 
+}
+#bootSplash .grid-flip-front, #bootSplash .grid-flip-back {
+ filter: drop-shadow(0 12px 32px var(--cos-text-glow)); 
+}
+html[data-theme="dark"] #bootSplash .grid-line-2 .ch {
+
+  background-image: linear-gradient(180deg, #ffffff 0%, #f4efff 48%, #c9b8ff 100%);
+
+}
+html[data-theme="dark"] #bootSplash .grid-flip-word {
+
+  background-image: linear-gradient(180deg, #ffffff 0%, #f4efff 48%, #c9b8ff 100%);
+
+}
+#bootSplash /* ColorOS 式舞台：两团大色球，一颗从左上滑入、一颗从右下滑入。
+   全部压在文字下面，文字永远不被玻璃盖住。 */
+.cos {
+
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+
+}
+#bootSplash .cos > * {
+ position: absolute; pointer-events: none; 
+}
+#bootSplash .cos-base {
+
+  inset: 0;
+  background:
+    radial-gradient(ellipse 66% 58% at 50% 16%, var(--cos-base-1), transparent 68%),
+    linear-gradient(180deg, var(--cos-base-0), var(--cos-base-0));
+  opacity: 1;
+  animation: bs-cos-base-in .9s ease both;
+
+}
+@keyframes bs-cos-base-in {
+ from { opacity: 0; } to { opacity: 1; } 
+}
+#bootSplash .cos-orb {
+
+  width: min(92vw, 120vh);
+  aspect-ratio: 1;
+  will-change: transform;
+  backface-visibility: hidden;
+
+}
+#bootSplash .cos-orb i {
+
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 2px 2px var(--cos-rim),
+    inset 0 -40px 90px rgba(255, 90, 31, .22),
+    0 40px 120px rgba(0, 0, 0, .20);
+
+}
+#bootSplash .cos-orb-l {
+
+  left: 7.5vw;
+  top: 18vh;
+  transform: translate(-50%, -50%);
+  animation: bs-cos-orb-l-in 1.25s cubic-bezier(.16, 1, .3, 1) .22s both;
+
+}
+#bootSplash .cos-orb-l i {
+
+  background: radial-gradient(circle at 32% 24%, var(--cos-left-1) 0%, var(--cos-left-2) 26%, var(--cos-left-3) 68%, var(--cos-left-4) 100%);
+
+}
+#bootSplash .cos-orb-r {
+
+  left: 93vw;
+  top: 79.5vh;
+  width: min(92vw, 117vh);
+  transform: translate(-50%, -50%);
+  animation: bs-cos-orb-r-in 1.25s cubic-bezier(.16, 1, .3, 1) .34s both;
+
+}
+#bootSplash .cos-orb-r i {
+
+  background: radial-gradient(circle at 70% 20%, var(--cos-right-1) 0%, var(--cos-right-2) 24%, var(--cos-right-3) 66%, var(--cos-right-4) 100%);
+
+}
+@keyframes bs-cos-orb-l-in {
+
+  from { opacity: 0; transform: translate(calc(-50% - 12%), calc(-50% - 9%)); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+
+}
+@keyframes bs-cos-orb-r-in {
+
+  from { opacity: 0; transform: translate(calc(-50% + 12%), calc(-50% + 9%)); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+
+}
+#bootSplash /* ColorOS 式信息层：标签、状态行、系统与本地时间。 */
+.grid-tagline {
+
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: var(--s4) 0 0;
+  color: var(--c-text-2);
+  font-size: clamp(12px, 1.05vw, 14px);
+  letter-spacing: .18em;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity .5s var(--ease) .08s, transform .6s cubic-bezier(.16, 1, .3, 1) .08s;
+
+}
+#bootSplash .intro.is-cos-in .grid-tagline {
+ opacity: 1; transform: none; 
+}
+html[data-theme="dark"] #bootSplash .grid-tagline {
+ color: rgba(232, 240, 252, .88); 
+}
+html[data-theme="dark"] #bootSplash .grid-meta {
+ color: rgba(214, 228, 250, .66); 
+}
+#bootSplash .grid-tag-dot {
+
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--c-ok);
+  box-shadow: 0 0 10px var(--c-ok);
+
+}
+#bootSplash .grid-meta {
+
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 18px;
+  padding-top: 12px;
+  color: var(--c-text-3);
+  font: 10px/1.4 var(--mono);
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity .5s var(--ease) .18s, transform .6s cubic-bezier(.16, 1, .3, 1) .18s;
+
+}
+#bootSplash .intro.is-cos-in .grid-meta {
+ opacity: 1; transform: none; 
+}
+#bootSplash .grid-meta::before {
+
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 64px;
+  height: 1px;
+  margin-left: -32px;
+  background: linear-gradient(90deg, transparent, var(--c-line-strong), transparent);
+
+}
+#bootSplash .grid-meta i {
+
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .5;
+
+}
+#bootSplash /* 退场：翻转一开始就原地淡出，不再移动球的位置，避免位置闪现。 */
+.intro.is-cos-out .cos {
+ opacity: 0; transition: opacity .3s var(--ease); 
+}
+#bootSplash .intro.is-cos-out .grid-tagline, #bootSplash .intro.is-cos-out .grid-meta {
+
+  opacity: 0;
+  transform: translateY(8px);
+  transition-duration: .2s;
+  transition-delay: 0s;
+
+}
+#bootSplash .grid-line-2::after, #bootSplash .grid-flip-word::after {
+ opacity: .62; 
+}
+#bootSplash /* 彩虹带：只在 --chromatic-sweep 前后 ±14% 的窗口里上色；
+   窗口外透明，底下的主题渐变继续显示。 */
+.grid-line-2::after, #bootSplash .grid-flip-word::after {
+
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  display: block;
+  white-space: nowrap;
+  color: transparent;
+  background-image: linear-gradient(90deg,
+    transparent 0 calc(var(--chromatic-sweep) - 14%),
+    #60a5fa calc(var(--chromatic-sweep) - 14%),
+    #818cf8 calc(var(--chromatic-sweep) - 7%),
+    #c084fc var(--chromatic-sweep),
+    #fb7185 calc(var(--chromatic-sweep) + 7%),
+    #fbbf24 calc(var(--chromatic-sweep) + 14%),
+    transparent calc(var(--chromatic-sweep) + 14%),
+    transparent 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  pointer-events: none;
+
+}
+@supports not ((-webkit-background-clip: text) or (background-clip: text)) {
+#bootSplash .grid-line-2 .ch, #bootSplash .grid-flip-word {
+
+    color: var(--c-accent);
+    background-image: none;
+  
+}
+#bootSplash .grid-line-2::after, #bootSplash .grid-flip-word::after {
+ display: none; 
+}
+}
+#bootSplash .intro.is-title-out .grid-copy {
+
+  opacity: 0;
+  transform: translateY(-10px) scale(1.012);
+  transition: opacity .32s cubic-bezier(.4, 0, 1, 1), transform .32s cubic-bezier(.4, 0, 1, 1);
+
+}
+#bootSplash .intro.is-dissolving .skip {
+ opacity: 0; pointer-events: none; 
+}
+#bootSplash /* ── 跳过 ────────────────────────────────────────────────────────── */
+.skip {
+
+  position: absolute;
+  right: 28px;
+  bottom: 28px;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--grid-skip-line);
+  border-radius: 50%;
+  background: var(--grid-skip-bg);
+  color: var(--c-text-2);
+  font: 13px/1 var(--mono);
+  box-shadow: 0 2px 12px var(--c-shadow-2);
+  backdrop-filter: blur(6px);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease), opacity .2s var(--ease);
+
+}
+#bootSplash .skip::before {
+ content: ""; position: absolute; inset: -7px; border-radius: 50%; 
+}
+#bootSplash .skip:hover {
+ background: var(--c-accent-weak); color: var(--c-text-1); border-color: var(--c-accent-line); 
+}
+#bootSplash .skip:active {
+ transform: scale(.94); 
+}
+#bootSplash .skip:focus-visible {
+ outline: 2px solid var(--c-accent-ring); outline-offset: 3px; 
+}
+#bootSplash /* ── 预览控制（只属于预览页；正式版没有） ─────────────────────────── */
+.ctl {
+
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  z-index: 200;
+  color: var(--c-text-1);
+  font-size: var(--t-sm);
+
+}
+#bootSplash .ctl-toggle {
+
+  height: var(--h-ctl);
+  padding: 0 12px;
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  box-shadow: 0 4px 16px var(--c-shadow-2);
+  font: var(--t-xs)/1 var(--mono);
+  letter-spacing: .08em;
+
+}
+#bootSplash .ctl-toggle:hover {
+ color: var(--c-text-1); border-color: var(--c-accent-line); 
+}
+#bootSplash .ctl-toggle:focus-visible {
+ outline: 2px solid var(--c-accent-ring); outline-offset: 2px; 
+}
+#bootSplash .ctl-panel {
+
+  position: absolute;
+  left: 0;
+  bottom: 44px;
+  display: grid;
+  gap: 12px;
+  width: min(370px, calc(100vw - 36px));
+  padding: var(--s4);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r2);
+  background: var(--c-surface);
+  box-shadow: 0 16px 48px var(--c-shadow-3);
+
+}
+#bootSplash .ctl-row {
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+
+}
+#bootSplash .ctl-row > span, #bootSplash .ctl-row > label {
+ flex: none; color: var(--c-text-2); font-size: var(--t-xs); 
+}
+#bootSplash .seg {
+
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-sm);
+  background: var(--c-sunken);
+
+}
+#bootSplash .seg button {
+
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--c-text-2);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+
+}
+#bootSplash .seg button[aria-pressed="true"] {
+
+  background: var(--c-surface);
+  color: var(--c-text-1);
+  box-shadow: 0 1px 2px var(--c-shadow-1);
+
+}
+#bootSplash .seg button:focus-visible {
+ outline: 2px solid var(--c-accent-ring); outline-offset: 1px; 
+}
+#bootSplash .ctl-input {
+
+  width: 168px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-sm);
+  background: var(--c-surface-2);
+  color: var(--c-text-1);
+  font: var(--t-xs) var(--mono);
+
+}
+#bootSplash .ctl-input:focus-visible {
+ outline: 2px solid var(--c-accent-ring); outline-offset: 1px; 
+}
+#bootSplash .ctl-check {
+ display: inline-flex; align-items: center; gap: 6px; color: var(--c-text-2); font-size: var(--t-xs); 
+}
+#bootSplash .btn {
+
+  height: var(--h-ctl);
+  padding: 0 12px;
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  font-size: var(--t-sm);
+
+}
+#bootSplash .btn:hover {
+ color: var(--c-text-1); border-color: var(--c-accent-line); 
+}
+#bootSplash .btn-primary {
+
+  border-color: transparent;
+  background: var(--c-accent);
+  color: var(--c-on-accent);
+
+}
+#bootSplash .btn-primary:hover {
+ background: var(--c-accent-hover); color: var(--c-on-accent); 
+}
+#bootSplash .btn:active {
+ transform: scale(.98); 
+}
+#bootSplash .btn:focus-visible {
+ outline: 2px solid var(--c-accent-ring); outline-offset: 2px; 
+}
+#bootSplash .ctl-note {
+
+  margin: 0;
+  color: var(--c-text-3);
+  font-size: 10px;
+  line-height: 1.55;
+
+}
+#bootSplash .nojs {
+
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  background: var(--c-bg);
+  color: var(--c-text-1);
+
+}
+#bootSplash /* ── 减弱动效：直接落位，不注册无限循环 ─────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+
+  .ch, .eyebrow { animation: none !important; opacity: 1 !important; transform: none !important; filter: none !important; }
+  .grid-flip-front, .grid-flip-back { transition: none !important; }
+  .mock { transition: none !important; }
+  .grid-title { animation: none !important; --chromatic-sweep: 114%; }
+  .cos { display: none !important; }
+  .grid-tagline, .grid-meta { opacity: 1 !important; transform: none !important; transition: none !important; }
+
+}
+/* 低端机降级（boot-splash.js 按 hardwareConcurrency/deviceMemory 加 .bs-lite）：
+   格栅叶数减半、不描边、逐字不做 blur、veil 不做全屏模糊。 */
+html.bs-lite #bootSplash .ch {
+  filter: none !important;
+}
+html.bs-lite #bootSplash .grid-veil {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+html.rm #bootSplash .ch, html.rm #bootSplash .eyebrow {
+ animation: none !important; opacity: 1 !important; transform: none !important; filter: none !important; 
+}
+html.rm #bootSplash .grid-flip-front, html.rm #bootSplash .grid-flip-back {
+ transition: none !important; 
+}
+html.rm #bootSplash .mock {
+ transition: none !important; 
+}
+html.rm #bootSplash .grid-title {
+ animation: none !important; --chromatic-sweep: 114%; 
+}
+html.rm #bootSplash .cos {
+ display: none !important; 
+}
+html.rm #bootSplash .grid-tagline, html.rm #bootSplash .grid-meta {
+ opacity: 1 !important; transform: none !important; transition: none !important; 
+}
+@media (max-width: 900px) {
+#bootSplash .mock-body {
+ grid-template-columns: 1fr 1fr; 
+}
+}
+@media (max-width: 640px) {
+#bootSplash .mock-top {
+ padding: 0 var(--s4); gap: var(--s2); 
+}
+#bootSplash .mock-status {
+ display: none; 
+}
+#bootSplash .mock-actions .mock-btn:not(.mock-btn-primary) {
+ display: none; 
+}
+#bootSplash .mock-nav {
+ padding: 8px var(--s4); overflow-x: auto; 
+}
+#bootSplash .mock-body {
+ grid-template-columns: 1fr; padding: var(--s4); 
+}
+#bootSplash .intro {
+ padding: var(--s4); 
+}
+#bootSplash .skip {
+ right: 16px; bottom: 16px; 
+}
+#bootSplash .ctl {
+ left: 12px; bottom: 12px; 
+}
+#bootSplash .ctl-panel {
+ width: calc(100vw - 24px); 
+}
+#bootSplash .grid-copy {
+ padding: 0 var(--s4); 
+}
+#bootSplash .grid-title {
+ font-size: clamp(56px, 17vw, 76px); 
+}
+#bootSplash .grid-line-1 {
+ margin-bottom: 10px; 
+}
+#bootSplash .grid-tagline {
+ margin-top: 12px; font-size: 12px; letter-spacing: .14em; 
+}
+#bootSplash .grid-meta {
+ margin-top: 14px; 
+}
+#bootSplash .cos-orb, #bootSplash .cos-orb-r {
+ width: 100vw; 
+}
+#bootSplash .cos-orb-l {
+ left: 20vw; top: 31.5vh; 
+}
+#bootSplash .cos-orb-r {
+ left: 82vw; top: 85.6vh; 
+}
+}
+@media (max-height: 560px) {
+#bootSplash .eyebrow {
+ display: none; 
+}
+#bootSplash .grid-title {
+ font-size: clamp(44px, 5.6vw, 60px); 
+}
+}

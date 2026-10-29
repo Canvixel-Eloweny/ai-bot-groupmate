@@ -99,10 +99,10 @@ const P3 = {
 const P4 = {
   id: 'P4',
   note: 'app.js 插件板不再同时挂 card 类（玻璃材质继承不到）——',
-  anchor: /class="card pcard"/,
-  count: 1,
+  anchor: /class="card pcard"/g,
+  count: 2,
   file: APP,
-  apply: (s) => s.replace('class="card pcard"', 'class="pcard"'),
+  apply: (s) => s.replace(/class="card pcard"/g, 'class="pcard"'),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };
@@ -110,11 +110,11 @@ const P4 = {
 // ── P5：bare: true 被删（外面又罩一张 span-12 大玻璃板）────────────────────
 const P5 = {
   id: 'P5',
-  note: 'schema.js 插件清单那张卡不再脱掉外层 .card（大玻璃板把 13 块包住）——',
-  anchor: /bare: true,/,
+  note: 'schema.js 插件清单那张卡不再脱掉外层 .card（大玻璃板把插件网格包住）——',
+  anchor: /bare: true,\n            ctrls: \[\{ t: 'pluginList' \}\],/,
   count: 1,
   file: SCHEMA,
-  apply: (s) => s.replace('bare: true,', 'span: 12,'),
+  apply: (s) => s.replace("bare: true,\n            ctrls: [{ t: 'pluginList' }],", "ctrls: [{ t: 'pluginList' }],"),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };
@@ -137,14 +137,11 @@ const P6 = {
 //    取**带 extId 的那一处**—— 它是唯一形状，也正是"页面上一块控件"的真实落点。
 const P7 = {
   id: 'P7',
-  note: 'schema.js 里旧控件名 extSettings 残留（改名只做了一半）——',
-  anchor: /\{ id: 'eset', title: '注入与更新', span: 5, ctrls: \[\{ t: 'pluginSettings'/,
+  note: 'schema.js 里新控件名写成不存在的旧名 extSettings（改名只做了一半）——',
+  anchor: /\{ t: 'psnMood' \}/,
   count: 1,
   file: SCHEMA,
-  apply: (s) => s.replace(
-    "{ id: 'eset', title: '注入与更新', span: 5, ctrls: [{ t: 'pluginSettings'",
-    "{ id: 'eset', title: '注入与更新', span: 5, ctrls: [{ t: 'extSettings'"
-  ),
+  apply: (s) => s.replace("{ t: 'psnMood' }", "{ t: 'extSettings' }"),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };
@@ -156,11 +153,11 @@ const P7 = {
 const P8 = {
   id: 'P8',
   note: 'schema.js 页面文案里「扩展包」字样回来（界面命名不统一）——',
-  anchor: /装在 <code>plugins\/<\/code> 与 <code>skills\/<\/code> 里的第三方插件/,
+  anchor: /装在 <code>plugins\/<\/code> 里的确定性扩展/,
   count: 1,
   file: SCHEMA,
   apply: (s) => s.replace(
-    '装在 <code>plugins/</code> 与 <code>skills/</code> 里的第三方插件',
+    '装在 <code>plugins/</code> 里的确定性扩展',
     '装在 <code>plugins/</code> 与 <code>skills/</code> 里的第三方扩展包'
   ),
   layer: 'check-wb',

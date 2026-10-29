@@ -68,6 +68,13 @@ import {
   summarize,
 } from './plugin-manifest.js';
 import { buildApi, activateCtxOf, splitPermissions } from './plugin-api.js';
+import {
+  contractOf,
+  enabledByKindOf,
+  entryContractText,
+  maxOf,
+  settingsByKindOf,
+} from './extension-kind.js';
 // 扩展包的 fetch（受出站策略约束）。与 `ext-scope.js` 同族：外来代码要碰
 // 网络，就只给"审过地址"的那一条路。
 import { createExtFetch } from './ext-fetch.js';
@@ -227,13 +234,14 @@ function scanRoot({ dir, kind, name }) {
  *
  * 扫两个根 → 逐条校验 → 按白名单决定"加载 / 未启用 / 拒绝" → 写日志。
  *
- * @param {{root:string, enabled?:Iterable<string>, log?:{info?,warn?}, max?:number}} opts
+ * @param {{root:string, enabled?:Iterable<string>, enabledByKind?:object, log?:{info?,warn?}, max?:number}} opts
  *        `root` 由调用方给（不在这里推导，见文件头）。
- *        `enabled` 是 config 里显式启用的 **id** 集合。
- *        `max` 是本次最多加载几个（`custom.plugins.max`；缺省 `PLUGIN_MAX`）。
+ *        `enabled` 是旧式单名单（两档共用，兼容旧调用）。
+ *        `enabledByKind` 是 `{plugin:[],skill:[]}`；给了它就以它为准。
+ *        `max` 是本次最多加载几个（`custom.extensions.max`；缺省 `PLUGIN_MAX`）。
  * @returns {{plan:Array, sum:object, scans:Array, roots:Array}}
  */
-export function loadExtensions({ root, enabled = [], log = {}, max = PLUGIN_MAX } = {}) {
+export function loadExtensions({ root, enabled = [], enabledByKind = null, log = {}, max = PLUGIN_MAX } = {}) {
   const info = typeof log.info === 'function' ? log.info.bind(log) : () => {};
   const warn = typeof log.warn === 'function' ? log.warn.bind(log) : () => {};
 
@@ -246,7 +254,7 @@ export function loadExtensions({ root, enabled = [], log = {}, max = PLUGIN_MAX 
     entries.push(...sc.entries);
   }
 
-  const plan = planLoad(entries, enabled, { max });
+  const plan = planLoad(entries, enabled, { max, enabledByKind });
   const sum = summarize(plan);
 
   // 有问题的一条**逐条**报（这条线绝对不能只给汇总数字 —— 用户要靠它定位是哪个包）。
@@ -335,7 +343,7 @@ export const HOST_STATE = Object.freeze({
  *
  * @returns {string|null} null = 可执行；字符串 = 拒绝原因
  */
-function entryProblem(dir, entry) {
+function entryProblem(dir, entry, kind = 'plugin') {
   const esc = entryEscapeReason(dir, entry);
   if (esc) return esc;
   const p = path.resolve(dir, entry);
@@ -343,7 +351,9 @@ function entryProblem(dir, entry) {
   try {
     st = fs.statSync(p);
   } catch {
-    return `入口文件不存在：${entry}`;
+    return kind === 'skill'
+      ? `入口文件不存在：${entry}（纯提示词 Skill 也需要 index.js，内容写 export {} 即可）`
+      : `入口文件不存在：${entry}`;
   }
   if (!st.isFile()) return `entry 指向的不是文件：${entry}`;
   try {
@@ -448,7 +458,7 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
     };
 
     // ① realpath 必查（B12d 时只是警告）
-    const problem = entryProblem(p.dir, m.entry);
+    const problem = entryProblem(p.dir, m.entry, p.kind);
     if (problem) {
       record(p.id, { ...base, state: HOST_STATE.FAILED, reason: 'entry-unusable', detail: problem });
       warn(`扩展包 ✗ ${p.dirName}（id ${p.id}）：${problem}`);
@@ -469,19 +479,23 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
     }
     modules.set(p.id, mod);
 
-    const hasSetup = typeof mod?.setup === 'function';
-    const hasActivate = typeof mod?.activate === 'function';
-    const hookCount = mod?.hooks && typeof mod.hooks === 'object' ? Object.keys(mod.hooks).length : 0;
-    if (!hasSetup && !hasActivate && !hookCount) {
+    const contract = contractOf(mod, m, p.kind);
+    const hasSetup = contract.hasSetup;
+    const hasActivate = contract.hasActivate;
+    if (!contract.ok) {
       // 启用了、也能 import，但入口什么都没导出 —— 既不是错误，也不该算"跑起来了"。
       record(p.id, {
         ...base,
         state: HOST_STATE.SKIPPED,
         reason: 'no-entry-contract',
-        detail: '入口没有导出 setup / activate / hooks',
+        detail: entryContractText(p.kind),
       });
-      warn(`扩展包 ⚠ ${p.dirName}（id ${p.id}）：入口没有 setup / activate / hooks，跳过`);
+      warn(`扩展包 ⚠ ${p.dirName}（id ${p.id}）：${entryContractText(p.kind)}，跳过`);
       return;
+    }
+
+    if (contract.mixed) {
+      warn(`扩展包 ⚠ ${p.dirName}（id ${p.id}）：Skill 导出了 hooks（混合型，不推荐）`);
     }
 
     // ② 造 ctx（按 permissions 裁剪）→ 跑 setup
@@ -510,7 +524,7 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
         now,
         // 用户在面板上填的设置（第 55 轮）。读的是**宿主启动时那份 custom** ——
         // 改了设置要重启才生效，与白名单同一条纪律（不支持热插拔）。
-        settings: (getCustom?.()?.plugins?.settings || {})[p.id],
+        settings: (settingsByKindOf(getCustom?.() || {})[p.kind === 'skill' ? 'skill' : 'plugin'] || {})[p.id],
         isActive: (other) => records.get(String(other))?.state === HOST_STATE.LOADED,
         // 受出站策略约束的 fetch（第 55 轮）：声明了 web_fetch 的包拿到的**就是这份**，
         // 不再是裸 `globalThis.fetch`。判据只有 `safe-fetch` 那一份，
@@ -598,7 +612,12 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
         hookErrors: attach.errors,
         // loaded 且两样都没有 = 这个包当前什么都不做。面板显示「空载」，
         // 用户不必去翻日志才知道"装了等于没装"。
-        empty: tools.length === 0 && hooks.length === 0,
+        empty: tools.length === 0 && hooks.length === 0
+          && (Array.isArray(m.promptSections) ? m.promptSections.length : 0) === 0,
+        promptOnly: p.kind === 'skill'
+          && Array.isArray(m.promptSections) && m.promptSections.length > 0
+          && tools.length === 0 && hooks.length === 0,
+        mixed: contract.mixed === true,
         toolErrors,
         promptSections: Array.isArray(m.promptSections) ? m.promptSections : [],
       },
@@ -620,9 +639,10 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
       if (loaded) return this.snapshot();
       loaded = true;
 
-      const enabled = getCustom?.()?.plugins?.enabled || [];
-      maxPluginsUsed = Math.max(1, Math.trunc(Number(getCustom?.()?.plugins?.max)) || PLUGIN_MAX);
-      const { plan } = loadExtensions({ root, enabled, log, max: maxPluginsUsed });
+      const customNow = getCustom?.() || {};
+      const enabledByKind = enabledByKindOf(customNow);
+      maxPluginsUsed = Math.max(1, Math.trunc(Number(maxOf(customNow))) || PLUGIN_MAX);
+      const { plan } = loadExtensions({ root, enabledByKind, log, max: maxPluginsUsed });
       for (const p of plan) {
         if (p.action === 'load') continue; // 稍后逐条异步处理
         record(p.id, {
@@ -683,6 +703,11 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
         ? it.hooks.reduce((m, [, c]) => m + Number(c || 0), 0)
         : 0), 0);
       sum.empty = items.filter((it) => it.state === HOST_STATE.LOADED && it.empty === true).length;
+      // Skill 侧的可解释计数：纯提示词、混合型、提示词总段数。
+      sum.promptOnly = items.filter((it) => it.state === HOST_STATE.LOADED && it.promptOnly === true).length;
+      sum.mixed = items.filter((it) => it.state === HOST_STATE.LOADED && it.mixed === true).length;
+      sum.promptSections = items.reduce((n, it) => n
+        + (it.state === HOST_STATE.LOADED && Array.isArray(it.promptSections) ? it.promptSections.length : 0), 0);
       return {
         items,
         sum,

@@ -91,13 +91,24 @@ export function isoOf(p) {
  * **全仓唯一实现**：`trace-stats` 的分桶、缓存命中脚本的分组、面板的「今天」、
  * 提醒的日期维度都取它一份 —— 别在任何地方再拼一遍这个模板串。
  */
+/**
+ * 本地时间的年月日（**唯一**一处把 Date 拆成 y/m/d 的地方）。
+ * 2026-10-25：生日彩蛋要按"今年生日过没过"反推出生年，不能再就地写一遍
+ * `getMonth() + 1` —— H-11① 已经把这条收敛到本文件，第二份实现会被契约当场抓住。
+ */
+export function localDateParts(d = new Date()) {
+  return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() };
+}
+
 export function dayKeyOf(d = new Date()) {
-  return isoOf({ y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() });
+  const p = localDateParts(d);
+  return isoOf({ y: p.y, m: p.m, d: p.d });
 }
 
 /** 本地时间所在的月份 → `YYYY-MM`（账本按月切分用）。与 `dayKeyOf` 同源：同一套本地字段 + 同一个 `pad2`。 */
 export function monthKeyOf(d = new Date()) {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+  const p = localDateParts(d);
+  return `${p.y}-${pad2(p.m)}`;
 }
 
 /** 星期几（0=周日）。日期非法时回 `1`（周一）—— 朝"照常"倒，理由同文件头 ②。 */

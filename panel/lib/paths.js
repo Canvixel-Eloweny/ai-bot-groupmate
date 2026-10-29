@@ -175,6 +175,9 @@ export const TRACE_FILE = panelFile('local-trace.jsonl');
 export const ARCHIVE_FILE = panelFile('session-archive.json');
 export const USAGE_DIR = PANEL_STATE_DIR;
 export const USAGE_FILE_RE = /^usage(-\d{4}-\d{2})?\.jsonl$/;
+/** 发言账本（`src/sent-stats.js` 写，面板只读）。 */
+export const SENT_DIR = PANEL_STATE_DIR;
+export const SENT_FILE_RE = /^sent(-\d{4}-\d{2})?\.jsonl$/;
 export const PIDFILE = panelFile('.bridge.pid');
 /**
  * 机器人**进程侧**的实例互斥锁（D19 · E19）。面板**只读**它 —— 谁持锁、心跳多新，
@@ -228,13 +231,14 @@ export const NEXT_DIR = programFile('panel/next');
  * 面板与机器人读同一份结果，不再各推一次。`QQBOT_DATA_DIR` 只覆盖
  * `DATA_DIR` 这一棵子树，不改变 config / panel / napcat 的位置。
  *
- * 下面的文件名与子目录名来自**各个扩展包自己的约定**（不是本项目的发明）：
- *   · `data/bot-state.json`         ← `plugins/本体情绪`（跨群共享的心情/精力/压力）
+ * 下面的文件名与子目录名来自**各功能的约定**（不是面板的发明）：
+ *   · `data/bot-state.json`         ← 项目内建心情（`src/emotion.js`，跨群共享）
  *   · `data/memory/people/*.json`   ← `skills/群友印象`（按 QQ 号跨群共享，一档一文件）
  *   · `data/images-lib/index.json`  ← `skills/自定义图库`
  *   · `data/api-deals.json`         ← `skills/AI额度情报`
- * ⚠️ 这些文件**不是我们写的**，形状不归我们管 —— 所以 `bot-data.js` 里的读取
- *    一律"认不出就不显示"，绝不猜、绝不补默认值。
+ * ⚠️ 面板**只读**这些文件；形状由各自的写入方定（心情是 `src/emotion.js`，
+ *    其余仍是扩展包）。所以 `bot-data.js` 里的读取一律"认不出就不显示"，
+ *    绝不猜、绝不补默认值。
  */
 export const DATA_DIR = ROOTS.dataDir;
 export const PERSONA_DIR = ROOTS.personaDir;
@@ -305,6 +309,10 @@ export const BACKEND_SOURCES = [
   // 进表的理由同上 —— 改了它们必须重启面板才生效，否则"页面换了而判据还是旧的"。
   'panel/lib/zip.js',
   'panel/lib/ext-install.js',
+  // 0.1.5 接口收尾（2026-10-28）：自定义背景存储 / 扩展包模板与文件夹打包 / GitHub 星数。
+  'panel/lib/backgrounds.js',
+  'panel/lib/ext-package.js',
+  'panel/lib/github-star.js',
   // 本地对话流的读盘口（第 16 轮 · H-10 第二半搬出）。它读的那个 `local-trace.jsonl`
   // **不进表**（桥接进程一直在追加写，属于"数据一直在变"，进来会让 stale 常年误报）；
   // 但**这个模块**要进表 —— 改了它得重启面板才生效。
@@ -323,6 +331,9 @@ export const BACKEND_SOURCES = [
   // （`audit.jsonl` / `usage-*.jsonl` 一直在变，进来会让 stale 常年误报）。
   'panel/lib/audit-log.js',
   'panel/lib/usage-report.js',
+  // 发言账本聚合 + 运行总览热力网格（2026-10-27）。进表理由同上 ——
+  // 改了它得重启面板才生效；它**读**的 `sent-*.jsonl` 不进表（一直在变）。
+  'panel/lib/sent-report.js',
   // 官方模型目录对账（2026-10-17）。进表理由同上 —— 改了它得重启面板才生效，
   // 否则会出现"页面说已同步、实际还是旧的对账逻辑"。
   // 读/写拆成两个文件是为了层次单向（L3 只许 import 更低层，见 check-wb §06）。
@@ -332,6 +343,8 @@ export const BACKEND_SOURCES = [
   'panel/lib/update-version.js',
   'panel/lib/update-manifest.js',
   'panel/lib/update-signature.js',
+  // UI 身份清单的读取/验签/核心锚点比对（§171）。改了它必须重启面板才生效。
+  'panel/lib/ui-identity.js',
   'panel/lib/update-download.js',
   'panel/lib/update.js',
   'panel/lib/update-routes.js',

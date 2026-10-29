@@ -1,0 +1,13 @@
+/* 工厂三页帧切换（2026-10-27）
+   三个工厂共用 #factoryHost；入场复用 0.2s 的层淡入，
+   切换时只让新帧做 6px 上浮 + 淡入，不重建 iframe。 */
+.factory-pane { position: absolute; inset: 0; }
+.factory-pane[hidden] { display: none; }
+.factory-pane.is-enter { animation: factory-pane-in .22s var(--ease); }
+@keyframes factory-pane-in {
+  from { opacity: 0; transform: translateY(6px) scale(.997); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .factory-pane.is-enter { animation: none; }
+}

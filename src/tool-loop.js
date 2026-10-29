@@ -313,7 +313,7 @@ export function createToolLoop({ client, registry, log, maxRounds = TOOL_ROUND_M
         // eslint-disable-next-line no-await-in-loop -- 顺序是刻意的，理由见上
         for (const c of pending) {
           const r = await invoke(c.name, c.argsRaw, ctx);
-          // 每次调用留一条 {name, isError} —— after-response 钩子（如「本体情绪」）
+          // 每次调用留一条 {name, isError} —— after-response 钩子/情绪结算
           // 靠它判"这轮工具是不是失败了"。isError 的来历只有两种：宿主三态失败
           // （不存在 / 参数坏 / 抛错）或工具自己在结果里声明。
           toolResults.push({ name: c.name, isError: r.isError });

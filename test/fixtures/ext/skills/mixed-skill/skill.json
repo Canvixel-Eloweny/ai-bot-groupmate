@@ -1,0 +1,24 @@
+{
+  "id": "mixed-skill",
+  "name": "混合型示例",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "Skill 同时导出 hooks；用来验证“混合型（不推荐）”仍可加载。",
+  "enabledByDefault": false,
+  "capabilities": [],
+  "permissions": [],
+  "requires": [],
+  "entry": "index.js",
+  "settings": {},
+  "prompt": {
+    "sections": [
+      {
+        "id": "mixed-note",
+        "title": "混合型示例",
+        "priority": 40,
+        "content": "这是一个同时带确定性钩子的 Skill。"
+      }
+    ]
+  }
+}

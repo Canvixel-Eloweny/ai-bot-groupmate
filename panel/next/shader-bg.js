@@ -154,7 +154,11 @@
   let paintSpeed = null;
   let t = 0;
   let raf = 0;
+  let bootHold = false;
   let lastTs = 0;
+  /* 等高线背景是默认档：它要在解析阶段就停掉本引擎，不能只把 canvas 透明掉
+     （透明 canvas 仍会每帧重画）。`setActive(false)` 只停循环，不动速度档与预设。 */
+  let active = true;
   let frames = 0;            // 逐帧探针用：verify 取两帧差值证明"真的在动"
   let noiseTile = null;      // 2D 兜底用的颗粒贴图（懒生成一次）
   let resizeTimer = 0;       // resize 防抖句柄（B32）：拖窗口时别每帧重建画布
@@ -275,6 +279,7 @@
   /* ── 主循环 ──────────────────────────────────────────────────────────── */
   function loop(ts) {
     raf = 0;
+    if (!active) { lastTs = 0; return; }
     if (document.hidden) { lastTs = 0; return; }        // 页签藏起来就停，回来再续
     const dt = lastTs ? Math.min((ts - lastTs) / 1000, 0.1) : 0;
     lastTs = ts;
@@ -285,14 +290,15 @@
   }
 
   function startLoop() {
-    /* ⚠️ 三个都不进循环：reduced-motion（真停）· 已经在跑（raf 句柄在）·
+    /* ⚠️ 四个都不进循环：被等高线停用 · reduced-motion（真停）· 已经在跑（raf 句柄在）·
        速度档 = 无（mul 0，B33 —— 循环空转重画同一帧是白烧 29ms/帧）。 */
-    if (reduced() || raf || !curSpeed || curSpeed.mul <= 0) return;
+    if (!active || reduced() || raf || bootHold || !curSpeed || curSpeed.mul <= 0) return;
     lastTs = 0;
     raf = requestAnimationFrame(loop);
   }
 
   function renderCurrent() {
+    if (!active) return;
     const v = variantOf();
     resize();
     drawOnce(v);
@@ -370,8 +376,10 @@
     if (!v) return;
     currentId = id;
     curVariant = v;                          // ← 与 currentId 同步（B32：漏这行 = 切了不换色）
-    applyBackdrop(v);
-    renderCurrent();
+    if (active) {
+      applyBackdrop(v);
+      renderCurrent();
+    }
     if (persist) {
       try { localStorage.setItem(STORE_KEY, id); } catch (e) { /* 隐私模式：不持久化而已 */ }
     }
@@ -412,10 +420,36 @@
     } else {
       startLoop();
     }
+    /* 等高线视频也吃同一份速度：档位只有一个来源，别让 settings 再写第二份。 */
+    document.dispatchEvent(new CustomEvent('bgfx:speed', { detail: { v, mul: s.mul } }));
   }
 
   function savedSpeed() {
     try { return localStorage.getItem(SPEED_STORE_KEY); } catch (e) { return null; }
+  }
+
+  /* 等高线模式的挂起/恢复。只动循环与可见性，不动速度档、预设与本地存储：
+     切回流光时用户原来的选择原样回来。解析阶段 `canvas` 还没拿到，先只置标志，
+     `init()` 会按 active 决定要不要画第一帧 —— 否则旧引擎会先抢写一次 bg-dark。 */
+  function setActive(on) {
+    const next = !!on;
+    if (active === next) {
+      if (next && canvas) canvas.classList.remove('is-inactive');
+      return;
+    }
+    active = next;
+    if (!canvas) return;
+    if (!active) {
+      canvas.classList.add('is-inactive');
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      lastTs = 0;
+      return;
+    }
+    canvas.classList.remove('is-inactive');
+    applyBackdrop(curVariant || variantOf());
+    renderCurrent();
+    startLoop();
+    requestAnimationFrame(() => moveRing());
   }
 
   /* ── 动画速度控件（B33→B36）：顶栏下挂小三角 + 展开式步进器 ──────────────
@@ -512,10 +546,18 @@
     curSpeed = SPEEDS.find((x) => x.v === sv)
       || SPEEDS.find((x) => x.v === SPEED_DEFAULT);
     if (!initGL()) gl = null;                            // 拿不到就整体走 2D
-    applyBackdrop(curVariant);
-    renderCurrent();
+    canvas.classList.toggle('is-inactive', !active);
+    if (active) {
+      applyBackdrop(curVariant);
+      renderCurrent();
+    }
     buildSpeedUI();
-    if (!raf) startLoop();                               // buildSpeedUI→setSpeed 已起过就别叠
+    /* 开屏期间不跑全屏 WebGL 循环（先在 renderCurrent 画一帧静态底）。 */
+    if (window.__bootGate && window.__bootGate.on && !window.__bootGate.done && typeof window.__bootGate.whenDone === 'function') {
+      bootHold = true;
+      window.__bootGate.whenDone(function () { bootHold = false; startLoop(); });
+    }
+    if (active && !raf) startLoop();                     // buildSpeedUI→setSpeed 已起过就别叠
     buildPicker();
     if (window.matchMedia) {
       try {
@@ -565,7 +607,9 @@
     /* B33：速度档同构暴露 —— `speed` 读缓存 curSpeed（可断言同步），
        setSpeed 走引擎唯一写点（verify 用它切档后取 frames 差值证"真停/真动"）。 */
     get speed() { return curSpeed ? curSpeed.v : null; },
+    get active() { return active; },
     setSpeed: (v) => setSpeed(v, true),
     set: (id) => setVariant(id, true),
+    setActive: (on) => setActive(on),
   };
 })();

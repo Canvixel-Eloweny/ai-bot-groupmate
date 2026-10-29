@@ -129,6 +129,11 @@ README-发布交接.txt
 Ed25519 清单签名只保证更新完整性，不等于 Authenticode。不要用自签证书冒充；
 证书采购与签名仍是维护者的预算决定。
 
+**2026-10-25 最终决定：不签 Authenticode。** P3-4 按“不签收口、风险接受”关闭；
+用户指引已补进 `README.html` 与 `README-installed.html`（SmartScreen 的
+“更多信息 → 仍要运行”、`certutil` 核对 `SHA256SUMS.txt`、未签名 ≠ 更新无校验）；
+包内生效需按下一批重出，Ed25519 清单签名不变。
+
 选型事实（详见规格 §20.3，都是外部官方口径，不是本机推测）：
 **EV 的“首次下载即得 SmartScreen 信任”在 2024 已取消**，EV 与 OV 同样要攒信誉；
 **Azure Artifact Signing（约 $9.99/月）对个人开发者只开放美国/加拿大**，

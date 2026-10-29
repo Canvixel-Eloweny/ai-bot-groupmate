@@ -292,13 +292,16 @@ estrella-bot/
   docker-compose.yml           # NapCat container
   persona/qq-chat.md           # persona
   plugins/                     # extensions, deterministic kind (capabilities / hooks) — none ship by default
-  skills/                      # extensions, LLM kind (register tools) — none ship by default
+  skills/                      # extensions, skill kind (tools + optional prompt.sections) — none ship by default
                                #   (the 13 built-in packages were removed on 2026-10-17; the host still loads
                                #    any package you drop here, subject to the allow-list below)
                                #   this on-disk skills/ is NOT src/skills.js: one is code on disk,
-                               #   the other is data inside config.json. The host scans, validates,
-                               #   reports, and only loads packages named in the allow-list
-                               #   (config.json custom.plugins.enabled), which requires a restart.
+                               #   the other is data inside config.json. Both kinds share one host/loader;
+                               #   `kind` only decides the default semantics. A pure-prompt skill still
+                               #   needs index.js (may be `export {}`). See docs/SKILLS.md.
+                               #   The host scans, validates, reports, and only loads packages named in
+                               #   custom.extensions.plugins.enabled / custom.extensions.skills.enabled
+                               #   (legacy custom.plugins is derived), which requires a restart.
                                #   Third-party packages you drop into these directories are NOT
                                #   committed (see the per-package exceptions in .gitignore).
   panel/
@@ -459,8 +462,10 @@ and follow its licence.
 (5 deterministic + 8 LLM kind) were removed on 2026-10-17. The host still loads any package you drop
 into either directory, subject to the allow-list below. Third-party packages *you* add are **not**
 committed (see the per-package exceptions in `.gitignore`). Which of them actually load is decided by
-`custom.plugins.enabled` in `config.json` — ⚠️ there is **no hot-plug**: changing the allow-list needs a
-restart (the console says so when you do). Also not distributed: `napcat/` (the protocol side) and the data
+`custom.extensions.plugins.enabled` / `custom.extensions.skills.enabled` in `config.json` (the legacy
+`custom.plugins.enabled` is derived for old configs) — ⚠️ there is **no hot-plug**: changing the
+allow-list needs a restart (the console says so when you do). See `docs/SKILLS.md` for the two kinds.
+Also not distributed: `napcat/` (the protocol side) and the data
 directories extensions write at runtime — see `docs/legal/THIRD-PARTY-NOTICES.md` §3.
 
 ---

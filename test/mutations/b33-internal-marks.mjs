@@ -93,10 +93,10 @@ export default [
   },
   {
     id: 'M6',
-    file: 'src/brain.js',
-    anchor: /不要照着写出来。）'\);/,
+    file: 'src/prompt-sections.js',
+    anchor: /不要照着写出来。）',/,
     count: 1,
-    apply: (src) => src.replace(/    base\.lines\.push\('（另外：[^\n]*不要照着写出来。）'\);\n/, ''),
+    apply: (src) => src.replace(/\s*'（另外：[^\n]*不要照着写出来。）',\n/, '\n'),
     layer: 'check-wb',
     expect: 'BLOCKED',
     note: 'B33 · §63⑥：提示词里那句声明被删（少让它复读那一半没了）',

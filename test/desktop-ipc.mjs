@@ -23,6 +23,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const IS_WIN = process.platform === 'win32';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const EVIDENCE = process.env.P3_IPC_EVIDENCE_DIR || path.join(os.tmpdir(), 'p3-2-ipc-evidence');
+/** Electron 输出在 catch 里也要能读 —— 放进 try 的块级作用域会让失败诊断本身抛 ReferenceError。 */
+let shellLog = '';
 
 function findElectron() {
   const override = String(process.env.P3_IPC_ELECTRON || '').trim();
@@ -176,7 +178,7 @@ try {
     ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
     path.join(ROOT, 'electron'),
   ], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
-  let shellLog = '';
+  shellLog = '';
   electron.stdout.on('data', (d) => { shellLog += String(d); });
   electron.stderr.on('data', (d) => { shellLog += String(d); });
   electron.once('exit', (code) => { shellLog += `\n[electron exit ${code}]\n`; });
@@ -306,6 +308,13 @@ try {
   try {
     await cdp.evalJs(`document.querySelector('.banner [data-a="panel.quit"]').click()`, 1500);
   } catch { /* 窗口正在退出 */ }
+  /* `panel.quit` 走站内确认卡（不是 window.confirm）：等它出现后点主按钮。 */
+  await sleep(400);
+  await cdp.evalJs(`(() => {
+    const b = [...document.querySelectorAll('.toast-btn.primary')].pop();
+    if (b) b.click();
+    return !!b;
+  })()`).catch(() => {});
   await waitFor(() => electron.exitCode !== null, 15000, 'IPC 退出控制台后 Electron 退出');
   assert.equal(fs.existsSync(path.join(tmp, 'panel', '.panel.json')), false, '退出后发现文件没清掉');
 

@@ -36,8 +36,11 @@
  * "行为类块越靠后越服从"，而它前面那些段每轮/每批都在动 ——
  * 插在 `ambient`（半易变）之前，才既靠后、又不会每轮作废一次前缀缓存。
  */
-const SECTION_ORDER = [
-  'base', 'persona', 'enhance', 'rules', 'isolate', 'memory', 'scenes', 'skills',
+export const SECTION_ORDER = [
+  'base', 'persona', 'mbti', 'enhance', 'mood', 'rules', 'isolate', 'memory', 'astro', 'scenes', 'skills',
+  // Skill（LLM 型扩展）的指引紧跟在「知识包/角色卡」之后、插件提示词之前：
+  // 两者都是“你本来就会的东西”，放一起才能在预览里一眼分清来源。
+  'skillExt',
   // 扩展包指引（清单 `prompt.sections`）紧跟在「技能」之后：两者都是"你本来就会的东西"，
   // 而它必须排在 `speech` 之前才符合"行为类块越靠后越服从"。
   // ⚠️ **2026-10-17 补登记**：这一节 2026-10-15 就建好了（`src/brain.js` 的
@@ -51,7 +54,7 @@ const SECTION_ORDER = [
  * 超预算时的淘汰顺序（**先砍前面的**）。
  * 与计划 v4 §5.2 定的优先级一致：人格 > 规则 > 场景 > 技能 > 记忆 > ambient > 历史。
  */
-export const EVICTION_ORDER = ['ambient', 'skills', 'memory', 'scenes', 'enhance', 'rules', 'persona'];
+export const EVICTION_ORDER = ['astro', 'mood', 'ambient', 'skills', 'memory', 'scenes', 'enhance', 'mbti', 'rules', 'persona'];
 
 /** 永不参与淘汰的段：身份/说话方式、注入隔离声明、必变段（时间+场景） */
 export const NEVER_DROP = ['base', 'isolate', 'volatile'];
@@ -75,17 +78,26 @@ export const SAVING_DROP = Object.freeze(['ambient', 'skills']);
  * 默认预算（字符数）。**经验值**：实测 system 2,600~2,900 字符，
  * 这里给到约 5 倍余量 —— 目的是封住"无上限"这个口子，不是让正常配置被砍。
  */
-const DEFAULT_BUDGET = Object.freeze({
+export const DEFAULT_BUDGET = Object.freeze({
   enabled: true,
   /** system 段总上限 */
   total: 16000,
   sections: Object.freeze({
     persona: 6000,
     enhance: 3000,
+    // MBTI 辅助 / 生日彩蛋（2026-10-25）：辅助层，配额远小于人格本体。
+    // 彩蛋只有两行，200 是"封顶"不是"目标"；超总量时它最先被砍。
+    mbti: 1200,
+    astro: 200,
+    // 此刻的状态：实测约 160~220 字符；给 400 是封顶，不是目标。
+    mood: 400,
     rules: 1500,
     memory: 3000,
     scenes: 2500,
     skills: 2000,
+    // Skill（LLM 型扩展）指引：与 knowledge 技能同档。Skill 的 prompt.sections
+    // 单包已限 5 段 / 1600 字，这里再封全局，避免“装一堆 Skill”挤掉别的段。
+    skillExt: 2000,
     // 扩展包指引：来自**已加载**的包清单（`prompt.sections`）。与 `skills` 同档，
     // 理由相同 —— 它是"什么时候该用哪个工具"的说明，不是人格/规则，
     // 单独封顶是为了让"装了一堆包"不至于把别的段挤掉。超了从末尾丢（新加的排后面）。

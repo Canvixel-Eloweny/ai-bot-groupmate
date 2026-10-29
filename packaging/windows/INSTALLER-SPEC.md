@@ -1094,6 +1094,8 @@ Mac **没有 Homebrew、没有 `osslsigncode`**（只有 LibreSSL 命令行，�
    （源 `packaging/windows/launcher/README.html`）里 `SmartScreen` 与“仍要运行”字样
    **各 0 处**；VM 安装根的同一文件（10,260 B）也是 `SmartScreen`=0 / “仍要运行”=0 / “更多信息”=0
    ⇒ 目前**没有**任何面向用户的“怎么过这一步”说明。
+   （⬆ 2026-10-18 快照；2026-10-25 已补：`README.html` 与 `README-installed.html`
+   都加了 SmartScreen / SHA-256 说明，见下方追加裁决。）
    要补这句必须改那个源，并**整批重出** ④/④b/③/安装器/发布资产（README.html 在 payload 里，
    由 `install-commit.mjs:41` 的 `ROOT_FILES` 落到安装根；改了不重出 = 包与哈希不一致）；
    这是独立一轮的活，不在收尾里顺手做；
@@ -1113,6 +1115,19 @@ SmartScreen 那道「更多信息 → 仍要运行」由用户手点；这不影
 遗留的实际缺口只有一个，且与证书无关：**包内说明没有教用户过这一步**（见上），
 补它需要改 `packaging/windows/launcher/README.html` 并整批重出包与发布资产 ⇒ 另起一轮，
 谁做都要按 `makensis → 签名(若届时签) → 取 size/sha256 → 出清单 → 签清单` 的顺序走。
+
+**2026-10-25 追加裁决（最终）**：维护者明确**不签名**，P3-4 不按原判据
+“签名后装机不拦”执行，改为“不签收口、风险接受”。源码侧已完成的是不依赖证书的部分：
+
+- `README.html`（免安装 / 群包顶层）与 `README-installed.html`（安装版）都补了
+  SmartScreen 的“更多信息 → 仍要运行”、用 `certutil` 核对 `SHA256SUMS.txt`，
+  以及“未签名 ≠ 更新无校验（Ed25519 清单签名仍在）”的说明；
+- `signing=none` 的构建回执保持；未签名产物在真实 Windows 上的基线已做可做部分
+  （2026-10-25：SmartScreen 进程级拦截、Defender 0 威胁、隔离安装/卸载/AUMID 通过；
+  360 / 腾讯管家未安装，未测；详见内部的 P3-4 基线验收记录）；
+- 包内生效仍需按 `payload → 安装器 → SHA256SUMS → ④/④b` 重出，群包 / Release 另走 G5/G6；
+- 未来若改主意：P3-5 的 CI 前置已具备，签名顺序仍是
+  `makensis → 签名 + RFC3161 → size/sha256 → SHA256SUMS → latest.json → Ed25519`。
 
 ### 20.4 Win10 1809 真机验证：维护者裁决不做
 

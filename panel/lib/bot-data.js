@@ -39,6 +39,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BOT_STATE_FILE, PEOPLE_DIR, GALLERY_FILE, API_DEALS_FILE, PATROL_SNAPSHOT_FILE } from './paths.js';
+// 21 项情绪的键名与中文名只有一份（src/emotion-keys.js）。
+// 面板画 21 根柱子要用它，投影也不能自己再列一次 21 个键。
+import { EMOTION_KEYS } from '../../src/emotion-keys.js';
 
 /* ── 小工具 ─────────────────────────────────────────────────────────────── */
 
@@ -65,7 +68,7 @@ function readJson(file) {
 const numOr = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const strOr = (v, max = 120) => (typeof v === 'string' ? v.slice(0, max) : '');
 
-/* ── ① 本体情绪（`plugins/本体情绪` → `data/bot-state.json`）───────────── */
+/* ── ① 本体情绪（项目内建 `src/emotion.js` → `data/bot-state.json`）────── */
 
 /**
  * 此刻的心情 / 精力 / 压力。
@@ -89,6 +92,19 @@ export function readEmotion(file = BOT_STATE_FILE) {
       .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
       .slice(0, 8)
     : [];
+  /* 21 项全谱（2026-10-25）：情绪页要画"全部摆出、0 也保留"的柱子，
+     而上面那份 `emotions` 是**旧摘要**（只留非零前 8 条），两者用途不同，都保留。
+     ⚠️ 缺失键补 0 是"这个键此刻没有强度"，不是"猜一个默认值" ——
+        键集合本身来自 src/emotion-keys.js，认不出的键仍走 `emotionExtra` 照实带出。 */
+  const spectrum = EMOTION_KEYS.map((k) => [k, numOr(isObj(d.emotions) ? d.emotions[k] : null) ?? 0]);
+  const extraEmo = isObj(d.emotions)
+    ? Object.keys(d.emotions).filter((k) => !EMOTION_KEYS.includes(k)).slice(0, 6)
+    : [];
+  /* 24 小时曲线：插件目前只写当前值；这里**只透传**它将来可能写的 trend，
+     没有就返回空数组 —— 页面据此给"还没有历史曲线"的空态，而不是自己画一条假折线。 */
+  const trend = Array.isArray(d.trend)
+    ? d.trend.map((v) => numOr(v)).filter((v) => v !== null).map((v) => Math.max(0, Math.min(100, v))).slice(-48)
+    : [];
 
   const energy = isObj(d.energy)
     ? ['physical', 'cognitive', 'emotional', 'will'].reduce((o, k) => {
@@ -105,13 +121,21 @@ export function readEmotion(file = BOT_STATE_FILE) {
   const ev = isObj(d.lastEvent)
     ? { kind: strOr(d.lastEvent.kind, 40), note: strOr(d.lastEvent.note, 160), at: numOr(d.lastEvent.at), chatKey: strOr(d.lastEvent.chatKey, 60) }
     : null;
+  /* 五维雷达（2026-10-25）：本体情绪自己算好写盘；面板只透传，不再算第二份。
+     旧状态文件没有这一项时返回空对象 —— 前端回落成"暂无"。 */
+  const radar = isObj(d.radar)
+    ? Object.fromEntries(Object.entries(d.radar).map(([k, v]) => [k, numOr(v)]).filter(([, v]) => v !== null))
+    : {};
 
   return {
     ok: true,
     mood: numOr(d.mood), arousal: numOr(d.arousal),
     acuteStress: numOr(d.acuteStress), chronicStress: numOr(d.chronicStress),
-    energy, energyExtra,
+    energy, energyExtra, radar,
     emotions: emo,
+    spectrum,
+    emotionExtra: extraEmo,
+    trend,
     intent: strOr(d.intent, 160),
     lastEvent: ev,
     updatedAt: numOr(d.updatedAt),

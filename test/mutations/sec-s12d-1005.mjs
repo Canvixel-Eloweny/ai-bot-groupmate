@@ -99,10 +99,12 @@ const M5 = {
 const M6 = {
   id: 'M6',
   note: 'app.js 的 plugin.toggle 去掉 `touchC(\'plugins.enabled\')` —— 开关改了却不记进草稿，保存时白名单不生效。预期 BLOCKED（§20 ④）',
-  anchor: /touchC\('plugins\.enabled'\);/,
+  anchor: /touchC\(path\);\n    markDirty\(\); paintPage\(false\);/,
   count: 1,
   file: APP,
-  apply: (s) => s.replace(/touchC\('plugins\.enabled'\);/, '/* 没记进草稿 */'),
+  apply: (s) => s.replace(
+    /touchC\(path\);\n    markDirty\(\); paintPage\(false\);/,
+    '/* 没记进草稿 */\n    markDirty(); paintPage(false);'),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };

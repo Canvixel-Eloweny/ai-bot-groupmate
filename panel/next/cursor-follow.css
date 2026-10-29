@@ -1,0 +1,78 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   全局光标跟随层 · 样式（2026-10-28）
+   ──────────────────────────────────────────────────────────────────────────
+   纯装饰，不替换原生光标：本文件不写任何 cursor 属性。
+   · 环 26.7px / 点 5.3px；缩放由 JS 的弹簧写在 transform 上，这里不给 transform 加过渡；
+   · 颜色只消费 style.css 的令牌（--c-text-1 / --dur / --ease）；
+   · 填充刻意比参考更淡（参考 5% / 30%，这里 3.5% / 24%）；
+   · 悬停可点元素：只放大，描边/填充加深中性色（全程黑白，维护者 2026-10-28 晚改）；
+   · z 81：压过设置层 76 / 齿轮 78 / 弹窗 80，让位给浮层 90 / 开屏 95 / 提示 140。
+   ────────────────────────────────────────────────────────────────────────── */
+
+.cf-root {
+  --cf-ring-size: 26.7px;
+  --cf-dot-size: 5.3px;
+  --cf-line: color-mix(in srgb, var(--c-text-1) 24%, transparent);
+  --cf-fill: color-mix(in srgb, var(--c-text-1) 3.5%, transparent);
+
+  /* 0×0 定位：根层只当子元素的坐标系，不铺满视口。
+     铺满会在 `panel/next/verify.mjs` 的「截图前没有全屏遮罩」里被当成遮罩
+     （它按 fixed + 视口 80% 判，pointer-events 不参与）。子元素 overflow 可见。 */
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  z-index: 81;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .12s linear, visibility 0s linear .12s;
+}
+
+.cf-root[data-on="true"] {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity .12s linear;
+}
+
+.cf-ring,
+.cf-dot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 50%;
+  box-sizing: border-box;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.cf-ring {
+  width: var(--cf-ring-size);
+  height: var(--cf-ring-size);
+  margin: calc(var(--cf-ring-size) / -2) 0 0 calc(var(--cf-ring-size) / -2);
+  border: 1px solid var(--cf-line);
+  background: var(--cf-fill);
+  transition: border-color var(--dur) var(--ease),
+              background-color var(--dur) var(--ease);
+}
+
+.cf-dot {
+  width: var(--cf-dot-size);
+  height: var(--cf-dot-size);
+  margin: calc(var(--cf-dot-size) / -2) 0 0 calc(var(--cf-dot-size) / -2);
+  background: var(--c-text-1);
+}
+
+.cf-root[data-hover="true"] .cf-ring {
+  border-color: color-mix(in srgb, var(--c-text-1) 40%, transparent);
+  background: color-mix(in srgb, var(--c-text-1) 7%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf-root { display: none !important; }
+}
+
+@media (pointer: coarse) {
+  .cf-root { display: none !important; }
+}

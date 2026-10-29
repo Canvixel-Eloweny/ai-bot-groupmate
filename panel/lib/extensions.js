@@ -53,16 +53,34 @@ function scrubPaths(s) {
  * 默认是安全的（新字段不会自动泄露），黑名单式默认是危险的。
  */
 function projectItem(p) {
+  const promptSections = Array.isArray(p.manifest?.promptSections) ? p.manifest.promptSections : [];
   return {
     id: String(p.id || ''),
     dirName: String(p.dirName || ''),
     name: String(p.manifest?.name || p.id || ''),
     version: String(p.manifest?.version || ''),
     kind: p.kind ?? null,
+    // 插件工厂的左侧分类树按清单 category 聚合（2026-10-28）。空 category 归 other。
+    category: String(p.manifest?.category || '').slice(0, 40),
+    settingMeta: Object.fromEntries(
+      Object.entries(p.manifest?.configSchema || {}).map(([k, v]) => [k, {
+        label: String(v?.label || ''),
+        description: String(v?.description || ''),
+      }])
+    ),
     action: p.action,
     reason: p.reason,
     detail: scrubPaths(p.detail),
     problems: (p.problems || []).map((w) => scrubPaths(w.text)),
+    // Skill 页要展示“模型会看到什么”；清单里的 prompt.sections 已在宿主侧归一化/限容，
+    // 这里只做只读投影。工具名/运行态在 effective 快照里，不在这里编。
+    promptSections: promptSections.map((s) => ({
+      id: String(s?.id || ''),
+      title: String(s?.title || ''),
+      content: String(s?.content || ''),
+      priority: Number(s?.priority) || 0,
+    })),
+    promptChars: promptSections.reduce((n, s) => n + String(s?.content || '').length, 0),
     // 清单里自带的**默认设置**（第 55 轮）：页面要用它做两件事 ——
     // ① 告诉用户"这个包有哪些键可以填"（否则只能靠猜）；
     // ② 用户没填过时显示的就是这个值，而不是一片空白。
@@ -79,12 +97,12 @@ function projectItem(p) {
   };
 }
 
-function scan(enabled, maxPlugins = null) {
+function scan(enabledByKind, maxPlugins = null) {
   let r;
   try {
     r = loadExtensions({
       root: USER_ROOT,
-      enabled,
+      enabledByKind,
       log: {},
       // 不传就由 `loadExtensions` 用 `PLUGIN_MAX` 兜底；传了就以配置为准。
       ...(Number.isFinite(Number(maxPlugins)) ? { max: Number(maxPlugins) } : {}),
@@ -98,44 +116,70 @@ function scan(enabled, maxPlugins = null) {
       sum: { total: 0, load: 0, skip: 0, reject: 0, byReason: {}, byKind: {} },
       roots: [],
       items: [],
+      categories: [],
     };
   }
+  const items = r.plan.map(projectItem);
+  const cats = [];
+  for (const it of items) {
+    if (it.category && !cats.includes(it.category)) cats.push(it.category);
+  }
+  const categories = cats
+    .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+    .map((key) => ({ key, label: key }));
+  if (items.some((it) => !it.category)) categories.push({ key: 'other', label: '其他' });
   return {
     ok: true,
     sum: r.sum,
     roots: r.scans.map((s) => ({ name: s.name, missing: s.missing, count: s.entries.length })),
-    items: r.plan.map(projectItem),
+    items,
+    categories,
   };
+}
+
+function enabledByKindOfInput(enabled) {
+  if (enabled && typeof enabled === 'object' && !Array.isArray(enabled)) {
+    return {
+      plugin: Array.isArray(enabled.plugin) ? enabled.plugin : [],
+      skill: Array.isArray(enabled.skill) ? enabled.skill : [],
+    };
+  }
+  const legacy = Array.isArray(enabled) ? enabled : [];
+  return { plugin: legacy, skill: legacy };
 }
 
 /**
  * 取扩展包快照。**永不抛**（任何异常都折成 `ok:false`）。
  *
- * @param {Iterable<string>} enabled config 里显式启用的 id 集合
- * @param {{now?:number, force?:boolean}} opts
+ * @param {Iterable<string>|{plugin:string[],skill:string[]}} enabled
+ *        旧式单名单数组，或 `{plugin,skill}` 两档名单。
+ * @param {{now?:number, force?:boolean, userSettings?:object, userSettingsByKind?:object, maxPlugins?:number}} opts
  *        `now` 由入参给（测试要能控制时间，不在函数里直接读 Date.now()）；
  *        `force` 跳过缓存 —— 测试与"刚改完白名单"时用。
  */
 export function extensionsOf(enabled = [], {
-  now = Date.now(), force = false, userSettings = {}, maxPlugins = null,
+  now = Date.now(), force = false, userSettings = {}, userSettingsByKind = null, maxPlugins = null,
 } = {}) {
-  // 上限进缓存键：改了 `plugins.max` 之后 3 秒内的下一次拉取必须重新扫，
+  const byKind = enabledByKindOfInput(enabled);
+  const userByKind = userSettingsByKind && typeof userSettingsByKind === 'object'
+    ? userSettingsByKind
+    : { plugin: userSettings, skill: userSettings };
+  // 上限进缓存键：改了 `extensions.max` 之后下一次拉取必须重新扫，
   // 否则"超上限"计数还是旧上限算出来的（表现为"我改大了上限，它还说超限"）。
-  const key = `${Array.from(enabled || [], String).join(',')}|${maxPlugins ?? ''}`;
+  const key = JSON.stringify([byKind.plugin, byKind.skill, maxPlugins ?? '']);
   let value;
   if (!force && cache && cache.key === key && now - cache.at < TTL_MS) value = cache.value;
   else {
-    value = scan(enabled, maxPlugins);
+    value = scan(byKind, maxPlugins);
     cache = { key, at: now, value };
   }
   // D7：把每个包的设置算成**控件描述**（类型 / 是否密码框 / 当前值）随状态下发。
   //
-  // ⚠️ 注解刻意放在**缓存之外**：缓存只按 `enabled` 做键，而 spec 依赖用户填的值 ——
+  // ⚠️ 注解刻意放在**缓存之外**：缓存只按名单/上限做键，而 spec 依赖用户填的值 ——
   //    放进缓存的话，用户改完一项要等 10 秒 TTL 才看到自己填的东西（表现就是"改了没反应"）。
-  //    spec 本身是对 ≤36 个键的纯映射，每 3 秒算一次的开销可以忽略。
   const items = (value.items || []).map((it) => ({
     ...it,
-    settingsSpec: settingsSpec(it.settings, userSettings[it.id]),
+    settingsSpec: settingsSpec(it.settings, (userByKind[it.kind] || userSettings)[it.id], it.settingMeta),
   }));
   return { ...value, items };
 }

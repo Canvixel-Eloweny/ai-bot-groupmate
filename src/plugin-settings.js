@@ -100,15 +100,19 @@ export function coerceSetting(kind, raw) {
  *
  * @param {Record<string, unknown>} declared 清单声明的键 → 默认值
  * @param {Record<string, unknown>} user 用户在面板上填的那份（可空）
- * @returns {{key:string, kind:string, sensitive:boolean, def:unknown, value:unknown}[]}
+ * @param {Record<string, {label?:string, description?:string}>} [schema] 清单 configSchema 的展示字段
+ * @returns {{key:string, kind:string, sensitive:boolean, label:string, description:string, def:unknown, value:unknown}[]}
  */
-export function settingsSpec(declared, user) {
+export function settingsSpec(declared, user, schema = {}) {
   const defs = declared && typeof declared === 'object' && !Array.isArray(declared) ? declared : {};
   const mine = user && typeof user === 'object' && !Array.isArray(user) ? user : {};
+  const meta = schema && typeof schema === 'object' && !Array.isArray(schema) ? schema : {};
   return Object.keys(defs).map((key) => ({
     key,
     kind: kindOfSetting(defs[key]),
     sensitive: isSensitiveKey(key),
+    label: typeof meta[key]?.label === 'string' ? meta[key].label : '',
+    description: typeof meta[key]?.description === 'string' ? meta[key].description : '',
     def: defs[key],
     // 用户没填过就用清单默认值 —— 与 `settingsOf()` 的合并口径一致
     value: Object.prototype.hasOwnProperty.call(mine, key) ? mine[key] : defs[key],

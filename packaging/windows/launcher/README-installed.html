@@ -97,18 +97,34 @@
   只有你在卸载最后一步明确勾「同时删除用户数据」并二次确认，数据才会被删。
 </div>
 
-<h2>五、常用入口</h2>
+<h2>五、Windows 提示「未知发布者」怎么办</h2>
+<div class="card">
+  <p>本安装器<b>没有购买商业代码签名证书</b>，Windows 可能把发布者显示为「未知发布者」，
+    首次运行时还可能弹出「Windows 已保护你的电脑」（SmartScreen）。这是<b>预期现象</b>，不等于安装包有毒；
+    不要因此关闭 Defender / 杀软。</p>
+  <p><b>先核对安装包哈希：</b>在发布页或群文件提供的 <code>SHA256SUMS.txt</code> 里找到
+    <code>Estrella-Bot-Setup-….exe</code> 那一行；在 EXE 所在文件夹打开<b>命令提示符 / PowerShell</b>，执行
+    <code>certutil -hashfile "Estrella-Bot-Setup-….exe" SHA256</code>，两者一致再继续。
+    如果找不到 <code>SHA256SUMS.txt</code>，先向发布者索取，不要直接运行。</p>
+  <p>哈希一致后：点「<b>更多信息</b>」→「<b>仍要运行</b>」。只放行这一次安装；
+    不要关闭系统防护。如果 360 / 腾讯管家拦截，先核对哈希，确认来源无误后再选择允许/加入信任。</p>
+  <p class="muted">安装器未签名 ≠ 更新没有校验：控制台更新时仍会用 Ed25519 公钥验证
+    <code>latest.json</code> 清单签名，再校验下载安装包的 SHA-256。</p>
+</div>
+
+<h2>六、常用入口</h2>
 <table>
   <tr><th>想做什么</th><th>点哪里</th></tr>
   <tr><td>启动全套（控制台 + 协议端）</td><td>★ 桌面「Estrella Bot」图标</td></tr>
   <tr><td>看运行状态 / 日志</td><td>控制台页面（启动器打印的地址；端口由系统分配）</td></tr>
   <tr><td>停掉一切</td><td>控制台右上角「结束本次运行」</td></tr>
   <tr><td>补装 / 换协议端来源</td><td>重跑安装器，在「协议端」页选</td></tr>
+  <tr><td>核对安装包有没有被改过</td><td>按「五、Windows 提示…」里的 certutil 步骤</td></tr>
   <tr><td>卸载（保留数据）</td><td>设置 → 应用 → Estrella Bot → 卸载</td></tr>
 </table>
 
 <footer>
-  Estrella Bot 0.1.3 · 本文件对应<b>安装版</b>（装进「本地磁盘 → 用户目录」的那种）。
+  Estrella Bot 0.1.5 · 本文件对应<b>安装版</b>（装进「本地磁盘 → 用户目录」的那种）。
   第三方组件与许可见同目录 <code>THIRD-PARTY-NOTICES.md</code> 与 <code>LICENSE</code>。
 </footer>
 

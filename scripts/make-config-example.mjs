@@ -130,17 +130,17 @@ example.launch = { ...DEFAULT_LAUNCH };
 // 值只从 `readCustom({})` 取（唯一默认值来源），不在这里手写。
 const customDefaults = readCustom({});
 example.custom = example.custom && typeof example.custom === 'object' ? example.custom : {};
-for (const key of ['peak', 'allowFriendsPrivate', 'wait', 'image', 'tools', 'skillPrompt']) {
+for (const key of ['peak', 'allowFriendsPrivate', 'wait', 'image', 'tools', 'skillPrompt', 'extensions']) {
   if (!(key in example.custom)) example.custom[key] = customDefaults[key];
 }
-// `plugins.max` / `plugins.hookTimeoutMs` 是 2026-10-23 新增的可配上限。整个
-// `plugins` 段可能早就存在（旧模板有 `enabled` / `settings`），所以只补缺的那几格。
-if (example.custom.plugins && typeof example.custom.plugins === 'object') {
-  if (!('max' in example.custom.plugins)) {
-    example.custom.plugins.max = customDefaults.plugins.max;
+// `extensions.max` / `extensions.hookTimeoutMs` 是扩展宿主的共享上限。
+// 旧模板可能只有 plugins 段；只补缺的格，不覆盖用户已有白名单。
+if (example.custom.extensions && typeof example.custom.extensions === 'object') {
+  if (!('max' in example.custom.extensions)) {
+    example.custom.extensions.max = customDefaults.extensions.max;
   }
-  if (!('hookTimeoutMs' in example.custom.plugins)) {
-    example.custom.plugins.hookTimeoutMs = customDefaults.plugins.hookTimeoutMs;
+  if (!('hookTimeoutMs' in example.custom.extensions)) {
+    example.custom.extensions.hookTimeoutMs = customDefaults.extensions.hookTimeoutMs;
   }
 }
 // `memory.promptMax` 同理：memory 段旧模板就有（auto/manual），只补缺的那一格。

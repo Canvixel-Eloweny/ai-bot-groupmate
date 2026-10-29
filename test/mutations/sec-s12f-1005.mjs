@@ -127,11 +127,11 @@ const F5 = {
 // ── F6：bounds 的键名写错（T76 必须拦）─────────────────────────────────────
 const F6 = {
   id: 'F6',
-  note: "schema.js 的 `bounds: 'cooldownSec'` 写成不存在的键 —— 页面上那行「后端允许 lo – hi」提示会静默消失。预期 BLOCKED（smoke T76）",
-  anchor: /bounds: 'cooldownSec',/,
+  note: "schema.js 的 `bounds: 'proactiveIntervalMin'` 写成不存在的键 —— 页面上那行「后端允许 lo – hi」提示会静默消失。预期 BLOCKED（smoke T76）",
+  anchor: /bounds: 'proactiveIntervalMin',/,
   count: 1,
   file: SCH,
-  apply: (s) => s.replace(/bounds: 'cooldownSec',/, "bounds: 'cooldownSecX',"),
+  apply: (s) => s.replace(/bounds: 'proactiveIntervalMin',/, "bounds: 'proactiveIntervalMinX',"),
   layer: 'smoke',
   expect: 'BLOCKED',
 };

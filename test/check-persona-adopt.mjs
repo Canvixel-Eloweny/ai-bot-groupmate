@@ -22,7 +22,6 @@ function ok(name, cond) {
   fails.push(name);
 }
 const read = (rel) => fs.readFileSync(path.join(APP, rel), 'utf8');
-const DIM = (id) => ADOPT_DIM_IDS.includes(id);
 
 // ── ① 提示词 ─────────────────────────────────────────────────────────────
 const msgs = adoptMessages({ name: '阿蓝', text: '她住在南湖的一条船上。怕黑，晚上要开灯。' });

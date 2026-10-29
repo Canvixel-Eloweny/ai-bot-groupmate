@@ -85,6 +85,8 @@ panel/effective.json
 # 官方模型目录对账的运行态（2026-10-17）：上次对账时间 + 待提示的事件。
 # 面板写、面板读（`panel/lib/model-sync-state.js`），与上面这批同性质 —— 本机运行产物。
 panel/model-sync.json
+# 0.1.5：GitHub 星数缓存（dev 形态落在仓库 panel/ 下；安装形态在 userdata/panel）。
+panel/github-star.json
 panel/.thinking.json
 panel/.bridge.pid
 # 机器人进程侧的实例互斥锁（D19 · E19）。它记的是"此刻哪个 pid 在跑"（含心跳），
