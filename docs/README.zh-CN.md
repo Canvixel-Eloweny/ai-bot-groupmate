@@ -10,13 +10,13 @@
 OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建网页控制台
 
 <p>
-  <a href="./README.md">English</a> · <b>简体中文</b>
+  <a href="../README.md">English</a> · <b>简体中文</b>
 </p>
 
 <p>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/actions/workflows/ci.yml"><img alt="四层门禁" src="https://img.shields.io/github/actions/workflow/status/Canvixel-Eloweny/ai-bot-groupmate/ci.yml?branch=main&label=%E5%9B%9B%E5%B1%82%E9%97%A8%E7%A6%81&logo=githubactions&logoColor=white&style=for-the-badge"></a>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://img.shields.io/github/actions/workflow/status/Canvixel-Eloweny/ai-bot-groupmate/codeql.yml?branch=main&label=CodeQL&logo=github&logoColor=white&style=for-the-badge"></a>
-  <a href="./LICENSE"><img alt="许可" src="https://img.shields.io/github/license/Canvixel-Eloweny/ai-bot-groupmate?label=license&logo=gnu&logoColor=white&style=for-the-badge"></a>
+  <a href="../LICENSE"><img alt="许可" src="https://img.shields.io/github/license/Canvixel-Eloweny/ai-bot-groupmate?label=license&logo=gnu&logoColor=white&style=for-the-badge"></a>
 </p>
 
 <p>
@@ -28,7 +28,7 @@ OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建�
 
 <p>
   <a href="./README.zh-CN.md#3-四套大脑预设与切换"><img alt="AI" src="https://img.shields.io/badge/AI-OpenAI--compatible-6f42c1?style=for-the-badge"></a>
-  <a href="./docs/release/CHANGELOG.md"><img alt="版本" src="https://img.shields.io/badge/release-v0.1.4-e05d44?style=for-the-badge"></a>
+  <a href="./release/CHANGELOG.md"><img alt="版本" src="https://img.shields.io/badge/release-v0.1.4-e05d44?style=for-the-badge"></a>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="最后提交" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -40,7 +40,7 @@ OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建�
 
 <hr>
 
-<p><sub>仓库默认展示的是<b>英文版</b>（<a href="./README.md">README.md</a>）；
+<p><sub>仓库默认展示的是<b>英文版</b>（<a href="../README.md">README.md</a>）；
 <b>本文件是中文版，两版不一致时以本文件为准</b>。<br>
 The English README is what the repository shows by default; this Chinese edition is authoritative when the two differ.</sub></p>
 
@@ -59,12 +59,12 @@ node scripts/check-onebot.js   # 确认协议端活着，并列出你已加入�
 npm start                      # 跑机器人
 ```
 
-**Windows —— 完全不需要 Docker。** 从 [Releases](../../releases/latest) 下载打包好的压缩包，
+**Windows —— 完全不需要 Docker。** 从 [Releases](../../../releases/latest) 下载打包好的压缩包，
 解压后依次运行 `1-SETUP.bat` → `3-START-NAPCAT.bat` → `2-START.bat`。
 
 有两样东西永远要你自己准备：一个 **OneBot v11 协议端**（实际用 NapCatQQ）和一个**模型**
 （本机跑，或一个 API Key）。逐步操作、以及每一步失败怎么办，见
-[`USER-GUIDE.zh-CN.md`](./docs/guides/USER-GUIDE.zh-CN.md)。
+[`USER-GUIDE.zh-CN.md`](./guides/USER-GUIDE.zh-CN.md)。
 
 ---
 
@@ -87,11 +87,11 @@ QQ 小号 ──► NapCat(Docker, OneBot v11) ──► 桥接进程 src/index.
 
 > **`Estrella Bot` 是这个软件的名字。** 标题里那个曾用名**只保留这一处**，作用是让已有的链接、
 > 书签与搜索结果仍然能落到这里 —— 除此之外全文不再使用它。项目最初叫 `qq-bot`，此后改过两次名
->（2026-09-17，然后 2026-10-11），完整沿革记在 [`CHANGELOG.md`](./docs/release/CHANGELOG.md)。
+>（2026-09-17，然后 2026-10-11），完整沿革记在 [`CHANGELOG.md`](./release/CHANGELOG.md)。
 > 本仓库在 GitHub 上的 slug 保持 `ai-bot-groupmate` 不变（2026-10-07 由 `ai-group-chat` 换过来）——
 > slug 用便于检索的描述性英文，展示名与它有意分开。启动器为 `Estrella-Bot.app`。
 >
-> **只想把它跑起来？** 直接看 **[用户使用说明](./docs/guides/USER-GUIDE.zh-CN.md)** —— 安装 → 登录 → 配置 → 启动，
+> **只想把它跑起来？** 直接看 **[用户使用说明](./guides/USER-GUIDE.zh-CN.md)** —— 安装 → 登录 → 配置 → 启动，
 > 写给不想先读源码的人。
 
 ---
@@ -132,7 +132,7 @@ npm run verify          # 上面三项串起来跑一遍（README 里的断言�
 NapCat 的 **Linux arm64 支持是当前的**（版本覆盖到 build 52892），容器自带配套 Linux QQ，
 **完全绕开 macOS 的 QQ 版本匹配问题，你本机的 QQ 一个字节都不用动。**
 
-👉 **完整安装步骤见 [`INSTALL-DOCKER.md`](./docs/guides/INSTALL-DOCKER.md)**
+👉 **完整安装步骤见 [`INSTALL-DOCKER.md`](./guides/INSTALL-DOCKER.md)**
 
 ```bash
 bash scripts/bootstrap.sh     # 检查环境 → 起容器 → 打印 WebUI 登录地址
@@ -168,7 +168,7 @@ macOS 之所以要容器，纯粹是因为它的版本白名单停在半年前�
 OneBot 的 WS / HTTP 仍在 **3001 / 3000** —— 与桥接默认端口**逐字相同**，
 所以**桥接与控制台一行都不用改**。
 
-👉 **完整安装步骤见 [`USER-GUIDE.zh-CN.md` · 第 9 节](./docs/guides/USER-GUIDE.zh-CN.md#9-windows-用户)**
+👉 **完整安装步骤见 [`USER-GUIDE.zh-CN.md` · 第 9 节](./guides/USER-GUIDE.zh-CN.md#9-windows-用户)**
 
 ```bat
 npm install
@@ -457,7 +457,7 @@ estrella-bot/
 
 ## 9. 接口文档
 
-全部 API 路由的入参 / 出参 / 副作用 / 幂等性见 **[`docs/API_CONTRACT.md`](./docs/API_CONTRACT.md)**。
+全部 API 路由的入参 / 出参 / 副作用 / 幂等性见 **[`docs/API_CONTRACT.md`](./API_CONTRACT.md)**。
 
 ## 10. 已知限制
 
@@ -492,16 +492,16 @@ estrella-bot/
 
 | 文件 | 讲什么 |
 |---|---|
-| [`CONTRIBUTING.md`](./.github/CONTRIBUTING.md) | 怎么跑四层门禁、提交信息怎么写、哪些改动不会被合 |
-| [`SECURITY.md`](./.github/SECURITY.md) | **漏洞怎么私密上报**（别开公开 issue）；以及本项目**已知的设计边界**（哪些"看起来像漏洞"其实是有意为之） |
-| [`CODE_OF_CONDUCT.md`](./.github/CODE_OF_CONDUCT.md) | 交流的基本约定 |
-| [`CHANGELOG.md`](./docs/release/CHANGELOG.md) | 每个批次改了什么、为什么改 |
-| [`THIRD-PARTY-NOTICES.md`](./docs/legal/THIRD-PARTY-NOTICES.md) | 借鉴了谁的思想、边界画在哪儿（它同时是**本仓库不构成许可传染**的凭据） |
+| [`CONTRIBUTING.md`](../.github/CONTRIBUTING.md) | 怎么跑四层门禁、提交信息怎么写、哪些改动不会被合 |
+| [`SECURITY.md`](../.github/SECURITY.md) | **漏洞怎么私密上报**（别开公开 issue）；以及本项目**已知的设计边界**（哪些"看起来像漏洞"其实是有意为之） |
+| [`CODE_OF_CONDUCT.md`](../.github/CODE_OF_CONDUCT.md) | 交流的基本约定 |
+| [`CHANGELOG.md`](./release/CHANGELOG.md) | 每个批次改了什么、为什么改 |
+| [`THIRD-PARTY-NOTICES.md`](./legal/THIRD-PARTY-NOTICES.md) | 借鉴了谁的思想、边界画在哪儿（它同时是**本仓库不构成许可传染**的凭据） |
 | 维护者自查 | 发布前会跑一遍 `npm run publish:audit`（只读、按阻断项给退出码）。⚠️ 它与去标识对照表**都只住在维护者仓库里**，不随公开仓库发布 —— 你 clone 下来没有这条命令，这是有意的 |
 
 ⚠️ 一条**改代码之前必须知道**的：本项目的门禁是**四层**（`check-wb` 静态契约、
 `smoke` 行为回归、沙箱里的 `presets` 与面板自检），而且**每一处修复都要配一条"只打它那一条"的
-变异测试**（见 [`test/mutations/README.md`](./test/mutations/README.md)）。
+变异测试**（见 [`test/mutations/README.md`](../test/mutations/README.md)）。
 只跑 `npm test` 是不够的 —— 完整命令与"为什么这么设计"都在 `CONTRIBUTING.md`。
 
 （本节 2026-10-05 补：此前仓库里已经有这五份治理文件，而 README **一个都没引用** ——
@@ -511,7 +511,7 @@ estrella-bot/
 
 | 渠道 | 用途 |
 |---|---|
-| [Issues](../../issues) | **首选**。提问、报缺陷、提需求都走这里 —— 公开讨论的结论能被下一个遇到同样问题的人搜到，私信不能 |
+| [Issues](../../../issues) | **首选**。提问、报缺陷、提需求都走这里 —— 公开讨论的结论能被下一个遇到同样问题的人搜到，私信不能 |
 | 安全漏洞 | **不要开公开 issue**。私密上报的入口，以及本项目「看起来像漏洞、其实是有意为之」的边界清单，都在上一节那张表里的 `.github/SECURITY.md` |
 
 两处例外，请先处理后再说：
@@ -525,8 +525,8 @@ estrella-bot/
 
 | 项 | 值 |
 |---|---|
-| 本项目的许可 | **Apache-2.0**（全文见 [`LICENSE`](./LICENSE)，署名通知见 [`NOTICE`](./docs/legal/NOTICE)） |
-| 第三方声明 | 见 [`THIRD-PARTY-NOTICES.md`](./docs/legal/THIRD-PARTY-NOTICES.md) |
+| 本项目的许可 | **Apache-2.0**（全文见 [`LICENSE`](../LICENSE)，署名通知见 [`NOTICE`](./legal/NOTICE)） |
+| 第三方声明 | 见 [`THIRD-PARTY-NOTICES.md`](./legal/THIRD-PARTY-NOTICES.md) |
 | 运行时依赖 | 只有 `ws`（MIT）。零构建、无其他第三方运行时依赖 |
 | 发布前审计 | `npm run publish:audit`（只读、按阻断项给退出码）。⚠️ 该脚本与它读的去标识对照表**都只住在维护者的仓库里**，不随公开仓库发布 —— 别人 clone 下来并没有这条命令 |
 

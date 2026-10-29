@@ -10,7 +10,7 @@ It chimes in, picks up running jokes, lurks, and occasionally speaks up on its o
 OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build web console
 
 <p>
-  <b>English</b> · <a href="./README.zh-CN.md">简体中文</a>
+  <b>English</b> · <a href="./docs/README.zh-CN.md">简体中文</a>
 </p>
 
 <p>
@@ -90,7 +90,7 @@ QQ alt ──► NapCat (Docker, OneBot v11) ──► bridge src/index.js ─�
 > history is in [`CHANGELOG.md`](./docs/release/CHANGELOG.md). The GitHub slug stays `ai-bot-groupmate` on purpose.
 > The launcher is `Estrella-Bot.app`.
 > **This English README is the default. The Chinese edition lives in
-> [`README.zh-CN.md`](./README.zh-CN.md) and is the authoritative one when the two differ.**
+> [`README.zh-CN.md`](./docs/README.zh-CN.md) and is the authoritative one when the two differ.**
 >
 > **Just want it running?** Start with the **[User Guide](./docs/guides/USER-GUIDE.md)** — install, sign in,
 > configure, start. Written for people who don't want to read the source first.
@@ -284,7 +284,7 @@ than a frontier cloud model).
 
 ```
 estrella-bot/
-  README.md / README.zh-CN.md  # English (default) + Chinese (authoritative)
+  README.md / docs/README.zh-CN.md  # English (default) + Chinese (authoritative)
   docs/guides/INSTALL-DOCKER.md # container install manual (incl. rollback)
   Estrella-Bot.app             # double-click launcher: bring up Docker + open the console
   config.json                  # your config (pre-filled, gitignored)
@@ -466,5 +466,5 @@ directories extensions write at runtime — see `docs/legal/THIRD-PARTY-NOTICES.
 ---
 
 <div align="center">
-  <sub><b>English</b> · <a href="./README.zh-CN.md">简体中文</a></sub>
+  <sub><b>English</b> · <a href="./docs/README.zh-CN.md">简体中文</a></sub>
 </div>

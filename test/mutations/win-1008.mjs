@@ -96,7 +96,7 @@ export default [
   {
     id: 'M5',
     note: '.bat 里出现 label/goto —— 那类结构在 LF 换行下可能被 cmd 静默错读，而本仓不许把 .bat 改成 CRLF',
-    file: 'Estrella-Bot.bat',
+    file: 'scripts/Estrella-Bot.bat',
     anchor: /^@echo off$/m,
     count: 1,
     apply: (s) => s.replace('@echo off', '@echo off\ngoto :RUN\n:RUN'),

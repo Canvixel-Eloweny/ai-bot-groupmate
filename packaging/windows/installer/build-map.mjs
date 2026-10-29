@@ -41,7 +41,7 @@ export const PORTABLE_ALLOW_ROOT = new Set([
 
 /** ④ app/ 根上允许存在、但 stage 只带其中一部分的文件。 */
 export const PORTABLE_ALLOW_APP_ROOT = new Set([
-  'Estrella-Bot.bat', 'README.md', 'README.zh-CN.md', 'docker-compose.yml',
+  'README.md', 'docker-compose.yml',
 ]);
 
 /** ④ 里按设计比 stage 多出来的子树（stage 只带白名单中的少量文件）。 */

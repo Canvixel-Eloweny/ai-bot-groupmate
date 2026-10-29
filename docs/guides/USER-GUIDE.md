@@ -345,7 +345,7 @@ So the Windows route is shorter — **no Docker, no WSL2, no Linux subsystem.**
 | Piece | macOS | Windows |
 |---|---|---|
 | QQ protocol side | NapCat + Linux QQ, inside a Docker container | **NapCat for Windows, installed natively** |
-| Double-click launcher | `Estrella-Bot.app` | `Estrella-Bot.bat` |
+| Double-click launcher | `Estrella-Bot.app` | `scripts/Estrella-Bot.bat` |
 | Bridge + console | Same code · protocol ports 3001 / 3000 | Same code · protocol ports; console port is OS-assigned |
 | Config, brain switching, status | The console page | **Identical** |
 
@@ -373,7 +373,7 @@ So the Windows route is shorter — **no Docker, no WSL2, no Linux subsystem.**
    npm install
    copy config.example.json config.json
    ```
-6. **Double-click `Estrella-Bot.bat`** → the console opens in your browser → enter your API key
+6. **Double-click `scripts/Estrella-Bot.bat`** → the console opens in your browser → enter your API key
    and your **allowed group IDs** → click **"One-click start"** in the top-right.
 
 > ⚠️ **Order matters: start NapCat and sign in first, *then* click "One-click start".**

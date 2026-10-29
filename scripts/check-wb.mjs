@@ -14318,10 +14318,10 @@ const LIB_SRC_ALLOW = [
   //    这里的解法是**把复杂度挪进 Node**（`scripts/win-launcher.mjs`），
   //    让 .bat 简单到 LF 也安全 —— LF 出问题的历来都是 `goto` 的按字节重定位。
   let batBuf = null;
-  try { batBuf = fs.readFileSync(new URL('../Estrella-Bot.bat', import.meta.url)); } catch { /* 下面报 */ }
+  try { batBuf = fs.readFileSync(new URL('../scripts/Estrella-Bot.bat', import.meta.url)); } catch { /* 下面报 */ }
   const launcherSrc = (() => { try { return raw('../scripts/win-launcher.mjs'); } catch { return ''; } })();
   if (!batBuf) {
-    problems.push('仓库根没有 Estrella-Bot.bat —— Windows 用户没有"双击就能用"的入口（.app 在那边打不开）');
+    problems.push('scripts/ 没有 Estrella-Bot.bat —— Windows 用户没有"双击就能用"的入口（.app 在那边打不开）');
   } else {
     const batTxt = batBuf.toString('utf8');
     if (batBuf.includes(13)) {
@@ -14334,7 +14334,7 @@ const LIB_SRC_ALLOW = [
       problems.push('Estrella-Bot.bat 里出现了 label / 括号块 / for —— '
         + '这三种结构在 LF 换行下可能被 cmd 静默错读，而本仓不许把 .bat 改成 CRLF');
     }
-    if (!/node\s+"%~dp0scripts\\win-launcher\.mjs"/.test(batTxt)) {
+    if (!/node\s+"%~dp0win-launcher\.mjs"/.test(batTxt)) {
       problems.push('Estrella-Bot.bat 没有调用 scripts/win-launcher.mjs —— '
         + '那它就只是一个空壳（真正的启动逻辑在那边）');
     }

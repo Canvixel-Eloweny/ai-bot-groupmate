@@ -1,7 +1,7 @@
 # 用户使用说明
 
 > **这份是给"想把它跑起来"的人看的。** 从零开始，照着做就能用。
-> 想看项目怎么设计的、代码怎么分层、门禁都有哪些，去看 [`README.zh-CN.md`](../../README.zh-CN.md)。
+> 想看项目怎么设计的、代码怎么分层、门禁都有哪些，去看 [`README.zh-CN.md`](../README.zh-CN.md)。
 >
 > 英文版在 [`USER-GUIDE.md`](./USER-GUIDE.md)；**两版不一致时以本文件为准**。
 
@@ -331,7 +331,7 @@ Windows 不需要绕：**NapCat 官方就有 Windows 原生版，而且是当期
 | 环节 | macOS | Windows |
 |---|---|---|
 | QQ 协议端 | NapCat + Linux QQ，跑在 Docker 容器里 | **NapCat for Windows，原生安装** |
-| 双击启动 | `Estrella-Bot.app` | `Estrella-Bot.bat` |
+| 双击启动 | `Estrella-Bot.app` | `scripts/Estrella-Bot.bat` |
 | 桥接 + 控制台 | 同一份代码 · 协议端口 3001 / 3000 | 同一份代码 · 协议端口相同；控制台端口由系统分配 |
 | 填配置 / 换大脑 / 看状态 | 控制台页面 | **完全一样** |
 
@@ -355,7 +355,7 @@ Windows 不需要绕：**NapCat 官方就有 Windows 原生版，而且是当期
    npm install
    copy config.example.json config.json
    ```
-6. **双击 `Estrella-Bot.bat`** → 浏览器自动打开控制台 → 在页面里填 API Key 与「放行的群号」
+6. **双击 `scripts/Estrella-Bot.bat`** → 浏览器自动打开控制台 → 在页面里填 API Key 与「放行的群号」
    → 点右上角 **「一键启动」**。
 
 > ⚠️ **顺序有讲究：先启动 NapCat 并扫码登录，再点「一键启动」。**
@@ -476,7 +476,7 @@ rm -rf data/ panel/*.jsonl panel/session-archive.json   # 清掉记忆与存档
 
 | 想找什么 | 去哪 |
 |---|---|
-| 项目怎么设计的、有哪些限制 | [`README.zh-CN.md`](../../README.zh-CN.md) |
+| 项目怎么设计的、有哪些限制 | [`README.zh-CN.md`](../README.zh-CN.md) |
 | 容器路线的完整安装手册（含回滚） | [`INSTALL-DOCKER.md`](./INSTALL-DOCKER.md) |
 | 想改代码 / 提 PR | [`CONTRIBUTING.md`](../../.github/CONTRIBUTING.md) |
 | 每个版本改了什么 | [`CHANGELOG.md`](../release/CHANGELOG.md) |

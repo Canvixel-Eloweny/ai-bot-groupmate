@@ -32,6 +32,7 @@ export const DOCS_KEEP = [
   'docs/guides/USER-GUIDE.md',       // 用户使用说明（英文默认）
   'docs/guides/USER-GUIDE.zh-CN.md', // 用户使用说明（中文权威版）
   'docs/guides/INSTALL-DOCKER.md',   // 容器路线安装手册（含回滚）
+  'docs/README.zh-CN.md',            // 中文首页（权威版；README.md 语言切换指向它）
 ];
 
 /**
