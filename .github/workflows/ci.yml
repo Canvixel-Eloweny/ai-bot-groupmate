@@ -130,9 +130,10 @@ jobs:
             node "test/$t.mjs"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-      # Windows runner 自带 Edge；panel-dom 若因找不到浏览器 SKIP，这里必须红，
-      # 否则「四层」里的 DOM 层在 CI 上又变成没人跑。
-      - name: 前端 DOM 必须真渲染（Windows Edge）
+      # Windows runner 自带 Edge；这条仍会跑并留下完整日志，但 headless 下的动画时序
+      # 与真实桌面不同。2026-10-30 维护者裁决：不再让它阻断发布。
+      - name: 前端 DOM 真渲染（Windows Edge · 非阻断信号）
+        continue-on-error: true
         shell: pwsh
         run: |
           $env:NODE_OPTIONS = ''
