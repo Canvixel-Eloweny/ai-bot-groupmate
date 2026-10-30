@@ -27,7 +27,7 @@ QQ 小号 ──►  NapCat（Docker 容器 · Linux QQ）   NapCat（Windows �
 ```
 
 > **为什么 macOS 要 Docker 而 Windows 不用**：macOS 那一支上 Docker 是为了**绕开**
-> NapCat 的 macOS 版本白名单问题（README 第 2 节「路线 B 受阻」）；而 NapCat 的 Windows 版
+> NapCat 的 macOS 版本白名单问题（README 第 3 节「macOS / Linux —— Docker」）；而 NapCat 的 Windows 版
 > 是**当期的**，不需要绕。
 
 ### 这份手册怎么读（哪一节归哪个平台）
@@ -323,7 +323,7 @@ tail -f panel/bridge.log         # 机器人（模型那一侧）的日志
 ### 为什么 Windows 不用 Docker
 
 macOS 那一支上 Docker 是为了**绕开** NapCat 的 macOS 版本白名单问题
-（它停在半年前，你本机的 QQ 一个都匹配不上 —— 见 README 第 2 节的「路线 B 受阻」）。
+（它停在半年前，你本机的 QQ 一个都匹配不上 —— 见 README 第 3 节的「macOS / Linux —— Docker」）。
 Windows 不需要绕：**NapCat 官方就有 Windows 原生版，而且是当期的**。
 
 所以 Windows 这条路更短 —— **不装 Docker、不装 WSL2、不装任何 Linux 子系统**。

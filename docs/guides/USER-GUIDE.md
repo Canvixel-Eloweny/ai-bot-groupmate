@@ -30,7 +30,7 @@ QQ alt ──►  NapCat (Docker container · Linux QQ)   NapCat (native Windows
 ```
 
 > **Why macOS needs Docker and Windows doesn't**: on macOS, Docker exists to **route around**
-> NapCat's stale macOS version allowlist (README section 2, "Route B blocked"). Windows doesn't
+> NapCat's stale macOS version allowlist (README §3, the macOS / Linux route). Windows doesn't
 > need to route around anything — NapCat ships a current native Windows build.
 
 ### How to read this guide (which section belongs to which platform)
@@ -337,8 +337,8 @@ IDs → click **"One-click start"** → mention it in a group and it answers.
 ### Why Windows doesn't need Docker
 
 On macOS, Docker exists to **route around** NapCat's stale macOS version allowlist (it stopped half
-a year ago, and none of the QQ builds on your machine match — see README section 2, "Route B
-blocked"). Windows has nothing to route around: **NapCat ships a current, native Windows build.**
+a year ago, and none of the QQ builds on your machine match — see README §3, macOS / Linux).
+Windows has nothing to route around: **NapCat ships a current, native Windows build.**
 
 So the Windows route is shorter — **no Docker, no WSL2, no Linux subsystem.**
 

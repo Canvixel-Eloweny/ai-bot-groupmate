@@ -202,12 +202,14 @@ const M13 = {
 };
 
 // ── M14：README 不再引用 SECURITY.md（M-01）────────────────────────────────
-const RD_SEC = /\[`SECURITY\.md`\]\(\.\/\.github\/SECURITY\.md\)/;
+// ⚠️ 2026-10-30：README 现在有 3 处同形引用（扩展段 / 参与本项目 / 联系方式），
+//    只删一处 M-01 仍会绿 ⇒ 锚点改成全局替换，count 与实测命中数一致。
+const RD_SEC = /\[`\.github\/SECURITY\.md`\]\(\.\/\.github\/SECURITY\.md\)/g;
 const M14 = {
   id: 'M14',
-  note: '把 README「参与本项目」里对 SECURITY.md 的引用换成不带文件名的散文 ——',
+  note: '把 README 里 3 处 SECURITY.md 引用全换成不带文件名的散文 ——',
   anchor: RD_SEC,
-  count: 1,
+  count: 3,
   file: 'README.md',
   apply: (s) => s.replace(RD_SEC, '安全策略'),
   layer: 'check-wb',

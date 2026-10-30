@@ -27,8 +27,8 @@ OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build
 </p>
 
 <p>
-  <a href="./README.md#3-four-brain-presets"><img alt="AI" src="https://img.shields.io/badge/AI-OpenAI--compatible-6f42c1?style=for-the-badge"></a>
-  <a href="./docs/release/CHANGELOG.md"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.4-e05d44?style=for-the-badge"></a>
+  <a href="./README.md#4-interfaces-plugins-and-skills"><img alt="AI" src="https://img.shields.io/badge/AI-OpenAI--compatible-6f42c1?style=for-the-badge"></a>
+  <a href="./docs/release/CHANGELOG.md"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.5-e05d44?style=for-the-badge"></a>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -40,157 +40,237 @@ OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build
 
 <hr>
 
+<p><sub>The English README is the default. The Chinese edition lives in
+<a href="./docs/README.zh-CN.md"><code>docs/README.zh-CN.md</code></a> and is authoritative when the two differ.</sub></p>
+
 </div>
 
-## Quick start
+<p align="center"><sub>
+<a href="#1-what-this-is">1. What this is</a> ·
+<a href="#2-why-estrella-bot">2. Why Estrella Bot</a> ·
+<a href="#3-install">3. Install</a> ·
+<a href="#4-interfaces-plugins-and-skills">4. Interfaces, plugins and skills</a> ·
+<a href="#5-how-it-works">5. How it works</a> ·
+<a href="#6-known-limitations">6. Known limitations</a> ·
+<a href="#7-roadmap">7. Roadmap</a> ·
+<a href="#8-contributing">8. Contributing</a> ·
+<a href="#9-contact">9. Contact</a> ·
+<a href="#10-license-and-credits">10. License and credits</a>
+</sub></p>
 
-Two supported routes. Both end at the same console. The Windows desktop build lets the OS
-assign the local port: the launcher prints the URL and the panel writes it to
-`USER_ROOT/panel/.panel.json`. Development runs still default to `127.0.0.1:8788`.
+## 1. What this is
 
-**macOS / Linux — Docker** (the recommended route on macOS). NapCat runs in a container, so **your own
-QQ client is never touched**:
+Estrella Bot is an **OneBot v11 bridge** that plugs a spare QQ account into any OpenAI-compatible model, plus a **zero-build browser console**. It is built to act like a group member, not a command bot: it follows the conversation, answers when addressed, sometimes joins in on its own, remembers people and running jokes, and goes quiet when that is the natural thing to do.
+
+At a glance:
+
+- **Group-native chat** — @-mentions, name aliases, probability-based interjections with cooldowns, sleep hours, message splitting and human-paced sending.
+- **Bring your own brain** — a local model (MLX / QwenChat), DeepSeek, Zhipu GLM, Qwen, or any OpenAI-compatible endpoint.
+- **A real control room** — start/stop the bot, switch models, edit the persona, manage memory and extensions, watch logs and usage, all from a local browser UI.
+- **Small and self-contained** — a single-process bot, one runtime dependency (`ws`), no build step, no central service.
+
+You supply three things: a **spare QQ account**, an **OneBot v11 implementation** (NapCatQQ in practice), and a **model** (a local endpoint or an API key). Source runs need Node.js ≥22.13; the Windows installer bundles its own runtime.
+
+> **The name.** Estrella Bot is the software name. The project began as `qq-bot`, was renamed twice, and keeps the GitHub slug `ai-bot-groupmate` on purpose so existing links and search results still land here. The full history is in [`CHANGELOG.md`](./docs/release/CHANGELOG.md).
+
+## 2. Why Estrella Bot
+
+- **It behaves like a member, not a reply machine.** A dedicated decision layer decides whether a message deserves an answer at all — @-mention, alias, question shape, interjection chance with cooldown, sleep window, per-member speaking style. Replies are split and paced like human messages, and the bot never answers itself.
+- **Model freedom without lock-in.** Four presets keep local and cloud brains separate; switching only materialises the chosen preset, so settings never bleed across providers. Any OpenAI-compatible endpoint can be added as a custom brain, with per-model capability switches and an automatic degradation chain when a provider fails.
+- **Local-first and private.** The bot, console, memory and logs live on your machine. Local models never leave it; cloud calls go only to the provider you configure. There is no central account system or hosted service.
+- **Everything is operable by click.** The console is a zero-build static frontend plus a local HTTP server. Start and stop the bot, scan the protocol-side QR code, edit persona and memory, inspect logs, usage and traces — no bundler, no rebuild after an edit.
+- **Safety is the default, not a setting.** The allow-list fails closed (an empty list refuses to start), outbound text is built as message segments so CQ codes from the model cannot become instructions, self-replies are dropped, SSRF and browse paths are gated, and test sandboxes never touch a live bot.
+- **Extensible without becoming a framework.** Plugins and skills share one host, one loader and one settings UI. Deterministic hooks and model-callable tools are two kinds of the same package, not two APIs.
+- **Cross-platform, with the trade-offs stated.** Windows gets a native installer and needs no Docker; macOS uses a Docker container because NapCat's macOS QQ allowlist is stale. No hidden platform magic.
+- **Small footprint, strong gates.** The runtime dependency is only `ws`, and the UI has no build step. Changes go through a four-layer gate plus mutation tests. Gate counts are not frozen in this README — `npm run verify` is the only authoritative source for the numbers.
+
+## 3. Install
+
+Every route ends at the same local console. Pick the one that matches your OS.
+
+### What you need
+
+| Piece | Notes |
+|---|---|
+| A spare QQ account | Use an alt account; third-party protocol implementations carry a risk of account restrictions |
+| OneBot v11 implementation | NapCatQQ in practice. It is **not bundled** — its license does not allow redistribution |
+| A model | A local OpenAI-compatible endpoint, or an API key for DeepSeek / Zhipu / Qwen |
+| Node.js ≥22.13 | Source runs only. The Windows installer embeds its runtime |
+| Docker Desktop | macOS / Linux container route only. The Windows installer needs no Docker |
+
+### Windows — installer (recommended)
+
+1. Download `Estrella-Bot-Setup-<version>.exe` from [Releases](../../releases/latest).
+2. Run it. On the **protocol side** page, either let the installer download NapCat, or point it at an already-unzipped `NapCat.Shell` folder. NapCat is **not** bundled.
+3. Launch **Estrella Bot** from the desktop or Start menu. The console opens, and the protocol side starts in the background.
+4. In the console's protocol page, scan the QR code with the spare account.
+5. Fill in the allowed group IDs and the model API key, then click **One-click start**.
+
+Notes:
+
+- **Quit your desktop QQ before scanning**, and keep the protocol-side process alive afterwards. NapCat works by injecting into QQ NT, which is single-instance; this is the most common "it worked yesterday" cause.
+- No Docker, no WSL2 and no separate Node install are required.
+- Prefer a manual or portable setup? Follow [USER-GUIDE §9](./docs/guides/USER-GUIDE.md#9-windows-users).
+
+### macOS / Linux — Docker (recommended on macOS)
+
+Docker exists on macOS to route around NapCat's stale QQ allowlist: the container bundles a matching Linux QQ, so **your own QQ client is never touched**.
 
 ```bash
-bash scripts/bootstrap.sh      # check the environment, start the container, print the WebUI login URL
-node scripts/check-onebot.js   # confirm the protocol side is alive and list the groups you are in
-npm start                      # run the bot
+git clone https://github.com/Canvixel-Eloweny/ai-bot-groupmate.git
+cd ai-bot-groupmate
+npm install
+cp config.example.json config.json        # then set allow.groups
+bash scripts/bootstrap.sh                 # start the container and print the WebUI login URL
+node scripts/check-onebot.js              # verify the protocol side and list your groups
 ```
 
-**Windows — no Docker at all.** Download the packaged build from
-[Releases](../../releases/latest), unzip it, then run `1-SETUP.bat` → `3-START-NAPCAT.bat` → `2-START.bat`.
-
-Two things you always supply yourself: an **OneBot v11 implementation** (in practice NapCatQQ) and a
-**model** — a local one, or an API key. Step-by-step instructions, including what to do when a step
-fails: [`USER-GUIDE.md`](./docs/guides/USER-GUIDE.md).
-
----
-
-An **OneBot v11 bridge** that plugs a spare QQ account into any OpenAI-compatible model, plus a
-**zero-build browser console** — switch brains, watch state, edit the persona, manage skills and memory.
-All by clicking.
-
-```
-QQ alt ──► NapCat (Docker, OneBot v11) ──► bridge src/index.js ──► model
-             ws/http :3000/:3001            │ trigger / context / prompt / splitting
-                                            ├─ local  : MLX(:8080) / QwenChat(:8765)
-                                            ├─ cloud  : DeepSeek API
-                                            ├─ cloud  : Zhipu GLM (only one with web search + vision)
-                                            └─ cloud  : Qwen (free grant per model, 90 days)
-                      ┌─────────────────────┴─────────────────────┐
-                      │ console panel/server.js (127.0.0.1, OS port) │
-                      │  ├─ frontend panel/next/ (static, polls /api/state every 3s)
-                      │  └─ starts/stops the bridge, 4 brain presets, custom workspace
-                      └───────────────────────────────────────────┘
-```
-
-> **`Estrella Bot` is the name of the software.** The former name in the title is kept in exactly one
-> place so that existing links, bookmarks and search results still land here — it is not used anywhere
-> else. The project began as `qq-bot` and was renamed twice (2026-09-17, then 2026-10-11); the full
-> history is in [`CHANGELOG.md`](./docs/release/CHANGELOG.md). The GitHub slug stays `ai-bot-groupmate` on purpose.
-> The launcher is `Estrella-Bot.app`.
-> **This English README is the default. The Chinese edition lives in
-> [`README.zh-CN.md`](./docs/README.zh-CN.md) and is the authoritative one when the two differ.**
->
-> **Just want it running?** Start with the **[User Guide](./docs/guides/USER-GUIDE.md)** — install, sign in,
-> configure, start. Written for people who don't want to read the source first.
-
----
-
-## 1. Local self-test (no QQ, no model)
-
-The fastest way to see whether the code is sane — **it needs neither a QQ account nor a model endpoint**:
+Start the console and click **One-click start** in the page; or run the console and the bot as two commands:
 
 ```bash
-npm test        # behaviour regression (all local mocks)
-npm run verify  # the full four-layer gate: contracts + regression + presets + panel
+node panel/server.js    # console at http://127.0.0.1:8788
+npm start               # bot only; the console can also start it
 ```
 
-## 2. Protocol side: three routes (**read this before you start**)
+On macOS you can double-click **`Estrella-Bot.app`** instead: it starts the console, opens the page, then brings Docker and the container up in the background.
 
-**Route A (recommended on macOS): Docker + Linux arm64.** NapCat's Linux arm64 support is current, the container bundles
-a matching Linux QQ, and **your local QQ client is not touched at all**.
+- Full container guide, including rollback: [`INSTALL-DOCKER.md`](./docs/guides/INSTALL-DOCKER.md).
+- The native macOS route is **blocked** by NapCat's allowlist. Do not install QQ from a third-party mirror — the chat client holds every credential for that account.
+- There is no macOS installer or DMG; macOS runs from the repository.
 
-```bash
-bash scripts/bootstrap.sh     # check env → start container → print WebUI login URL
-node scripts/check-onebot.js  # liveness probe + list joined groups (get group ids here)
-npm start                     # run the bridge
-```
+### Manual / development route (any OS)
 
-Full steps: [`INSTALL-DOCKER.md`](./docs/guides/INSTALL-DOCKER.md).
-
-**Route B: native macOS — currently blocked.** NapCat's Mac installer only whitelists QQ builds
-`6.9.82-40768` … `6.9.93-47354`, while current QQ is past that; Tencent does not archive old versions.
-Getting this route working requires a delisted QQ build. **Do not install QQ from a third-party mirror** —
-the chat client holds every credential for that account.
-
-**Route C: native NapCat on Windows — the route for Windows users.** Windows needs **no Docker**:
-NapCat ships a current native Windows build (the container exists on macOS only because its version
-allowlist stopped half a year ago; see routes A/B above). This drops Docker Desktop and WSL2 from the
-chain entirely, and NapCat's WebUI still runs on 6099 with OneBot's WS / HTTP still on
-**3001 / 3000** — identical to the bridge defaults, so **neither the bridge nor the console changes**.
+On Windows, install Node.js, QQ NT and native NapCat, open the WebSocket server on `3001` and the HTTP server on `3000`, then:
 
 ```bat
 npm install
 copy config.example.json config.json
 ```
 
-Installing NapCat, opening the two channels, the **nine platform differences** (quit the desktop QQ
-before scanning / keep the NapCat window alive / no local model / memory card / instance count /
-the Docker step / the console window), and what to report back from your first real-machine run:
+Start the console with `scripts\Estrella-Bot.bat`, or run `node panel/server.js` and `npm start` separately. Step-by-step instructions, including what to do when a step fails: [USER-GUIDE](./docs/guides/USER-GUIDE.md) · [用户使用说明](./docs/guides/USER-GUIDE.zh-CN.md).
 
-👉 **Full install steps: [`USER-GUIDE.md` · section 9](./docs/guides/USER-GUIDE.md#9-windows-users)**
+### First run
 
-## 3. Four brain presets
+1. Sign in to NapCat with the spare account.
+2. Put the group IDs you allow into `allow.groups`. An empty list with `allowAllWhenEmpty:false` makes the process refuse to start.
+3. Set the model endpoint and key in the console, or in `config.json` (`apiKeyEnv` is safer than pasting a key into the file).
+4. Open the console. Desktop builds write the URL to `USER_ROOT/panel/.panel.json`; source runs default to `http://127.0.0.1:8788`.
+5. Click **One-click start**, then @ the bot or call it by name in an allowed group.
 
-The console organises model settings into **four presets**. Switching only *materialises* one of them into
-flat fields for the bridge; presets never bleed into each other, and per-brain edits survive switching away
-and back.
+### Verify the installation
 
-| Preset key | Name | baseUrl | Traits |
+If you run from source, `npm test` exercises the behaviour regression without needing QQ or a model, and `npm run verify` runs the full four-layer gate. The gate numbers in this README are not frozen; the output of `npm run verify` is the only authoritative count.
+
+## 4. Interfaces, plugins and skills
+
+There are four interfaces worth knowing — the protocol side, the model, the console API, and extensions.
+
+| Interface | Between | What it is |
+|---|---|---|
+| OneBot v11 | QQ ↔ bot | WebSocket on `3001` and HTTP on `3000`; NapCat in practice |
+| Model | bot ↔ LLM | Any OpenAI-compatible `/chat/completions` endpoint |
+| Console API | browser ↔ panel | Local HTTP on `127.0.0.1`; every route is documented |
+| Extensions | package ↔ host | Plugins and skills share one host and one loader |
+
+### Console — the human interface
+
+The console is served by `panel/server.js` on `127.0.0.1`. It is the control room: run overview, start/stop, protocol login, persona studio, memory, scheduled messages, extensions, logs, usage, traces and settings. The frontend is static assets under `panel/next/` with a data-driven control table (`schema.js`), so there is no build step. The server binds to an OS-assigned port in desktop builds and writes the actual URL to `USER_ROOT/panel/.panel.json`; development runs default to `127.0.0.1:8788`.
+
+More: [`docs/FRONTEND-V2.md`](./docs/FRONTEND-V2.md) · [`docs/MOTION-METHODOLOGY.md`](./docs/MOTION-METHODOLOGY.md).
+
+### Local HTTP API — the automation interface
+
+Everything the console does is a local HTTP route: state, config, bridge start/stop, protocol login, model switching, memory, extensions, logs and diagnostics. Inputs, outputs, side effects and idempotency for every route are in [`docs/API_CONTRACT.md`](./docs/API_CONTRACT.md). The frontend polls `/api/state`; external tools can do the same, or call specific routes. The panel binds loopback only and checks Host and Origin, so it is not exposed to your LAN by default.
+
+### Models — four presets, plus your own endpoint
+
+The console organises model settings into four presets. Switching only **materialises** one preset into flat fields for the bridge; presets never bleed into each other, and per-brain edits survive switching away and back.
+
+| Preset | Name | baseUrl | Traits |
 |---|---|---|---|
-| `local` | Local model | `http://127.0.0.1:<port>/v1` (MLX or QwenChat) | Offline, free, data never leaves the machine. The two local channels are **mutually exclusive** (same model memory) |
+| `local` | Local model | `http://127.0.0.1:<port>/v1` (MLX or QwenChat) | Offline, free, data never leaves the machine. The two local channels are mutually exclusive (same model memory) |
 | `deepseek` | DeepSeek cloud | `https://api.deepseek.com/v1` | Cheap and good, text only |
-| `zhipu` | Zhipu GLM | `https://open.bigmodel.cn/api/paas/v4` | **The only one with web search + vision**; also the always-thinking family (glm-5.3 and friends) |
-| `qwen` | Qwen (Alibaba) | `https://dashscope.aliyuncs.com/compatible-mode/v1` | Free grant **per model** (1M tokens, 90 days) — so the fallback chain is long on purpose: each model is a separate grant. The grant **runs out**, and the platform's "stop when the free quota is used up" switch is **off by default** — turn it on, or the next call bills you |
+| `zhipu` | Zhipu GLM | `https://open.bigmodel.cn/api/paas/v4` | The only preset with web search + vision; also the always-thinking family |
+| `qwen` | Qwen (Alibaba) | `https://dashscope.aliyuncs.com/compatible-mode/v1` | Free grant per model (1M tokens, 90 days); the fallback chain is long on purpose. The grant runs out, and the platform's "stop when free quota is used up" switch is off by default — turn it on |
 
-> **On "free"** — it is not one thing. `local` never costs anything; some Zhipu models are
-> permanently free; Zhipu's gift packs and *every* Qwen model run on a grant that expires.
-> All three cases are decided by a single rule (`src/free-quota.js`), and the console shows
-> which one applies plus when it ends. Only Zhipu exposes a live balance — Qwen's usage API is
-> account-scoped, so the console says "check the website" rather than inventing a number.
+**Custom models — bring your own key.** Any OpenAI-compatible endpoint works: a company gateway, a self-hosted relay, LM Studio on another machine, or a provider we have not wired up. Give it a name, paste the API address and key, fill in the model name, then tick what it can actually do:
 
-### Custom models — bring your own key
-
-If none of the four fit, add your own. **Any OpenAI-compatible endpoint works**: a company
-gateway, a self-hosted relay, LM Studio on another machine, or a provider we have not wired
-up. Give it a name, paste the address and your key, fill in the model name, then tick what it
-can actually do:
-
-| Tick | What it really changes |
+| Tick | What it changes |
 |---|---|
-| Vision | Pictures from the group get sent to it. Unticked, they are stripped to `[图片]`. |
-| Thinking | A reasoning parameter is sent. Every provider spells this differently, so this uses the most common form — if the server rejects it, the request is automatically resent without it. |
+| Vision | Pictures from the group get sent to it. Unticked, they become `[图片]`. |
+| Thinking | A reasoning parameter is sent. If the server rejects it, the request is automatically resent without it. |
 | Web search | The search tool is attached. ⚠️ This is Zhipu's shape; most other endpoints will not recognise it. |
 
-**Only the boxes you tick appear afterwards** — no row of greyed-out switches you cannot use.
-You can keep as many custom models as you like, switch between them like any other brain, and
-**right-click** one to rename or delete it.
+Only the boxes you tick appear afterwards. You can keep as many custom models as you like, switch between them like any other brain, and **right-click** one to rename or delete it. The address must be the **API** address (the one serving `/chat/completions`), not the provider's console page.
 
-The address must be the **API** address (the thing that serves `/chat/completions`), not the
-provider's console website — pasting the console URL gets you a plain explanation instead of a
-config that fails on every request. Self-built and relay endpoints are fine.
+Custom models are stored in `llm.customBrains`, one entry per brain, not in `llm.presets`. The single source of truth for model capabilities (thinking levels, web search, vision, degradation-chain eligibility) is `src/model-caps.js`; the entry point for vision is `supportsVision()`.
 
-Custom models are stored separately, in `llm.customBrains`, one entry per brain, rather than
-inside `llm.presets` — that table is "one provider → one set of settings", and shoehorning
-user-named, many-of-them entries into it would have meant changing a dozen places that all
-assume a fixed list.
+### Plugins and skills — the extension interface
 
-The single source of truth for model capabilities (thinking levels low/high/max, web search, vision,
-eligibility for the degradation chain) is `src/model-caps.js`. **The one entry point for vision is
-`supportsVision()`.**
+`plugins/` and `skills/` share **one host, one loader, one manifest contract, one tool registry and one hook bus**. `kind` only decides the default semantics; it is not a second API and it is **not a sandbox**.
 
-## 4. Configuration
+| | Plugin (`plugins/<id>/`) | Skill (`skills/<id>/`) |
+|---|---|---|
+| Best for | Deterministic capabilities: hooks, guards, fixed-time actions | Model-facing capabilities: tools plus optional prompt guidance |
+| Entry | `setup` / `activate` / `hooks` (at least one) | Same, or `prompt.sections` for a prompt-only skill |
+| Execution | Guaranteed when a hook fires | The model decides whether to call the tool |
+| Prompt | Optional extension guidance | Optional `skillExt` section |
+| Enable list | `custom.extensions.plugins.enabled` | `custom.extensions.skills.enabled` |
+| Console page | Factory → Plugins | Factory → Skills |
+
+A minimal prompt-only skill is two files:
+
+```text
+skills/group-etiquette/
+  skill.json   # id / apiVersion / entry + prompt.sections[]
+  index.js     # may be just: export {};
+```
+
+What both kinds share:
+
+- One manifest contract (`plugin.json` / `skill.json`): `id`, `apiVersion`, `entry`, optional `permissions`.
+- One tool registry and one tool cap; one hook bus with a per-hook timeout.
+- One settings UI, with sensitive-key handling and range checks.
+- One enable list per kind. A package sitting in the directory is **scanned and reported, but not loaded** until its id is in the allow-list.
+- **No hot plug**: changing the allow-list requires restarting the bot.
+- Failure is visible: load failures, missing hooks and unregistered tools are reported instead of silently ignored.
+- Extension hooks are **fail-open** (a broken package should not silence the bot); the outbound credential gate is fail-closed.
+
+Extensions are **not sandboxed** — they load in the bot process and can `import fs`. Install only packages you trust. The host limits them with a permission-trimmed API (`fetch` allow-list, read-only OneBot proxy), egress quota and manifest checks, but that is a boundary, not a jail. See [`docs/SKILLS.md`](./docs/SKILLS.md) and [`.github/SECURITY.md`](./.github/SECURITY.md).
+
+**None ship by default.** The packages written for this project were removed; drop your own into `plugins/` or `skills/`, install a ZIP from the console, then enable it in the allow-list. Third-party packages you add are not committed (see `.gitignore`).
+
+> Do not confuse the on-disk `skills/` packages with `custom.skills` in `config.json`: the former is executable code, the latter is prompt data.
+
+## 5. How it works
+
+### The shape of the system
+
+```text
+QQ alt ──► NapCat (OneBot v11) ──► src/index.js ──► model
+             ws 3001 / http 3000     │ trigger → context → prompt → split
+                                      ├─ local  : MLX / QwenChat
+                                      ├─ cloud  : DeepSeek / Zhipu / Qwen
+                                      └─ custom : any OpenAI-compatible endpoint
+                 ┌────────────────────┴────────────────────┐
+                 │ panel/server.js (127.0.0.1)              │
+                 │  ├─ panel/next/ static UI, polls state   │
+                 │  └─ start/stop, config, memory, extensions│
+                 └──────────────────────────────────────────┘
+```
+
+### Message lifecycle
+
+1. `src/onebot.js` flattens a OneBot event into text, image URLs and "was I mentioned".
+2. `src/index.js` applies allow/deny lists, sleep and wake rules, and rate gates.
+3. `src/brain.js` `decide()` answers one question with a pure function: **should this message get a reply at all?**
+4. `src/context-budget.js` assembles the prompt: stable sections first, volatile context last, within a character budget.
+5. `src/llm.js` calls the model with the degradation chain and explicit 400 handling.
+6. `src/tool-loop.js` runs tool rounds when the model asks for a tool.
+7. `src/brain.js` splits the reply and strips internal markers; `src/egress.js` runs the outbound gate.
+8. `src/pace.js` sends at a human pace and re-checks the allow-list before each send.
+
+### Configuration
 
 ```bash
 cp config.example.json config.json   # config.json is pre-filled and gitignored
@@ -222,7 +302,7 @@ export QQBOT_API_KEY=sk-xxxx
 node src/index.js
 ```
 
-### Key options
+Key options:
 
 | Field | Meaning |
 |---|---|
@@ -232,214 +312,93 @@ node src/index.js
 | `trigger.requireAtInGroup` | Whether the bot must be @-mentioned or called by name in groups |
 | `trigger.aliases` | Names that count as being addressed (e.g. `["小鱼"]`) |
 | `trigger.interjectChance` | Probability of chiming in when not addressed (0–1); default 0 |
+| `trigger.interjectCooldownMs` | Cooldown between unmentioned interjections |
 | `reply.splitToken` | Token the model uses to separate messages; default `\|\|` |
 | `reply.sendDelayMs` | Delay between split messages, to avoid rate limits |
 | `throttle.globalConcurrency` | **Set to 1 for local models** — concurrency doubles latency on Apple Silicon |
 | `throttle.perMinutePerSession` | Per-session replies per minute |
-| `custom` | Custom workspace data (8 sections, see below) |
+| `llm.presets.<key>` | Per-brain settings; materialised on switch, do not edit the semantics by hand |
+| `custom` | Workspace data (persona, enhancements, skills, memory, scheduled messages, play rules, security, other) |
 
-## 5. Custom workspace
+### Persona and memory
 
-The console's "custom" area is a **data-driven modular workspace**; all structure lives in
-`src/custom-config.js` (single source of truth). The frontend renders it dynamically and the backend merges
-partial updates via `patchCustom()` — it **never replaces the whole object**, so editing one field cannot
-wipe the others.
+Persona is plain natural language in `persona/qq-chat.md`. `buildMessages()` in `src/brain.js` assembles the prompt in this order:
 
-Sections, in display order: **persona** (12 structured fields) · **enhancements** (12 optional fields) ·
-**skills** (`pack`/`persona`, scopes `global`/`group`/`user`, triggers, examples) · **memory** (automatic +
-manual) · **scheduled messages** · **play rules** (injected right after the persona) · **security** · **other**.
-
-> Persona fingerprinting invalidates stale session history when the persona changes; memory is deliberately
-> excluded from the fingerprint so adding a memory does not clear history.
-
-## 6. Persona
-
-Edit `persona/qq-chat.md` — plain natural language. `buildMessages()` in `src/brain.js` assembles:
-
+```text
 style rules → persona → enhancements → play rules → group background → context → current message
+```
 
-To make replies livelier, in order of value: write a **concrete** persona (catchphrases, message length,
-when *not* to reply) · add few-shot examples inside the persona file · lower `temperature` (≈0.8 is stable;
-above 1.2 it starts making things up) · use a bigger model (a local 8B holds a persona noticeably worse
-than a frontier cloud model).
+To make replies livelier, in order of value: write a concrete persona (catchphrases, message length, when *not* to reply) · add few-shot examples inside the persona file · lower `temperature` (≈0.8 is stable; above 1.2 it starts making things up) · use a bigger model.
 
-## 7. Design notes (why it is written this way)
+The custom workspace is data-driven; its structure lives in `src/custom-config.js`. Partial updates go through `patchCustom()`, which merges instead of replacing, so editing one field cannot wipe the others. Persona changes invalidate stale session history via a fingerprint; memory is deliberately excluded, so adding a memory does not clear history.
 
-- **CQ injection defence** — everything sent to the protocol side is a **message-segment array**, never a CQ
-  code string. If the model emits `[CQ:at,qq=all]` it stays ordinary text and is never parsed as an instruction.
+### Repository layout
+
+| Path | What lives there |
+|---|---|
+| `src/` | The bot: protocol IO, trigger decision, prompt assembly, model client, tools, memory, extensions |
+| `panel/` | `server.js` (local HTTP API) + `next/` (zero-build frontend) + `lib/` (backend layers) |
+| `plugins/` · `skills/` | Extension packages — none ship by default |
+| `scripts/` | Bootstrap, OneBot probe, dry run, event sniffing, contract gates |
+| `test/` | Behaviour regression, sandbox, panel boot/DOM checks, mutation tests, E2E scripts |
+| `packaging/` | Windows NSIS installer, portable build, update manifests and signing |
+| `docs/` | User guides, API contract, architecture, skills, legal notices |
+| `persona/` | Persona text |
+| `config.example.json` · `docker-compose.yml` | Sanitised config template and NapCat container |
+
+Layering and dependency direction are explained in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+
+### Design decisions
+
+- **CQ injection defence** — everything sent to the protocol side is a **message-segment array**, never a CQ code string. If the model emits `[CQ:at,qq=all]`, it stays ordinary text.
 - **No self-replies** — events where `user_id === self_id` are dropped, otherwise the bot answers itself forever.
-- **Allow-list fails closed** — empty allow-list without an explicit opt-in ⇒ **refuses to start**, rather than
-  silently letting everything through.
-- **Reconnect** with exponential backoff (1s→30s); in-flight requests are rejected on disconnect, never left hanging.
+- **Allow-list fails closed** — an empty allow-list without an explicit opt-in refuses to start, rather than silently letting everything through.
+- **Reconnect with exponential backoff** (1s→30s); in-flight requests are rejected on disconnect, never left hanging.
 - **Rate limiting** — per-session minimum interval, per-minute cap, global concurrency semaphore.
 - **Long-message splitting** prefers sentence boundaries so the protocol side does not truncate mid-sentence.
-- **Degradation chain is validated on both ends** — cross-provider, duplicate and over-long entries, and
-  always-thinking models are all rejected with a stated reason (a 400 is not retryable and would waste the chain).
-- **Log ring buffer** — `state.logs` is capped, the backend keeps a `dropped` counter so `total` stays
-  monotonic, and a lagging frontend cursor triggers a `reset` redraw.
-- **Sandbox isolation** — `test/sandbox.sh` starts the panel with `QQBOT_SANDBOX=1`; in that mode the server
-  **never adopts or stops a real bridge process**, so regression runs cannot kill your live bot.
+- **Degradation chain is validated on both ends** — cross-provider, duplicate and over-long entries, and always-thinking models are rejected with a stated reason.
+- **Log ring buffer** — `state.logs` is capped, the backend keeps a `dropped` counter so `total` stays monotonic, and a lagging frontend cursor triggers a reset redraw.
+- **Sandbox isolation** — `test/sandbox.sh` starts the panel with `QQBOT_SANDBOX=1`; in that mode the server never adopts or stops a real bridge process, so regression runs cannot kill your live bot.
 
-## 8. Layout
+## 6. Known limitations
 
-```
-estrella-bot/
-  README.md / docs/README.zh-CN.md  # English (default) + Chinese (authoritative)
-  docs/guides/INSTALL-DOCKER.md # container install manual (incl. rollback)
-  Estrella-Bot.app             # double-click launcher: bring up Docker + open the console
-  config.json                  # your config (pre-filled, gitignored)
-  config.example.json          # sanitised template generated from a real config
-  docker-compose.yml           # NapCat container
-  persona/qq-chat.md           # persona
-  plugins/                     # extensions, deterministic kind (capabilities / hooks) — none ship by default
-  skills/                      # extensions, skill kind (tools + optional prompt.sections) — none ship by default
-                               #   (the 13 built-in packages were removed on 2026-10-17; the host still loads
-                               #    any package you drop here, subject to the allow-list below)
-                               #   this on-disk skills/ is NOT src/skills.js: one is code on disk,
-                               #   the other is data inside config.json. Both kinds share one host/loader;
-                               #   `kind` only decides the default semantics. A pure-prompt skill still
-                               #   needs index.js (may be `export {}`). See docs/SKILLS.md.
-                               #   The host scans, validates, reports, and only loads packages named in
-                               #   custom.extensions.plugins.enabled / custom.extensions.skills.enabled
-                               #   (legacy custom.plugins is derived), which requires a restart.
-                               #   Third-party packages you drop into these directories are NOT
-                               #   committed (see the per-package exceptions in .gitignore).
-  panel/
-    server.js                  # 127.0.0.1, OS-assigned port — every API plus route dispatch
-    next/                      # current frontend: zero-build static assets + schema.js control table
-    lib/                       # backend layered ESM (path/state layer → config/page/plugin → model/process)
-  scripts/
-    bootstrap.sh               # start the container and fetch the WebUI token
-    check-onebot.js            # protocol-side liveness probe + list groups
-    check-wb.mjs               # structural contracts: single entry points, no duplicate implementations,
-                               #   capability tables vs measured reality, scanner self-verification
-    dryrun.js                  # dry-run the whole reply chain (the console "try one sentence" calls this)
-    sniff.js                   # capture OneBot events to debug "@ed but no reaction"
-    status.sh                  # one screen of status
-  src/                         # the bot itself (ESM, zero build, split by responsibility)
-    index.js                   # wiring and main loop
-    onebot.js                  # OneBot v11 WS client + message-segment parsing
-    bridge-io.js               # protocol-side IO: send, history fetch, reporting
-    brain.js                   # trigger decision + context + prompt assembly + splitting
-    llm.js                     # OpenAI-compatible client (degradation chain + breaker)
-    tool-loop.js               # tool round loop (main LLM path)
-    tool-registry.js           # tool registry: names + stable specs (zero-dep leaf)
-    pace.js                    # send pacing (single entry point)
-    egress.js                  # outbound gate + log sanitisation (shared pattern table)
-    interject.js               # unmentioned-message interjection decision
-    reply-text.js              # splitting, dive placeholders, internal-mark stripping
-    ambient.js / context-budget.js  # sticky context window / prompt budget and eviction
-    config.js / custom-config.js / model-caps.js   # config load, workspace schema, capability truth
-    field-schema.js            # declared defaults and ranges for numeric fields (zero-dep leaf)
-    ── runtime scheduling ──
-    sleep.js                   # sleep plan + wake-up (status is recomputed, never persisted)
-    reminder.js                # scheduled reminders (three-state window + holiday table)
-    notice.js                  # poke / notice-style inbound events
-    session-control.js         # per-session abort and retry
-    cross-send.js              # cross-session posting (off by default, quota + audit)
-    forward-expand.js          # merged-forward expansion (segment/depth caps, text only)
-    forward-probe.js           # real-machine probe for forward event shapes
-    ── capabilities and contracts ──
-    gate-scan.js               # single traversal of gate rule tables (zero-dep leaf)
-    injection.js               # injection gate (dirty memory never persisted, fail-open)
-    net-rules.js               # "does it cost money" (must not import safe-fetch)
-    safe-fetch.js              # SSRF verdicts (extension egress goes through ext-fetch.js)
-    browse-lock.js             # browse lock (allow-list + lock switch, fail-closed)
-    ext-fetch.js               # extension egress (own quota, safe-fetch + gateway)
-    text-hygiene.js            # request-body text hygiene (Unicode / lone surrogates)
-    internal-marks.js          # single source of internal markers (never leak into chat)
-    tier.js                    # usage tiers and billing rules
-    holidays.js                # holiday table (table first, weekday as fallback)
-    vision-probe.js            # vision capability probe (synthesised test images)
-    speech-rules.js            # speaking rules (splitting / diving / closing)
-    skills.js                  # skill matching from config data (prompt injection)
-    memory.js / memory-record.js / memory-store.js
-    usage.js                   # call accounting (source of the cost panel)
-    trace-id.js / trace-stats.js   # trace ids, image hashes, cache-hit records
-    ── persistence ──
-    atomic-write.js            # atomic writes + startup sweep of stale temp files
-    session-archive.js         # archive write/restore (stale archives are refused)
-    working-memory.js          # cross-turn working memory (TTL + per-item fade)
-    style-profile.js           # per-member speaking profile
-    reply-track.js             # who said what in which turn
-    unread.js                  # unread model (bounded; no clear-all API)
-    ephemeral.js / config-history.js
-    ── extension execution layer ──
-    plugin-manifest.js         # manifest contracts: id / apiVersion / entry
-    plugin-host.js             # scans, validates, loads and runs (four states, no hot-plug)
-    plugin-api.js              # builds the per-extension api (ctx trimmed)
-    plugin-settings.js         # extension settings (sensitive keys, range rejection)
-    hook-bus.js / send-guard.js / ext-scope.js
-    control-channel.js         # panel -> bot control channel (abort/retry, idempotent)
-    ── helpers ──
-    logger.js · bridge-proc.js (process verification, fail-closed) · bridge-lock.js
-    panel-auth.js (auth decision, pure) · proactive.js
-  test/
-    smoke.js                   # behaviour regression assertions
-    sandbox.sh                 # isolated sandbox + panel regression
-    verify-presets.mjs         # four-brain interface assertions
-    e2e/                       # real-machine / real-browser scripts (not part of npm test)
-```
+- **No streaming** — the whole reply is generated before sending. Character-by-character output in a group chat looks less human, not more.
+- **Voice and video become placeholder text.** Images are genuinely understood by vision-capable models; text-only models still receive a placeholder.
+- **Cross-restart context relies on session archives**, and archives past a freshness threshold are refused — better to forget than to resume a topic that ended long ago.
+- **The bot is single-process and single-account.** Multi-account is not implemented.
+- **The console reads from disk on every request** (zero build). Editing `server.js` requires restarting the panel process (`POST /api/panel/restart` is idempotent).
+- **Extensions can execute, but "on disk" and "in effect" are two different things** — packages are scanned and listed, but only ids in the allow-list are loaded, and there is no hot plug.
 
-## 9. API reference
+## 7. Roadmap
 
-Inputs, outputs, side effects and idempotency for every route: **[`docs/API_CONTRACT.md`](./docs/API_CONTRACT.md)**.
-
-Deeper design documents (also part of the published repository):
-[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) (layering and dependency direction) ·
-[`docs/FRONTEND-V2.md`](./docs/FRONTEND-V2.md) (console frontend) ·
-[`docs/MOTION-METHODOLOGY.md`](./docs/MOTION-METHODOLOGY.md) (motion parameters).
-
-## 10. Known limitations
-
-- **No streaming** — the whole reply is generated before sending. Incremental character-by-character output
-  in a group chat looks less human, not more.
-- **Voice and video become placeholder text.** Images are genuinely understood by **vision-capable models**
-  (e.g. glm-4.6v-flash); text-only models still receive a placeholder.
-- **Cross-restart context relies on session archives**, and archives past a freshness threshold are
-  **refused** — better to forget than to resume a topic that ended long ago.
-- **Single process, single account.** Multi-account is not implemented.
-- The console **reads from disk on every request** (zero build). Editing `server.js` requires restarting the
-  panel process (`POST /api/panel/restart` is idempotent).
-- **Extensions can execute, but "on disk" and "in effect" are still two different things** — `plugins/` and
-  `skills/` are scanned, validated and listed, but only packages named in the allow-list are actually loaded.
-
-## 11. Roadmap
-
-Everything below is **known-not-done**, taken from the limitations above. No time commitments — this is a
-one-person project and priorities follow real pain.
+Everything below is **known-not-done**, taken from the limitations above. No time commitments — this is a one-person project and priorities follow real pain.
 
 - [ ] **Multi-account support** — currently single process / single instance.
 - [ ] **Understanding voice and video content** — today they become placeholder text.
-- [ ] **Outbound rich media** — sending images. (Sticker output was **removed** on 2026-10-17: the bot only ever picked from QQ's 15 built-in faces.)
-- [ ] **Native macOS protocol side** (route B) — blocked by NapCat's QQ version allow-list.
+- [ ] **Outbound rich media** — sending images. (Sticker output was removed: the bot only ever picked from QQ's built-in faces.)
+- [ ] **Native macOS protocol side** — blocked by NapCat's QQ version allow-list.
 - [ ] **Hot-reloading extensions** — changing the allow-list still requires restarting the bot.
 
-## 12. Contributing
+## 8. Contributing
 
-Start with [`CONTRIBUTING.md`](./.github/CONTRIBUTING.md). Three things to know before writing code:
+Start with [`.github/CONTRIBUTING.md`](./.github/CONTRIBUTING.md). Three things to know before writing code:
 
-1. **The gates are four layers** — `check-wb` structural contracts, `smoke` behaviour regression, and the
-   sandboxed `presets` and panel self-checks. Run the whole thing with `npm run verify`.
-2. **Every fix needs a mutation test that only catches that one fix.** "The assertion exists" is not the same
-   as "the assertion is wired up".
-3. **Gate counts are deliberately not hard-coded in this document.** They rotted four times before anyone
-   noticed, so the real numbers live in exactly one place: the output of `npm run verify`. If you are tempted
-   to write "N assertions" here again — that sentence is the reason you should not.
+1. **The gates have four layers** — `check-wb` structural contracts, `smoke` behaviour regression, and the sandboxed `presets` and panel self-checks. Run the whole thing with `npm run verify`.
+2. **Every fix needs a mutation test that only catches that one fix.** "The assertion exists" is not the same as "the assertion is wired up".
+3. **Gate counts are deliberately not hard-coded in this document.** They rotted four times before anyone noticed; the real numbers live in exactly one place: the output of `npm run verify`.
 
-Also read [`CHANGELOG.md`](./docs/release/CHANGELOG.md) and [`CODE_OF_CONDUCT.md`](./.github/CODE_OF_CONDUCT.md).
+Also read [`docs/release/CHANGELOG.md`](./docs/release/CHANGELOG.md), [`.github/SECURITY.md`](./.github/SECURITY.md) (including the known design boundaries), [`.github/CODE_OF_CONDUCT.md`](./.github/CODE_OF_CONDUCT.md), and [`docs/legal/THIRD-PARTY-NOTICES.md`](./docs/legal/THIRD-PARTY-NOTICES.md).
 
-## 13. Contact
+## 9. Contact
 
 | Channel | Use |
 |---|---|
 | [Issues](../../issues) | **Preferred.** Questions, bugs, feature requests — public discussion is searchable by the next person; a DM is not |
-| [`SECURITY.md`](./.github/SECURITY.md) | Report vulnerabilities **privately**; do not open a public issue |
+| [`.github/SECURITY.md`](./.github/SECURITY.md) | Report vulnerabilities **privately**; do not open a public issue |
 
-Two things to do first: **redact real QQ numbers / group ids / chat logs** before posting, and run
-`npm run verify` and paste the output — a minimal reproduction beats a long description.
+Two things to do first: **redact real QQ numbers / group ids / chat logs** before posting, and run `npm run verify` and paste the output — a minimal reproduction beats a long description.
 
-## 14. License and credits
+## 10. License and credits
 
 | Item | Value |
 |---|---|
@@ -447,26 +406,11 @@ Two things to do first: **redact real QQ numbers / group ids / chat logs** befor
 | Third-party notices | [`THIRD-PARTY-NOTICES.md`](./docs/legal/THIRD-PARTY-NOTICES.md) |
 | Runtime dependencies | Only `ws` (MIT). Zero build, no other third-party runtime dependency |
 
-**Apache-2.0 in three sentences.** ① Use it freely: read, run, modify, ship it — even closed-source, no
-permission needed. ② Just keep `LICENSE` and `NOTICE` with it and mark the files you changed. ③ It grants
-an explicit patent license and reserves trademark rights; it does **not** require you to publish your
-changes (there is no network clause).
+**Apache-2.0 in three sentences.** ① Use it freely: read, run, modify, ship it — even closed-source, no permission needed. ② Keep `LICENSE` and `NOTICE` with it and mark the files you changed. ③ It grants an explicit patent license and reserves trademark rights; it does **not** require you to publish your changes (there is no network clause).
 
-**NapCat is not part of this repository.** Running it requires an OneBot v11 implementation (in practice
-NapCatQQ), whose custom *Limited Redistribution License* is not an OSI-approved open-source licence and
-explicitly restricts building other projects from its code. This project therefore only calls it through
-official channels, shares no code with it, and distributes none of its code or binaries. Obtain it yourself
-and follow its licence.
+**NapCat is not part of this repository.** Running it requires an OneBot v11 implementation (in practice NapCatQQ), whose custom *Limited Redistribution License* is not an OSI-approved open-source license and explicitly restricts building other projects from its code. This project therefore only calls it through official channels, shares no code with it, and distributes none of its code or binaries. Obtain it yourself and follow its license.
 
-`plugins/` and `skills/` ship **no extensions by default**: the 13 packages written for this project
-(5 deterministic + 8 LLM kind) were removed on 2026-10-17. The host still loads any package you drop
-into either directory, subject to the allow-list below. Third-party packages *you* add are **not**
-committed (see the per-package exceptions in `.gitignore`). Which of them actually load is decided by
-`custom.extensions.plugins.enabled` / `custom.extensions.skills.enabled` in `config.json` (the legacy
-`custom.plugins.enabled` is derived for old configs) — ⚠️ there is **no hot-plug**: changing the
-allow-list needs a restart (the console says so when you do). See `docs/SKILLS.md` for the two kinds.
-Also not distributed: `napcat/` (the protocol side) and the data
-directories extensions write at runtime — see `docs/legal/THIRD-PARTY-NOTICES.md` §3.
+`plugins/` and `skills/` ship **no extensions by default**: the packages written for this project were removed. The host still loads any package you drop into either directory, subject to the allow-list in `custom.extensions.plugins.enabled` / `custom.extensions.skills.enabled` (the legacy `custom.plugins.enabled` is derived for old configs). There is **no hot-plug**: changing the allow-list needs a restart (the console says so). See [`docs/SKILLS.md`](./docs/SKILLS.md) for the two kinds. Also not distributed: `napcat/` (the protocol side) and the data directories extensions write at runtime — see [`docs/legal/THIRD-PARTY-NOTICES.md`](./docs/legal/THIRD-PARTY-NOTICES.md) §3.
 
 ---
 

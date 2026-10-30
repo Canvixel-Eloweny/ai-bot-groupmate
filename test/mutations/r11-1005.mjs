@@ -74,31 +74,30 @@ const M3 = {
 };
 
 // ── M4：被发布的文档里塞死引用（公开仓库里那份并不存在）────────────────────
-// ⚠️ 2026-10-06：README.md 改成英文默认版 ⇒ 锚点随第 9 节标题改成英文写法。
-const RD_SEC9 = /## 9\. API reference/;
+// ⚠️ 2026-10-30：README 重排成五段主线 ⇒ 锚点随「License and credits」一节搬到这里。
+const RD_SEC9 = /## 10\. License and credits/;
 const M4 = {
   id: 'M4',
   note: '往 README（会被发布的文件）里塞一条指向非白名单 docs 的引用 ——',
   anchor: RD_SEC9,
   count: 1,
   file: RD,
-  apply: (s) => s.replace(RD_SEC9, '## 9. API reference\n\n内部台账见 [`docs/DEEP-IMPROVE.md`](./docs/DEEP-IMPROVE.md)。'),
+  apply: (s) => s.replace(RD_SEC9, '## 10. License and credits\n\n内部台账见 [`docs/DEEP-IMPROVE.md`](./docs/DEEP-IMPROVE.md)。'),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };
 
 // ── M5：M-02 —— 把「N 条断言」写回 README ──────────────────────────────────
-// ⚠️ 2026-10-06：同上，锚点改钉英文那行；`apply` 也改成**英文形态**的计数 ——
-//    否则这条变异只能证明"中文形态被拦"，而 README 现在是英文的（对它是真空）。
-//    它同时覆盖 §72 新增的那三条英文 ROT 判据。
-const RD_NPMTEST = /npm test\s+# behaviour regression/;
+// ⚠️ 2026-10-30：README 重排后没有 `npm test` 代码块；锚点改钉唯一那句 verify 说明，
+//    `apply` 仍写英文形态的计数 —— 否则这条变异只能证明"中文形态被拦"。
+const RD_NPMTEST = /the output of `npm run verify` is the only authoritative count/;
 const M5 = {
   id: 'M5',
-  note: 'README 里把四层计数写回去（英文形态 `behaviour regression (449 assertions)`）—— 那份数字腐烂过四次，正是本轮的修法要拦的形态，',
+  note: 'README 里把四层计数写回去（英文形态 `449 assertions`）—— 那份数字腐烂过四次，正是本轮的修法要拦的形态，',
   anchor: RD_NPMTEST,
   count: 1,
   file: RD,
-  apply: (s) => s.replace(RD_NPMTEST, 'npm test        # behaviour regression (449 assertions)'),
+  apply: (s) => s.replace(RD_NPMTEST, 'the output of `npm run verify` is the only authoritative count (449 assertions)'),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };

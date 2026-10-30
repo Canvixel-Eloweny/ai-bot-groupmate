@@ -2792,7 +2792,7 @@ async function apiOnekeyStart(req, res, url) {
   say('▶ 开始一键启动');
 
   // ── 容器这一步：按平台分支（2026-10-08 · Windows 适配）──────────────────────
-  // ⚠️ Windows 走**原生 NapCat**（README §2 路线 C）：那边没有 Docker，容器也不是
+  // ⚠️ Windows 走**原生 NapCat**（README 的「安装」一节）：那边没有 Docker，容器也不是
   //    需要被拉起的东西 —— NapCat 是用户自己双击启动的一个应用。
   //    少了这个分支，Windows 用户点「一键启动」会**在第一步就整体失败**
   //    （`ensureDocker` 不 ok 就直接 `return 400`，报"没找到 Docker Desktop"）——
