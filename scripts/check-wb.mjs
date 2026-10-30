@@ -90,7 +90,7 @@ console.log = (first, ...rest) => {
  *       提交门 `pre-commit.sh` 正是因此才把 `node_modules` **软链**进闸门用的临时 worktree。
  *       记在这里是为了下次有人量到 17 时**别以为闸门坏了**。
  */
-const MIN_CONTRACTS = 172;
+const MIN_CONTRACTS = 173;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -12977,7 +12977,7 @@ const LIB_SRC_ALLOW = [
   {
     let crlfText = 0;
     let scanned = 0;
-    const bins = /\.(png|icns|jpg|jpeg|gif|ico|zip|mp4|webm|woff2?|qqxlog|db|db-shm|db-wal)$/i;
+    const bins = /\.(png|icns|bmp|jpg|jpeg|gif|ico|zip|mp4|webm|woff2?|qqxlog|db|db-shm|db-wal)$/i;
     for (const f of walkInto(REPO, [], {
       // 'console-profile' = 独立窗口的浏览器专用 profile（运行期数据，gitignore）——
       // 它里面全是浏览器的缓存/数据库文件（无二进制扩展名、却带 CRLF 字节），
@@ -20699,6 +20699,64 @@ const LIB_SRC_ALLOW = [
 
     if (p171.length) { bad++; for (const x of p171) console.log('✗ ' + x); }
     else console.log('✓ 界面身份（§171）：签名/公钥指纹 · 7 域 30 页顺序 · 外壳 · 渲染入口 · 运行时接线 · 加项放行');
+  }
+
+  // ══ §172 · 开屏标题入场与背景接管（2026-10-30 新增）══════════════════════
+  // 用户实拍：① 标题逐字从左冒出 + 每字 8px 模糊，开头像错位/抽帧；
+  //           ② 开屏结束到等高线视频开播之间整页静止 0.48s（23MB 视频被延后到整层隐藏后才加载），
+  //              即使预加载也会在收尾看到 poster→video 换帧。
+  // 规则：① 闸门新增 reveal 阶段且在 finish 里补一次；② 标题淡出时触发 reveal；
+  //       ③ 等高线在 reveal 阶段直接开播；④ 海报漂移保留到 playing；
+  //       ⑤ 性能探针量 gate→playing；⑥ 标题整行入场（不再逐字延迟）。
+  if (true) {
+    const p172 = [];
+    const splash172 = read('../panel/next/splash.js');
+    const boot172 = read('../panel/next/boot-splash.js');
+    const bootCss172 = read('../panel/next/boot-splash.css');
+    const contour172 = read('../panel/next/contour-bg.js');
+    const perf172 = read('../test/panel-splash-perf.mjs');
+
+    if (!/whenRevealing: function/.test(splash172) || !/reveal: function/.test(splash172)
+      || !/revealing: !bootOn/.test(splash172)) {
+      p172.push('§172①：__bootGate 缺 whenRevealing/reveal/revealing');
+    }
+    if (!/this\.reveal\(\);/.test(splash172)) {
+      p172.push('§172①：finish() 没有先补 reveal（跳过开屏会丢接管）');
+    }
+
+    if (!/intro\.classList\.add\('is-title-out'\);[^]*?__bootGate\.reveal\(\)/.test(boot172)) {
+      p172.push('§172②：标题淡出时没有调用 __bootGate.reveal()');
+    }
+
+    if (!/whenRevealing\(function \(\) \{[\s\S]{0,500}?bootHold = false;/.test(contour172)
+      || !/bootHold = false;\s*\n\s*apply\(\);/.test(contour172)) {
+      p172.push('§172③：contour-bg 没有在 reveal 阶段直接开播（只预加载仍会在收尾换帧）');
+    }
+    if (/layer\.classList\.remove\('is-static'\);\s*\n\s*if \(video\.playbackRate !== speedMul\)/.test(contour172)) {
+      p172.push('§172④：加载阶段就移除了 is-static（海报会在空窗里完全冻住）');
+    }
+    if (!/addEventListener\('playing'[\s\S]{0,700}?layer\.classList\.remove\('is-static'\)/.test(contour172)) {
+      p172.push('§172④：playing 时没有移除 is-static');
+    }
+
+    if (/animationDelay\s*=/.test(boot172)) {
+      p172.push('§172⑥：splitLine 又给单字设延迟（标题会从左边错位冒出）');
+    }
+    if (!/bs-title-line-in/.test(bootCss172)
+      || !/#bootSplash \.grid-line-1,\s*\n#bootSplash \.grid-hero \{/.test(bootCss172)) {
+      p172.push('§172⑥：标题不是整行入场');
+    }
+    const chBlock172 = (bootCss172.match(/#bootSplash \.ch \{[^}]*\}/) || [''])[0];
+    if (!chBlock172 || /animation|opacity|filter/.test(chBlock172)) {
+      p172.push('§172⑥：.ch 仍带逐字动画/初始隐藏');
+    }
+
+    if (!/gate_to_playing_ms/.test(perf172) || !/is_static_until_playing/.test(perf172)) {
+      p172.push('§172⑤：panel-splash-perf 没有量 gate→playing / is-static 顺序');
+    }
+
+    if (p172.length) { bad++; for (const x of p172) console.log('✗ ' + x); }
+    else console.log('✓ 开屏衔接（§172）：reveal 直接开播 · finish 补 reveal · 海报漂移到 playing · 标题整行入场 · 探针量空窗');
   }
 
   // ① 契约块数下限。`ran + 1` 里那个 +1 就是**本段自己**（本段也走 console.log、也被计入），

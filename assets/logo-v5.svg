@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Estrella Bot">
+  <title>Estrella Bot</title>
+  <defs>
+    <clipPath id="eb-plate"><rect width="64" height="64" rx="10"/></clipPath>
+    <pattern id="eb-grain" width="2.6" height="2.6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="2.6" stroke="#f4f4f2" stroke-opacity=".038" stroke-width=".45"/>
+    </pattern>
+  </defs>
+  <rect width="64" height="64" rx="10" fill="#0a0a0a"/>
+  <rect width="64" height="64" fill="url(#eb-grain)" clip-path="url(#eb-plate)"/>
+  <ellipse cx="32" cy="32" rx="25" ry="19" transform="rotate(-18 32 32)" fill="none" stroke="#f4f4f2" stroke-opacity=".6" stroke-width="1.7"/>
+  <circle cx="44.7" cy="13.8" r="1.8" fill="#f4f4f2" stroke="#0a0a0a" stroke-width="1.1"/>
+  <g transform="translate(32 32) scale(.7) translate(-32 -32)">
+    <path fill="#f4f4f2" d="M32 10c1.1 12.3 9.7 20.9 22 22-12.3 1.1-20.9 9.7-22 22-1.1-12.3-9.7-20.9-22-22 12.3-1.1 20.9-9.7 22-22Z"/>
+  </g>
+</svg>

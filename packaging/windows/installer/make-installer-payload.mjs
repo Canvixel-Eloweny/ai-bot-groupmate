@@ -36,7 +36,7 @@ import { writeBuildInfo, shortCommit } from '../tools/lib/build-info.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..', '..');
-const LAUNCHER_ALLOW = ['Estrella-Bot.vbs', 'run-hidden.vbs', 'launch-napcat-hidden.vbs', 'estrella-bot.ico'];
+const LAUNCHER_ALLOW = ['Estrella-Bot.vbs', 'run-hidden.vbs', 'launch-napcat-hidden.vbs', 'estrella-bot.ico', 'estrella-bot-v5.ico'];
 
 function argOf(name) {
   const i = process.argv.indexOf(name);
@@ -251,6 +251,7 @@ async function main() {
   ].join('\n'), 'utf8');
   copyFile(path.join(HERE, 'Estrella-Bot.nsi'), path.join(buildDir, 'Estrella-Bot.nsi'));
   copyFile(path.join(HERE, 'uninstall-stop.ps1'), path.join(buildDir, 'uninstall-stop.ps1'));
+  copyFile(path.join(HERE, 'estrella-bot-header.bmp'), path.join(buildDir, 'estrella-bot-header.bmp'));
 
   // ⑤ manifest + 同一份 verifier 自校验。
   const files = walk(out)

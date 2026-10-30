@@ -106,19 +106,17 @@
       '</div>';
   }
 
+  /* 逐字拆开只为让 line-2 的渐变按字符裁切；入场动画整行做（见 CSS bs-title-line-in），
+     不再给单字设延迟 —— 左起逐字会出现"先偏左、再补齐"的错位感。 */
   function splitLine(el) {
     var text = el.textContent;
-    var base = 120;
-    var step = 24;
-    if (el.classList.contains('line-2') || el.classList.contains('grid-line-2')) { base = 420; step = 30; }
     el.dataset.text = text;
     el.textContent = '';
     el.setAttribute('aria-hidden', 'true');
     var frag = document.createDocumentFragment();
-    Array.from(text).forEach(function (ch, i) {
+    Array.from(text).forEach(function (ch) {
       var s = document.createElement('span');
       s.className = 'ch';
-      s.style.animationDelay = (base + i * step) + 'ms';
       s.textContent = ch === ' ' ? '\u00a0' : ch;
       frag.appendChild(s);
     });
@@ -526,7 +524,13 @@
       }, GRID.FLIP_START);
     }
 
-    later(function () { if (run === T.run) intro.classList.add('is-title-out'); }, GRID.TITLE_FADE);
+    later(function () {
+      if (run !== T.run) return;
+      intro.classList.add('is-title-out');
+      /* 从这里开始面板已经能从格栅洞里看见：提前把 23MB 背景视频拉起来（只加载不播），
+         否则整层隐藏后还要等首帧，用户会看到"桌面已出现、背景却定住"的空窗。 */
+      if (window.__bootGate) window.__bootGate.reveal();
+    }, GRID.TITLE_FADE);
     later(function () {
       if (run !== T.run) return;
       intro.classList.add('is-dissolving');

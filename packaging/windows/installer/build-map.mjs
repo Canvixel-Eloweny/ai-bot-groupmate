@@ -36,7 +36,7 @@ export const PORTABLE_ALLOW_ROOT = new Set([
   '1-SETUP.bat', '2-START.bat', '3-START-NAPCAT.bat', '4-DIAG.bat', '7-VERIFY.bat',
   'BUILD-INFO.txt', 'PUBLISH-PROVENANCE.json', 'README.html', 'README-installed.html',
   'SHA256SUMS.txt', 'launch-hidden.vbs', 'start-fake-chat.bat', '一键安装.bat',
-  'Estrella-Bot.vbs', 'run-hidden.vbs', 'launch-napcat-hidden.vbs', 'estrella-bot.ico',
+  'Estrella-Bot.vbs', 'run-hidden.vbs', 'launch-napcat-hidden.vbs', 'estrella-bot.ico', 'estrella-bot-v5.ico',
 ]);
 
 /** ④ app/ 根上允许存在、但 stage 只带其中一部分的文件。 */

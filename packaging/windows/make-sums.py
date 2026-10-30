@@ -36,6 +36,7 @@ ITEMS = [
     "start-fake-chat.bat",
     "7-VERIFY.bat",
     "estrella-bot.ico",
+    "estrella-bot-v5.ico",
     "README.html",
     # ⚠️ 2026-10-14：README.txt 与「本版修了什么.txt」已不再随包（维护者要求：
     #    说明只保留 README.html 一份，也不再向用户展示"修了什么"清单）。

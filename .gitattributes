@@ -20,6 +20,7 @@
 # （启发式会在"看起来像文本"的二进制上翻车，而翻车的表现是文件被静默改写）。
 *.png  binary
 *.icns binary
+*.bmp  binary
 *.jpg  binary
 *.jpeg binary
 *.mp4  binary

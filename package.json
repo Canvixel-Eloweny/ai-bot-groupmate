@@ -1,6 +1,6 @@
 {
   "name": "ai-bot-groupmate",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "appId": "com.estrellabot.windows",
   "configSchema": 1,
   "private": true,

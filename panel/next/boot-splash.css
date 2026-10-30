@@ -208,23 +208,7 @@ html[data-theme="dark"] #bootSplash {
 #bootSplash .ch {
 
   display: inline-block;
-  opacity: 0;
-  transform: translateY(.5em);
-  filter: blur(8px);
-  animation:
-    bs-char-opacity 700ms cubic-bezier(.16, 1, .3, 1) both,
-    bs-char-blur 900ms cubic-bezier(.16, 1, .3, 1) both,
-    bs-char-rise 700ms cubic-bezier(.16, 1, .3, 1) both;
 
-}
-@keyframes bs-char-opacity {
- from { opacity: 0; } to { opacity: 1; } 
-}
-@keyframes bs-char-blur {
- from { filter: blur(8px); } to { filter: blur(0); } 
-}
-@keyframes bs-char-rise {
- from { transform: translateY(.5em); } to { transform: translateY(0); } 
 }
 @keyframes bs-rise-in {
 
@@ -334,6 +318,23 @@ html[data-theme="dark"] #bootSplash {
   -webkit-background-clip: text;
   background-clip: text;
   background-repeat: no-repeat;
+
+}
+/* 标题整行入场：逐字拆开只为让渐变按字符裁切，入场必须整行一起做。
+   左起逐字 + 每字 8px 模糊会出现"先偏左、再补齐"的错位感（2026-10-30 用户实拍）。 */
+#bootSplash .grid-line-1,
+#bootSplash .grid-hero {
+
+  opacity: 0;
+  animation: bs-title-line-in 760ms cubic-bezier(.16, 1, .3, 1) both;
+
+}
+#bootSplash .grid-line-1 { animation-delay: 120ms; }
+#bootSplash .grid-hero { animation-delay: 360ms; }
+@keyframes bs-title-line-in {
+
+  from { opacity: 0; transform: translateY(.16em); filter: blur(4px); }
+  to { opacity: 1; transform: translateY(0); filter: blur(0); }
 
 }
 #bootSplash /* 词条翻转：150ms 上飘出场、300ms 下落入场，2:1 非对称。
@@ -834,6 +835,7 @@ html[data-theme="dark"] #bootSplash .grid-meta {
 @media (prefers-reduced-motion: reduce) {
 
   .ch, .eyebrow { animation: none !important; opacity: 1 !important; transform: none !important; filter: none !important; }
+  .grid-line-1, .grid-hero { animation: none !important; opacity: 1 !important; transform: none !important; filter: none !important; }
   .grid-flip-front, .grid-flip-back { transition: none !important; }
   .mock { transition: none !important; }
   .grid-title { animation: none !important; --chromatic-sweep: 114%; }
@@ -842,8 +844,9 @@ html[data-theme="dark"] #bootSplash .grid-meta {
 
 }
 /* 低端机降级（boot-splash.js 按 hardwareConcurrency/deviceMemory 加 .bs-lite）：
-   格栅叶数减半、不描边、逐字不做 blur、veil 不做全屏模糊。 */
-html.bs-lite #bootSplash .ch {
+   格栅叶数减半、不描边、标题不做 blur、veil 不做全屏模糊。 */
+html.bs-lite #bootSplash .grid-line-1,
+html.bs-lite #bootSplash .grid-hero {
   filter: none !important;
 }
 html.bs-lite #bootSplash .grid-veil {
@@ -851,6 +854,9 @@ html.bs-lite #bootSplash .grid-veil {
   backdrop-filter: none;
 }
 html.rm #bootSplash .ch, html.rm #bootSplash .eyebrow {
+ animation: none !important; opacity: 1 !important; transform: none !important; filter: none !important; 
+}
+html.rm #bootSplash .grid-line-1, html.rm #bootSplash .grid-hero {
  animation: none !important; opacity: 1 !important; transform: none !important; filter: none !important; 
 }
 html.rm #bootSplash .grid-flip-front, html.rm #bootSplash .grid-flip-back {

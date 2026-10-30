@@ -77,16 +77,37 @@
     started: false,
     done: !bootOn,
     waiting: false,
+    revealing: !bootOn,
     queue: [],
+    revealQueue: [],
     /** 开屏结束后再跑；没开屏或已经结束则立刻跑。 */
     whenDone: function (fn) {
       if (typeof fn !== 'function') return;
       if (!this.on || this.done) { fn(); return; }
       this.queue.push(fn);
     },
+    /** 开屏进入"透出阶段"（标题淡出 / 格栅溶解）时跑：给 23MB 背景视频留预加载时间。
+        没开屏、已结束或已经透出则立刻跑。 */
+    whenRevealing: function (fn) {
+      if (typeof fn !== 'function') return;
+      if (!this.on || this.done || this.revealing) { fn(); return; }
+      this.revealQueue.push(fn);
+    },
+    /** 只由 boot-splash.js 在标题淡出时调用；重复调用无副作用。 */
+    reveal: function () {
+      if (this.revealing) return;
+      this.revealing = true;
+      var q = this.revealQueue;
+      this.revealQueue = [];
+      for (var i = 0; i < q.length; i++) {
+        try { q[i](); } catch (e) { /* 单个预加载失败不阻断其它 */ }
+      }
+    },
     /** 只由 boot-splash.js 在整层真正隐藏后调用；重复调用无副作用。 */
     finish: function () {
       if (this.done) return;
+      /* 用户点跳过 / watchdog 提前收尾：先补一次 reveal，别让预加载整段丢掉。 */
+      this.reveal();
       this.done = true;
       var q = this.queue;
       this.queue = [];

@@ -109,14 +109,26 @@ export function readBodyToFile(req, { file, maxBytes = 4 * 1024 * 1024 } = {}) {
     let tooLarge = false;
     let done = false;
     let out = null;
+    let cleanupPromise = null;
     const cleanup = () => {
-      try { out?.destroy(); } catch { /* 已关 */ }
-      try { fs.rmSync(file, { force: true }); } catch { /* 已删 */ }
+      if (cleanupPromise) return cleanupPromise;
+      cleanupPromise = new Promise((doneCleanup) => {
+        const rm = () => {
+          try { fs.rmSync(file, { force: true }); } catch { /* 已删 */ }
+          doneCleanup();
+        };
+        if (!out) { rm(); return; }
+        if (out.closed) { rm(); return; }
+        // 等 close 再删：createWriteStream 的 open 是异步的，先 rm 后 open 会把文件重新建出来。
+        out.once('close', rm);
+        try { out.destroy(); } catch { rm(); }
+      });
+      return cleanupPromise;
     };
-    const finish = (v) => {
+    const finish = async (v) => {
       if (done) return;
       done = true;
-      if (!v.ok) cleanup();
+      if (!v.ok) await cleanup();
       resolve(v);
     };
     try {

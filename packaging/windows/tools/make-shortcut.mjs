@@ -10,7 +10,7 @@
  *    从 .lnk 拉起必然闪一个黑框；而 .lnk **没有"隐藏窗口"这个开关**。
  *  · 所以中间夹一层 `wscript.exe launch-hidden.vbs`：wscript 本身无窗口，
  *    再由它 `Run …, 0` 把真正那条命令**隐藏**着起。
- *  · 名字与图标都用**当前品牌**：`Estrella Bot` + `estrella-bot.ico`
+ *  · 名字与图标都用**当前品牌**：`Estrella Bot` + `estrella-bot-v5.ico`
  *    （图标由 `packaging/windows/make-ico.py` 从官方立绘生成，7 档尺寸）。
  *
  *  ⚠️ **不写开始菜单、不改注册表、不开机自启** —— 这三件都是"往用户系统里放东西"，
@@ -24,7 +24,7 @@ import { spawnSync } from 'node:child_process';
 import { ROOT, IS_WIN, exists, ok, bad, say, dim, isMain } from './lib/common.mjs';
 
 export const SHORTCUT_NAME = 'Estrella Bot.lnk';
-export const ICO_REL = 'estrella-bot.ico';
+export const ICO_REL = 'estrella-bot-v5.ico';
 export const VBS_REL = 'launch-hidden.vbs';
 
 /** PowerShell 单引号字面量：单引号里唯一的元字符是 `'`，按规矩写成两个。 */

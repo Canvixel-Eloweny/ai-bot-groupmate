@@ -84,7 +84,7 @@
     migrate.mjs
   launcher\
     Estrella-Bot.vbs            # 隐藏启动入口（ASCII-only）
-    estrella-bot.ico
+    estrella-bot-v5.ico    # 正式图标；estrella-bot.ico 为兼容保留
   resources\
     update-pubkey.pem           # 更新清单验签公钥（可含 keyring）
   uninstall.exe
@@ -279,12 +279,16 @@ QQBOT_DATA_DIR   >  <USER_ROOT>/data        （只覆盖 data 子树）
   默认勾选前两项，自启不勾）→ **协议端来源**（P6 新增：三选一 —— 我已有 zip /
   我已解压好的目录 / 现在联网下载；**默认谁都不勾**）→ 导入旧数据 → 安装 →
   完成（默认勾选“启动 Estrella Bot”）。
+- 品牌：页脚 `BrandingText "Estrella Bot ${APP_VERSION}"`；页眉图
+  `installer/estrella-bot-header.bmp`（150×57，`MUI_HEADERIMAGE_RIGHT`），与快捷方式/应用图标同源。
+- 升级：检测到已安装时跳过欢迎、许可与安装目录页；组件页顶部显示
+  `DisplayVersion` 与“配置、记忆、插件、人格与 NapCat 登录态都会保留”。
 - 升级检测：读 HKCU
   `Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot` 的
   `InstallLocation`。存在则走“升级”页，固定使用该目录；要换目录必须先卸载。
 - `/D=` 必须是最后一个参数且不加引号（NSIS 约定）；路径含空格时由 NSIS 处理。
 - 快捷方式：桌面 + 开始菜单，目标 `wscript.exe "<InstallRoot>\launcher\Estrella-Bot.vbs"`，
-  图标 `resources\estrella-bot.ico`，工作目录 `<InstallRoot>`。
+  图标 `launcher\estrella-bot-v5.ico`，工作目录 `<InstallRoot>`。
 - 开机启动（可选）：写 HKCU `Run` 或启动文件夹；默认不勾；卸载时删除。
 
 ### 6.2 安装事务
@@ -734,8 +738,8 @@ P2 已按本规格完成可安装形态；版本由维护者按 G4 指定为 **0
    静默安装默认不下载，`/INSTALLNAPCAT` 显式开启。
 3. §2.1 把 `uninstall.exe` 列在安装根布局里；它由 NSIS `WriteUninstaller` 生成，
    **不进 payload**（避免自删除混淆）。
-4. 图标统一放 `launcher/estrella-bot.ico`（`resources/` 另存一份供将来使用）；
-   快捷方式指向 `launcher/estrella-bot.ico`。
+4. 图标统一放 `launcher/estrella-bot-v5.ico`（`estrella-bot.ico` 兼容保留，`resources/` 另存一份供将来使用）；
+   快捷方式指向 `launcher/estrella-bot-v5.ico`。
 5. 安装器实际顺序是“解 stage → 停应用 → commit”；stage 解包不碰运行中的程序文件，
    停应用发生在任何目录交换之前。
 6. P2 只做“无效 current 回退 previous”；健康失败连续两次自动回滚、旧版本目录清理

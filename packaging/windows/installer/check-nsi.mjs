@@ -137,6 +137,7 @@ function main() {
 
   for (const rel of [
     path.join('launcher', 'estrella-bot.ico'),
+    path.join('launcher', 'estrella-bot-v5.ico'),
     'LICENSE',
     path.join('launcher', 'Estrella-Bot.vbs'),
     path.join('launcher', 'run-hidden.vbs'),
@@ -158,6 +159,16 @@ function main() {
   const ps1 = path.join(path.dirname(nsi), 'uninstall-stop.ps1');
   if (!fs.existsSync(ps1)) problems.push(`缺 ${ps1}`);
   else if (/[^\x00-\x7F]/.test(fs.readFileSync(ps1, 'utf8'))) problems.push('uninstall-stop.ps1 不是 ASCII-only');
+
+  const headerBmp = path.join(path.dirname(nsi), 'estrella-bot-header.bmp');
+  if (!fs.existsSync(headerBmp)) {
+    problems.push('缺 estrella-bot-header.bmp（MUI_HEADERIMAGE_BITMAP）');
+  } else {
+    const b = fs.readFileSync(headerBmp);
+    if (b.readUInt32LE(18) !== 150 || b.readUInt32LE(22) !== 57) {
+      problems.push(`estrella-bot-header.bmp 不是 150x57（实测 ${b.readUInt32LE(18)}x${b.readUInt32LE(22)}）`);
+    }
+  }
 
   if (problems.length) {
     for (const p of problems) console.error(`✗ ${p}`);

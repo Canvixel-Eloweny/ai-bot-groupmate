@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/logo-v4.svg" alt="Estrella Bot" width="140">
+<img src="https://gcore.jsdelivr.net/gh/Canvixel-Eloweny/ai-bot-groupmate@main/assets/logo-v5.svg" alt="Estrella Bot" width="140">
 
 # Estrella Bot · QQ-BOT-Creative
 

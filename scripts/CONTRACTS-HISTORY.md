@@ -1628,3 +1628,21 @@
 //  ⑤ 坑：签名覆盖原始字节，必须 LF（.gitattributes 显式 eol=lf）；公钥指纹 pin
 //     在 check-wb 与 ui-identity.js 两处；负向对照不真改 schema，避免撞
 //     verify.mjs 的 7 域 / check-wb §165 的工厂 5 页 / panel-dom 的 3 frame。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §172 · 开屏标题入场与背景接管（2026-10-30）
+// ══════════════════════════════════════════════════════════════════════════════
+//  ① 判据：__bootGate 新增 whenRevealing/reveal/revealing；finish() 先补 reveal；
+//     boot-splash 在 TITLE_FADE（3280ms）调用 reveal；contour-bg 在 reveal 阶段
+//     直接 bootHold=false + apply()（视频在开屏层还盖着时就接管背景，不是只预加载）；
+//     is-static 保留到 playing 事件；标题整行入场（splitLine 不再设单字延迟、
+//     .ch 无逐字动画）；perf 探针量 gate→playing 与 is-static 顺序。
+//  ② 段数：MIN 172 → **173**（自证计数 173：新增 §172 一段）。
+//  ③ 变异：test/mutations/splash-preload-2026-10-30.mjs M1–M6（check-wb，6/6 BLOCKED）。
+//  ④ 同轮测试：perf:splash 实测 gate_to_playing_ms=-1407（视频在闸门前 1.4s 开播）、
+//     is_static_until_playing=true，开屏 p95 83.3ms / max 133.3ms 未退化；
+//     panel-dom 全绿；隔离 worktree 的 npm run verify 全绿。
+//  ⑤ 坑：① 探针的 playing 监听先于产品监听注册，事件当下读 class 会读到交棒前的
+//     is-static；必须在 setTimeout(0) 后再读。② §170④ 对 contour 的 whenDone
+//     字面量仍必须保留。③ 标题逐字从左 + 每字 8px blur 会造成"先偏左、再补齐"的
+//     错位/抽帧；整行一个 filter 比 8 个字符 filter 便宜且对齐。

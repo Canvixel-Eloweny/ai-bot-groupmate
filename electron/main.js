@@ -287,7 +287,7 @@ function ensureToastShortcut() {
     fs.mkdirSync(dir, { recursive: true });
     const target = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'wscript.exe');
     const vbs = path.join(INSTALL_ROOT, 'launcher', 'Estrella-Bot.vbs');
-    const icon = path.join(INSTALL_ROOT, 'launcher', 'estrella-bot.ico');
+    const icon = path.join(INSTALL_ROOT, 'launcher', 'estrella-bot-v5.ico');
     const ok = shell.writeShortcutLink(lnk, 'create', {
       target, args: `"${vbs}"`, icon, iconIndex: 0, appUserModelId: APP_ID, description: 'Estrella Bot',
     });
@@ -699,8 +699,8 @@ function scheduleSave() {
 
 function trayIcon() {
   const candidates = [
-    INSTALL_ROOT ? path.join(INSTALL_ROOT, 'launcher', 'estrella-bot.ico') : '',
-    path.join(REPO_ROOT, 'packaging', 'windows', 'launcher', 'estrella-bot.ico'),
+    INSTALL_ROOT ? path.join(INSTALL_ROOT, 'launcher', 'estrella-bot-v5.ico') : '',
+    path.join(REPO_ROOT, 'packaging', 'windows', 'launcher', 'estrella-bot-v5.ico'),
   ].filter(Boolean);
   for (const file of candidates) {
     if (!fs.existsSync(file)) continue;

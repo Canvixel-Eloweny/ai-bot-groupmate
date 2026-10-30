@@ -11,6 +11,7 @@ InstallDir "$LOCALAPPDATA\Programs\Estrella-Bot"
 InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot" "InstallLocation"
 RequestExecutionLevel user
 XPStyle on
+BrandingText "Estrella Bot ${APP_VERSION}"
 
 !include "MUI2.nsh"
 !include "nsDialogs.nsh"
@@ -29,12 +30,17 @@ VIAddVersionKey "FileVersion" "${APP_VERSION}"
 VIAddVersionKey "LegalCopyright" "Estrella Bot contributors"
 
 !define MUI_ABORTWARNING
-!define MUI_ICON "stage\launcher\estrella-bot.ico"
-!define MUI_UNICON "stage\launcher\estrella-bot.ico"
+!define MUI_ICON "stage\launcher\estrella-bot-v5.ico"
+!define MUI_UNICON "stage\launcher\estrella-bot-v5.ico"
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_RIGHT
+!define MUI_HEADERIMAGE_BITMAP "estrella-bot-header.bmp"
 !define MUI_FINISHPAGE_RUN "$SYSDIR\wscript.exe"
 !define MUI_FINISHPAGE_RUN_FUNCTION "LaunchApp"
 
+!define MUI_PAGE_CUSTOMFUNCTION_PRE WelcomePre
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_PAGE_CUSTOMFUNCTION_PRE LicensePre
 !insertmacro MUI_PAGE_LICENSE "stage\LICENSE"
 !define MUI_PAGE_CUSTOMFUNCTION_PRE DirectoryPre
 !insertmacro MUI_PAGE_DIRECTORY
@@ -64,6 +70,10 @@ LangString CMP_STARTMENU ${LANG_ENGLISH} "Create a Start menu shortcut"
 LangString CMP_STARTMENU ${LANG_SIMPCHINESE} "创建开始菜单快捷方式"
 LangString CMP_AUTOSTART ${LANG_ENGLISH} "Start Estrella Bot when I sign in"
 LangString CMP_AUTOSTART ${LANG_SIMPCHINESE} "登录 Windows 时自动启动 Estrella Bot"
+LangString CMP_UPGRADE_VERSION ${LANG_ENGLISH} "Installed version:"
+LangString CMP_UPGRADE_VERSION ${LANG_SIMPCHINESE} "已安装版本："
+LangString CMP_UPGRADE_BODY ${LANG_ENGLISH} "This is an in-place upgrade: your config, memory, plugins, persona and NapCat login state will be kept."
+LangString CMP_UPGRADE_BODY ${LANG_SIMPCHINESE} "本次为覆盖升级：配置、记忆、插件、人格与 NapCat 登录态都会保留。"
 LangString NAP_TITLE ${LANG_ENGLISH} "QQ protocol side (NapCat)"
 LangString NAP_TITLE ${LANG_SIMPCHINESE} "QQ 协议端（NapCat）"
 LangString NAP_SUB ${LANG_ENGLISH} "Estrella Bot does not ship NapCat. Choose where yours comes from."
@@ -132,6 +142,7 @@ LangString UN_CONFIRM ${LANG_SIMPCHINESE} "删除全部 Estrella Bot 用户数�
 
 Var Upgrade
 Var UserRoot
+Var InstalledVersion
 Var DesktopShortcut
 Var StartMenuShortcut
 Var AutoStart
@@ -149,6 +160,9 @@ Var NapEdit
 Var BtnNapFolder
 Var ImportEdit
 Var ImportBrowse
+Var UpgradeNote
+Var UpgradeNoteText
+Var NoteY
 
 Function .onInit
   !insertmacro MUI_LANGDLL_DISPLAY
@@ -170,11 +184,16 @@ Function .onInit
   StrCpy $NapcatPath ""
   StrCpy $ImportFrom ""
   StrCpy $DeleteUserData 0
+  StrCpy $InstalledVersion "?"
 
   ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot" "InstallLocation"
   ${If} $0 != ""
     StrCpy $INSTDIR $0
     StrCpy $Upgrade 1
+    ReadRegStr $InstalledVersion HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot" "DisplayVersion"
+    ${If} $InstalledVersion == ""
+      StrCpy $InstalledVersion "?"
+    ${EndIf}
   ${EndIf}
 
   ReadRegStr $UserRoot HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot" "UserRoot"
@@ -243,6 +262,18 @@ Function .onInit
   ${EndIf}
 FunctionEnd
 
+Function WelcomePre
+  ${If} $Upgrade == 1
+    Abort
+  ${EndIf}
+FunctionEnd
+
+Function LicensePre
+  ${If} $Upgrade == 1
+    Abort
+  ${EndIf}
+FunctionEnd
+
 Function DirectoryPre
   ${If} $Upgrade == 1
     Abort
@@ -257,16 +288,31 @@ Function ComponentsPage
     Abort
   ${EndIf}
 
-  ${NSD_CreateCheckbox} 0 0 100% 12u "$(CMP_DESKTOP)"
+  StrCpy $NoteY 0
+  ${If} $Upgrade == 1
+    StrCpy $UpgradeNoteText "$(CMP_UPGRADE_VERSION) $InstalledVersion$\r$\n$(CMP_UPGRADE_BODY)"
+    ${NSD_CreateLabel} 0 0 100% 34u "$UpgradeNoteText"
+    Pop $UpgradeNote
+    StrCpy $NoteY 48
+  ${EndIf}
+
+  ${NSD_CreateCheckbox} 0 $NoteY 100% 12u "$(CMP_DESKTOP)"
   Pop $CheckDesktop
   ${NSD_Check} $CheckDesktop
+  IntOp $NoteY $NoteY + 16
 
-  ${NSD_CreateCheckbox} 0 16u 100% 12u "$(CMP_STARTMENU)"
+  ${NSD_CreateCheckbox} 0 $NoteY 100% 12u "$(CMP_STARTMENU)"
   Pop $CheckStartMenu
   ${NSD_Check} $CheckStartMenu
+  IntOp $NoteY $NoteY + 16
 
-  ${NSD_CreateCheckbox} 0 32u 100% 12u "$(CMP_AUTOSTART)"
+  ${NSD_CreateCheckbox} 0 $NoteY 100% 12u "$(CMP_AUTOSTART)"
   Pop $CheckAutoStart
+
+  ${If} $Upgrade == 1
+    GetDlgItem $0 $HWNDPARENT 3
+    EnableWindow $0 0
+  ${EndIf}
 
   nsDialogs::Show
 FunctionEnd
@@ -519,23 +565,23 @@ Section "Install"
   SetOutPath "$INSTDIR"
 
   ${If} $DesktopShortcut == 1
-    CreateShortCut "$DESKTOP\Estrella Bot.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\launcher\Estrella-Bot.vbs"' "$INSTDIR\launcher\estrella-bot.ico" 0
+    CreateShortCut "$DESKTOP\Estrella Bot.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\launcher\Estrella-Bot.vbs"' "$INSTDIR\launcher\estrella-bot-v5.ico" 0
   ${EndIf}
 
   ${If} $StartMenuShortcut == 1
     CreateDirectory "$SMPROGRAMS\Estrella Bot"
-    CreateShortCut "$SMPROGRAMS\Estrella Bot\Estrella Bot.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\launcher\Estrella-Bot.vbs"' "$INSTDIR\launcher\estrella-bot.ico" 0
+    CreateShortCut "$SMPROGRAMS\Estrella Bot\Estrella Bot.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\launcher\Estrella-Bot.vbs"' "$INSTDIR\launcher\estrella-bot-v5.ico" 0
     CreateShortCut "$SMPROGRAMS\Estrella Bot\Uninstall.lnk" "$INSTDIR\uninstall.exe"
   ${EndIf}
 
   ${If} $AutoStart == 1
-    CreateShortCut "$SMSTARTUP\Estrella Bot.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\launcher\Estrella-Bot.vbs"' "$INSTDIR\launcher\estrella-bot.ico" 0
+    CreateShortCut "$SMSTARTUP\Estrella Bot.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\launcher\Estrella-Bot.vbs"' "$INSTDIR\launcher\estrella-bot-v5.ico" 0
   ${EndIf}
 
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot" "DisplayName" "Estrella Bot"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot" "DisplayVersion" "${APP_VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot" "Publisher" "Estrella Bot contributors"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot" "DisplayIcon" "$INSTDIR\launcher\estrella-bot.ico"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot" "DisplayIcon" "$INSTDIR\launcher\estrella-bot-v5.ico"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot" "UserRoot" "$UserRoot"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Estrella-Bot" "UninstallString" '"$INSTDIR\uninstall.exe"'

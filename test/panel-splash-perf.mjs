@@ -148,6 +148,41 @@ try {
   await send('Page.addScriptToEvaluateOnNewDocument', {
     source: `window.__spFrames = [];
       window.__spLong = [];
+      window.__spGap = { gate: null, playing: null, gateClass: null, playingClass: null };
+      (function () {
+        var g;
+        Object.defineProperty(window, '__bootGate', {
+          configurable: true,
+          get: function () { return g; },
+          set: function (v) {
+            g = v;
+            var orig = v.finish;
+            v.finish = function () {
+              if (window.__spGap.gate == null) {
+                window.__spGap.gate = performance.now();
+                var layer = document.getElementById('contourBg');
+                window.__spGap.gateClass = layer ? layer.className : null;
+              }
+              return orig.apply(this, arguments);
+            };
+          }
+        });
+        var seen = false;
+        setInterval(function () {
+          var video = document.getElementById('contourVideo');
+          if (!video || seen) return;
+          seen = true;
+          video.addEventListener('playing', function () {
+            window.__spGap.playing = performance.now();
+            /* 探针的监听先于产品监听注册；事件当下读到的还是交棒前的 class。
+               等本轮事件派发结束再读，才能看到 is-playing / is-static 的最终态。 */
+            setTimeout(function () {
+              var layer = document.getElementById('contourBg');
+              window.__spGap.playingClass = layer ? layer.className : null;
+            }, 0);
+          });
+        }, 50);
+      })();
       (function tick(t) { window.__spFrames.push(t); requestAnimationFrame(tick); })(performance.now());
       try {
         new PerformanceObserver(function (l) {
@@ -172,6 +207,10 @@ try {
     const res = performance.getEntriesByType('resource').filter((e) => e.name.indexOf(location.origin) === 0);
     const sum = (key) => res.reduce((n, e) => n + (Number(e[key]) || 0), 0);
     const splash = document.getElementById('bootSplash');
+    const gap = window.__spGap || {};
+    const gapMs = gap.gate != null && gap.playing != null ? Math.round(gap.playing - gap.gate) : null;
+    const staticOk = !!(gap.playingClass && gap.playingClass.includes('is-playing')
+      && !gap.playingClass.includes('is-static'));
     return {
       frames: rel.length,
       frame_p50: +pick(0.5).toFixed(2),
@@ -187,6 +226,12 @@ try {
       builds: window.__paintStats ? window.__paintStats.builds : null,
       skips: window.__paintStats ? window.__paintStats.skips : null,
       splashHidden: splash ? !!splash.hidden : null,
+      gap_gate_ms: gap.gate == null ? null : +gap.gate.toFixed(1),
+      gap_playing_ms: gap.playing == null ? null : +gap.playing.toFixed(1),
+      gate_to_playing_ms: gapMs,
+      is_static_until_playing: staticOk,
+      gate_class: gap.gateClass,
+      playing_class: gap.playingClass,
     };
   `);
 
@@ -194,6 +239,8 @@ try {
   console.log(`SPLASH_PERF over20=${out.over20} over50=${out.over50} longtasks=${out.longtasks} long_max_ms=${out.long_max}`);
   console.log(`SPLASH_PERF transfer_bytes=${out.transfer} encoded_bytes=${out.encoded} decoded_bytes=${out.decoded}`);
   console.log(`SPLASH_PERF paint_builds=${out.builds} paint_skips=${out.skips} splash_hidden=${out.splashHidden}`);
+  console.log(`SPLASH_GAP gate_to_playing_ms=${out.gate_to_playing_ms} is_static_until_playing=${out.is_static_until_playing}`);
+  console.log(`SPLASH_GAP gate_ms=${out.gap_gate_ms} playing_ms=${out.gap_playing_ms} gate_class=${out.gate_class} playing_class=${out.playing_class}`);
   if (!out.splashHidden) {
     console.log('⚠️ 5.6s 时开屏仍未隐藏 —— 探针数字不能代表完整开屏');
     process.exitCode = 1;

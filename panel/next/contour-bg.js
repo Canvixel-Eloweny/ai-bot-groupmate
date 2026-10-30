@@ -237,12 +237,14 @@
         return;
       }
     }
-    layer.classList.remove('is-static');
+    /* 海报漂移要保留到 playing 事件（见下面的监听）：setSource 只是开始加载，
+       此时视频还没有一帧画面；提前移除 is-static 会让背景在这段空窗里完全冻住。 */
     if (video.playbackRate !== speedMul) video.playbackRate = speedMul;
     /* 已经在播时不要再走一次 play()：重复 apply（速度事件、主题 no-op 等）会没有
        新的 playing 事件，状态就会永远停在 loading，而画面其实在动。 */
     if (!video.paused && video.readyState >= 2) {
       layer.classList.add('is-playing');
+      layer.classList.remove('is-static');
       setState('video');
     } else {
       setState('loading');
@@ -343,9 +345,20 @@
       apply();
     });
 
-    /* 开屏期间不加载 24MB 视频：只显示 poster / 静态漂移，整层隐藏后再 load + play。 */
+    /* 开屏期间不播放视频：只显示 poster / 静态漂移；但到"透出阶段"（标题淡出）就先把
+       23MB 视频拉起来（只 load 不 play），否则整层隐藏后还要等首帧，用户会看到
+       "桌面已出现、背景却定住"的空窗。真正 play 仍由 whenDone 放行。 */
     if (window.__bootGate && window.__bootGate.on && !window.__bootGate.done && typeof window.__bootGate.whenDone === 'function') {
       bootHold = true;
+      if (typeof window.__bootGate.whenRevealing === 'function') {
+        window.__bootGate.whenRevealing(function () {
+          if (!video || suppressed || reduced || speedMul <= 0 || quality === 'poster') return;
+          /* 收尾要无缝：不是只预加载，而是从这里就让视频接管背景；
+             poster→video 的 450ms 交叉淡化在开屏层还盖着时完成。 */
+          bootHold = false;
+          apply();
+        });
+      }
       window.__bootGate.whenDone(function () { bootHold = false; apply(); });
     }
 

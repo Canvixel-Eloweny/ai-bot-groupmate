@@ -97,7 +97,7 @@ export function setAutostart(enabled, {
 
   const target = path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'wscript.exe');
   const args = `"${launcher}" --hidden`;
-  const icon = path.win32.join(installRoot, 'launcher', 'estrella-bot.ico');
+  const icon = path.win32.join(installRoot, 'launcher', 'estrella-bot-v5.ico');
   const script = [
     `$s=(New-Object -ComObject WScript.Shell).CreateShortcut(${psQuote(shortcut)})`,
     `$s.TargetPath=${psQuote(target)}`,

@@ -39,6 +39,7 @@ packaging/windows/
   make-app.mjs         ★ 生成**包内**的 `app/`（对外拷贝 + 剔除 `app/packaging/`，见第 1 步）
   make-zip.py          打 zip（可复现：条目排序 + 固定时间戳 + 校验 SHA256SUMS）
   make-ico.py          从方形图生成 Windows 快捷方式用的 .ico（7 档尺寸）
+  installer/estrella-bot-header.bmp  安装器页眉图（150×57，MUI_HEADERIMAGE，随 NSIS 编译）
   scan-package.mjs     对**最终产物**做真值复扫（不复制判据，复用 scripts/known-real.mjs）
   vbs-lint.py          ★ 静态检查 `launcher/*.vbs`：`Option Explicit` 下"赋值了却没 Dim"
                        与 VBA 专属函数（`IIf` 等）误用。**动过任何一个 .vbs 就跑一次** ——
@@ -56,7 +57,8 @@ packaging/windows/
     launch-napcat-hidden.vbs  无窗口拉起协议端（NapCat 的启动器也是控制台程序；
                        Node 的 windowsHide=CREATE_NO_WINDOW 会让它自己 AllocConsole
                        弹第二个黑窗，必须走 wscript 的隐藏控制台，2026-10-13 真机复现）
-    estrella-bot.ico   桌面快捷方式图标（由 make-ico.py 从官方立绘生成，7 档）
+    estrella-bot.ico   旧路径（兼容保留；内容与 v5 相同）
+    estrella-bot-v5.ico  当前正式图标（安装器 / 快捷方式 / 托盘使用；版本化文件名避免 Windows 图标缓存）
     README.html        给 Windows 用户看的说明 —— **唯一的说明文件**
                        （维护者 2026-10-14 指定：不要 README.txt；也不要再生成
                         "本版修了什么"式的版本说明 —— 用户只需要看 README）
@@ -102,7 +104,7 @@ echo 退出码=%ERRORLEVEL%
 ```
 Win-v<版本>/
   一键安装.bat  1-SETUP.bat  2-START.bat  3-START-NAPCAT.bat  4-DIAG.bat
-  launch-hidden.vbs  launch-napcat-hidden.vbs  estrella-bot.ico  README.html
+  launch-hidden.vbs  launch-napcat-hidden.vbs  estrella-bot.ico  estrella-bot-v5.ico  README.html
   SHA256SUMS.txt          ← 构建时生成，不在这里
   BUILD-INFO.txt          ← 构建时生成：这份包对应**哪一次提交**（见第 8 步）
   app/                    ← 由下面第 1 步生成（跟踪文件）

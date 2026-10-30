@@ -3,6 +3,16 @@
 本项目在 `main` 上持续迭代，每个对外可见的版本打一个 tag。以下按**批次**记录对外可见的变化。
 内部批次台账（含未交付项与裁决记录）是**内部件，不随公开仓库发布**。
 
+## 0.1.6 — 2026-10-30
+
+**New official app icon and installer upgrade polish.** The console header, Windows
+installer/shortcuts/tray, macOS app icon and README now use the orbit-star mark. The installer
+shows product-and-version branding and a product header image, detects the installed version
+during upgrades, skips the welcome and license pages on upgrade, and tells the user that config,
+memory, plugins, persona and NapCat login state are kept. The desktop shortcut icon uses a
+versioned ICO path so Windows shows the new mark immediately after an upgrade. No functional
+bot changes.
+
 ## Unreleased — 2026-10-24
 
 **Windows desktop builds can now run in GitHub Actions (`P3-5`).** A manual
