@@ -1798,10 +1798,11 @@ async function previewImport(file) {
 async function installZip(file, kind = 'plugin', opts = {}) {
   if (!S.online) return DEMO_BLOCK();
   const overwrite = opts.overwrite === true;
+  const expectId = /^[A-Za-z0-9_-]{1,40}$/.test(String(opts.expectId || '')) ? String(opts.expectId) : '';
   if (!overwrite && !(await confirmToast('装这个包？同名包不会被覆盖（那是另一条确认）。', { okLabel: '安装' }))) return;
   busy(true, '校验并安装…');
   try {
-    const q = `kind=${encodeURIComponent(kind === 'skill' ? 'skill' : 'plugin')}${overwrite ? '&overwrite=1' : ''}`;
+    const q = `kind=${encodeURIComponent(kind === 'skill' ? 'skill' : 'plugin')}${overwrite ? '&overwrite=1' : ''}${expectId ? `&id=${encodeURIComponent(expectId)}` : ''}`;
     const r = await api(`/api/extensions/install?${q}`, { method: 'POST', body: file });
     toast(`已装入 ${r.id}（${r.kind}）· ${r.files} 个文件。装完默认不启用 —— 在列表里勾上它，然后重启机器人。`, 'ok');
     await refresh(true);
@@ -2862,7 +2863,7 @@ function cardHtml(c) {
  *   看到的却是「一块大玻璃板里切了 13 块」。多出来的那层不是设计，是容器。
  *
  * ⚠️ 这条通道**只脱掉 .card 这一层**，不碰控件自己的结构：
- *   · 控件吐什么（pluginList 仍吐 .pgrid > .pcard）由渲染器负责，容器不加工；
+ *   · 控件吐什么由渲染器负责，容器不加工；
  *   · .card-h / .card-d 在 bare 下**一并省掉** —— 它们是「卡片标题栏」，
  *     裸容器没有卡片，留一个悬空的 h2 反而更怪（要标题就写进控件自己）；
  *   · .card-b 的 padding 也一并省掉，否则网格四周多出一圈不属于任何一块板的留白，
@@ -4869,240 +4870,6 @@ const RENDER = {
       <div class="hint">改完点底部「保存并生效」。越界键会被拒绝并说出来 —— 不会静默丢弃。</div>
     </div>`;
   },
-  /**
-   * 插件总览（计数 + 运行期状态 + 热插拔说明）。
-   *
-   * ⚠️ 为什么从清单里**拆出来**成独立一张卡：它是"扫了几个 / 机器人加载了几个"这一层
-   *   全局信息，与任何一个具体插件无关。混在某个插件的板里，读者会以为那几个数字
-   *   只跟这一个插件有关 —— 而它其实是整批的。
-   */
-  pluginSummary: () => {
-    const s = S.state || DEMO;
-    const ext = s.extensions;
-    if (!ext || !ext.ok) return '<div class="empty">读不到插件目录。</div>';
-    const kind = 'plugin';
-    const items = (ext.items || []).filter((it) => (it.kind === 'skill' ? 'skill' : 'plugin') === kind);
-    const sum = {
-      total: items.length,
-      load: items.filter((x) => x.action === 'load').length,
-      skip: items.filter((x) => x.action === 'skip').length,
-      reject: items.filter((x) => x.action === 'reject').length,
-    };
-    const rt = j(s, ['effective', 'extensions'], null);
-    const rtItems = (rt?.items || []).filter((it) => (it.kind === 'skill' ? 'skill' : 'plugin') === kind);
-    const rtSum = {
-      loaded: rtItems.filter((x) => x.state === 'loaded').length,
-      pending: rtItems.filter((x) => x.state === 'pending').length,
-      failed: rtItems.filter((x) => x.state === 'failed').length,
-      over: rtItems.filter((x) => x.state === 'over').length,
-      empty: rtItems.filter((x) => x.state === 'loaded' && x.empty).length,
-    };
-    const enabled = draftArr('extensions.plugins.enabled').length;
-    const maxPlugins = Number(s.custom?.extensions?.max) || 256;
-    const toolMax = Number(s.custom?.tools?.max) || 64;
-    const overStatic = items.filter((x) => x.action === 'over').length;
-    const overRun = rtSum.over;
-    return `<div class="f">
-      <div class="hint">扫到 ${sum.total} 个插件：可加载 ${sum.load} · 未启用 ${sum.skip} · 有问题 ${sum.reject} · <b>超过上限 ${overStatic}</b>（上限 ${maxPlugins}）。
-        ${rt ? `机器人侧：已加载 ${rtSum.loaded} · 未启用 ${rtSum.pending} · 失败 ${rtSum.failed} · 超上限 ${overRun} · 空载 ${rtSum.empty}。` : '机器人没在跑，看不到运行期状态。'}</div>
-      <div class="hint">已启用 <b>${enabled}</b> / 上限 <b>${maxPlugins}</b>${overStatic ? `（超出 ${overStatic} 个不会加载；取消勾选别的包或调大上限即可）` : ''} ·
-        工具 <b>${rt?.limits?.toolsUsed ?? '?'}</b> / 上限 <b>${rt?.limits?.tools ?? toolMax}</b>（工具 schema 会进每一轮请求，别调太大）。</div>
-      <div class="hint"><b>不支持热插拔</b>：改完白名单要重启机器人（那正是插件板上出现「待重启」的原因）。装完 ZIP 也不会自动启用。</div>
-    </div>`;
-  },
-  skillSummary: () => {
-    const s = S.state || DEMO;
-    const ext = s.extensions;
-    if (!ext || !ext.ok) return '<div class="empty">读不到 Skill 目录。</div>';
-    const kind = 'skill';
-    const items = (ext.items || []).filter((it) => (it.kind === 'skill' ? 'skill' : 'plugin') === kind);
-    const rt = j(s, ['effective', 'extensions'], null);
-    const rtItems = (rt?.items || []).filter((it) => (it.kind === 'skill' ? 'skill' : 'plugin') === kind);
-    const enabled = draftArr('extensions.skills.enabled').length;
-    const maxPlugins = Number(s.custom?.extensions?.max) || 256;
-    const promptMax = Number(s.extensionPrompt?.skill?.maxChars) || 2000;
-    const promptUsed = Number(s.extensionPrompt?.skill?.used) || 0;
-    const promptOnly = rtItems.filter((x) => x.promptOnly).length;
-    const mixed = rtItems.filter((x) => x.mixed).length;
-    const overStatic = items.filter((x) => x.action === 'over').length;
-    return `<div class="f">
-      <div class="hint">扫到 ${items.length} 个 Skill：可加载 ${items.filter((x) => x.action === 'load').length} · 未启用 ${items.filter((x) => x.action === 'skip').length} · 有问题 ${items.filter((x) => x.action === 'reject').length} · <b>超过上限 ${overStatic}</b>（扩展总数上限 ${maxPlugins}）。
-        ${rt ? `机器人侧：已加载 ${rtItems.filter((x) => x.state === 'loaded').length} · 失败 ${rtItems.filter((x) => x.state === 'failed').length} · 纯提示词 ${promptOnly} · 混合型 ${mixed}。` : '机器人没在跑，看不到运行期状态。'}</div>
-      <div class="hint">已启用 <b>${enabled}</b> / 扩展总数上限 <b>${maxPlugins}</b> · 提示词预算 <b>${promptUsed}</b> / <b>${promptMax}</b> 字${s.extensionPrompt?.source === 'static' ? '（静态预览：启用后才会注入）' : ''}。</div>
-      <div class="hint"><b>Skill 不保证执行</b>：模型可能一直不调用它。需要“条件满足必跑”的功能请做插件。<b>不支持热插拔</b>：勾选后要重启机器人；装完 ZIP 也不会自动启用。</div>
-    </div>`;
-  },
-  skillPromptPreview: () => {
-    const s = S.state || DEMO;
-    const plan = s.extensionPrompt;
-    if (!plan) return '<div class="empty">还没有 Skill 预览数据。</div>';
-    const skill = plan.skill || {};
-    const lines = Array.isArray(skill.lines) ? skill.lines : [];
-    const pluginLines = Array.isArray(plan.plugin?.lines) ? plan.plugin.lines : [];
-    const source = plan.source === 'runtime'
-      ? '<span class="tag ok">此刻注入</span>'
-      : '<span class="tag warn">机器人未运行：启用后将注入</span>';
-    return `<div class="f">
-      <div class="hint">${source} · Skill 段 <b>${skill.used || 0}</b> / <b>${skill.maxChars || 2000}</b> 字 · 丢弃段 ${skill.dropped || 0}</div>
-      <pre class="mono" style="white-space:pre-wrap;font-size:11.5px;max-height:320px;overflow:auto;">${esc(lines.join('\n') || '（当前没有 Skill 提示词段）')}</pre>
-      ${pluginLines.length ? `<details class="det"><summary>插件兼容指引（extensions 段，${plan.plugin.used || 0} 字）</summary><pre class="mono" style="white-space:pre-wrap;font-size:11.5px;max-height:220px;overflow:auto;">${esc(pluginLines.join('\n'))}</pre></details>` : ''}
-      <div class="hint">预览只展示扩展注入段，不含核心系统提示；工具名来自真实注册表（robot 未运行时静态预览不伪造工具名）。</div>
-    </div>`;
-  },
-  /**
-   *
-   * ── 为什么这么排 ────────────────────────────────────────────────────────
-   *   旧形态是「一张大卡 → 一个 `.rows` 列表 → N 行」。三个问题：
-   *     ① 视觉上所有插件是**一个**对象，开关与设置混在一列长列表里；
-   *     ② 设置项多的插件会把整列撑得很长，下面那些插件要滚很久才看到；
-   *     ③ 玻璃只有一层 —— "每块板都是玻璃"这件事根本没发生。
-   *   现在：`.pgrid` 网格（`auto-fill minmax(340px,1fr)`）→ 每插件一张 `.pcard`。
-   *   **玻璃材质不新造**：`.pcard` 同时挂 `card` 类，材质走现役那一档
-   *   （`:where(body.eg-on) .card`，见 style.css）—— 圆角 / 模糊 / 阴影 / 透明度
-   *   与全站其它卡片逐项同源，**视觉一致性由此保证，而不是靠"再写一份像的"**。
-   *
-   * ── 保持不变的部分（一条都不许少）─────────────────────────────────────────
-   *   启用开关（`plugin.toggle`）、运行期徽标（loaded/failed/待重启）、设置项
-   *   （`plugin.set`，>3 项仍默认收起）、`自带联网` 标记、problems 详情、版本号、
-   *   有问题的插件**开关禁用**且不能被勾上。
-   *
-   * ⚠️ 板内不用 `.row`（那套是给"卡内列表行"设计的，横排 + hover 底色）；
-   *   这里用 `.pcard-h` / `.pcard-b` 两个新类，**只管排版**，
-   *   玻璃与圆角一律继承 `.card` —— 见 style.css 的「插件板」一节。
-   */
-  pluginList: () => {
-    const s = S.state || DEMO;
-    const ext = s.extensions;
-    if (!ext || !ext.ok) return '<div class="empty">读不到插件目录。</div>';
-    const on = new Set(draftArr('extensions.plugins.enabled'));
-    const rt = j(s, ['effective', 'extensions'], null);
-    const rtById = {}; if (rt?.items) for (const r of rt.items) rtById[r.id] = r;
-    const items = (ext.items || []).filter((it) => (it.kind === 'skill' ? 'skill' : 'plugin') === 'plugin');
-    if (!items.length) return '<div class="empty">还没有装插件。</div>';
-    return `<div class="pgrid">${items.map((it) => {
-      const bad = it.action === 'reject';
-      const over = it.action === 'over';
-      const checked = on.has(it.id) && !bad;
-      const run = rtById[it.id];
-      const hookCount = (run?.hooks || []).reduce((n, [, c]) => n + Number(c || 0), 0);
-      const toolCount = (run?.tools || []).length;
-      const hookErr = (run?.hookErrors || []);
-      const toolErr = (run?.toolErrors || []);
-      // 运行期徽标：over 也要显示（它不是 rejects，开关仍可勾选）。
-      const badge = !rt ? ''
-        : over ? '<span class="tag warn">超上限·未加载</span>'
-          : (!checked ? '' : run ? `<span class="tag ${run.state === 'failed' ? 'bad' : 'ok'}">${esc(run.state || '')}</span>` : '<span class="tag warn">待重启</span>');
-      return `<section class="card pcard" data-plugin="${esc(it.id)}">
-        <div class="pcard-h">
-          <label class="sw flat" title="${bad ? '这个插件有问题，勾了也不会加载' : '勾上才启用'}">
-            <input type="checkbox" ${checked ? 'checked' : ''} ${bad ? 'disabled' : ''} data-a="plugin.toggle" data-k="plugin" data-p="${esc(it.id)}"><span class="track"></span><span class="txt"></span></label>
-          <span class="nm">${esc(it.name)}</span>
-          <span class="spacer"></span>
-          <span class="hint mono">v${esc(it.version || '?')}</span>
-        </div>
-        <div class="pcard-b">
-          <div class="f-inline">
-            <span class="tag plain mono">${esc(it.id)}</span>
-            <span class="tag ${it.kind === 'plugin' ? 'info' : 'plain'}">${it.kind === 'plugin' ? '插件' : 'Skill'}</span>
-            ${badge}
-            ${it.netSelf ? '<span class="tag warn" title="这个插件自带联网：它用自己的 fetch，不受浏览锁定约束">自带联网</span>' : ''}
-            ${bad ? '<span class="tag bad">有问题</span>' : ''}
-            ${run ? `<span class="tag ${hookCount ? 'ok' : 'warn'}" title="运行期实际挂上的钩子数">钩子 ${hookCount}</span>` : ''}
-            ${run ? `<span class="tag ${toolCount ? 'ok' : 'warn'}" title="运行期实际注册的工具数">工具 ${toolCount}</span>` : ''}
-            ${run?.empty ? '<span class="tag bad" title="既没挂上钩子、也没注册工具 —— 装了等于没装（先看下面的告警）">空载</span>' : ''}
-            ${hookErr.length ? `<span class="tag bad" title="${esc(hookErr.map((e) => `${e.point}: ${e.reason}`).join('\n'))}">钩子未挂 ${hookErr.length}</span>` : ''}
-            ${toolErr.length ? `<span class="tag bad" title="${esc(toolErr.map((e) => `${e.id || e.name || '?'}: ${e.reason}`).join('\n'))}">工具未注册 ${toolErr.length}</span>` : ''}
-          </div>
-          <div class="hint">${esc(it.detail || '')}</div>
-          ${(it.problems || []).length ? `<div class="hint bad">${esc(it.problems.join('；'))}</div>` : ''}
-          ${pluginSettingsRow(it, 'plugin')}
-        </div>
-      </section>`;
-    }).join('')}</div>`;
-  },
-  skillList: () => {
-    const s = S.state || DEMO;
-    const ext = s.extensions;
-    if (!ext || !ext.ok) return '<div class="empty">读不到 Skill 目录。</div>';
-    const on = new Set(draftArr('extensions.skills.enabled'));
-    const rt = j(s, ['effective', 'extensions'], null);
-    const rtById = {}; if (rt?.items) for (const r of rt.items) rtById[r.id] = r;
-    const items = (ext.items || []).filter((it) => (it.kind === 'skill' ? 'skill' : 'plugin') === 'skill');
-    if (!items.length) return '<div class="empty">还没有装 Skill。纯提示词 Skill 也需要 skill.json + index.js（可写 export {}）。</div>';
-    return `<div class="pgrid">${items.map((it) => {
-      const bad = it.action === 'reject';
-      const over = it.action === 'over';
-      const checked = on.has(it.id) && !bad;
-      const run = rtById[it.id];
-      const hookCount = (run?.hooks || []).reduce((n, [, c]) => n + Number(c || 0), 0);
-      const toolCount = (run?.tools || []).length;
-      const promptCount = (run?.promptSections || it.promptSections || []).length;
-      const hookErr = (run?.hookErrors || []);
-      const toolErr = (run?.toolErrors || []);
-      const badge = !rt ? ''
-        : over ? '<span class="tag warn">超上限·未加载</span>'
-          : (!checked ? '' : run ? `<span class="tag ${run.state === 'failed' ? 'bad' : 'ok'}">${esc(run.state || '')}</span>` : '<span class="tag warn">待重启</span>');
-      return `<section class="card pcard" data-plugin="${esc(it.id)}">
-        <div class="pcard-h">
-          <label class="sw flat" title="${bad ? '这个 Skill 有问题，勾了也不会加载' : '勾上才启用'}">
-            <input type="checkbox" ${checked ? 'checked' : ''} ${bad ? 'disabled' : ''} data-a="plugin.toggle" data-k="skill" data-p="${esc(it.id)}"><span class="track"></span><span class="txt"></span></label>
-          <span class="nm">${esc(it.name)}</span>
-          <span class="spacer"></span>
-          <span class="hint mono">v${esc(it.version || '?')}</span>
-        </div>
-        <div class="pcard-b">
-          <div class="f-inline">
-            <span class="tag plain mono">${esc(it.id)}</span>
-            <span class="tag info">Skill</span>
-            ${badge}
-            ${run?.promptOnly ? '<span class="tag ok">提示词型</span>' : ''}
-            ${run?.mixed ? '<span class="tag warn" title="Skill 同时导出了 hooks；建议迁移到插件">混合型（不推荐）</span>' : ''}
-            ${bad ? '<span class="tag bad">有问题</span>' : ''}
-            ${run ? `<span class="tag ${hookCount ? 'ok' : 'warn'}" title="运行期实际挂上的钩子数">钩子 ${hookCount}</span>` : ''}
-            ${run ? `<span class="tag ${toolCount ? 'ok' : 'warn'}" title="运行期实际注册的工具数">工具 ${toolCount}</span>` : ''}
-            <span class="tag ${promptCount ? 'ok' : 'warn'}" title="清单 prompt.sections 段数">提示词 ${promptCount}</span>
-            ${run?.empty ? '<span class="tag bad" title="既没挂钩子、也没注册工具、也没有提示词 —— 装了等于没装">空载</span>' : ''}
-            ${hookErr.length ? `<span class="tag bad" title="${esc(hookErr.map((e) => `${e.point}: ${e.reason}`).join('\n'))}">钩子未挂 ${hookErr.length}</span>` : ''}
-            ${toolErr.length ? `<span class="tag bad" title="${esc(toolErr.map((e) => `${e.id || e.name || '?'}: ${e.reason}`).join('\n'))}">工具未注册 ${toolErr.length}</span>` : ''}
-          </div>
-          <div class="hint">${esc(it.detail || '')}</div>
-          ${(it.problems || []).length ? `<div class="hint bad">${esc(it.problems.join('；'))}</div>` : ''}
-          ${pluginSettingsRow(it, 'skill')}
-        </div>
-      </section>`;
-    }).join('')}</div>`;
-  },
-  skillScope: () => `<div class="f">
-      <div class="scroll-y"><table class="tbl">
-        <colgroup><col style="width:32%"><col></colgroup>
-        <thead><tr><th>类型</th><th>谁决定 / 怎么生效</th></tr></thead>
-        <tbody>
-          <tr><td class="mono">Skill（skills/）</td><td>注册工具 + prompt.sections；<b>模型判断</b>是否调用，可能一直不用。</td></tr>
-          <tr><td class="mono">插件（plugins/）</td><td>导出 hooks；<b>核心</b>在固定时机调用，条件满足必跑。</td></tr>
-          <tr><td class="mono">知识包 / 角色卡</td><td><code>custom.skills</code> 里的提示词数据，不是代码扩展，不注册工具。</td></tr>
-        </tbody>
-      </table></div>
-      <div class="hint">Skill 与插件共用同一套加载器、工具表、开关与生命周期；目录只是语义标签。Skill 带 hooks 会被标成“混合型”，但不会静默丢弃。</div>
-    </div>`,
-  pluginScope: () => `<div class="f">
-      <div class="scroll-y"><table class="tbl">
-        <colgroup><col style="width:34%"><col></colgroup>
-        <thead><tr><th>它想做的事</th><th>结果</th></tr></thead>
-        <tbody>
-          <tr><td class="mono">send_msg / send_*</td><td><span class="tag bad">一律拒绝</span> 并告警 —— 发言只能走宿主给的 ctx.sender，插件不许自己往外发</td></tr>
-          <tr><td>只读动作（15 个白名单）</td><td><span class="tag ok">放行</span> 例如取群信息、取历史消息</td></tr>
-          <tr><td>其余任何动作</td><td><span class="tag bad">拒绝</span> 默认关，不是默认开</td></tr>
-        </tbody></table></div>
-      <div class="hint">这套边界在 <code>src/ext-scope.js</code> 里是<b>闭集合</b>：要加新动作必须去改那一处并补契约，不能在这里加一行 if。</div>
-    </div>`,
-  /* `faces` 渲染器已于 2026-10-17 删除：收藏表情随「发 QQ 表情」能力一起下线。 */
-  /**
-   * 群友档案：**真数据**（2026-10-02 起）。
-   * 数据源 `data/memory/people/*.json`（插件 群友印象 在写），
-   * 由 `panel/lib/bot-data.js` 投影：一档一文件，坏文件只跳过它自己。
-   * ⚠️ 那一栏显示的是**真实 QQ 号**（这一页是靠它认人的，脱敏之后就没法用了）。
-   *    页面与面板都只在本机；别把它截图发出去。
-   */
   people: (x) => {
     const p = (S.state || DEMO).people;
     if (!p) return '<div class="empty">这一版的面板还没下发群友档案（需要重启面板加载新代码）。</div>';
@@ -5383,10 +5150,6 @@ const RENDER = {
   },
   importFile: () => `<div class="f"><input type="file" accept=".json" data-a="import.file" />
       <div class="hint">选一个之前下载的 JSON。导入前会先弹一份变更清单 —— 确认了才载入页面。</div></div>`,
-  importZip: (x) => `<div class="f">${x.label ? lb(x) : ''}<div class="f-inline">
-      <input type="file" accept=".zip,application/zip" data-a="zip.file" data-k="${esc(x.kind || 'plugin')}" class="grow" />
-      <button class="btn btn-ghost" data-a="zip.pick" data-k="${esc(x.kind || 'plugin')}">选文件并安装</button></div>
-      <div class="hint">顶层必须是一个目录。${x.kind === 'skill' ? 'Skill 页只接受含 <code>skill.json</code> 的包；纯提示词 Skill 仍需 <code>index.js</code>（写 <code>export {}</code>）。' : '插件页只接受含 <code>plugin.json</code> 的包。'}<b>装完默认不启用</b> —— 在列表里勾上它，然后重启机器人。</div></div>`,
   protoInfo: () => `<div class="f">
       <div class="kv"><dt>这是什么</dt><dd>控制台前端的<b>初步重构原型</b>：整页由 <code>panel/next/schema.js</code> 一份数据驱动。</dd></div>
       <div class="kv"><dt>怎么加减</dt><dd>加页面 / 卡片 / 控件只改 schema；加控件类型才要动 <code>app.js</code> 的 RENDER 表。</dd></div>
@@ -7386,20 +7149,6 @@ function sleepVal(k, v) {
 /* 配置里的命名空间是复数（extensions.plugins / extensions.skills），
    而 kind 是单数（plugin / skill）—— 两套字面量只在这个函数里换算一次。 */
 const extNsOf = (kind) => (kind === 'skill' ? 'skills' : 'plugins');
-/* pluginSettingsRow 的独立实现（避免 RENDER 表里塞函数当键） */
-function pluginSettingsRow(it, kind = 'plugin') {
-  const spec = Array.isArray(it.settingsSpec) ? it.settingsSpec : [];
-  if (!spec.length) return '';
-  const body = spec.map((f) => pluginSettingHtml(it.id, f, kind)).join('');
-  /* 设置项多的包（实测最多 7 项）默认收起：一个包就把页面撑满，
-     会让"下面还有别的包"这件事看不见。≤3 项的直接摊开，省一次点击。 */
-  if (spec.length > 3) {
-    return `<details class="det"><summary>设置（共 ${spec.length} 项，改完点底部「保存并生效」）</summary>
-      <div class="f" style="gap:6px;padding-top:4px;">${body}</div></details>`;
-  }
-  return `<div class="f" style="gap:6px;">
-    <span class="hint">设置（共 ${spec.length} 项，改完点底部「保存并生效」）</span>${body}</div>`;
-}
 /** 把一次 `plugin.set` 控件变化写进草稿。click 不写、change 才写 —— 见调用点的注释。 */
 function commitPluginSetting(el, p) {
   const [kindRaw, extId, key] = String(p || '').split('|');
@@ -8162,10 +7911,10 @@ const INLINE_ACTIONS = [
   'sessions.load', 'sessions.open', 'chats.load', 'chats.open',
   'logs.load', 'audit.load', 'packages.load',
   'route.up', 'route.down', 'route.del', 'route.add', 'route.reset', 'route.undo', 'route.clean',
-  'plugin.toggle', 'plugin.set', 'memlist.set', 'memlist.del', 'memlist.add',
+  'plugin.set', 'memlist.set', 'memlist.del', 'memlist.add',
   'sched.set', 'skill.set', 'skill.del', 'cg.fill',
   'holidays.add', 'holidays.del', 'holidays.kind', 'holidays.ren',
-  'import.file', 'zip.file', 'zip.pick',
+  'import.file',
   'field', 'field-local', 'feat', '__modal', '__modal-close',
 ];
 
@@ -8322,17 +8071,6 @@ document.addEventListener('click', async (ev) => {
     || a === 'route.reset' || a === 'route.undo' || a === 'route.clean') {
     return routeAction(a, p);
   }
-  if (a === 'plugin.toggle') {
-    const kind = el?.dataset?.k === 'skill' ? 'skill' : 'plugin';
-    const path = `extensions.${extNsOf(kind)}.enabled`;
-    const arr = draftArr(path);
-    const i = arr.indexOf(p);
-    if (i >= 0) arr.splice(i, 1); else arr.push(p);
-    touchC(path);
-    markDirty(); paintPage(false);
-    toast(i >= 0 ? `已取消勾选 ${p}` : `已勾选 ${p} —— 点底部「保存并生效」，然后重启机器人才生效`, 'warn');
-    return;
-  }
   if (a === 'memlist.set' || a === 'memlist.del' || a === 'memlist.add') return memListAction(a, p, el);
   if (a === 'sched.set') return schedAction(p, el);
   if (a === 'holidays.add') {
@@ -8358,8 +8096,6 @@ document.addEventListener('click', async (ev) => {
   }
   if (a === 'skill.set' || a === 'skill.del') return skillAction(a, p, el);
   if (a === 'import.file') { /* 由 change 事件处理 */ return; }
-  if (a === 'zip.file') { /* 由 change 事件处理 */ return; }
-  if (a === 'zip.pick') { document.querySelector('[data-a="zip.file"]')?.click(); return; }
   if (a === 'export.all') return doExport('all');
   if (a === 'export.diag') return doExport('diag', 'zip');
   if (a.startsWith('export.')) return doExport(a.slice(7));
@@ -8396,10 +8132,14 @@ window.addEventListener('message', (ev) => {
   }
   /* 本版控制台只有 `installZip(file)` 这条老导入口（弹窗式的导入/创造提示词
      属于插件系统那一批，尚未合并）——所以这里按**本版实际有的能力**接线：
-     导入 = 拉起 ZIP 选择器后交给 installZip；创造 = 说清楚为什么暂时不可用。 */
+     导入 = 拉起 ZIP 选择器后交给 installZip；创造 = 说清楚为什么暂时不可用。
+     工厂的「更新」会带 overwrite + expectId：只覆盖它点名的那个扩展。 */
   if (d.action === 'plugin.import.file' && d.file instanceof Blob) {
     const f = new File([d.file], String(d.name || 'plugin.zip'), { type: 'application/zip' });
-    installZip(f, d.kind === 'skill' ? 'skill' : 'plugin');
+    installZip(f, d.kind === 'skill' ? 'skill' : 'plugin', {
+      overwrite: d.overwrite === true,
+      expectId: d.expectId,
+    });
     return;
   }
   if (d.action === 'plugin.import') {
@@ -8502,7 +8242,6 @@ document.addEventListener('change', async (ev) => {
   }
   if (a === 'plugin.set') { commitPluginSetting(el, el.dataset.p); return; }
   if (a === 'import.file') { const f = el.files?.[0]; if (f) previewImport(f); return; }
-  if (a === 'zip.file') { const f = el.files?.[0]; if (f) installZip(f, el.dataset.k === 'skill' ? 'skill' : 'plugin'); return; }
 });
 
 /** 手动记忆那一行的输入框：按回车等于点「添加」。它**不是一个动作**（没有 data-a），

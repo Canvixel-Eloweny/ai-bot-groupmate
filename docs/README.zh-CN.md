@@ -217,7 +217,7 @@ copy config.example.json config.json
 | 执行 | 钩子命中就必跑 | 由模型判断是否调用工具 |
 | 提示词 | 可选扩展指引 | 可选 `skillExt` 段 |
 | 白名单 | `custom.extensions.plugins.enabled` | `custom.extensions.skills.enabled` |
-| 控制台页 | 工厂 → 插件管理 | 工厂 → Skill |
+| 控制台页 | 工厂 → 插件技能工厂（插件模式） | 工厂 → 插件技能工厂（Skill 模式） |
 
 最小纯提示词 Skill 只有两个文件：
 

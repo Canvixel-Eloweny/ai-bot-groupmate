@@ -151,8 +151,8 @@ try {
       id, name: `QA ${id}`, version: '1.0.0', apiVersion: 1, entry: 'index.js',
       capabilities: [], permissions: [], requires: [],
       category: id === 'qa01' ? '工具' : (id === 'qa02' ? '数据' : ''),
-      settings: id === 'qa01' ? { mode: 'def' } : {},
-      configSchema: id === 'qa01' ? { mode: { label: '模式', description: '测试用设置' } } : {},
+      settings: id === 'qa01' ? { mode: 'def', verbose: false } : {},
+      configSchema: id === 'qa01' ? { mode: { label: '模式', description: '测试用设置' }, verbose: { label: '详细日志' } } : {},
     }, null, 2), 'utf8');
     fs.writeFileSync(path.join(dir, 'index.js'), 'export function setup() {}\n', 'utf8');
   }
@@ -673,7 +673,7 @@ try {
   ok(blankPages.length === 0,
     `没有空白页（工厂三页改为 frame 页，实得 ${blankPages.map((x) => x.label).join(' · ') || '无'}）`);
   ok(frames.length === 3 && frameLabels.includes('工厂/视觉工厂')
-    && frameLabels.includes('工厂/人设工厂') && frameLabels.includes('工厂/插件工厂'),
+    && frameLabels.includes('工厂/人设工厂') && frameLabels.includes('工厂/插件技能工厂'),
     `工厂三页都挂 frame（实得 ${frameLabels.join(' · ') || '无'}）`);
   ok(errored.length === 0, `逐页点击零运行时错误（${errored.length} 页有错）`);
   if (errored.length) for (const b of errored.slice(0, 6)) console.log(`     ✗ ${b.label} · 新增 ${b.newErrs} 条错误`);
@@ -684,12 +684,12 @@ try {
   const counts = r.map((x) => `${x.label.trim()}=${x.cards}`).join(' ');
   console.log(`  每页卡片数：${counts}`);
 
-  /* ── 工厂五页（2026-10-27 · 二级导航驱动）──────────────────────────────
+  /* ── 工厂三页（2026-10-31 · 二级导航驱动）──────────────────────────────
      工厂不再是顶栏圆钮 + 空白占位：三个二级页各挂一份常驻 iframe，
-     由 #page[data-frame] 选帧；另有插件管理 / Skill 两个普通页。这里必须验：
+     由 #page[data-frame] 选帧；插件技能工厂内含插件 / Skill 两种模式。这里必须验：
      五页都在、导航真的能点、导航压在工厂之上、轮询不重载也不重播入场、
      切帧不重载、离开收起、重进保留，以及从普通页切回 frame 页时鼠标在导航上不收回。 */
-  console.log('\n── 工厂五页（二级导航驱动）──');
+  console.log('\n── 工厂三页（二级导航驱动）──');
   /* 让真实指针先离开导航：下面的首轮自动上收要求鼠标不在 dock 上。 */
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 20, y: 600 });
   const fx = await evalJs(`(async () => {
@@ -817,10 +817,11 @@ try {
     hot.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }));
     await sleep(420);
 
-    /* 回归（2026-10-28）：从普通页（插件管理）切回 frame 页会重新武装 navAuto；
+    /* 回归（2026-10-31）：从工厂域外的普通页切回 frame 页会重新武装 navAuto；
        此时鼠标仍在二级栏上，120ms 后不许收回。 */
-    const normal = subOf('插件管理');
-    if (!normal) return { err: '找不到插件管理页' };
+    groups()[0].click(); await sleep(650);
+    const normal = subOf('总览') || subs()[0];
+    if (!normal) return { err: '找不到普通页' };
     normal.click(); await sleep(450);
     const dockRect = dock.getBoundingClientRect();
     dock.dispatchEvent(new PointerEvent('pointermove', {
@@ -828,6 +829,9 @@ try {
       clientX: dockRect.left + dockRect.width / 2,
       clientY: dockRect.top + dockRect.height / 2,
     }));
+    const factoryGrp = groups().find((b) => (b.title || b.textContent || '').includes('工厂'));
+    if (!factoryGrp) return { err: '切回工厂时找不到工厂域' };
+    factoryGrp.click(); await sleep(650);
     subOf('视觉工厂').click(); await sleep(3000);
     const stayAfterRearm = !document.body.classList.contains('nav-auto-hidden');
     dock.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true, relatedTarget: document.body }));
@@ -859,8 +863,8 @@ try {
       personaLoads: stP.frames.persona.loadCount,
     };
 
-    const subG = subOf('插件工厂');
-    if (!subG) return { err: '找不到插件工厂页', labels, framesAttr };
+    const subG = subOf('插件技能工厂');
+    if (!subG) return { err: '找不到插件技能工厂页', labels, framesAttr };
     subG.click();
     let gFrame = null;
     for (let i = 0; i < 300; i++) {
@@ -958,9 +962,9 @@ try {
     ok(!fx.shownState.body && !fx.shownState.inert
       && fx.shownState.visibility === 'visible' && Number(fx.shownState.opacity) >= 0.99,
     `热区呼出导航（${JSON.stringify(fx.shownState)}）`);
-    ok(fx.labels.length === 5 && fx.labels.join('|') === '视觉工厂|人设工厂|插件工厂|插件管理|Skill'
+    ok(fx.labels.length === 3 && fx.labels.join('|') === '视觉工厂|人设工厂|插件技能工厂'
       && fx.framesAttr.filter(Boolean).join('|') === 'visual-factory.html|persona-factory.html|plugin-factory.html',
-    `工厂二级栏 = 三 frame + 插件管理 / Skill（${JSON.stringify({ labels: fx.labels, frames: fx.framesAttr })}）`);
+    `工厂二级栏 = 三 frame（插件技能工厂内含插件/Skill 模式）（${JSON.stringify({ labels: fx.labels, frames: fx.framesAttr })}）`);
     ok(fx.open.bodyFrame && fx.open.dataFrame === 'visual-factory.html'
       && /page--frame/.test(fx.open.pageCls) && fx.open.pageText === 0 && fx.open.pageCards === 0
       && fx.open.hostVis === 'visible' && fx.open.hostAria === 'false'
@@ -996,7 +1000,7 @@ try {
     `人设 → 插件只切帧不重载（${JSON.stringify(fx.plugin)}）`);
     ok(fx.tree.cats.includes('工具') && fx.tree.cats.includes('数据') && fx.tree.cats.includes('other')
       && fx.tree.labels.includes('其他'),
-    `插件工厂分类树来自清单 category（${JSON.stringify(fx.tree.cats)} / ${JSON.stringify(fx.tree.labels)}）`);
+    `插件技能工厂分类树来自清单 category（${JSON.stringify(fx.tree.cats)} / ${JSON.stringify(fx.tree.labels)}）`);
     ok(/选择文件夹/.test(fx.tree.folderText) && !/不支持/.test(fx.tree.folderText),
       `文件夹导入不再写死不支持（${JSON.stringify(fx.tree.folderText)}）`);
     ok(fx.tree.createOpen && fx.tree.createFields >= 7,
@@ -1013,37 +1017,6 @@ try {
       && fx.reHidden && !fx.re.navHidden && !fx.re.navInert,
     `重进工厂落视觉工厂、同一 iframe 不重载，且再次上收后可呼出（${JSON.stringify({ re: fx.re, reHidden: fx.reHidden })}）`);
   }
-
-  /* ── 插件设置中文名（2026-10-28）──────────────────────────────────────
-     前端早就是 f.label || f.key；后端把 configSchema.label 透传之后，
-     qa01 的设置区必须真的出现「模式」，而不是原始键名 mode。 */
-  console.log('\n── 插件设置中文名 ──');
-  const labelUi = await evalJs(`(async () => {
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
-      window.__navAutoHide.reveal();
-      await sleep(420);
-    }
-    const groups = () => [...document.querySelectorAll('#nav1 .grp')];
-    const subs = () => [...document.querySelectorAll('#nav2 .sub')];
-    const grp = groups().find((b) => (b.title || b.textContent || '').includes('工厂'));
-    if (!grp) return { error: '找不到工厂域' };
-    grp.click();
-    await sleep(600);
-    const sub = subs().find((b) => (b.title || b.textContent || '').includes('插件管理'));
-    if (!sub) return { error: '找不到插件管理页' };
-    sub.click();
-    await sleep(1400);
-    const page = document.getElementById('page');
-    const text = page ? page.textContent || '' : '';
-    return {
-      hasLabel: text.includes('模式'),
-      hasCard: !!page.querySelector('[data-plugin="qa01"]'),
-      setting: !!page.querySelector('[data-p="plugin|qa01|mode"]'),
-    };
-  })()`);
-  ok(labelUi && !labelUi.error && labelUi.hasCard && labelUi.setting && labelUi.hasLabel,
-    `扩展设置项显示中文名（${JSON.stringify(labelUi)}）`);
 
   /* ── 人设域六页 + MBTI 四轴滑块（2026-10-25）──────────────────────────
      回复设置页已按维护者决定移出六页 IA（后续重做），所以这里不再钉 `.tkx`。
@@ -3051,69 +3024,132 @@ try {
     ok(false, `制作站冒烟失败：${e && e.message ? e.message : e}`);
   }
 
-  /* ── 插件管理页：上限 / 运行期可观测 / 设置保存与回填（2026-10-23）──────────
-     上面的制作站已经跳到了 `lab-liquid-glass.html`，先回控制台再进工厂 → 插件管理。 */
+  /* ── 插件技能工厂：管理模式 / 统计 / 设置保存 / Skill 模式（2026-10-31）────
+     旧插件管理页与 Skill 页已并入工厂 iframe；这里必须在真渲染里验证：
+     模式开关、四统计、管理视图清单/设置/上限、保存回填、Skill 预览与开关。 */
   try {
     await send('Page.navigate', { url: `${BASE}/` });
     await sleep(1200);
-    await evalJs(`(() => {
-      const fac = [...document.querySelectorAll('#nav1 .grp')].find((x) => (x.getAttribute('aria-label') || '').startsWith('工厂'));
-      fac?.click();
-      return true;
-    })()`);
-    await sleep(350);
-    await evalJs(`(() => { window.__navAutoHide && window.__navAutoHide.reveal(); return 1; })()`);
-    await sleep(420);
-    const went = await evalJs(`(() => {
-      const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /插件管理/.test(x.title || x.textContent || ''));
-      if (s) s.click();
-      return !!s;
-    })()`);
-    await sleep(450);
-    ok(went, '插件管理页可进入（工厂 → 插件管理）');
 
+    const openFactory = async () => evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
+        window.__navAutoHide.reveal();
+        await sleep(420);
+      }
+      const grp = [...document.querySelectorAll('#nav1 .grp')].find((b) => (b.title || b.textContent || '').includes('工厂'));
+      if (!grp) return { error: 'no-factory-group' };
+      grp.click(); await sleep(620);
+      const sub = [...document.querySelectorAll('#nav2 .sub')].find((b) => (b.title || b.textContent || '').includes('插件技能工厂'));
+      if (!sub) return { error: 'no-plugin-skill-page' };
+      sub.click(); await sleep(900);
+      return { ok: true };
+    })()`);
+
+    const ensureFactoryView = async (kind) => evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+      if (!f || !f.contentDocument) return { error: 'no-iframe' };
+      const doc = f.contentDocument;
+      const mode = doc.querySelector('.mode-btn[data-kind="${kind}"]');
+      if (mode && mode.getAttribute('aria-pressed') !== 'true') {
+        mode.click(); await sleep(250);
+      }
+      const manage = doc.getElementById('manage');
+      if (manage && manage.hidden) {
+        doc.querySelector('[data-act="manage"]')?.click();
+        await sleep(350);
+      }
+      return { ok: true };
+    })()`);
+
+    const of = await openFactory();
+    ok(of && of.ok, `插件技能工厂可进入（${of?.error || 'ok'}）`);
+    let factoryReady = false;
+    for (let i = 0; i < 60; i += 1) {
+      factoryReady = await evalJs(`(() => {
+        const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+        return !!(f && f.contentDocument && f.contentDocument.querySelector('.app'));
+      })()`);
+      if (factoryReady) break;
+      await sleep(200);
+    }
+    ok(factoryReady === true, '插件技能工厂 iframe 已就绪');
+
+    await ensureFactoryView('plugin');
+    await sleep(500);
     const plug = await evalJs(`(() => {
-      const page = document.getElementById('page');
-      const text = page ? (page.textContent || '') : '';
-      const cards = [...document.querySelectorAll('.pcard')];
-      const tags = [...document.querySelectorAll('.pcard .tag')];
+      const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+      const doc = f.contentDocument;
+      const text = doc.body.textContent || '';
+      const items = [...doc.querySelectorAll('#mList .m-item')];
+      const tags = [...doc.querySelectorAll('#mList .m-item .tag')];
       const titles = tags.map((t) => t.title || '');
       return {
-        cards: cards.length,
+        cards: items.length,
         text,
         overTags: tags.filter((t) => /超上限/.test(t.textContent || '')).length,
         emptyTags: tags.filter((t) => /空载/.test(t.textContent || '')).length,
         bogus: titles.some((t) => /bogus-hook/.test(t)),
         toolErr: titles.some((t) => /工具数已达上限/.test(t)),
-        plugMax: document.querySelector('[data-id="plug.max"]')?.value,
-        toolMax: document.querySelector('[data-id="tool.max"]')?.value,
+        max: doc.querySelector('[data-limit="max"]')?.value,
+        toolsMax: doc.querySelector('[data-limit="toolsMax"]')?.value,
+        stats: [...doc.querySelectorAll('#mStats .stat')].map((s) => s.textContent.trim()),
+        savebar: !!doc.getElementById('pfSavebar'),
+        hasLabel: /模式/.test(text),
+        setting: !!doc.querySelector('[data-set="plugin|qa01|mode"]'),
       };
     })()`);
-    ok(plug.cards === 25, `插件板数 = 25（实际 ${plug.cards}）`);
-    ok(/超过上限\s*5|超上限\s*5/.test(plug.text.replace(/\s+/g, ' ')), '总览显示超上限 5');
-    ok(/已启用\s*25\s*\/\s*上限\s*20/.test(plug.text.replace(/\s+/g, ' ')), '总览显示「已启用 25 / 上限 20」');
-    /* 工具额度是**全局共享**的（插件与 Skill 同一张工具表）⇒ 这里读的是 21（20 插件工具 + 1 Skill 工具）。 */
-    ok(/工具\s*21\s*\/\s*上限\s*64/.test(plug.text.replace(/\s+/g, ' ')), '总览显示「工具 21 / 上限 64」');
-    ok(plug.overTags >= 5, `至少 5 张卡标了超上限（实际 ${plug.overTags}）`);
-    ok(plug.emptyTags >= 1, '空载卡有显式标记');
-    ok(plug.bogus, '钩子未挂的原因出现在卡片 title 上');
-    ok(plug.toolErr, '工具注册失败的原因出现在卡片 title 上');
-    ok(plug.plugMax === '20' && plug.toolMax === '64', `两个上限控件回显 20 / 64（实际 ${plug.plugMax} / ${plug.toolMax}）`);
+    ok(plug.cards === 25, `插件技能工厂管理清单 = 25（实际 ${plug.cards}）`);
+    ok(plug.stats.length === 4 && plug.stats.some((s) => /失效\s*5/.test(s)),
+      `四个统计标签在位，失效 = 5（实际 ${JSON.stringify(plug.stats)}）`);
+    ok(/已启用\s*27\s*\/\s*27/.test(plug.text.replace(/\s+/g, ' ')), '统计显示「已启用 27/27」');
+    ok(plug.overTags >= 5, `至少 5 个条目标了超上限（实际 ${plug.overTags}）`);
+    ok(plug.emptyTags >= 1, '空载条目有显式标记');
+    ok(plug.bogus, '钩子未挂的原因出现在 tag title 上');
+    ok(plug.toolErr, '工具注册失败的原因出现在 tag title 上');
+    ok(plug.max === '20' && plug.toolsMax === '64', `两个上限控件回显 20 / 64（实际 ${plug.max} / ${plug.toolsMax}）`);
+    ok(plug.savebar === true, '保存条在位');
+    ok(plug.hasLabel && plug.setting, `扩展设置项显示中文名「模式」（${JSON.stringify({ hasLabel: plug.hasLabel, setting: plug.setting })}）`);
+    const manageLayout = await evalJs(`(() => {
+      const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+      const doc = f.contentDocument;
+      const grid = doc.querySelector('#mList .m-item .set-grid');
+      const item = doc.querySelector('#mList .m-item');
+      const toggle = doc.querySelector('#mList .m-item .set-toggle input');
+      const limits = doc.getElementById('limits');
+      const cols = (el) => el ? getComputedStyle(el).gridTemplateColumns.split(/\\s+/).filter(Boolean).length : 0;
+      return {
+        gridCols: cols(grid), limitCols: cols(limits),
+        radius: item ? parseFloat(getComputedStyle(item).borderTopLeftRadius) || 0 : 0,
+        toggle: toggle ? [getComputedStyle(toggle).width, getComputedStyle(toggle).height] : null,
+        fields: doc.querySelectorAll('#mList .m-item .set-field, #mList .m-item .set-toggle').length,
+      };
+    })()`);
+    ok(manageLayout && manageLayout.gridCols === 2 && manageLayout.limitCols === 3,
+      `管理视图设置双列、全局参数三列（${JSON.stringify(manageLayout)}）`);
+    ok(manageLayout && manageLayout.radius >= 10 && manageLayout.toggle
+      && manageLayout.toggle[0] === '30px' && manageLayout.toggle[1] === '18px',
+      `插件设置卡片圆角与开关尺寸（radius=${manageLayout?.radius} · toggle=${JSON.stringify(manageLayout?.toggle)}）`);
+    ok(manageLayout && manageLayout.fields >= 2, `设置项按字段卡片渲染（${manageLayout?.fields} 项）`);
 
-    // 设置保存：输入 → change → 保存 → 读临时根 config.json；reload 后回显。
     const saved = await evalJs(`(async () => {
-      const inp = document.querySelector('[data-p="plugin|qa01|mode"]');
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+      const doc = f.contentDocument;
+      const inp = doc.querySelector('[data-set="plugin|qa01|mode"]');
       if (!inp) return { error: 'no-input' };
-      inp.focus(); inp.value = 'abc';
+      inp.value = 'abc';
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
       inp.dispatchEvent(new Event('change', { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 150));
-      const bar = document.getElementById('savebar');
-      const dirty = !!bar && !bar.hidden && /1 处改动/.test(bar.textContent || '');
-      document.querySelector('[data-a="draft-save"]')?.click();
-      await new Promise((r) => setTimeout(r, 1500));
+      await sleep(200);
+      const bar = doc.getElementById('pfSavebar');
+      const dirty = !!bar && !bar.hidden && /1 项未保存/.test(bar.textContent || '');
+      doc.getElementById('pfSave')?.click();
+      await sleep(1600);
       return { dirty, errs: (window.__errs || []).length };
     })()`);
-    ok(saved && !saved.error && saved.dirty, `输入后保存条出现「1 处改动」（${saved?.error || 'ok'}）`);
+    ok(saved && !saved.error && saved.dirty, `输入后保存条出现「1 项未保存」（${saved?.error || 'ok'}）`);
     let written = null;
     try { written = JSON.parse(fs.readFileSync(path.join(USERDATA, 'config.json'), 'utf8')); } catch { /* 读不到就红 */ }
     ok(written?.custom?.extensions?.plugins?.settings?.qa01?.mode === 'abc',
@@ -3121,40 +3157,38 @@ try {
 
     await send('Page.reload');
     await sleep(1400);
-    await evalJs(`(() => {
-      const fac = [...document.querySelectorAll('#nav1 .grp')].find((x) => (x.getAttribute('aria-label') || '').startsWith('工厂'));
-      fac?.click();
-      return true;
-    })()`);
-    await sleep(350);
-    await evalJs(`(() => { window.__navAutoHide && window.__navAutoHide.reveal(); return 1; })()`);
-    await sleep(420);
-    await evalJs(`(() => {
-      const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /插件管理/.test(x.title || x.textContent || ''));
-      if (s) s.click(); return !!s;
-    })()`);
-    await sleep(450);
-    /* 刷新后首次 /api/state 实测可达 ~1.5s（测试根 25 插件、状态包 ~89KB）。
-       固定等待会让控件还没落位就被断言；轮询到控件出现为止，判据本身不变。 */
+    await openFactory();
+    await ensureFactoryView('plugin');
     for (let i = 0; i < 50; i += 1) {
-      const ready = await evalJs(`!!document.querySelector('[data-p="plugin|qa01|mode"]')`);
+      const ready = await evalJs(`(() => {
+        const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+        return !!(f && f.contentDocument && f.contentDocument.querySelector('[data-set="plugin|qa01|mode"]'));
+      })()`);
       if (ready) break;
       await sleep(300);
     }
-    const back = await evalJs(`document.querySelector('[data-p="plugin|qa01|mode"]')?.value ?? ''`);
+    const back = await evalJs(`(() => {
+      const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+      return f && f.contentDocument ? (f.contentDocument.querySelector('[data-set="plugin|qa01|mode"]')?.value ?? '') : 'no-iframe';
+    })()`);
     ok(back === 'abc', `刷新后输入框回显 abc（实际 ${JSON.stringify(back)}）`);
-
-    /* 2026-10-23：预算控件必须真的在页面上 + 能保存回临时根（不是只在 schema 里声明）。 */
-    const hook0 = await evalJs(`document.querySelector('[data-id="plug.hookTimeout"]')?.value ?? ''`);
+    const hook0 = await evalJs(`(() => {
+      const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+      return f && f.contentDocument ? (f.contentDocument.querySelector('[data-limit="hookTimeoutMs"]')?.value ?? '') : '';
+    })()`);
     ok(hook0 === '5000', `钩子超时控件回显 5000（实际 ${JSON.stringify(hook0)}）`);
     const hookSaved = await evalJs(`(async () => {
-      const el = document.querySelector('[data-id="plug.hookTimeout"]');
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+      const doc = f.contentDocument;
+      const el = doc.querySelector('[data-limit="hookTimeoutMs"]');
       if (!el) return { error: 'no-hook-timeout' };
       el.value = '6000';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 150));
-      document.querySelector('[data-a="draft-save"]')?.click();
-      await new Promise((r) => setTimeout(r, 1500));
+      await sleep(200);
+      doc.getElementById('pfSave')?.click();
+      await sleep(1600);
       return { ok: true };
     })()`);
     ok(hookSaved && !hookSaved.error, `钩子超时输入并保存（${hookSaved?.error || 'ok'}）`);
@@ -3163,38 +3197,86 @@ try {
     ok(writtenHook?.custom?.extensions?.hookTimeoutMs === 6000,
       `保存后临时根 config.json 里 hookTimeoutMs=6000（实际 ${JSON.stringify(writtenHook?.custom?.extensions?.hookTimeoutMs)}）`);
 
-    /* ── Skill 页（2026-10-28 · Plugin/Skill 综合优化；现在位于工厂 → Skill）────
-       与插件页共用卡片/开关/设置行；额外要能解释纯提示词型、工具型与模型可见预览。 */
-    await evalJs(`(() => {
-      const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /Skill/i.test(x.title || x.textContent || ''));
-      if (s) s.click(); return !!s;
-    })()`);
-    await sleep(450);
-    const sk = await evalJs(`(() => {
-      const page = document.getElementById('page');
-      const text = page ? (page.textContent || '') : '';
+    const browseLayout = await evalJs(`(() => {
+      const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+      const doc = f.contentDocument;
+      doc.querySelector('[data-act="browse"]')?.click();
+      const list = doc.querySelector('#list .list');
+      const item = doc.querySelector('#list .item');
+      if (!list || !item) return { error: 'no-list' };
+      const cs = getComputedStyle(list);
+      const ci = getComputedStyle(item);
       return {
-        cards: document.querySelectorAll('.pcard').length,
+        cols: cs.gridTemplateColumns.split(/\\s+/).filter(Boolean).length,
+        radius: parseFloat(ci.borderTopLeftRadius) || 0,
+        count: doc.querySelectorAll('#list .item').length,
+      };
+    })()`);
+    ok(browseLayout && !browseLayout.error && browseLayout.cols === 2,
+      `浏览列表为两列（${JSON.stringify(browseLayout)}）`);
+    ok(browseLayout && browseLayout.radius >= 10 && browseLayout.count === 25,
+      `列表卡片有圆角且 25 个条目都在（radius=${browseLayout?.radius} · count=${browseLayout?.count}）`);
+
+    const updUi = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+      const doc = f.contentDocument;
+      doc.querySelector('[data-act="manage"]')?.click();
+      await sleep(250);
+      const b = doc.querySelector('#manage [data-act="update"]');
+      if (!b) return { error: 'no-update' };
+      b.click();
+      await sleep(250);
+      const out = {
+        kindHidden: !!doc.getElementById('impKindWrap')?.hidden,
+        hasKind: !!doc.getElementById('impKind'),
+        title: doc.getElementById('impDropTitle')?.textContent || '',
+        folder: !!doc.getElementById('impFolder'),
+        zip: !!doc.getElementById('impZip'),
+      };
+      doc.querySelector('[data-imp="close"]')?.click();
+      doc.querySelector('[data-act="import"]')?.click();
+      await sleep(250);
+      out.installKindVisible = !doc.getElementById('impKindWrap')?.hidden;
+      out.installKindEnabled = !doc.getElementById('impKind')?.disabled;
+      doc.querySelector('[data-imp="close"]')?.click();
+      return out;
+    })()`);
+    ok(updUi && !updUi.error && updUi.kindHidden && updUi.hasKind,
+      `更新弹窗不再显示不可点的类型下拉（${JSON.stringify(updUi)}）`);
+    ok(updUi && /ZIP 或文件夹/.test(updUi.title) && updUi.folder && updUi.zip,
+      '更新弹窗同时支持 ZIP 与文件夹');
+    ok(updUi && updUi.installKindVisible && updUi.installKindEnabled,
+      '导入弹窗的类型下拉仍然可见可用（没有误伤安装模式）');
+
+    await ensureFactoryView('skill');
+    await sleep(500);
+    const sk = await evalJs(`(() => {
+      const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+      const doc = f.contentDocument;
+      const text = doc.body.textContent || '';
+      return {
+        cards: doc.querySelectorAll('#mList .m-item').length,
         text,
         promptOnly: /提示词型/.test(text),
         toolBadge: /工具\\s*1/.test(text),
         preview: text.includes('sk01 的提示词正文。') && text.includes('sk02__ping'),
-        empty: /还没有装 Skill/.test(text),
+        empty: /还没有装\\s*Skill/.test(text),
       };
     })()`);
-    ok(sk.cards === 2, `Skill 板数 = 2（实际 ${sk.cards}）`);
-    ok(sk.promptOnly, '纯提示词 Skill 卡显示「提示词型」');
+    ok(sk.cards === 2, `Skill 管理清单 = 2（实际 ${sk.cards}）`);
+    ok(sk.promptOnly, '纯提示词 Skill 显示「提示词型」');
     ok(sk.toolBadge, '工具型 Skill 显示「工具 1」');
     ok(sk.preview, 'Skill 预览含提示词正文与真实工具名');
     ok(!sk.empty, '有 Skill 时不应显示空态');
     const skSaved = await evalJs(`(async () => {
-      const el = document.querySelector('[data-a="plugin.toggle"][data-k="skill"][data-p="sk01"]');
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+      const doc = f.contentDocument;
+      const el = doc.querySelector('[data-toggle="skill|sk01"]');
       if (!el) return { error: 'no-skill-toggle' };
-      /* 真用户路径是 click（浏览器随后才发 change）；面板的 toggle 分支挂在 click 上。 */
       el.click();
-      await new Promise((r) => setTimeout(r, 150));
-      document.querySelector('[data-a="draft-save"]')?.click();
-      await new Promise((r) => setTimeout(r, 1500));
+      await sleep(1600);
       return { ok: true };
     })()`);
     ok(skSaved && !skSaved.error, `Skill 开关可写并保存（${skSaved?.error || 'ok'}）`);
@@ -3203,13 +3285,14 @@ try {
     ok(Array.isArray(writtenSk?.custom?.extensions?.skills?.enabled)
       && !writtenSk.custom.extensions.skills.enabled.includes('sk01'),
       `保存后 extensions.skills.enabled 不含 sk01（实际 ${JSON.stringify(writtenSk?.custom?.extensions?.skills?.enabled)}）`);
-
     await evalJs(`(() => {
+      window.__navAutoHide?.reveal?.();
       const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => /记忆/.test(x.title || x.textContent || ''));
       if (g) g.click(); return !!g;
     })()`);
     await sleep(400);
     await evalJs(`(() => {
+      window.__navAutoHide?.reveal?.();
       const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /自我记忆/.test(x.title || x.textContent || ''));
       if (s) s.click(); return !!s;
     })()`);
@@ -3233,6 +3316,7 @@ try {
       `保存后临时根 config.json 里 memory.promptMax=8（实际 ${JSON.stringify(writtenMem?.custom?.memory?.promptMax)}）`);
 
     await evalJs(`(() => {
+      window.__navAutoHide?.reveal?.();
       const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /知识包/.test(x.title || x.textContent || ''));
       if (s) s.click(); return !!s;
     })()`);
@@ -3244,7 +3328,7 @@ try {
     ok(skillBudget && skillBudget.max === '3' && skillBudget.chars === '2000',
       `技能预算控件回显 3 / 2000（实际 ${skillBudget?.max} / ${skillBudget?.chars}）`);
   } catch (e) {
-    ok(false, `插件管理/Skill/记忆/技能页冒烟失败：${e && e.message ? e.message : e}`);
+    ok(false, `插件技能工厂/记忆/技能页冒烟失败：${e && e.message ? e.message : e}`);
   }
   await send('Emulation.clearDeviceMetricsOverride');
 
@@ -3592,5 +3676,5 @@ if (fails.length) {
   console.log(`── ${fails.length} 处问题 ──`);
   process.exit(1);
 }
-console.log('\n✓ 前端 DOM 守卫通过：首屏 + 检查表 + 逐页遍历（含零运行时错误 / 无白屏页）+ 工厂五页（三 frame + 插件管理 / Skill，二级导航驱动 / 导航浮层可点 / 切帧不重载）+ 插话冷却进度条 + 设置层外观/持久化/窄屏入口 + 二级随内容收缩 + 岛内维护域（7 域，30 页）');
+console.log('\n✓ 前端 DOM 守卫通过：首屏 + 检查表 + 逐页遍历（含零运行时错误 / 无白屏页）+ 工厂三页（三 frame；插件技能工厂内含插件/Skill 模式，二级导航驱动 / 导航浮层可点 / 切帧不重载）+ 插话冷却进度条 + 设置层外观/持久化/窄屏入口 + 二级随内容收缩 + 岛内维护域（7 域，28 页）');
 process.exit(0);

@@ -3,12 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Estrella Plugin Factory · 插件工厂</title>
+<title>Estrella Plugin &amp; Skill Factory · 插件技能工厂</title>
 <!--
   ══════════════════════════════════════════════════════════════════════════
-   Estrella Plugin Factory（2026-10-27）
+   Estrella Plugin & Skill Factory（2026-10-31 · 插件管理 + Skill 合并）
    ══════════════════════════════════════════════════════════════════════════
    这是第三个**工厂项目**（与「玻璃工厂」「人设工厂」同级），不是控制台里的插件页。
+   2026-10-31 起，插件管理页与 Skill 页一起并进来：
+     · 左上角模式开关：插件工厂 / Skill 工厂；
+     · 「管理插件与技能」进入管理模式，可改两类扩展的设置与全局参数；
+     · 四个统计标签按插件 + Skill 合并计数。
 
    ── 外观约束（维护者原话：不要拆、不要玻璃板、这是一整块）─────────────────
      · 整面：sidebar 与内容区是**同一张纸**，只有 1px 分隔线，没有卡片、没有阴影、
@@ -19,14 +23,15 @@
    ── 数据 ──────────────────────────────────────────────────────────────────
      同源读取控制台 `/api/state`（token 从父页面 `<meta name="panel-token">` 取）：
        · 分类词表 = 清单 `category` 聚合（服务端下发；缺省归 other）
-       · 插件清单 = `extensions.items`
+       · 扩展清单 = `extensions.items`（plugin + skill）
        · 运行期   = `effective.extensions.items`（钩子 / 工具 / 空载 / 状态）
+       · 设置     = `custom.extensions.{plugins|skills}.settings`
+       · Skill 预览 = `extensionPrompt`
      面板不在线时显示离线态，不编造数据。
 
    ── 动作 ──────────────────────────────────────────────────────────────────
-     「导入插件」支持 ZIP / 文件夹；「创造插件」在本页填表 → 服务端模板生成 →
-     交给控制台走唯一安装接口。开关是**只读**的：写白名单仍走控制台
-     （那里有草稿 / 保存条 / 审计），工厂只负责看清楚。
+     导入/创造仍交给控制台走唯一安装接口；开关与设置直接 POST /api/config；
+     删除走 POST /api/extensions/remove；更新用安装接口的 overwrite=1 + id 校验。
 -->
 <style>
   :root {
@@ -51,16 +56,31 @@
     font: 14px/1.65 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
     -webkit-font-smoothing: antialiased;
   }
-  button { font: inherit; color: inherit; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  [hidden] { display: none !important; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .app { display: grid; grid-template-columns: var(--side) minmax(0, 1fr); height: 100%; }
 
-  /* ── 左栏：品牌 / 入口 / 分类树 ─────────────────────────────────────── */
+  /* ── 左栏：品牌 / 模式 / 入口 / 分类树 ─────────────────────────────── */
   .side { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--line); }
-  .brand { display: flex; align-items: center; gap: 10px; padding: 18px 18px 14px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 18px 18px 12px; }
   .brand svg { width: 26px; height: 26px; flex: none; color: var(--fg); }
   .brand-copy { display: grid; gap: 1px; min-width: 0; }
-  .brand-en { font-size: 10px; font-weight: 700; letter-spacing: .16em; color: var(--fg-3); }
+  .brand-en { font-size: 10px; font-weight: 700; letter-spacing: .12em; color: var(--fg-3); white-space: nowrap; }
   .brand-zh { font-size: 16px; font-weight: 700; line-height: 1.2; letter-spacing: .01em; }
+
+  /* 模式开关：两段 + 滑动指示块（维护者要的「滑动按钮」） */
+  .mode { position: relative; display: grid; grid-template-columns: 1fr 1fr; margin: 0 14px 12px;
+    padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: var(--washed); }
+  .mode-ind { position: absolute; top: 3px; left: 3px; width: calc(50% - 3px); height: calc(100% - 6px);
+    border: 1px solid var(--line); border-radius: 7px; background: var(--bg);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
+    transition: transform .24s cubic-bezier(.2, .8, .3, 1); }
+  .mode[data-kind="skill"] .mode-ind { transform: translateX(100%); }
+  .mode-btn { position: relative; z-index: 1; height: 30px; border: 0; border-radius: 7px;
+    background: none; color: var(--fg-3); cursor: pointer; font-size: 12.5px; }
+  .mode-btn:hover { color: var(--fg); }
+  .mode-btn[aria-pressed="true"] { color: var(--fg); font-weight: 650; }
 
   .acts { display: grid; gap: 8px; padding: 0 14px 14px; }
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -69,6 +89,16 @@
   .btn:hover { background: var(--washed); }
   .btn-primary { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
   .btn-primary:hover { opacity: .9; background: var(--fg); }
+  .manage-btn[aria-pressed="true"] { background: var(--accent-weak); border-color: var(--accent-weak); color: var(--accent); font-weight: 650; }
+
+  /* 悬停换字：前层原动作名，后层彩蛋；同格叠放，不撑高、不移动布局 */
+  .act-swap { overflow: hidden; }
+  .act-stack { display: inline-grid; place-items: center; }
+  .act-front, .act-back { grid-area: 1 / 1; display: block; line-height: 1;
+    transition: transform .28s cubic-bezier(.2, .8, .3, 1), opacity .18s ease; }
+  .act-back { transform: translateY(120%); opacity: 0; }
+  .act-swap:hover .act-front, .act-swap:focus-visible .act-front { transform: translateY(-120%); opacity: 0; }
+  .act-swap:hover .act-back, .act-swap:focus-visible .act-back { transform: translateY(0); opacity: 1; }
 
   .tree { flex: 1; min-height: 0; overflow: auto; padding: 4px 8px 12px; }
   .tree-sec { padding: 6px 10px 4px; font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--fg-3); }
@@ -90,36 +120,46 @@
   .sub-btn:hover { background: var(--washed); color: var(--fg); }
   .sub-btn[aria-pressed="true"] { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
   .dot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .5; flex: none; }
-  /* 左下角是控制台的设置齿轮（浮层压在上面）：底栏给它留出 56px，
-     否则窄高窗口里这段说明会被齿轮压住半行。 */
-  .side-foot { padding: 10px 18px 56px; border-top: 1px solid var(--line-2);
-    color: var(--fg-3); font-size: 11.5px; line-height: 1.6; }
 
   /* ── 右栏：信息区（整面，不切卡）────────────────────────────────────── */
-  .main { min-width: 0; min-height: 0; overflow: auto; }
-  .doc { max-width: 980px; padding: 40px 48px 72px; }
+  .main { min-width: 0; min-height: 0; overflow: auto; position: relative; }
+  .doc { max-width: 1140px; padding: 40px 36px 110px; }
   .kicker { font-size: 12px; letter-spacing: .02em; color: var(--fg-3); }
-  .doc h1 { margin: 6px 0 10px; font-size: 30px; line-height: 1.25; letter-spacing: -.01em; font-weight: 700; }
+  .list-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px;
+    flex-wrap: wrap; margin: 6px 0 10px; }
+  .doc h1 { margin: 0; font-size: 30px; line-height: 1.25; letter-spacing: -.01em; font-weight: 700; }
   .lede { margin: 0; color: var(--fg-2); font-size: 14.5px; line-height: 1.75; max-width: 68ch; }
-  .rule { height: 1px; background: var(--line); margin: 28px 0 22px; }
+  .rule { height: 1px; background: var(--line); margin: 24px 0 20px; }
   .doc h2 { margin: 0 0 4px; font-size: 15px; font-weight: 650; }
   .doc .hint { color: var(--fg-3); font-size: 12.5px; margin: 0; }
 
-  .list { margin-top: 18px; border-top: 1px solid var(--line-2); }
+  .stats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .stat { display: inline-flex; align-items: baseline; gap: 5px; padding: 3px 8px;
+    border: 1px solid var(--line); border-radius: 999px; background: var(--bg);
+    color: var(--fg-2); font-size: 11.5px; white-space: nowrap; }
+  .stat b { color: var(--fg); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .stat.ok b { color: var(--ok); }
+  .stat.warn b { color: var(--warn); }
+  .stat.bad b { color: var(--bad); }
+  .stats-line { margin: 4px 0 0; color: var(--fg-3); font-size: 11.5px; text-align: right; }
+
+  .list { margin-top: 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
   .item { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px;
-    padding: 16px 2px; border-bottom: 1px solid var(--line-2); }
-  .item:hover { background: var(--washed); }
-  .sw { position: relative; width: 30px; height: 18px; margin-top: 3px; border-radius: 999px;
-    border: 1px solid var(--line); background: var(--washed); }
+    padding: 15px 16px; border: 1px solid var(--line); border-radius: 14px;
+    background: var(--bg); transition: background .16s ease, border-color .16s ease; }
+  .item:hover { background: var(--washed); border-color: color-mix(in srgb, var(--accent) 26%, var(--line)); }
+  @media (max-width: 1040px) { .list { grid-template-columns: 1fr; } }
+  .sw { appearance: none; position: relative; width: 30px; height: 18px; margin-top: 3px; padding: 0;
+    flex: none; border-radius: 999px; border: 1px solid var(--line); background: var(--washed); cursor: pointer; }
   .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
     border-radius: 50%; background: var(--fg-3); transition: transform .16s ease; }
   .sw[data-on="1"] { background: var(--accent); border-color: var(--accent); }
   .sw[data-on="1"]::after { transform: translateX(12px); background: #fff; }
-  .sw[data-bad="1"] { opacity: .45; }
+  .sw[data-bad="1"], .sw:disabled { opacity: .45; cursor: not-allowed; }
   .item-main { min-width: 0; }
   .item-h { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .item-h b { font-size: 14.5px; font-weight: 650; }
-  .item-id { font: 11.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-3); }
+  .item-id, .m-id { font: 11.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-3); }
   .item-desc { margin: 3px 0 0; color: var(--fg-2); font-size: 13px; line-height: 1.65; }
   .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
   .tag { font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 5px;
@@ -127,16 +167,94 @@
   .tag.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 32%, transparent); }
   .tag.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 32%, transparent); }
   .tag.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 32%, transparent); }
-  .item-side { text-align: right; color: var(--fg-3); font-size: 11.5px; white-space: nowrap; }
+  .item-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+    color: var(--fg-3); font-size: 11.5px; white-space: nowrap; }
+  .item-acts, .m-acts { display: flex; gap: 10px; }
+  .link { border: 0; padding: 0; background: none; color: var(--fg-3); font-size: 11.5px; cursor: pointer; }
+  .link:hover { color: var(--accent); }
+  .link.danger:hover { color: var(--bad); }
+
+  /* ── 管理模式 ───────────────────────────────────────────────────────── */
+  .manage-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 16px 0 0;
+    padding: 11px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--washed);
+    color: var(--fg-2); font-size: 12.5px; }
+  .manage-bar b { color: var(--fg); }
+  .manage-bar .btn { height: 28px; margin-left: auto; padding: 0 10px; font-size: 12px; }
+  .m-item { margin-top: 14px; padding: 18px 20px 20px; border: 1px solid var(--line);
+    border-radius: 14px; background: var(--bg); transition: border-color .16s ease; }
+  .m-item:hover { border-color: color-mix(in srgb, var(--accent) 26%, var(--line)); }
+  .m-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .m-head .sw { margin-top: 0; align-self: center; }
+  .m-name { font-size: 15px; font-weight: 650; }
+  .m-acts { margin-left: auto; }
+  .m-desc { margin: 7px 0 0 39px; color: var(--fg-2); font-size: 13px; line-height: 1.65; }
+  .m-item .tags { margin-left: 39px; margin-top: 8px; }
+  .m-settings { margin: 15px 0 0 39px; padding-top: 14px; border-top: 1px dashed var(--line-2); }
+  .m-settings .set-note { margin: 0; }
+  .set-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-bottom: 9px; color: var(--fg-3); font-size: 11.5px; letter-spacing: .02em; }
+  .set-count { font-variant-numeric: tabular-nums; }
+  .set-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .set-field { display: flex; flex-direction: column; gap: 6px; min-width: 0;
+    padding: 11px 12px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--bg); }
+  .set-field:hover { border-color: var(--line); }
+  .set-field.set-wide { grid-column: 1 / -1; }
+  .set-label { min-width: 0; color: var(--fg-3); font-size: 11.5px; line-height: 1.5; }
+  .set-input, .set-field textarea { width: 100%; padding: 6px 9px; border: 1px solid var(--line);
+    border-radius: 7px; background: var(--bg); color: var(--fg); font-size: 12.5px; }
+  .set-input { height: 32px; }
+  .set-field textarea { min-height: 64px; resize: vertical; }
+  .set-toggle { display: flex; align-items: center; gap: 10px; min-width: 0;
+    padding: 11px 12px; border: 1px solid var(--line-2); border-radius: 10px;
+    background: var(--bg); color: var(--fg-2); font-size: 12.5px; cursor: pointer; }
+  .set-toggle:hover { border-color: var(--line); background: var(--washed); }
+  .set-toggle input { appearance: none; position: relative; width: 30px; height: 18px; margin: 0;
+    flex: none; border-radius: 999px; border: 1px solid var(--line); background: var(--washed); cursor: pointer; }
+  .set-toggle input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+    border-radius: 50%; background: var(--fg-3); transition: transform .16s ease, background .16s ease; }
+  .set-toggle input:checked { background: var(--accent); border-color: var(--accent); }
+  .set-toggle input:checked::after { transform: translateX(12px); background: #fff; }
+  .set-toggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .set-toggle-label { min-width: 0; line-height: 1.45; }
+  .set-note { margin: 9px 0 0 39px; color: var(--fg-3); font-size: 12px; }
+  .limits { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+  .limit-row { display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+    padding: 12px 13px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--bg);
+    font-size: 12.5px; color: var(--fg-2); }
+  .limit-row .set-label { min-width: 0; }
+  .limit-row .set-input { width: 100%; }
+  .limit-hint { color: var(--fg-3); font-size: 11.5px; line-height: 1.5; }
+  .scope { margin-top: 14px; border-top: 1px solid var(--line-2); padding-top: 12px; }
+  .scope summary { cursor: pointer; color: var(--fg-2); font-size: 12.5px; }
+  .tbl { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12.5px; }
+  .tbl th, .tbl td { border-bottom: 1px solid var(--line-2); padding: 8px 10px; text-align: left; vertical-align: top; }
+  .tbl th { color: var(--fg-2); font-weight: 650; }
+  .preview { margin-top: 12px; padding: 12px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--washed); }
+  .preview pre { margin: 8px 0 0; white-space: pre-wrap; word-break: break-word;
+    font: 11.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-2); max-height: 320px; overflow: auto; }
+  .preview details { margin-top: 10px; }
+  .preview summary { cursor: pointer; color: var(--fg-2); font-size: 12px; }
+
   .empty { margin-top: 20px; padding: 28px 2px; color: var(--fg-2); }
   .empty b { display: block; color: var(--fg); font-size: 15px; margin-bottom: 4px; }
   .notice { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
     color: var(--fg-2); font-size: 12.5px; }
   .fail { color: var(--bad); }
 
-  /* ── 导入插件：正中的虚线面板（2026-10-27）──────────────────────────────
-     遮罩 + 卡片，入场 0.22s 上浮淡入；虚线区支持拖拽，hover / dragover 变实。
-     不给文件夹做假承诺：本版只装 ZIP，文件夹按钮点开会说明原因。 */
+  /* 保存条与轻提示 */
+  .savebar { position: fixed; left: var(--side); right: 24px; bottom: 18px; z-index: 70;
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+    box-shadow: 0 16px 40px -18px rgba(0, 0, 0, .35); font-size: 12.5px; }
+  .savebar b { font-variant-numeric: tabular-nums; }
+  .savebar .grow { flex: 1; }
+  .savebar .btn { height: 30px; padding: 0 12px; font-size: 12.5px; }
+  .toast { position: fixed; right: 24px; bottom: 70px; z-index: 95; max-width: min(420px, calc(100vw - 48px));
+    padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg);
+    box-shadow: 0 12px 30px -16px rgba(0, 0, 0, .35); color: var(--fg-2); font-size: 12.5px; }
+  .toast.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 36%, var(--line)); }
+
+  /* ── 导入 / 创造 / 删除弹层 ─────────────────────────────────────────── */
   .imp { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center;
     background: rgba(17, 19, 24, .42); backdrop-filter: blur(2px); }
   .imp[hidden] { display: none; }
@@ -155,14 +273,16 @@
   .imp-drop:hover, .imp-drop.is-over { border-color: var(--accent); background: var(--accent-weak); transform: translateY(-1px); }
   .imp-t { font-size: 18px; font-weight: 700; }
   .imp-hint { margin: 0; color: var(--fg-2); font-size: 13px; line-height: 1.7; max-width: 46ch; }
-  .imp-btns { display: flex; gap: 8px; margin-top: 6px; }
-  .imp-note { margin: 12px 0 0; color: var(--warn); font-size: 12.5px; }
-  .imp-note[hidden] { display: none; }
+  .imp-btns { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
+  .imp-kind { display: flex; align-items: center; gap: 10px; margin-top: 12px;
+    color: var(--fg-2); font-size: 12.5px; }
+  .imp-kind select { padding: 6px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--fg); }
+  .imp-note, .rm-note { margin: 12px 0 0; color: var(--warn); font-size: 12.5px; }
+  .imp-note[hidden], .rm-note[hidden] { display: none; }
   .imp-form { display: grid; gap: 10px; width: 100%; text-align: left; padding: 4px 2px 2px; }
   .imp-form .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .imp-form label { display: grid; gap: 4px; color: var(--fg-2); font-size: 12.5px; }
-  /* `hidden` 属性必须压过 `.imp-form label/ .row2` 的 display —— 否则创造插件里
-     plugin/skill 两套字段会同时露出来。 */
   .imp-form [hidden] { display: none !important; }
   .imp-form input, .imp-form select, .imp-form textarea {
     width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
@@ -174,16 +294,35 @@
     font: 11.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
     white-space: pre-wrap; word-break: break-word; }
   .imp-preview[hidden] { display: none; }
+  .rm-text { margin: 0; color: var(--fg-2); font-size: 13.5px; line-height: 1.75; }
+  .rm-text b { color: var(--fg); }
+  .btn-danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 650; }
+  .btn-danger:hover { opacity: .9; background: var(--bad); }
   @media (max-width: 640px) { .imp-form .row2 { grid-template-columns: 1fr; } }
-  @media (prefers-reduced-motion: reduce) { .imp-card { animation: none; } }
 
   @media (max-width: 900px) {
     .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
     .side { border-right: 0; border-bottom: 1px solid var(--line); }
     .tree { max-height: 34vh; }
-    .doc { padding: 26px 22px 56px; }
+    .doc { padding: 26px 22px 110px; }
     .doc h1 { font-size: 24px; }
-    .acts { grid-template-columns: 1fr 1fr; }
+    .acts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .savebar { left: 16px; right: 16px; }
+    .stats { justify-content: flex-start; }
+    .stats-line { text-align: left; }
+    .item { grid-template-columns: 34px minmax(0, 1fr); }
+    .item-side { grid-column: 2; flex-direction: row; align-items: center; justify-content: space-between; }
+    .set-grid, .limits { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 620px) {
+    .acts { grid-template-columns: 1fr; }
+    .brand-en { font-size: 9px; letter-spacing: .08em; }
+    .m-item { padding: 16px 14px 18px; }
+    .m-settings, .set-note, .m-desc, .m-item .tags { margin-left: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .imp-card { animation: none; }
+    .mode-ind, .act-front, .act-back { transition: none; }
   }
 </style>
 </head>
@@ -195,42 +334,93 @@
         <path d="M9 4.5a2.5 2.5 0 1 1 5 0V6h3a1 1 0 0 1 1 1v3h-1.5a2.5 2.5 0 1 0 0 5H18v3a1 1 0 0 1-1 1h-3v-1.5a2.5 2.5 0 1 0-5 0V19H6a1 1 0 0 1-1-1v-3h1.5a2.5 2.5 0 1 0 0-5H5V7a1 1 0 0 1 1-1h3V4.5z"/>
       </svg>
       <span class="brand-copy">
-        <span class="brand-en">PLUGIN FACTORY</span>
-        <span class="brand-zh">插件工厂</span>
+        <span class="brand-en">PLUGIN &amp; SKILL FACTORY</span>
+        <span class="brand-zh">插件技能工厂</span>
       </span>
     </div>
-    <div class="acts">
-      <button class="btn btn-primary" data-act="import" type="button">导入插件</button>
-      <button class="btn" data-act="create" type="button">创造插件</button>
+
+    <div class="mode" id="mode" data-kind="plugin" role="group" aria-label="切换插件或 Skill">
+      <span class="mode-ind" aria-hidden="true"></span>
+      <button class="mode-btn" type="button" data-kind="plugin" aria-pressed="true">插件工厂</button>
+      <button class="mode-btn" type="button" data-kind="skill" aria-pressed="false">Skill 工厂</button>
     </div>
-    <nav class="tree" id="tree" aria-label="插件分类">
+
+    <div class="acts">
+      <button class="btn btn-primary act-swap" data-act="import" type="button" aria-label="导入插件">
+        <span class="act-stack"><span class="act-front">导入插件</span><span class="act-back" aria-hidden="true">来试一试吧</span></span>
+      </button>
+      <button class="btn act-swap" data-act="create" type="button" aria-label="创造插件">
+        <span class="act-stack"><span class="act-front">创造插件</span><span class="act-back" aria-hidden="true">这么厉害</span></span>
+      </button>
+      <button class="btn manage-btn" data-act="manage" type="button" aria-pressed="false">管理插件与技能</button>
+    </div>
+
+    <nav class="tree" id="tree" aria-label="插件与 Skill 分类">
       <div class="tree-sec">分类</div>
       <div id="treeRows"></div>
     </nav>
-    <div class="side-foot">开关与控制台一致：勾选要回控制台保存并重启机器人。二级分类按机器人<b>实际挂上的</b>工具 / 钩子算。</div>
   </aside>
+
   <main class="main">
     <div class="doc">
-      <div class="kicker" id="kicker">全部</div>
-      <h1 id="title">全部插件</h1>
-      <p class="lede" id="lede">左右两栏是同一张纸：左边选分类，右边看这一类的插件。</p>
-      <div class="rule"></div>
-      <h2 id="listTitle">插件</h2>
-      <p class="hint" id="listHint">运行期状态来自机器人上一轮加载结果；没运行就只显示磁盘上的事实。</p>
-      <div id="list"></div>
-      <p class="hint" id="loading" style="margin-top:14px;">正在读取控制台状态…</p>
-      <div class="empty" id="empty" hidden></div>
+      <section class="view" id="browse">
+        <div class="kicker" id="kicker">插件</div>
+        <div class="list-head">
+          <h1 id="title">全部插件</h1>
+          <div class="stats" id="stats"></div>
+        </div>
+        <p class="lede" id="lede">左右两栏是同一张纸：左边选分类，右边看这一类的插件。</p>
+        <p class="stats-line" id="statsLine"></p>
+        <div class="rule"></div>
+        <h2 id="listTitle">插件</h2>
+        <p class="hint" id="listHint">运行期状态来自机器人上一轮加载结果；没运行就只显示磁盘上的事实。</p>
+        <div id="list"></div>
+        <p class="hint" id="loading" style="margin-top:14px;">正在读取控制台状态…</p>
+        <div class="empty" id="empty" hidden></div>
+      </section>
+
+      <section class="view" id="manage" hidden>
+        <div class="kicker">管理插件与技能</div>
+        <div class="list-head">
+          <h1 id="mTitle">管理插件</h1>
+          <div class="stats" id="mStats"></div>
+        </div>
+        <div class="manage-bar">
+          <b>管理模式</b><span>· 设置与全局参数可编辑；开关、删除、更新在两种模式下都能用。</span>
+          <button class="btn" type="button" data-act="browse">返回列表</button>
+        </div>
+        <p class="hint" id="mHint">只显示当前类型；四个统计为插件 + Skill 合并。</p>
+        <div class="rule"></div>
+        <h2 id="mListTitle">插件清单与设置</h2>
+        <p class="hint" id="mListHint">禁用项先启用并重启，设置才会被保存。</p>
+        <div id="mList"></div>
+        <div class="empty" id="mEmpty" hidden></div>
+        <div id="mExtra"></div>
+        <div class="rule"></div>
+        <h2>全局参数</h2>
+        <p class="hint">插件与 Skill 共用；改完点底部「保存并生效」，重启机器人后生效。</p>
+        <div class="limits" id="limits"></div>
+      </section>
+
       <div class="notice fail" id="offline" hidden>读不到控制台状态：面板可能没在运行。这个页面不编造数据。</div>
+    </div>
+    <div class="savebar" id="pfSavebar" hidden>
+      <span><b id="pfCount">0</b> 项未保存</span>
+      <span class="grow"></span>
+      <button class="btn" type="button" id="pfDiscard">放弃</button>
+      <button class="btn btn-primary" type="button" id="pfSave">保存并生效</button>
     </div>
   </main>
 </div>
+
+<div class="toast" id="toast" hidden></div>
 
 <div class="imp" id="impScrim" hidden>
   <div class="imp-card" role="dialog" aria-modal="true" aria-labelledby="impTitle">
     <div class="imp-h"><b id="impTitle">导入插件</b><button class="imp-x" data-imp="close" aria-label="关闭">×</button></div>
     <div class="imp-drop" id="impDrop" role="button" tabindex="0">
-      <div class="imp-t">把 ZIP 拖到这里</div>
-      <p class="imp-hint">也可以选 ZIP 或整个文件夹。装完默认不启用 —— 回控制台勾上它，再重启机器人。</p>
+      <div class="imp-t" id="impDropTitle">把 ZIP 拖到这里</div>
+      <p class="imp-hint" id="impHint">也可以选 ZIP 或整个文件夹。装完默认不启用 —— 回列表勾上它，再重启机器人。</p>
       <div class="imp-btns">
         <button class="btn btn-primary" data-imp="zip" type="button">选择 ZIP</button>
         <button class="btn" data-imp="folder" type="button">选择文件夹</button>
@@ -238,6 +428,12 @@
       <input type="file" accept=".zip,application/zip" id="impZip" hidden>
       <input type="file" webkitdirectory multiple id="impFolder" hidden>
     </div>
+    <label class="imp-kind" id="impKindWrap">类型
+      <select id="impKind">
+        <option value="plugin">插件</option>
+        <option value="skill">Skill</option>
+      </select>
+    </label>
     <p class="imp-note" id="impNote" hidden></p>
   </div>
 </div>
@@ -276,11 +472,22 @@
   </div>
 </div>
 
+<div class="imp" id="rmScrim" hidden>
+  <div class="imp-card" role="dialog" aria-modal="true" aria-labelledby="rmTitle">
+    <div class="imp-h"><b id="rmTitle">删除插件</b><button class="imp-x" data-rm="close" aria-label="关闭">×</button></div>
+    <p class="rm-text" id="rmText"></p>
+    <p class="rm-note" id="rmNote" hidden></p>
+    <div class="imp-btns" style="justify-content:flex-end;margin-top:16px;">
+      <button class="btn" data-rm="cancel" type="button">取消</button>
+      <button class="btn btn-danger" data-rm="confirm" type="button">删除</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (() => {
   'use strict';
 
-  /* ── 词表：二级分类只有这一处（按运行期能力形态）────────────────────── */
   const SHAPES = [
     { key: 'tools', label: '工具型', desc: '注册了工具，模型可以调用' },
     { key: 'hooks', label: '钩子型', desc: '挂在钩子点上，改的是消息流' },
@@ -293,11 +500,14 @@
   const esc = (v) => String(v == null ? '' : v)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  const state = { cat: 'all', sub: 'all' };
+  const kindLabel = (kind) => (kind === 'skill' ? 'Skill' : '插件');
+  const state = { kind: 'plugin', view: 'browse', cat: 'all', sub: 'all' };
   let data = null;
+  let dirty = new Map();
+  let importMode = { mode: 'install', kind: 'plugin', id: '', name: '' };
+  let pendingRemove = null;
+  let toastTimer = 0;
 
-  /* token 从父页面取：工厂是控制台的 iframe（同源）。直开这个页面时没有父页面，
-     那就按"没有 token"处理 —— 只读路由会回 401，页面显示离线态而不是假装有数据。 */
   function panelToken() {
     try {
       const meta = window.parent && window.parent !== window
@@ -327,13 +537,23 @@
       body: JSON.stringify(body),
     });
     const ct = r.headers.get('content-type') || '';
-    const data = ct.includes('json') ? await r.json() : await r.text();
+    const out = ct.includes('json') ? await r.json() : await r.text();
     if (!r.ok) {
-      const e = new Error((data && data.error) || ('HTTP ' + r.status));
+      const e = new Error((out && out.error) || ('HTTP ' + r.status));
       e.status = r.status;
       throw e;
     }
-    return data;
+    return out;
+  }
+
+  function showToast(text, tone) {
+    const el = $('toast');
+    if (!el) return;
+    el.hidden = false;
+    el.textContent = text;
+    el.classList.toggle('bad', tone === 'bad');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, 4200);
   }
 
   function toBase64(buf) {
@@ -353,9 +573,17 @@
     return new Blob([bytes], { type });
   }
 
+  const kindOf = (it) => (it.kind === 'skill' ? 'skill' : 'plugin');
+  const enabledSet = (kind) => (kind === 'skill' ? data.enabledSkills : data.enabledPlugins);
+  const settingsOf = (kind) => (kind === 'skill' ? data.settingsSkills : data.settingsPlugins);
+  const itemsOfKind = (kind) => data.items.filter((it) => kindOf(it) === kind);
   const catOf = (it) => (data.catKeys.has(it.category) ? it.category : 'other');
-  const shapeOf = (it) => {
-    const rt = data.rtById[it.id];
+  const isBad = (it) => it.action === 'reject' || (Array.isArray(it.problems) && it.problems.length > 0);
+  const isEnabled = (it) => enabledSet(kindOf(it)).has(it.id) && it.action !== 'reject';
+  const rtOf = (it) => data.rtById[it.id] || null;
+
+  function shapeOf(it) {
+    const rt = rtOf(it);
     if (!rt) return 'idle';
     const h = (rt.hooks || []).length;
     const t = (rt.tools || []).length;
@@ -363,29 +591,91 @@
     if (t) return 'tools';
     if (h) return 'hooks';
     return 'empty';
-  };
-  const isBad = (it) => it.action === 'reject' || (Array.isArray(it.problems) && it.problems.length > 0);
+  }
 
-  function shapeCounts(cat) {
+  function filteredItems() {
+    const order = new Map(data.categories.map((c, i) => [c.key, i]));
+    const rank = (it) => (order.has(catOf(it)) ? order.get(catOf(it)) : 99);
+    return itemsOfKind(state.kind)
+      .slice()
+      .sort((a, b) => rank(a) - rank(b)
+        || String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN')
+        || String(a.id).localeCompare(String(b.id)))
+      .filter((it) => state.cat === 'all' || catOf(it) === state.cat)
+      .filter((it) => state.sub === 'all' || shapeOf(it) === state.sub);
+  }
+
+  function catCount(kind, key) {
+    const list = itemsOfKind(kind);
+    return key === 'all' ? list.length : list.filter((it) => catOf(it) === key).length;
+  }
+
+  function shapeCounts(kind, cat) {
     const out = {};
-    for (const it of data.items) {
+    for (const it of itemsOfKind(kind)) {
       if (cat !== 'all' && catOf(it) !== cat) continue;
       const k = shapeOf(it);
       out[k] = (out[k] || 0) + 1;
     }
     return out;
   }
-  function catCount(key) {
-    return key === 'all' ? data.items.length : data.items.filter((it) => catOf(it) === key).length;
+
+  function statsOf() {
+    const all = data.items;
+    const enabled = all.filter(isEnabled);
+    const pAll = itemsOfKind('plugin');
+    const sAll = itemsOfKind('skill');
+    const pOn = pAll.filter(isEnabled).length;
+    const sOn = sAll.filter(isEnabled).length;
+    const rtOn = data.rtAlive;
+    const effective = rtOn
+      ? enabled.filter((it) => rtOf(it)?.state === 'loaded').length
+      : '—';
+    const invalid = rtOn
+      ? enabled.filter((it) => it.action === 'reject' || ['failed', 'over'].includes(rtOf(it)?.state)).length
+      : enabled.filter((it) => it.action === 'reject' || it.action === 'over').length;
+    const errors = rtOn
+      ? all.filter((it) => (
+        (it.problems || []).length
+        || (rtOf(it)?.hookErrors || []).length
+        || (rtOf(it)?.toolErrors || []).length
+        || rtOf(it)?.state === 'failed'
+      )).length
+      : all.filter((it) => (it.problems || []).length).length;
+    return {
+      total: all.length, enabled: enabled.length,
+      pluginsTotal: pAll.length, pluginsEnabled: pOn,
+      skillsTotal: sAll.length, skillsEnabled: sOn,
+      effective, invalid, errors, alive: rtOn,
+    };
+  }
+
+  function statsHtml() {
+    const s = statsOf();
+    const t = (text) => esc(text);
+    return [
+      `<span class="stat" title="${t('启用名单里真实存在的扩展 / 全部扩展；插件与 Skill 合并')}">已启用 <b>${s.enabled}/${s.total}</b></span>`,
+      `<span class="stat ok" title="${t('机器人实际加载成功；机器人未运行时显示 —')}">生效 <b>${s.effective}</b></span>`,
+      `<span class="stat warn" title="${t('已启用但被拒 / 失败 / 超上限；机器人未运行时只算磁盘静态')}">失效 <b>${s.invalid}</b></span>`,
+      `<span class="stat bad" title="${t('有清单问题或钩子 / 工具注册错误')}">报错 <b>${s.errors}</b></span>`,
+    ].join('');
+  }
+
+  function statsLine() {
+    const s = statsOf();
+    return `插件 ${s.pluginsEnabled}/${s.pluginsTotal} · Skill ${s.skillsEnabled}/${s.skillsTotal}`;
   }
 
   function treeHtml() {
-    const rows = [`<button class="row-btn" data-cat="all" aria-pressed="${state.cat === 'all'}"><span class="lbl">全部插件</span><span class="n">${data.items.length}</span></button>`];
+    const kind = state.kind;
+    const items = itemsOfKind(kind);
+    const allLabel = `全部${kindLabel(kind)}`;
+    const rows = [`<button class="row-btn" data-cat="all" aria-pressed="${state.cat === 'all'}"><span class="lbl">${allLabel}</span><span class="n">${items.length}</span></button>`];
     for (const c of data.categories) {
-      const n = catCount(c.key);
+      const n = catCount(kind, c.key);
       if (!n) continue;
       const open = state.cat === c.key;
-      const counts = shapeCounts(c.key);
+      const counts = shapeCounts(kind, c.key);
       const subs = SHAPES.filter((sh) => counts[sh.key]).map((sh) => `<button class="sub-btn" data-cat="${esc(c.key)}" data-sub="${sh.key}" aria-pressed="${open && state.sub === sh.key}" title="${esc(sh.desc)}"><span class="dot" aria-hidden="true"></span><span class="lbl">${esc(sh.label)}</span><span class="n">${counts[sh.key]}</span></button>`).join('');
       rows.push(`<div class="node" data-cat="${esc(c.key)}"${open ? ' data-open="1"' : ''}>
         <button class="row-btn" data-cat="${esc(c.key)}" aria-expanded="${open}" aria-pressed="${open}">
@@ -399,10 +689,11 @@
   }
 
   function tagsOf(it) {
-    const rt = data.rtById[it.id];
+    const rt = rtOf(it);
     const out = [];
-    out.push(`<span class="tag">${it.kind === 'plugin' ? '插件' : '技能包'}</span>`);
+    out.push(`<span class="tag">${kindOf(it) === 'plugin' ? '插件' : 'Skill'}</span>`);
     out.push(`<span class="tag">${esc(data.catLabel(catOf(it)))}</span>`);
+    if (it.action === 'over') out.push('<span class="tag warn">超上限·未加载</span>');
     if (rt) out.push(`<span class="tag ${rt.state === 'failed' ? 'bad' : 'ok'}">${esc(rt.state || 'loaded')}</span>`);
     if (rt) {
       const h = (rt.hooks || []).length;
@@ -410,55 +701,330 @@
       out.push(`<span class="tag ${h ? 'ok' : ''}">钩子 ${h}</span>`);
       out.push(`<span class="tag ${t ? 'ok' : ''}">工具 ${t}</span>`);
       if (rt.empty) out.push('<span class="tag bad">空载</span>');
+      if (rt.promptOnly) out.push('<span class="tag">提示词型</span>');
+      if (rt.mixed) out.push('<span class="tag">混合型</span>');
+      const he = (rt.hookErrors || []);
+      const te = (rt.toolErrors || []);
+      if (he.length) out.push(`<span class="tag bad" title="${esc(he.map((e) => `${e.point}: ${e.reason}`).join('\n'))}">钩子未挂 ${he.length}</span>`);
+      if (te.length) out.push(`<span class="tag bad" title="${esc(te.map((e) => `${e.id || e.name || '?'}: ${e.reason}`).join('\n'))}">工具未注册 ${te.length}</span>`);
     }
-    if (it.netSelf) out.push('<span class="tag warn" title="这个插件自带联网：它用自己的 fetch，不受浏览锁定约束">自带联网</span>');
+    if (it.netSelf) out.push('<span class="tag warn" title="这个扩展自带联网：它用自己的 fetch，不受浏览锁定约束">自带联网</span>');
     if (isBad(it)) out.push('<span class="tag bad">有问题</span>');
     return out.join('');
   }
 
-  function renderList() {
-    /* 排序与控制台插件库一致：先按分类词表顺序，再按名称 —— 同一个包在两处
-       不该出现在不同位置（否则"我刚在这儿看到它"会失效）。 */
-    const order = new Map(data.categories.map((c, i) => [c.key, i]));
-    const rank = (it) => order.has(catOf(it)) ? order.get(catOf(it)) : 99;
-    const items = data.items.slice()
-      .sort((a, b) => rank(a) - rank(b)
-        || String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN')
-        || String(a.id).localeCompare(String(b.id)))
-      .filter((it) => state.cat === 'all' || catOf(it) === state.cat)
-      .filter((it) => state.sub === 'all' || shapeOf(it) === state.sub);
+  function switchHtml(it) {
+    const on = isEnabled(it);
+    const bad = it.action === 'reject';
+    const kind = kindOf(it);
+    return `<button class="sw" type="button" role="switch" aria-checked="${on}" data-on="${on ? '1' : '0'}" data-bad="${bad ? '1' : '0'}" data-toggle="${kind}|${esc(it.id)}" ${bad ? 'disabled' : ''} title="${bad ? '这个扩展有问题，勾了也不会加载' : (on ? '已启用（点击关闭）' : '未启用（点击启用）')}"></button>`;
+  }
+
+  function itemActions(it) {
+    const kind = kindOf(it);
+    return `<span class="item-acts">
+      <button class="link" type="button" data-act="update" data-kind="${kind}" data-id="${esc(it.id)}" data-name="${esc(it.name || it.id)}">更新</button>
+      <button class="link danger" type="button" data-act="remove" data-kind="${kind}" data-id="${esc(it.id)}" data-name="${esc(it.name || it.id)}">删除</button>
+    </span>`;
+  }
+
+  function renderBrowse() {
+    const kind = state.kind;
     const cat = state.cat === 'all' ? null : data.categories.find((c) => c.key === state.cat);
     const sub = SHAPES.find((s) => s.key === state.sub);
-    $('kicker').textContent = cat ? (sub ? '分类 · ' + sub.label : '分类') : '全部';
-    $('title').textContent = cat ? (sub ? cat.label + ' · ' + sub.label : cat.label) : '全部插件';
+    const items = filteredItems();
+    const totalKind = itemsOfKind(kind).length;
+    const label = kindLabel(kind);
+    $('kicker').textContent = cat ? (sub ? `分类 · ${sub.label}` : '分类') : (kind === 'skill' ? 'Skill' : '插件');
+    $('title').textContent = cat ? (sub ? `${cat.label} · ${sub.label}` : cat.label) : `全部${label}`;
     $('lede').textContent = cat
       ? (sub ? sub.desc : (cat.desc || ''))
-      : '左右两栏是同一张纸：左边选分类，右边看这一类的插件。';
-    $('listTitle').textContent = cat ? (cat.label + ' 下的插件') : '全部插件';
-    $('listHint').textContent = `显示 ${items.length} / 共 ${data.items.length} 个 · 开关在控制台里改，工厂只读`;
+      : (kind === 'skill'
+        ? 'Skill 是模型可选的提示词与工具；用不用由模型判断。左边选分类，右边看这一类。'
+        : '左右两栏是同一张纸：左边选分类，右边看这一类的插件。');
+    $('listTitle').textContent = cat ? `${cat.label} 下的${label}` : `全部${label}`;
+    $('listHint').textContent = `显示 ${items.length} / 共 ${totalKind} 个 · 开关直接保存，重启机器人后生效`;
     $('treeRows').innerHTML = treeHtml();
 
     if (!items.length) {
       $('list').innerHTML = '';
       $('empty').hidden = false;
-      $('empty').innerHTML = data.items.length
-        ? '<b>这个分类下没有插件</b>换个分类，或用左边的「导入插件」装一个。'
-        : '<b>还没有装插件</b>用左边的「导入插件」拖入 ZIP 或插件文件夹。';
+      $('empty').innerHTML = totalKind
+        ? '<b>这个分类下没有扩展</b>换个分类，或用左边的「导入插件」装一个。'
+        : `<b>还没有装${label}</b>用左边的「导入插件」拖入 ZIP 或插件文件夹，或用「创造插件」生成一个。`;
       return;
     }
     $('empty').hidden = true;
-    $('list').innerHTML = `<div class="list">${items.map((it) => {
-      const enabled = data.enabled.has(it.id) && it.action !== 'reject';
-      return `<div class="item" data-plugin="${esc(it.id)}">
-        <span class="sw" data-on="${enabled ? '1' : '0'}" data-bad="${isBad(it) ? '1' : '0'}" title="${isBad(it) ? '这个插件有问题，勾了也不会加载' : '启用状态（只读）'}"></span>
-        <div class="item-main">
-          <div class="item-h"><b>${esc(it.name || it.id)}</b><span class="item-id">${esc(it.id)}</span></div>
-          <p class="item-desc">${esc(it.description || it.detail || '没有写描述')}</p>
-          <div class="tags">${tagsOf(it)}</div>
-        </div>
-        <div class="item-side">v${esc(it.version || '?')}</div>
-      </div>`;
-    }).join('')}</div>`;
+    $('list').innerHTML = `<div class="list">${items.map((it) => `<div class="item" data-plugin="${esc(it.id)}" data-kind="${kindOf(it)}">
+      ${switchHtml(it)}
+      <div class="item-main">
+        <div class="item-h"><b>${esc(it.name || it.id)}</b><span class="item-id">${esc(it.id)}</span></div>
+        <p class="item-desc">${esc(it.description || it.detail || '没有写描述')}</p>
+        <div class="tags">${tagsOf(it)}</div>
+      </div>
+      <div class="item-side"><span>v${esc(it.version || '?')}</span>${itemActions(it)}</div>
+    </div>`).join('')}</div>`;
+  }
+
+  function settingsValue(kind, id, f) {
+    const key = `set:${kind}|${id}|${f.key}`;
+    if (dirty.has(key)) return dirty.get(key);
+    const fromState = (settingsOf(kind)[id] || {})[f.key];
+    return fromState !== undefined ? fromState : f.value;
+  }
+
+  function settingField(kind, id, f) {
+    const val = settingsValue(kind, id, f);
+    const common = `data-set="${esc(kind)}|${esc(id)}|${esc(f.key)}" data-fkind="${esc(f.kind)}"`;
+    const label = esc(f.label || f.key);
+    const tip = `title="清单默认值：${esc(JSON.stringify(f.def))}"`;
+    if (f.kind === 'bool') {
+      const on = val === true || val === 'true';
+      return `<label class="set-toggle" ${tip}><input type="checkbox" ${on ? 'checked' : ''} ${common}><span class="set-toggle-label">${label}</span>${f.sensitive ? '<span class="tag warn">凭据</span>' : ''}</label>`;
+    }
+    if (f.kind === 'number') {
+      return `<label class="set-field" ${tip}><span class="set-label">${label}</span><input class="set-input" type="number" value="${esc(String(val ?? ''))}" ${common}></label>`;
+    }
+    if (f.kind === 'list') {
+      const text = Array.isArray(val) ? val.join('\n') : String(val ?? '');
+      return `<label class="set-field set-wide" ${tip}><span class="set-label">${label} · 一行一项</span><textarea rows="2" ${common}>${esc(text)}</textarea></label>`;
+    }
+    if (f.kind === 'string') {
+      return `<label class="set-field" ${tip}><span class="set-label">${label}${f.sensitive ? ' <span class="tag warn">凭据</span>' : ''}</span><input class="set-input" type="${f.sensitive ? 'password' : 'text'}" value="${esc(String(val ?? ''))}" ${common}></label>`;
+    }
+    return `<div class="set-note set-wide">${label}：这一项的默认值不是基本类型，宿主不支持直接编辑（要改就改清单）。</div>`;
+  }
+
+  function settingsHtml(it, kind) {
+    const spec = Array.isArray(it.settingsSpec) ? it.settingsSpec : [];
+    if (!spec.length) return `<p class="set-note">这个${kindLabel(kind)}没有声明设置项。</p>`;
+    return `<div class="set-head"><span>设置项</span><span class="set-count">${spec.length} 项</span></div>
+      <div class="set-grid">${spec.map((f) => settingField(kind, it.id, f)).join('')}</div>`;
+  }
+
+  function limitValue(key) {
+    const dk = `limit:${key}`;
+    if (dirty.has(dk)) return dirty.get(dk);
+    return key === 'max' ? data.limits.max : key === 'toolsMax' ? data.limits.toolsMax : data.limits.hookTimeoutMs;
+  }
+
+  function boundsOf(key, fallback) {
+    const b = data.bounds && data.bounds[key];
+    return Array.isArray(b) && b.length === 2 ? b : fallback;
+  }
+
+  function limitsHtml() {
+    const mk = (key, label, hint, fallback) => {
+      const b = boundsOf(key === 'max' ? 'pluginMax' : key === 'toolsMax' ? 'toolMax' : 'hookTimeoutMs', fallback);
+      return `<label class="limit-row"><span class="set-label">${label}</span>
+        <input class="set-input" type="number" min="${esc(String(b[0]))}" max="${esc(String(b[1]))}" step="1" data-limit="${key}" value="${esc(String(limitValue(key) ?? ''))}">
+        <span class="limit-hint">${hint} · 允许 ${esc(String(b[0]))} – ${esc(String(b[1]))}</span></label>`;
+    };
+    return [
+      mk('max', '扩展总数上限', '插件 + Skill 共用，默认 256', [1, 1024]),
+      mk('toolsMax', '最多注册工具数', '工具 schema 会进每一轮请求，别调太大', [1, 256]),
+      mk('hookTimeoutMs', '钩子单条超时（毫秒）', '超时的钩子会被放行并记警告，默认 5000', [100, 120000]),
+    ].join('');
+  }
+
+  function manageItemHtml(it) {
+    const kind = kindOf(it);
+    const on = isEnabled(it);
+    return `<section class="m-item" data-plugin="${esc(it.id)}" data-kind="${kind}">
+      <div class="m-head">
+        ${switchHtml(it)}
+        <span class="m-name">${esc(it.name || it.id)}</span>
+        <span class="m-id">${esc(it.id)}</span>
+        <span class="m-acts">
+          <button class="link" type="button" data-act="update" data-kind="${kind}" data-id="${esc(it.id)}" data-name="${esc(it.name || it.id)}">更新</button>
+          <button class="link danger" type="button" data-act="remove" data-kind="${kind}" data-id="${esc(it.id)}" data-name="${esc(it.name || it.id)}">删除</button>
+        </span>
+      </div>
+      <p class="m-desc">${esc(it.description || it.detail || '没有写描述')}</p>
+      <div class="tags">${tagsOf(it)}</div>
+      <div class="m-settings">${on ? settingsHtml(it, kind) : `<p class="set-note">这个${kindLabel(kind)}未启用：启用并重启机器人后，设置才会被保存。</p>`}</div>
+    </section>`;
+  }
+
+  function skillExtraHtml() {
+    const plan = data.extPrompt;
+    if (!plan) return '<div class="notice">还没有 Skill 预览数据。</div>';
+    const skill = plan.skill || {};
+    const lines = Array.isArray(skill.lines) ? skill.lines : [];
+    const pluginLines = Array.isArray(plan.plugin?.lines) ? plan.plugin.lines : [];
+    const source = plan.source === 'runtime'
+      ? '<span class="tag ok">此刻注入</span>'
+      : '<span class="tag warn">机器人未运行：启用后将注入</span>';
+    return `<div class="scope">
+      <h2 style="margin-top:0;">Skill 提示词预览</h2>
+      <div class="preview">
+        <div class="hint">${source} · Skill 段 <b>${skill.used || 0}</b> / <b>${skill.maxChars || 2000}</b> 字 · 丢弃段 ${skill.dropped || 0}</div>
+        <pre>${esc(lines.join('\n') || '（当前没有 Skill 提示词段）')}</pre>
+        ${pluginLines.length ? `<details><summary>插件兼容指引（extensions 段，${plan.plugin.used || 0} 字）</summary><pre>${esc(pluginLines.join('\n'))}</pre></details>` : ''}
+      </div>
+      <details class="scope"><summary>Skill 与插件 / 知识包的区别</summary>
+        <table class="tbl"><thead><tr><th>类型</th><th>谁决定 / 怎么生效</th></tr></thead><tbody>
+          <tr><td>Skill（skills/）</td><td>注册工具 + prompt.sections；<b>模型判断</b>是否调用，可能一直不用。</td></tr>
+          <tr><td>插件（plugins/）</td><td>导出 hooks；<b>核心</b>在固定时机调用，条件满足必跑。</td></tr>
+          <tr><td>知识包 / 角色卡</td><td><code>custom.skills</code> 里的提示词数据，不是代码扩展，不注册工具。</td></tr>
+        </tbody></table>
+        <p class="hint" style="margin-top:8px;">Skill 不保证执行；需要“条件满足必跑”的功能请做插件。开关与设置改完要重启机器人。</p>
+      </details>
+    </div>`;
+  }
+
+  function pluginExtraHtml() {
+    return `<details class="scope"><summary>插件能做什么 / 不能做什么</summary>
+      <table class="tbl"><thead><tr><th>它想做的事</th><th>结果</th></tr></thead><tbody>
+        <tr><td class="mono">send_msg / send_*</td><td><span class="tag bad">一律拒绝</span> 并告警 —— 发言只能走宿主给的 ctx.sender，插件不许自己往外发</td></tr>
+        <tr><td>只读动作（15 个白名单）</td><td><span class="tag ok">放行</span> 例如取群信息、取历史消息</td></tr>
+        <tr><td>其余任何动作</td><td><span class="tag bad">拒绝</span> 默认关，不是默认开</td></tr>
+      </tbody></table>
+      <p class="hint" style="margin-top:8px;">这套边界在 <code>src/ext-scope.js</code> 里是闭集合；要加新动作必须去改那一处并补契约。</p>
+    </details>`;
+  }
+
+  function renderManage() {
+    const kind = state.kind;
+    const label = kindLabel(kind);
+    const items = filteredItems();
+    $('mTitle').textContent = `管理${label}`;
+    $('mHint').textContent = '只显示当前类型；四个统计为插件 + Skill 合并。设置改动点底部保存。';
+    $('mListTitle').textContent = `${label}清单与设置`;
+    const catName = state.cat === 'all' ? '全部' : (data.categories.find((c) => c.key === state.cat)?.label || state.cat);
+    $('mListHint').textContent = `当前分类：${catName} · 禁用项先启用并重启，设置才会被保存。`;
+    $('mList').innerHTML = items.map(manageItemHtml).join('');
+    $('mEmpty').hidden = !!items.length;
+    $('mEmpty').innerHTML = items.length ? '' : `<b>还没有装${label}</b>用左边的「导入插件」或「创造插件」。`;
+    $('mExtra').innerHTML = kind === 'skill' ? skillExtraHtml() : pluginExtraHtml();
+    $('limits').innerHTML = limitsHtml();
+    $('treeRows').innerHTML = treeHtml();
+    updateSavebar();
+  }
+
+  function updateSavebar() {
+    const bar = $('pfSavebar');
+    if (!bar) return;
+    bar.hidden = dirty.size === 0;
+    $('pfCount').textContent = String(dirty.size);
+  }
+
+  function render() {
+    const mode = $('mode');
+    if (mode) mode.dataset.kind = state.kind;
+    document.querySelectorAll('.mode-btn[data-kind]').forEach((b) => {
+      b.setAttribute('aria-pressed', b.dataset.kind === state.kind ? 'true' : 'false');
+    });
+    const manageBtn = document.querySelector('[data-act="manage"]');
+    if (manageBtn) manageBtn.setAttribute('aria-pressed', state.view === 'manage' ? 'true' : 'false');
+    $('browse').hidden = state.view === 'manage';
+    $('manage').hidden = state.view !== 'manage';
+    if (!data) {
+      $('stats').innerHTML = '';
+      $('mStats').innerHTML = '';
+      $('statsLine').textContent = '';
+      return;
+    }
+    const chips = statsHtml();
+    $('stats').innerHTML = chips;
+    $('mStats').innerHTML = chips;
+    $('statsLine').textContent = statsLine();
+    if (state.view === 'browse') {
+      renderBrowse();
+    } else if (dirty.size === 0) {
+      renderManage();
+    } else {
+      $('treeRows').innerHTML = treeHtml();
+      updateSavebar();
+    }
+  }
+
+  async function load() {
+    try {
+      const st = await api('/api/state');
+      const ext = st.extensions || {};
+      const rt = (st.effective && st.effective.extensions) || null;
+      const custom = st.custom || {};
+      const ex = custom.extensions && typeof custom.extensions === 'object' ? custom.extensions : null;
+      const legacyEnabled = Array.isArray(custom.plugins?.enabled) ? custom.plugins.enabled : [];
+      const enabledPlugins = new Set(ex ? (ex.plugins?.enabled || []) : legacyEnabled);
+      const enabledSkills = new Set(ex ? (ex.skills?.enabled || []) : legacyEnabled);
+      const settingsPlugins = ex?.plugins?.settings || custom.plugins?.settings || {};
+      const settingsSkills = ex?.skills?.settings || {};
+      const categories = Array.isArray(ext.categories) ? ext.categories : [];
+      const items = Array.isArray(ext.items) ? ext.items : [];
+      const rtById = {};
+      if (rt && Array.isArray(rt.items)) for (const r of rt.items) rtById[r.id] = r;
+      data = {
+        categories,
+        catKeys: new Set(categories.map((c) => c.key)),
+        items,
+        rtById,
+        rtAlive: !!(st.effective && st.effective.alive),
+        enabledPlugins,
+        enabledSkills,
+        settingsPlugins,
+        settingsSkills,
+        limits: {
+          max: ex?.max ?? custom.extensions?.max ?? 256,
+          toolsMax: custom.tools?.max ?? 64,
+          hookTimeoutMs: ex?.hookTimeoutMs ?? 5000,
+        },
+        bounds: st.customMeta?.fieldMeta?.bounds || {},
+        extPrompt: st.extensionPrompt || null,
+        catLabel: (k) => (categories.find((c) => c.key === k) || {}).label || '其他',
+      };
+      $('offline').hidden = true;
+      $('loading').hidden = true;
+      render();
+    } catch (e) {
+      $('loading').hidden = true;
+      $('offline').hidden = false;
+      $('offline').textContent = '读不到控制台状态：' + (e && e.message ? e.message : e) + '。这个页面不编造数据。';
+      data = null;
+      $('list').innerHTML = '';
+      $('mList').innerHTML = '';
+      $('empty').hidden = true;
+      $('mEmpty').hidden = true;
+      $('mExtra').innerHTML = '';
+      $('limits').innerHTML = '';
+      $('stats').innerHTML = '';
+      $('mStats').innerHTML = '';
+      $('statsLine').textContent = '';
+      $('treeRows').innerHTML = '';
+    }
+  }
+
+  async function toggleItem(kind, id) {
+    if (!data) return;
+    const cur = new Set(enabledSet(kind));
+    const on = cur.has(id);
+    if (on) cur.delete(id); else cur.add(id);
+    const ns = kind === 'skill' ? 'skills' : 'plugins';
+    try {
+      await postJson('/api/config', {
+        custom: { extensions: { [ns]: { enabled: [...cur] } } },
+      });
+      showToast(`已${on ? '关闭' : '启用'} ${id}，重启机器人后生效。`);
+      await load();
+    } catch (e) {
+      showToast(`保存失败：${e.message}`, 'bad');
+      await load();
+    }
+  }
+
+  function setKind(kind) {
+    const k = kind === 'skill' ? 'skill' : 'plugin';
+    if (state.kind === k) return;
+    state.kind = k;
+    state.cat = 'all';
+    state.sub = 'all';
+    render();
+  }
+
+  function setView(view) {
+    state.view = view === 'manage' ? 'manage' : 'browse';
+    render();
   }
 
   function bindTree() {
@@ -473,68 +1039,154 @@
         state.cat = (cat === 'all' || state.cat !== cat) ? cat : 'all';
         state.sub = 'all';
       }
-      renderList();
+      render();
     });
   }
 
-  async function load() {
+  /* ── 删除 ─────────────────────────────────────────────────────────── */
+  function openRemove(kind, id, name) {
+    pendingRemove = { kind, id, name };
+    $('rmTitle').textContent = `删除${kindLabel(kind)}`;
+    $('rmText').innerHTML = `确定删除 <b>${esc(name || id)}</b>（<code>${esc(id)}</code>）吗？<br>会移除磁盘上的扩展目录，并清掉启用名单与设置。<b>不可恢复</b>，且需要重启机器人后才彻底退出运行。`;
+    $('rmNote').hidden = true;
+    $('rmScrim').hidden = false;
+  }
+  function closeRemove() { $('rmScrim').hidden = true; }
+  async function confirmRemove() {
+    if (!pendingRemove) return;
+    const { kind, id, name } = pendingRemove;
     try {
-      const st = await api('/api/state');
-      const ext = st.extensions || {};
-      const rt = (st.effective && st.effective.extensions) || null;
-      const rtById = {};
-      if (rt && Array.isArray(rt.items)) for (const r of rt.items) rtById[r.id] = r;
-      const categories = Array.isArray(ext.categories) ? ext.categories : [];
-      const items = Array.isArray(ext.items) ? ext.items : [];
-      data = {
-        categories,
-        catKeys: new Set(categories.map((c) => c.key)),
-        items,
-        rtById,
-        enabled: new Set(((st.custom || {}).plugins || {}).enabled || []),
-        catLabel: (k) => (categories.find((c) => c.key === k) || {}).label || '其他',
-      };
-      $('offline').hidden = true;
-      $('loading').hidden = true;
-      renderList();
+      await postJson('/api/extensions/remove', { kind, id });
+      closeRemove();
+      pendingRemove = null;
+      showToast(`已删除 ${name || id}；重启机器人后彻底退出运行。`);
+      await load();
     } catch (e) {
-      $('loading').hidden = true;
-      $('offline').hidden = false;
-      $('offline').textContent = '读不到控制台状态：' + (e && e.message ? e.message : e) + '。这个页面不编造数据。';
-      $('list').innerHTML = '';
-      $('empty').hidden = true;
+      const note = $('rmNote');
+      note.hidden = false;
+      note.textContent = `删除失败：${e.message}`;
     }
   }
 
-  /* ── 导入面板（居中虚线区）────────────────────────────────────────────── */
+  /* ── 设置保存 ─────────────────────────────────────────────────────── */
+  function collectSaveBody() {
+    const body = { custom: { extensions: {}, tools: {} } };
+    let hasExt = false;
+    let hasTools = false;
+    for (const [key, value] of dirty) {
+      if (key.startsWith('set:')) {
+        const [kind, id, field] = key.slice(4).split('|');
+        const ns = kind === 'skill' ? 'skills' : 'plugins';
+        body.custom.extensions[ns] = body.custom.extensions[ns] || { settings: {} };
+        body.custom.extensions[ns].settings = body.custom.extensions[ns].settings || {};
+        body.custom.extensions[ns].settings[id] = body.custom.extensions[ns].settings[id] || {};
+        body.custom.extensions[ns].settings[id][field] = value;
+        hasExt = true;
+      } else if (key === 'limit:max') {
+        body.custom.extensions.max = Number(value);
+        hasExt = true;
+      } else if (key === 'limit:hookTimeoutMs') {
+        body.custom.extensions.hookTimeoutMs = Number(value);
+        hasExt = true;
+      } else if (key === 'limit:toolsMax') {
+        body.custom.tools.max = Number(value);
+        hasTools = true;
+      }
+    }
+    if (!hasExt) delete body.custom.extensions;
+    if (!hasTools) delete body.custom.tools;
+    return body;
+  }
+
+  async function saveSettings() {
+    if (!dirty.size) return;
+    for (const [key, value] of dirty) {
+      if (key.startsWith('limit:') && !Number.isFinite(Number(value))) {
+        showToast('上限必须填数字；改好后再保存。', 'bad');
+        return;
+      }
+    }
+    const btn = $('pfSave');
+    if (btn) btn.disabled = true;
+    try {
+      const r = await postJson('/api/config', collectSaveBody());
+      dirty = new Map();
+      updateSavebar();
+      showToast((r && r.msg) || '已保存，重启机器人后生效。');
+      await load();
+    } catch (e) {
+      showToast(`保存失败：${e.message}`, 'bad');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function discardSettings() {
+    dirty = new Map();
+    updateSavebar();
+    render();
+    showToast('已放弃未保存的修改。');
+  }
+
+  /* ── 导入 / 更新 ──────────────────────────────────────────────────── */
   const scrim = $('impScrim');
   const note = $('impNote');
   function sayNote(text) { note.hidden = false; note.textContent = text; }
-  function openImp() {
+  function setImpCopy() {
+    const kind = importMode.kind;
+    const label = kindLabel(kind);
+    const updating = importMode.mode === 'update';
+    $('impTitle').textContent = `${updating ? '更新' : '导入'}${label}`;
+    $('impDropTitle').textContent = updating ? '把新版 ZIP 或文件夹拖到这里' : '把 ZIP 或文件夹拖到这里';
+    $('impHint').textContent = updating
+      ? `选择同 id 的新版 ZIP 或文件夹覆盖「${importMode.name || importMode.id}」。旧包会先备份；包的 id 不一致会被拒绝。`
+      : '也可以选 ZIP 或整个文件夹。装完默认不启用 —— 回列表勾上它，再重启机器人。';
+    $('impKind').value = kind;
+    $('impKind').disabled = false;
+    $('impKindWrap').hidden = updating;
+  }
+
+  function openImp(opts = {}) {
+    const requested = opts.kind === 'skill' || opts.kind === 'plugin' ? opts.kind : state.kind;
+    importMode = {
+      mode: opts.mode === 'update' ? 'update' : 'install',
+      kind: requested,
+      id: opts.id || '',
+      name: opts.name || '',
+    };
     note.hidden = true;
+    setImpCopy();
     scrim.hidden = false;
     $('impDrop').focus({ preventScroll: true });
   }
   function closeImp() { scrim.hidden = true; }
+
   function handoff(file) {
     if (!file) return;
-    if (!/\.zip$/i.test(file.name)) { sayNote('只支持 .zip —— 请先把插件文件夹压成 ZIP，或用「选择文件夹」。'); return; }
+    if (!/\.zip$/i.test(file.name)) { sayNote('单个文件只支持 .zip；整个扩展文件夹可以直接拖进来，或用「选择文件夹」。'); return; }
+    const kind = importMode.kind;
+    const overwrite = importMode.mode === 'update';
+    const expectId = overwrite ? importMode.id : '';
     closeImp();
     if (window.parent && window.parent !== window) {
-      window.parent.postMessage({ source: 'estrella-factory', action: 'plugin.import.file', file, name: file.name, kind: 'plugin' }, location.origin);
+      window.parent.postMessage({
+        source: 'estrella-factory', action: 'plugin.import.file',
+        file, name: file.name, kind, overwrite, expectId,
+      }, location.origin);
     } else {
       sayNote('请在控制台里打开这个工厂再导入 —— 安装动作由控制台执行。');
       scrim.hidden = false;
     }
   }
 
-  function handoffBlob(blob, name, kind) {
+  function handoffBlob(blob, name, kind, overwrite, expectId) {
     if (!(blob instanceof Blob)) { sayNote('打包结果不是文件。'); return; }
     closeCreate();
     closeImp();
     if (window.parent && window.parent !== window) {
       window.parent.postMessage({
-        source: 'estrella-factory', action: 'plugin.import.file', file: blob, name, kind,
+        source: 'estrella-factory', action: 'plugin.import.file',
+        file: blob, name, kind, overwrite: overwrite === true, expectId: expectId || '',
       }, location.origin);
       return;
     }
@@ -542,15 +1194,52 @@
     scrim.hidden = false;
   }
 
-  async function handoffFolder(fileList) {
-    const files = Array.from(fileList || []);
+  function entriesOfFileList(fileList) {
+    return Array.from(fileList || []).map((file) => ({
+      file, path: file.webkitRelativePath || file.name,
+    }));
+  }
+
+  async function walkDropEntry(entry, base, out) {
+    if (!entry) return;
+    if (entry.isFile) {
+      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+      out.push({ file, path: base + entry.name });
+      return;
+    }
+    if (!entry.isDirectory) return;
+    const reader = entry.createReader();
+    const children = [];
+    for (;;) {
+      const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+      if (!batch.length) break;
+      children.push(...batch);
+    }
+    const next = base + entry.name + '/';
+    for (const child of children) await walkDropEntry(child, next, out);
+  }
+
+  async function entriesOfDrop(dt) {
+    const roots = Array.from((dt && dt.items) || [])
+      .map((it) => (typeof it.webkitGetAsEntry === 'function' ? it.webkitGetAsEntry() : null))
+      .filter(Boolean);
+    if (!roots.length) return null;
+    const entries = [];
+    for (const root of roots) await walkDropEntry(root, '', entries);
+    return { roots, entries };
+  }
+
+  async function handoffFolder(list) {
+    const files = Array.isArray(list) ? list : [];
     if (!files.length) return;
     note.hidden = true;
+    const kind = importMode.kind;
     const entries = [];
     let root = '';
     let total = 0;
-    for (const f of files) {
-      const rel = String(f.webkitRelativePath || f.name || '').replace(/\\/g, '/');
+    for (const item of files) {
+      const f = item.file || item;
+      const rel = String(item.path || f.webkitRelativePath || f.name || '').replace(/\\/g, '/');
       if (!rel) continue;
       if (/(^|\/)(__MACOSX|\.DS_Store|Thumbs\.db)(\/|$)/i.test(rel)) continue;
       if (rel.startsWith('/') || rel.split('/').some((s) => !s || s === '.' || s === '..')) {
@@ -570,15 +1259,22 @@
     sayNote('正在打包 ' + entries.length + ' 个文件…');
     try {
       const r = await postJson('/api/extensions/package', {
-        mode: 'folder', kind: 'plugin', root, files: entries,
+        mode: 'folder', kind, root, files: entries,
       });
       if (!r || !r.ok || !r.zipBase64) throw new Error((r && r.error) || '打包失败');
-      handoffBlob(base64ToBlob(r.zipBase64), (root || 'plugin') + '.zip', r.kind || 'plugin');
+      handoffBlob(
+        base64ToBlob(r.zipBase64),
+        (root || kind) + '.zip',
+        r.kind || kind,
+        importMode.mode === 'update',
+        importMode.mode === 'update' ? importMode.id : '',
+      );
     } catch (e) {
       sayNote('打包失败：' + e.message);
     }
   }
-  /* ── 创造插件（模板创建，不调用模型）──────────────────────────────────── */
+
+  /* ── 创造（模板创建，不调用模型）──────────────────────────────────── */
   const createScrim = $('createScrim');
   const crNote = $('crNote');
   const crPreview = $('crPreview');
@@ -603,7 +1299,9 @@
     if (crInstall) crInstall.disabled = true;
     if (crPreview) { crPreview.hidden = true; crPreview.textContent = ''; }
     setCrNote('');
-    setCreateKind($('crKind') ? $('crKind').value : 'plugin');
+    const sel = $('crKind');
+    if (sel) sel.value = state.kind;
+    setCreateKind(state.kind);
     createScrim.hidden = false;
     const id = $('crId');
     if (id) id.focus({ preventScroll: true });
@@ -652,7 +1350,7 @@
   }
   function installCreate() {
     if (!createState) { setCrNote('先点「生成预览」。'); return; }
-    handoffBlob(base64ToBlob(createState.zipBase64), createState.name, createState.kind);
+    handoffBlob(base64ToBlob(createState.zipBase64), createState.name, createState.kind, false, '');
   }
   if (createScrim) {
     createScrim.addEventListener('click', (ev) => {
@@ -689,9 +1387,14 @@
   $('impZip').addEventListener('change', (ev) => handoff(ev.target.files && ev.target.files[0]));
   $('impFolder').addEventListener('change', (ev) => {
     // ⚠️ 先快照再清 value：清空 input.value 会让 FileList 变成空，异步打包就读不到文件。
-    const files = Array.from(ev.target.files || []);
+    const files = entriesOfFileList(ev.target.files);
     ev.target.value = '';
     void handoffFolder(files);
+  });
+  $('impKind').addEventListener('change', () => {
+    if (importMode.mode === 'update') return;
+    importMode.kind = $('impKind').value === 'skill' ? 'skill' : 'plugin';
+    setImpCopy();
   });
   const drop = $('impDrop');
   drop.addEventListener('dragover', (ev) => { ev.preventDefault(); drop.classList.add('is-over'); });
@@ -699,27 +1402,92 @@
   drop.addEventListener('drop', (ev) => {
     ev.preventDefault();
     drop.classList.remove('is-over');
-    const files = ev.dataTransfer && ev.dataTransfer.files;
-    if (files && files.length > 1) void handoffFolder(files);
-    else handoff(files && files[0]);
+    const dt = ev.dataTransfer;
+    const files = dt && dt.files;
+    void (async () => {
+      const rich = await entriesOfDrop(dt);
+      if (rich) {
+        const hasDir = rich.roots.some((r) => r.isDirectory);
+        if (hasDir || rich.entries.length > 1) {
+          if (!rich.entries.length) { sayNote('拖入的文件夹里没有可读取的文件。'); return; }
+          await handoffFolder(rich.entries);
+          return;
+        }
+        handoff(rich.entries[0] && rich.entries[0].file);
+        return;
+      }
+      if (files && files.length > 1) await handoffFolder(entriesOfFileList(files));
+      else handoff(files && files[0]);
+    })().catch((e) => sayNote('读取拖入内容失败：' + (e && e.message ? e.message : e)));
   });
-  drop.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openImp(); } });
+  drop.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); $('impZip').click(); } });
+
+  $('rmScrim').addEventListener('click', (ev) => {
+    if (ev.target === $('rmScrim') || ev.target.closest('[data-rm="close"]') || ev.target.closest('[data-rm="cancel"]')) {
+      closeRemove();
+      return;
+    }
+    if (ev.target.closest('[data-rm="confirm"]')) void confirmRemove();
+  });
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
     if (!scrim.hidden) closeImp();
     if (createScrim && !createScrim.hidden) closeCreate();
+    if (!$('rmScrim').hidden) closeRemove();
   });
 
   document.addEventListener('click', (ev) => {
+    const modeBtn = ev.target.closest('.mode-btn[data-kind]');
+    if (modeBtn) { setKind(modeBtn.dataset.kind); return; }
+    const toggle = ev.target.closest('[data-toggle]');
+    if (toggle) {
+      const [kind, id] = String(toggle.dataset.toggle || '').split('|');
+      if (kind && id) void toggleItem(kind, id);
+      return;
+    }
     const btn = ev.target.closest('[data-act]');
     if (!btn) return;
-    if (btn.dataset.act === 'import') openImp();
-    else if (btn.dataset.act === 'create') openCreate();
+    const act = btn.dataset.act;
+    if ((act === 'update' || act === 'remove') && dirty.size) {
+      showToast('有未保存的设置，先保存或放弃再操作。', 'bad');
+      return;
+    }
+    if (act === 'import') openImp({ mode: 'install', kind: state.kind });
+    else if (act === 'create') openCreate();
+    else if (act === 'manage') setView(state.view === 'manage' ? 'browse' : 'manage');
+    else if (act === 'browse') setView('browse');
+    else if (act === 'update') openImp({ mode: 'update', kind: btn.dataset.kind, id: btn.dataset.id, name: btn.dataset.name });
+    else if (act === 'remove') openRemove(btn.dataset.kind, btn.dataset.id, btn.dataset.name);
   });
+
+  function onSettingInput(ev) {
+    const el = ev.target;
+    if (!el || !el.matches) return;
+    if (el.matches('[data-set]')) {
+      const key = el.dataset.set;
+      const fk = el.dataset.fkind;
+      let v;
+      if (fk === 'bool') v = el.checked === true;
+      else if (fk === 'number') v = el.value === '' ? '' : Number(el.value);
+      else if (fk === 'list') v = String(el.value || '').split('\n').map((s) => s.trim()).filter(Boolean);
+      else v = el.value;
+      dirty.set('set:' + key, v);
+      updateSavebar();
+      return;
+    }
+    if (el.matches('[data-limit]')) {
+      dirty.set('limit:' + el.dataset.limit, el.value === '' ? '' : Number(el.value));
+      updateSavebar();
+    }
+  }
+  document.addEventListener('input', onSettingInput);
+  document.addEventListener('change', onSettingInput);
+
+  $('pfSave').addEventListener('click', () => void saveSettings());
+  $('pfDiscard').addEventListener('click', discardSettings);
 
   bindTree();
   load();
-  /* 控制台每 3 秒拉一次 state；工厂按同一节奏刷新（只读，开销很小）。 */
   setInterval(load, 5000);
 })();
 </script>

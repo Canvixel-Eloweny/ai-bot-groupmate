@@ -16,38 +16,34 @@ const CSS = 'panel/next/style.css';
 export default [
   {
     id: 'P1',
-    note: '把浅色粉端 #ffdbe9 换回中性灰 #eceff2 —— §131 必须变红'
-      + '（胶囊只剩蓝→灰，看起来"像有渐变"但粉没了）。预期 BLOCKED（check-wb §131 粉蓝配色）',
+    note: '整行删掉浅色 --c-nav-pill-b 令牌（浅色胶囊失去粉端）—— §131 必须变红'
+      + '（判据已从精确色值改为「浅/深两套令牌都在」）。预期 BLOCKED（check-wb §131 令牌存在性）',
     anchor: /--c-nav-pill-b:\s*#ffdbe9;/,
     count: 1,
     file: CSS,
-    apply: (s) => s.replace(/--c-nav-pill-b:\s*#ffdbe9;/, '--c-nav-pill-b: #eceff2;'),
+    apply: (s) => s.replace(/--c-nav-pill-b:\s*#ffdbe9;/, ''),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },
   {
     id: 'P2',
-    note: '把深色粉端 rgba(196,108,158,.36) 换成中性白 —— §131 必须变红'
-      + '（深色胶囊只剩淡蓝→白）。预期 BLOCKED（check-wb §131 粉蓝配色）',
+    note: '整行删掉深色 --c-nav-pill-b 令牌（深色胶囊失去粉端）—— §131 必须变红'
+      + '（判据为浅/深两套令牌都在）。预期 BLOCKED（check-wb §131 令牌存在性）',
     anchor: /--c-nav-pill-b:\s*rgba\(196, 108, 158, \.36\);/,
     count: 1,
     file: CSS,
-    apply: (s) => s.replace(
-      /--c-nav-pill-b:\s*rgba\(196, 108, 158, \.36\);/,
-      '--c-nav-pill-b: rgba(255, 255, 255, .08);'),
+    apply: (s) => s.replace(/--c-nav-pill-b:\s*rgba\(196, 108, 158, \.36\);/, ''),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },
   {
     id: 'P3',
-    note: '把浅色冷蓝托盘下缘换成近白 —— §131 必须变红'
-      + '（二级栏回到"几乎看不出蓝"的状态，肉眼像渐变丢失）。预期 BLOCKED（check-wb §131 粉蓝配色）',
+    note: '整行删掉浅色 --c-nav-l2-grad-b 令牌（浅色托盘失去下缘）—— §131 必须变红'
+      + '（判据为浅/深两套令牌都在）。预期 BLOCKED（check-wb §131 令牌存在性）',
     anchor: /--c-nav-l2-grad-b:\s*rgba\(230, 240, 251, \.86\);/,
     count: 1,
     file: CSS,
-    apply: (s) => s.replace(
-      /--c-nav-l2-grad-b:\s*rgba\(230, 240, 251, \.86\);/,
-      '--c-nav-l2-grad-b: rgba(247, 249, 250, .86);'),
+    apply: (s) => s.replace(/--c-nav-l2-grad-b:\s*rgba\(230, 240, 251, \.86\);/, ''),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

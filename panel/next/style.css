@@ -1478,21 +1478,6 @@ body.is-frame-page .foot { display: none; }
     radial-gradient(85% 55% at 86% -8%, var(--c-accent-weak), transparent 62%);
 }
 
-/* ── 插件板（每个插件一块独立玻璃板 · 2026-10-04）──────────────────────────
-   ⚠️⚠️ **材质不重写**：.pcard 同时挂 card 类，玻璃（底色 / 织纹 / backdrop-filter /
-      边缘高光 / 厚度 inset）、圆角 --r3、阴影、1px 边全部继承 .card 那一档
-      （:where(body.eg-on) .card 在下面第 2 档材质区里）。所以「多个插件板之间
-      视觉统一」是**结构性**的 —— 改一次 .card 材质，所有板一起变；
-      另写一份「看起来像玻璃的」才是两份语义，必然漂。
-
-   ⚠️⚠️ **.pgrid > .pcard 必须显式解除 span 12** —— 这条是实测踩出来的：
-      .card 带着 grid-column: span 12（那是给 .page 那条 12 列栅格用的：卡片占满整行）。
-      .pcard 复用 card 类是为了继承玻璃材质，副作用是把 span 12 一起继承了 ——
-      在 .pgrid 内部它照样 span 12 ⇒ 13 块板被**撑成 13 排单列**。
-      而这类失效**不报错**：板还在、玻璃还在、「等宽」也照样成立（都是整行宽，
-      自然等宽）—— 只有「横向平铺」这件事没了，页面看起来接近改之前的旧形态。
-      verify 的「同排等宽」条在单列下还会**假绿**（rowWidths 过滤掉单元素排后恒为空），
-      所以另立了一条「真的横排多列」的反向自证。 */
 /* 裸容器（bare 通道落地处）：**刻意什么都不给** —— 没有底色、没有边框、
    没有圆角、没有阴影、没有 backdrop-filter。它只做一件事：占满 .page 那条 12 列
    栅格的一整行，把内部的板集合直接放到页面背景上。
@@ -1502,32 +1487,6 @@ body.is-frame-page .foot { display: none; }
       留空本身就是这条纪律。 */
 .bare { grid-column: span 12; min-width: 0; }
 
-.pgrid {
-  display: grid;
-  /* auto-fill minmax(340px,1fr)：每列至少 340px、**列宽由容器均分** ⇒ 同一行里
-     所有板逐像素等宽；放不下就换行。窄屏用同一条查询降到单列。 */
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: var(--s3);                /* 板间间距：与 .grid2/.grid3 同一档，不另定 */
-  align-items: stretch;           /* 同排板**等高**（用户要「尺寸统一」）；
-     高度差由板内 .pcard-b 的 align-content:start 自然吃掉，不在板腰留空白带。 */
-}
-.pgrid > .pcard { grid-column: auto; }
-@media (max-width: 760px) { .pgrid { grid-template-columns: minmax(0, 1fr); } }
-
-/* 板内两段布局。刻意**不用** .card-h / .card-b：那两段带 1px 分隔线与 48px
-   最小高度，是为「大卡片的标题栏」调的；插件板更小，套上去会显得空。 */
-.pcard-h {
-  display: flex; align-items: center; gap: var(--s2);
-  min-width: 0; padding: var(--s3) var(--s3) 0;
-}
-.pcard-h .nm { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pcard-h .spacer { flex: 1; }
-.pcard-b {
-  display: grid; gap: var(--s2); min-width: 0; padding: var(--s3);
-  align-content: start;          /* 配合外层 stretch：板等高，内容仍从顶部起排 */
-}
-/* 板内的 details（设置项多时收起的那层）不要自带左边框 —— 板已经很窄了。 */
-.pcard .det > summary { padding-left: 0; }
 
 /* 输入类：统一 32px 高 / 8px 圆角 / 焦点环只画一圈（内阴影式的 3px 圈，
    不是又描一道边 —— 两道边在深色下会叠成一条脏线） */

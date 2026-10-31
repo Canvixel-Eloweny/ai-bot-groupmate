@@ -1208,9 +1208,9 @@ export const GROUPS = [
   },
   /* ══════════════════ ⑦ 工厂 ══════════════════
      独立工具域：一页就是一件完整工具，不拆卡片。
-     五个二级页 = 三份常驻 iframe（视觉 / 人设 / 插件）+ 插件管理 / Skill 两个普通卡片页；
-     前三页由 `#page[data-frame]` 选择当前帧，后两页走普通渲染。
-     `factory-frame.js` 负责帧的预热、显隐与 0.22s 切换入场。 */
+     三个二级页 = 三份常驻 iframe（视觉 / 人设 / 插件技能工厂）；
+     2026-10-31：插件管理页与 Skill 页并入插件技能工厂（模式开关 + 管理插件与技能）。
+     三页都由 `#page[data-frame]` 选择当前帧，`factory-frame.js` 负责预热、显隐与 0.22s 切换入场。 */
   {
     id: 'factory', label: '工厂',
     subs: [
@@ -1225,77 +1225,12 @@ export const GROUPS = [
         frame: 'persona-factory.html',
       },
       {
-        id: 'plugin', label: '插件工厂', title: '插件工厂',
-        desc: '查看本机扩展能力的运行面；导入 ZIP 或整个文件夹，也可以按模板创建插件 / Skill。',
+        id: 'plugin', label: '插件技能工厂', title: '插件技能工厂',
+        desc: '插件与 Skill 共用同一套宿主：导入/创建、开关、设置、更新、删除，以及运行期统计都在这里。',
         frame: 'plugin-factory.html',
       },
-      {
-        id: 'plugins', label: '插件管理', title: '插件管理',
-        desc: '装在 <code>plugins/</code> 里的确定性扩展。目录里有<b>不等于</b>会生效 —— 必须在这里勾上，且要重启机器人（不支持热插拔）。Skill 在旁边的「Skill」页。',
-        draft: true,
-        cards: [
-          {
-            id: 'plugsum', title: '插件总览与安装', span: 12,
-            ctrls: [
-              { t: 'pluginSummary' },
-              /* 2026-10-23：上限不再写死 20 / 24。区间由 `src/field-schema.js` 的
-                 `pluginMax` / `toolMax` 提供（`bounds` 读的是服务端下发的 fieldMeta），
-                 这里不抄 1024 / 256 两个数字。 */
-              { t: 'number', id: 'plug.max', label: '扩展总数上限（插件 + Skill）', bind: 'extensions.max', bounds: 'pluginMax', min: 1, step: 1,
-                hint: '默认 256。插件与 Skill 共用一个上限；超出的会显示「超上限·未加载」，不会静默丢弃；改完要重启机器人。' },
-              { t: 'number', id: 'tool.max', label: '最多注册工具数', bind: 'tools.max', bounds: 'toolMax', min: 1, step: 1,
-                hint: '默认 64。工具 schema 会进每一轮请求，别调太大；改完要重启机器人。' },
-              { t: 'number', id: 'plug.hookTimeout', label: '钩子单条超时（毫秒）', bind: 'extensions.hookTimeoutMs',
-                bounds: 'hookTimeoutMs', min: 100, step: 100,
-                hint: '默认 5000。超时的钩子会被放行并记一条警告；改完要重启机器人。' },
-              { t: 'importZip', kind: 'plugin', label: '装插件 ZIP' },
-            ],
-          },
-          {
-            id: 'pluggrid', title: '插件清单与设置', span: 12,
-            /* ⚠️ `bare: true` = **不套外层 .card**（`cardHtml` 走 `bareHtml`）。
-               插件网格自己就是完整的板集合：外面再罩一张 span-12 玻璃板，
-               视觉上就变成「大玻璃板里切了 N 块」—— 而用户要的是每块独立浮着。
-     （这里原本写着"13 块"：那是当时装着的包数，2026-10-17 那 13 个包已全部删除 ——
-       数字会腐烂，写 N 才不会在下一次变成"注释说一件不再成立的事"。）
-               那层外壳不是设计，是容器，所以这里把它整个脱掉。 */
-            bare: true,
-            ctrls: [{ t: 'pluginList' }],
-          },
-          {
-            id: 'scope', title: '插件能做什么 / 不能做什么', span: 12,
-            ctrls: [{ t: 'pluginScope' }],
-          },
-        ],
-      },
-      {
-        id: 'skill', label: 'Skill', title: 'Skill（LLM 型扩展）',
-        desc: '装在 <code>skills/</code> 里的 LLM 型扩展：注册工具 + 可选提示词，<b>用不用由模型判断</b>。与「知识包/角色卡」是两份数据；目录里有也不等于会生效，勾上后要重启机器人。',
-        draft: true,
-        cards: [
-          {
-            id: 'skillsum', title: 'Skill 总览与安装', span: 12,
-            ctrls: [
-              { t: 'skillSummary' },
-              { t: 'importZip', kind: 'skill', label: '装 Skill ZIP' },
-              { t: 'note', text: 'Skill 只增加模型可选的工具与提示词，<b>不保证执行</b>。需要“条件满足必跑”的请做插件；纯提示词 Skill 仍需 <code>index.js</code>，内容写 <code>export {}</code> 即可。' },
-            ],
-          },
-          {
-            id: 'skillgrid', title: 'Skill 清单与设置', span: 12,
-            bare: true,
-            ctrls: [{ t: 'skillList' }],
-          },
-          {
-            id: 'skillpreview', title: '模型可见预览', span: 12,
-            ctrls: [{ t: 'skillPromptPreview' }],
-          },
-          {
-            id: 'skillscope', title: 'Skill 与插件 / 知识包的区别', span: 12,
-            ctrls: [{ t: 'skillScope' }],
-          },
-        ],
-      },
+
+
     ],
   },
 ];
@@ -1328,7 +1263,7 @@ const NAV_SHORT = {
   },
   factory: {
     group: '工厂',
-    subs: { visual: '视觉工厂', persona: '人设工厂', plugin: '插件工厂', plugins: '插件管理', skill: 'Skill' },
+    subs: { visual: '视觉工厂', persona: '人设工厂', plugin: '插件技能工厂' },
   },
 };
 for (const g of GROUPS) {
@@ -1555,8 +1490,7 @@ export const CTRL_KINDS = [
      ⚠️ 它们不是"控件"，而是 Self-contained 的页面主体；内部字段仍逐个登记进
         `S.reg` 走统一写口，保存/丢弃/草稿计数与普通控件完全一样。 */
   'psnOverview', 'psnProfile', 'psnMbti', 'psnEnhance', 'psnMood', 'psnPrompt',
-  'schedList', 'holidays', 'pluginSummary', 'pluginList', 'pluginSettings', 'pluginScope',
-  'skillSummary', 'skillList', 'skillPromptPreview', 'skillScope',
+  'schedList', 'holidays', 'pluginSettings',
   'people', 'unread', 'gallery', 'apiDeals',
   'sesList', 'sesDetail', 'chatList', 'chatDetail', 'traceList', 'logList', 'auditList',
   /* `termView`：网页内置终端（2026-10-11）—— 取代那个关不掉的前台 cmd 窗口。
@@ -1564,7 +1498,7 @@ export const CTRL_KINDS = [
      （`/api/console/stream`），页面重画时靠模块级状态重填，不重新建连接。 */
   'termView', 'fakeView',
   'update',
-  'tryOut', 'importFile', 'importZip', 'protoInfo',
+  'tryOut', 'importFile', 'protoInfo',
   /* HUD 调整页（2026-10-25）：轮播项表与实时读数都由 island.js 的
      cfg()/items()/debug() 供数，页面不另存一份 HUD 默认值。 */
   'hudItems', 'hudMetrics',

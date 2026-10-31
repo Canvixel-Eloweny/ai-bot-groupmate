@@ -203,7 +203,9 @@ import { USAGE_SOURCES } from '../src/usage.js';
 // 而漂的表现是"自己打的包自己读不出"。`makeZip` 原先长在本文件里，本步搬进叶子。
 import { makeZip, ZIP_UPLOAD_MAX } from './lib/zip.js';
 // 安装的**判据 + 三步落盘**全在 `ext-install.js`（IO 可注入 → 能确定性地测回滚）。
-import { installArchive } from './lib/ext-install.js';
+import {
+  installArchive, planRemove, removeExtension, stripExtensionFromCustom,
+} from './lib/ext-install.js';
 // 插件的两个根（`plugins/` / `skills/`，可被 `QQBOT_*` 覆盖）—— 唯一推导处。
 // 面板早就通过 `panel/lib/extensions.js` 引了 plugin-host，这里不是新的启动路径耦合。
 import { extensionRoots } from '../src/plugin-host.js';
@@ -305,6 +307,8 @@ const WRITE_ROUTES = new Set([
   // D21：插件 ZIP 导入（往 `plugins/` / `skills/` 落目录）。它是**破坏性写**
   // （会新建、可覆盖已有包）→ 与 trace/logs 清理同桌，必须受鉴权与审计。
   '/api/extensions/install',
+  // 扩展卸载（2026-10-31）：删目录 + 清启用名单/设置，是彻底的破坏性写。
+  '/api/extensions/remove',
   // P3 应用内更新：检查/下载/取消/安装都会写状态或启动安装器；全部走 token + 审计。
   '/api/update/check', '/api/update/download', '/api/update/cancel', '/api/update/install',
   // P4 离线更新：prepare 验签/暂存，installer 收原始 EXE 并校验；都会落盘。
@@ -3243,10 +3247,13 @@ async function apiExtensionsInstall(req, res, url) {
   const overwrite = url.searchParams.get('overwrite') === '1';
   const kindRaw = url.searchParams.get('kind');
   const expectedKind = kindRaw === 'skill' || kindRaw === 'plugin' ? kindRaw : null;
+  const expectedId = (url.searchParams.get('id') || '').trim();
   if (kindRaw && !expectedKind) {
     return sendJson(res, { ok: false, error: '安装 kind 只能是 skill 或 plugin' }, 400);
   }
-  const r = installArchive({ bytes: got.buf, roots: extensionRoots(USER_ROOT), overwrite, expectedKind });
+  const r = installArchive({
+    bytes: got.buf, roots: extensionRoots(USER_ROOT), overwrite, expectedKind, expectedId,
+  });
   if (!r.ok) {
     pushLog(`· 扩展安装失败：${r.error}`);
     return sendJson(res, { ok: false, error: r.error }, r.code || 400);
@@ -3266,6 +3273,61 @@ async function apiExtensionsInstall(req, res, url) {
   return sendJson(res, {
     ok: true, id: r.id, kind: r.kind, dir: r.dir, files: r.files, replaced: r.replaced,
   });
+}
+
+// ── 扩展卸载（2026-10-31）──────────────────────────────────────────────
+// 客户端只给 `{kind,id}`；目录名从服务端扫描结果取（不接受路径）。
+// 顺序刻意是「先清配置、再删目录」：删目录失败时启用名单已经不指向它，
+// 用户看到的是「目录还在」而不是「配置勾着一个不存在的包」。
+async function apiExtensionsRemove(req, res, url) {
+  const body = await readBody(req);
+  const kind = body.kind === 'skill' ? 'skill' : body.kind === 'plugin' ? 'plugin' : '';
+  const id = String(body.id || '').trim();
+  if (!kind) return sendJson(res, { ok: false, error: '卸载类型只能是 plugin 或 skill' }, 400);
+  if (!id) return sendJson(res, { ok: false, error: '缺少扩展 id' }, 400);
+
+  const cfg = readConfig() || {};
+  const exNow = cfg.custom?.extensions;
+  const hasExNow = exNow && typeof exNow === 'object' && !Array.isArray(exNow);
+  const enabledMap = hasExNow
+    ? { plugin: exNow.plugins?.enabled || [], skill: exNow.skills?.enabled || [] }
+    : { plugin: cfg.custom?.plugins?.enabled || [], skill: cfg.custom?.plugins?.enabled || [] };
+  const scan = extensionsOf(enabledMap, {
+    force: true,
+    maxPlugins: hasExNow ? exNow.max : cfg.custom?.plugins?.max,
+  });
+  const item = (scan.items || []).find((it) => it.id === id && it.kind === kind);
+  if (!item) return sendJson(res, { ok: false, error: '没有找到这个扩展（可能已经删掉了）' }, 404);
+
+  const plan = planRemove({ item, kind, roots: extensionRoots(USER_ROOT) });
+  if (!plan.ok) return sendJson(res, { ok: false, error: plan.error }, 400);
+
+  cfg.custom = stripExtensionFromCustom(cfg.custom || {}, kind, id);
+  try {
+    writeConfig(cfg, { via: 'extensions.remove' });
+  } catch (e) {
+    return sendJson(res, { ok: false, error: `配置写盘失败，目录未动：${e?.message || e}` }, 500);
+  }
+
+  const rm = removeExtension({ target: plan.target });
+  if (!rm.ok) {
+    pushLog(`· 扩展卸载失败（配置已移除）：${item.dirName} · ${rm.error}`);
+    return sendJson(res, {
+      ok: false, error: rm.error, configCleared: true, removed: false,
+    }, 500);
+  }
+
+  const nextEx = cfg.custom?.extensions;
+  const hasNextEx = nextEx && typeof nextEx === 'object' && !Array.isArray(nextEx);
+  extensionsOf(hasNextEx
+    ? { plugin: nextEx.plugins?.enabled || [], skill: nextEx.skills?.enabled || [] }
+    : { plugin: cfg.custom?.plugins?.enabled || [], skill: cfg.custom?.plugins?.enabled || [] },
+  {
+    force: true,
+    maxPlugins: hasNextEx ? nextEx.max : cfg.custom?.plugins?.max,
+  });
+  pushLog(`· ${kind === 'skill' ? 'Skill' : '插件'}已卸载：${item.dirName}（${id}）`);
+  return sendJson(res, { ok: true, id, kind, dir: item.dirName });
 }
 
 // ── 自定义工作台：下载 / 导出 ──
@@ -4299,6 +4361,7 @@ const API_ROUTES = [
   { path: '/api/memory/review', method: 'POST', handler: apiMemoryReview },
   { path: '/api/custom/preview', method: 'POST', handler: apiCustomPreview },
   { path: '/api/extensions/install', method: 'POST', handler: apiExtensionsInstall },
+  { path: '/api/extensions/remove', method: 'POST', handler: apiExtensionsRemove },
   { path: '/api/custom/export', handler: apiCustomExport },
   { path: '/api/zhipu/packages', handler: apiZhipuPackages },
   { path: '/api/models', handler: apiModels },

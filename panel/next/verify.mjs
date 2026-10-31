@@ -263,7 +263,7 @@ check('每个页面都渲染出了卡片（frame / 空白页除外）', badPages
 check('没有空白页（工厂三页改为 frame 页）', blankPages.length === 0, blankPages.join(' · ') || '无');
 check('工厂三页都挂 frame',
   framePages.length === 3 && /视觉工厂/.test(framePages.join(' '))
-    && /人设工厂/.test(framePages.join(' ')) && /插件工厂/.test(framePages.join(' ')),
+    && /人设工厂/.test(framePages.join(' ')) && /插件技能工厂/.test(framePages.join(' ')),
   framePages.join(' · ') || '无');
 
 /* 工厂三页（2026-10-27）：入口只在「工厂」二级导航，三份常驻 iframe 由
@@ -393,8 +393,8 @@ const factory = await evalJs(`return (async () => {
     root: !!(pFrame && pFrame.contentDocument && pFrame.contentDocument.querySelector('.site-header')),
     visualLoads: stP.frames.visual.loadCount, personaLoads: stP.frames.persona.loadCount,
   };
-  const subG = subOf('插件工厂');
-  if (!subG) return { err: '找不到插件工厂页', labels, framesAttr };
+  const subG = subOf('插件技能工厂');
+  if (!subG) return { err: '找不到插件技能工厂页', labels, framesAttr };
   subG.click();
   let gFrame = null;
   for (let i = 0; i < 300; i++) {
@@ -463,9 +463,9 @@ check('顶部热区呼出导航',
     && factory.shownState?.inert === false && factory.shownState?.visibility === 'visible'
     && Number(factory.shownState?.opacity) >= 0.99,
   factory && JSON.stringify(factory.shownState));
-check('工厂五页映射正确、顶栏圆钮已删除',
-  !!factory && !factory.err && factory.open?.labels?.length === 5
-    && factory.open.labels.join('|') === '视觉工厂|人设工厂|插件工厂|插件管理|Skill'
+check('工厂三页映射正确、顶栏圆钮已删除',
+  !!factory && !factory.err && factory.open?.labels?.length === 3
+    && factory.open.labels.join('|') === '视觉工厂|人设工厂|插件技能工厂'
     && factory.open.framesAttr.filter(Boolean).join('|') === 'visual-factory.html|persona-factory.html|plugin-factory.html'
     && factory.open.btnIds?.length === 0 && factory.open.toggle === false,
   factory && JSON.stringify({ labels: factory.open?.labels, frames: factory.open?.framesAttr, ids: factory.open?.btnIds, toggle: factory.open?.toggle, err: factory.err }));
@@ -1503,7 +1503,9 @@ for (let s = 0; s < 6; s += 1) {
 }
 
 /* ① 引擎挂上了吗 —— 判据是「把手在 + Sortable 存在 + 挂载数 ≤1」 */
-const rbMount = await evalJs(`
+const rbProvider = await evalJs(`return (window.__next && window.__next.state && window.__next.state.config && window.__next.state.config.provider) || '';`);
+const rbCloud = rbProvider === 'zhipu' || rbProvider === 'qwen';
+const rbMount = rbCloud ? await evalJs(`
   const root=document.querySelector('[data-rb]');
   if(!root) return {err:'这一页没有线路板（provider 不是 zhipu）'};
   const grips=root.querySelectorAll('.srt-grip');
@@ -1517,7 +1519,12 @@ const rbMount = await evalJs(`
     posRel: getComputedStyle(root).position,
     ids: [...items].map(e=>e.getAttribute('data-srt-id')),
   };
-`);
+`) : { err: `provider=${rbProvider}：线路板只在 zhipu/qwen 下渲染` };
+if (!rbCloud) {
+  skip('排序引擎真的挂上了（把手与引擎都在，且只挂了一挂）', `provider=${rbProvider}：线路板不渲染`);
+  skip('播报区是真读屏元素（role=status 且**不是** display:none——那会让它一声不吭）', `provider=${rbProvider}`);
+  skip('线路容器是定位元素（offsetTop 的参照物必须是它，否则整列补偿差一个容器高）', `provider=${rbProvider}`);
+} else {
 check('排序引擎真的挂上了（把手与引擎都在，且只挂了一挂）',
   !!rbMount && rbMount.hasEngine && rbMount.count <= 1 && rbMount.grips === rbMount.items && rbMount.items >= 2,
   rbMount?.err || `项=${rbMount?.items} 把手=${rbMount?.grips} 挂载数=${rbMount?.count}`);
@@ -1526,6 +1533,7 @@ check('播报区是真读屏元素（role=status 且**不是** display:none—�
   `display=${rbMount?.liveDisplay}`);
 check('线路容器是定位元素（offsetTop 的参照物必须是它，否则整列补偿差一个容器高）',
   !!rbMount && rbMount.posRel === 'relative', `position=${rbMount?.posRel}`);
+}
 
 /* ② 拖拽：合成指针事件走真实引擎。逐帧采样位移峰值 —— 判「让位」不能只看终点，
      瞬移的实现同样有正确的终点。
@@ -2245,155 +2253,57 @@ check('增强项字段容器真的按网格排布（选择器没落空）',
  *   ④ **播报区是 `display:none`** —— 屏幕上看不出来，读屏也一声不吭。
  * ⚠️ 所以拖拽断言用**合成 PointerEvent**（`pointerdown/move/up`）而不是点按钮：
  *     点按钮走的是另一条路（applyIds），它绿了不代表拖拽绿了。 */
-/* ── ⑨ 插件板：每块插件一块**独立玻璃板**，网格平铺（2026-10-04）─────────────
- * 这一组钉的是用户 2026-10-04 提的三条，每一条**坏了都不会报错**：
- *   ① **板数 == 插件数** —— 少画一块时页面照样正常，只是那个插件"不见了"；
- *      多画一块（板里套板）也一样不报错，只是多了一层没意义的框。
- *   ② **同排等宽** —— `1fr` 弹性列被换成 `auto` / `max-content` 时，只有最右一块
- *      变窄，肉眼几乎看不出，但"平铺"这件事已经没了。
- *   ③ **材质与全站卡片同源** —— 玻璃靠 `.pcard` 挂 `card` 类继承。若有人把材质
- *      抄一份写在 `.pcard` 上，这条会红：那时两份语义早晚会漂（玻璃每改一次，
- *      插件板就少跟一次，而没有任何测试会发现）。
- * ⚠️ 组号 6 = 「工厂」域（0-based），子页 3 = 「插件管理」页。
- *   工厂 frame 页会自动上收导航并 inert，点子页前先呼出。 */
-await evalJs(`document.querySelectorAll('#nav1 .grp')[6].click(); return 1;`);
-await sleep(200);
-await evalJs(`window.__navAutoHide && window.__navAutoHide.reveal(); return 1;`);
-await sleep(420);
-await evalJs(`document.querySelectorAll('#nav2 .sub')[3].click(); return 1;`);
-await sleep(300);
-const plug = await evalJs(`return (() => {
+/* ── ⑨ 插件技能工厂：iframe 管理面（2026-10-31 重写）────────────────────
+ * 旧插件板（`.pgrid` / `.pcard`）已随插件管理 / Skill 两页下线；工厂 iframe 是唯一管理面。
+ * 这一组验：iframe 就绪、模式开关、四统计、管理视图、上限控件、保存条。
+ * 沙箱 0 插件时，「清单数 == 插件数」显式跳过；真机（plugins/ 在位）才真验。 */
+const plug = await evalJs(`return (async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
+    window.__navAutoHide.reveal(); await sleep(350);
+  }
+  const grp = [...document.querySelectorAll('#nav1 .grp')].find((b) => /工厂/.test(b.title || b.textContent || ''));
+  if (!grp) return { error: 'no-factory-group' };
+  grp.click(); await sleep(600);
+  const sub = [...document.querySelectorAll('#nav2 .sub')].find((b) => /插件技能工厂/.test(b.title || b.textContent || ''));
+  if (!sub) return { error: 'no-plugin-skill-page' };
+  sub.click(); await sleep(900);
+  const f = document.querySelector('#factoryHost iframe[data-frame="plugin-factory.html"]');
+  if (!f || !f.contentDocument) return { error: 'no-iframe' };
+  const doc = f.contentDocument;
+  const manage = doc.getElementById('manage');
+  if (manage && manage.hidden) { doc.querySelector('[data-act="manage"]')?.click(); await sleep(350); }
   const s = (window.__next && window.__next.state) ? window.__next.state : null;
-  const n = s && s.extensions && Array.isArray(s.extensions.items) ? s.extensions.items.length : -1;
-  const boards = [...document.querySelectorAll('#page .pgrid > .pcard')];
-  const cs = boards.map((b) => b.getBoundingClientRect());
-  /* 同排判定：top 相同（±1px 亚像素）才算同一排 */
-  const rows = {};
-  cs.forEach((r) => { const k = Math.round(r.top); (rows[k] = rows[k] || []).push(Math.round(r.width)); });
-  const rowWidths = Object.values(rows).filter((w) => w.length > 1);
-  const uneven = rowWidths.filter((w) => Math.max(...w) - Math.min(...w) > 1);
-  /* gap **必须按"同一排内相邻两块"与"同一列内相邻两块"分别量**：
-     拿 cs[1] / cs[2] 硬取第 2、3 块是错的 —— 网格换行后 cs[1] 可能就在**下一排**，
-     那时算出来的"水平间隙"是负的（实测 -1357px），而板子其实排得好好的。
-
-     ⚠️⚠️ **第二版又踩了一次**：改成"比较 cs[i-1] 与 cs[i]"仍然量不到垂直间隙 ——
-     网格是**按行填充**的（索引 0,1,2 是第一排，3,4,5 是第二排），所以
-     **索引相邻的两块永远不同列**，同列的那一对（0↔3）索引差 3，压根不相邻。
-     实测表现：水平 8 对、垂直 **0 对**，gapY 恒为 -1。
-     ⇒ 正确做法是**按坐标分组**：同一列 = left 相同；再在其中取 top 相邻的两块。
-     这也是为什么"判据自己也要被反证"—— 一个量不到任何样本的判据，
-     它给出的 -1 与"间距是负数"在输出上长得一模一样。 */
-  const byCol = {};
-  boards.forEach((b, i) => {
-    const k = Math.round(cs[i].left);
-    (byCol[k] = byCol[k] || []).push(i);
-  });
-  const gx = []; const gy = [];
-  /* 水平：同一排内，left 递增方向的相邻两块 */
-  for (const k of Object.keys(rows)) {
-    const idx = boards.map((b, i) => i).filter((i) => Math.round(cs[i].top) === Number(k));
-    for (let n = 1; n < idx.length; n++) gx.push(Math.round(cs[idx[n]].left - cs[idx[n - 1]].right));
-  }
-  /* 垂直：同一列内，top 递增方向的相邻两块 */
-  for (const k of Object.keys(byCol)) {
-    const idx = byCol[k].slice().sort((a, b) => cs[a].top - cs[b].top);
-    for (let n = 1; n < idx.length; n++) gy.push(Math.round(cs[idx[n]].top - cs[idx[n - 1]].bottom));
-  }
-  const first = boards[0];
+  const items = s && s.extensions && Array.isArray(s.extensions.items) ? s.extensions.items : [];
   return {
-    declared: n,
-    boards: boards.length,
-    /* 间距：同一排内相邻两块的水平间隙 / 同一列内相邻两块的垂直间隙 */
-    gapX: gx.length ? Math.max(...gx) : -1,
-    gapY: gy.length ? Math.max(...gy) : -1,
-    gapXN: gx.length,
-    gapYN: gy.length,
-    uneven: uneven.length,
-    rows: Object.keys(rows).length,
-    cols: Math.max(...Object.values(rows).map((w) => w.length), 0),
-    /* ⚠️ **反向自证：真的有多列**。上面那条「同排等宽」在单列下会**假绿** ——
-       一列时每排只有一个元素，rowWidths 过滤后长度 0，uneven 恒为 0。
-       而"13 块板被 span 12 撑成 13 排"正是本轮真实踩到的那一个
-       （.pcard 继承 .card 的 grid-column: span 12）—— 它不报错、板还在、
-       玻璃还在，只有平铺没了。所以这里单独立一条判"列数 > 1"。
-       窄视口（≤760px）本就设计为单列，故按视口宽度给下界。
-       ⚠️⚠️ **本段是模板字符串：注释里不许出现反引号**（同 tilt.js 那段的纪律）——
-       一个反引号就会提前闭合 evalJs 的模板，报出来的是"missing ) after argument
-       list"，而真正的原因在几百行之外的注释里。 */
-    minCols: window.innerWidth > 760 ? 2 : 1,
-    /* 材质同源：backdrop-filter 必须**真的**落在计算样式上（不是被浏览器丢弃） */
-    hasFilter: first ? getComputedStyle(first).backdropFilter !== 'none'
-      || getComputedStyle(first).webkitBackdropFilter !== 'none' : false,
-    /* 圆角与全站卡片一致 —— 同上，抄一份材质就会在这里分叉 */
-    radius: first ? getComputedStyle(first).borderTopLeftRadius : '',
-    toggleCount: document.querySelectorAll('#page [data-a="plugin.toggle"]').length,
-    /* 外层容器检测：板**不该有 .card 祖先**。曾经整页套在一张 span-12 .card 里，
-       视觉是「大玻璃板里切了 13 块」—— 而这条不报错、板还在、材质还在，
-       唯一的症状就是「还是在一个大玻璃板里面」（用户 2026-10-04 截图点名）。
-       只量 .pgrid 的父级不够：万一是 .card > .card-b > .pgrid 两层，
-       最近父级是 .card-b 而真正的壳在上面一层，所以要 closest 向上找。 */
-    outerCard: (() => {
-      const g = document.querySelector('#page .pgrid');
-      if (!g) return 'no-grid';
-      const c = g.closest('.card');
-      return c ? (c.id || 'card-without-id') : '';
-    })(),
-    bareExists: !!document.querySelector('#page .bare'),
-    /* 命名统一：页面上不许再出现"扩展包 / 拓展"字样 */
-    legacy: (document.getElementById('page').textContent || '').match(/扩展包|拓展|扩展功能/g) || [],
+    iframe: true,
+    modes: doc.querySelectorAll('.mode-btn[data-kind]').length,
+    stats: doc.querySelectorAll('#mStats .stat').length,
+    limits: doc.querySelectorAll('[data-limit]').length,
+    savebar: !!doc.getElementById('pfSavebar'),
+    declaredPlugins: items.filter((it) => (it.kind === 'skill' ? 'skill' : 'plugin') === 'plugin').length,
+    boards: doc.querySelectorAll('#mList .m-item').length,
+    legacy: (doc.body.textContent || '').match(/扩展包|拓展|扩展功能/g) || [],
   };
 })()`);
-/* ⚠️ **这 5 条的前提是「至少有 1 块板」** —— 板上量出来的东西（列数 / 间隙 / 材质 /
- *   外层有没有 .card）在 0 块板时**没有样本可量**，判据会给出和"排版坏了"一模一样的
- *   输出（实测 `outerCard` 取到哨兵 `'no-grid'`、gap 恒 -1）。这不是"排版坏了"。
- *
- *   沙箱**刻意**不带插件：`test/sandbox.sh:121` `--exclude '/plugins/' --exclude '/skills/'`
- *   （第 44 轮 B12d · EX-PLUGIN 起的决定）⇒ `state.extensions.items` 恒为 0
- *   ⇒ `declared === 0` ⇒ 这 5 条在该路径上**永远不成立**。
- *
- *   第 57 轮之前它们是 5 条**常驻假红**。现在的处理是显式 SKIP（不是算通过）。
- *   代价如实写：此路径上这 5 条不再被验；想让它们真跑，改沙箱的排除清单，
- *   或在本机（`plugins/` 在位）直接跑 `node panel/next/verify.mjs --url …`。
- */
-const plugNoSample = plug.declared === 0;
-const PLUG_SKIP_REASON = `沙箱里 state.extensions.items = ${plug.declared} 个（test/sandbox.sh:121 排除 /plugins/ 与 /skills/）`
-  + ` ⇒ 0 块板，这 5 条没有样本可量；真机（plugins/ 在位）跑本脚本才会真验`;
-
-if (plugNoSample) {
-  console.log(`\n⏭ 插件板 5 条**显式跳过**：${PLUG_SKIP_REASON}\n`);
-  skip('插件板数 = 插件数（一个插件一块独立板，没被合并进大容器）', PLUG_SKIP_REASON);
-  skip('插件板真的**横排多列**（`span 12` 没有被 `.card` 带进 `.pgrid`）', PLUG_SKIP_REASON);
-  skip('插件板横向网格平铺（gap 来自 CSS，两轴同值且非零）', PLUG_SKIP_REASON);
-  skip('插件板玻璃材质真的落地（backdrop-filter 在计算样式上，且圆角继承 .card）', PLUG_SKIP_REASON);
-  skip('**插件板没有 .card 祖先**（外层大玻璃板已脱掉，板直接浮在背景上）', PLUG_SKIP_REASON);
+check('插件技能工厂 iframe 就绪（模式开关 / 四统计 / 管理视图）',
+  !!plug && !plug.error && plug.iframe === true && plug.modes === 2 && plug.stats === 4,
+  plug && JSON.stringify(plug));
+check('插件技能工厂有保存条与三个上限控件',
+  !!plug && !plug.error && plug.savebar === true && plug.limits === 3,
+  plug && JSON.stringify({ savebar: plug.savebar, limits: plug.limits }));
+if (!plug || plug.error) {
+  skip('插件技能工厂管理清单 = 插件数', plug ? plug.error : 'no-plug');
+} else if (plug.declaredPlugins === 0) {
+  skip('插件技能工厂管理清单 = 插件数', '沙箱 0 插件（test/sandbox.sh 排除 /plugins/ 与 /skills/）');
 } else {
-  check('插件板数 = 插件数（一个插件一块独立板，没被合并进大容器）',
-    plug.declared > 0 && plug.boards === plug.declared,
-    `声明 ${plug.declared} 个 · 画出 ${plug.boards} 块板`);
-  check('插件板真的**横排多列**（`span 12` 没有被 `.card` 带进 `.pgrid`）',
-    plug.cols >= plug.minCols, `${plug.boards} 块板排成 ${plug.rows} 排 × 最多 ${plug.cols} 列（下界 ${plug.minCols}）`);
-  check('插件板横向网格平铺（gap 来自 CSS，两轴同值且非零）',
-    plug.gapX > 0 && plug.gapY > 0 && Math.abs(plug.gapX - plug.gapY) < 2,
-    `${plug.cols} 列 × ${plug.rows} 排 · 水平间隙 ${plug.gapX}px（${plug.gapXN} 对）` +
-    ` · 垂直间隙 ${plug.gapY}px（${plug.gapYN} 对）`);
-  check('插件板玻璃材质真的落地（backdrop-filter 在计算样式上，且圆角继承 .card）',
-    plug.hasFilter === true && /px/.test(plug.radius || ''), `border-radius=${plug.radius}`);
-  check('**插件板没有 .card 祖先**（外层大玻璃板已脱掉，板直接浮在背景上）',
-    plug.outerCard === '' && plug.bareExists === true,
-    plug.outerCard
-      ? `网格仍被 .card（id=${plug.outerCard}）包着 —— 看到的还是「一块大玻璃板里切了 N 块」`
-      : (plug.bareExists ? '裸容器 .bare 在位，网格直接落在页面栅格上' : '⚠️ 找不到 .bare，插件网格这一页结构可能变了'));
+  check('插件技能工厂管理清单 = 插件数',
+    plug.boards === plug.declaredPlugins,
+    `声明 ${plug.declaredPlugins} 个 · 管理清单 ${plug.boards} 条`);
 }
-/* 下面两条**不依赖"有没有板"**，照常判（0 块板时它们是真空绿，但判据本身不撒谎：
- *   不等宽的排数为 0、开关数等于板数，这两件事在 0 块板时本来就该成立）。 */
-check('插件板同排等宽（`1fr` 弹性列真的在均分，不是 auto/max-content）',
-  plug.uneven === 0, plug.rows > 0
-    ? `${plug.rows} 排 × 最多 ${plug.cols} 列 · 不等宽的排 ${plug.uneven} 处 · 行间距 ${plug.gapY}px`
-    : `板宽实测 ${JSON.stringify(plug)}`);
-check('每个插件板都保留启用开关（改名后 data-a 已跟到 plugin.toggle）',
-  plug.toggleCount === plug.boards, `开关 ${plug.toggleCount} 个 / 板 ${plug.boards} 块`);
-check('界面上不再出现「扩展包 / 拓展」字样（命名已统一为插件）',
-  plug.legacy.length === 0, plug.legacy.length ? `残留：${[...new Set(plug.legacy)].join('、')}` : '干净');
+check('插件技能工厂界面不再出现「扩展包 / 拓展」字样',
+  !!plug && !plug.error && plug.legacy.length === 0,
+  plug && (plug.legacy.length ? `残留：${[...new Set(plug.legacy)].join('、')}` : '干净'));
 
 /* ── ⑩ 二级页签不许折行 / 不许被压扁（2026-10-04 · B43）─────────────────────
  * 用户实机截图：二级页签显示成**两行**、第二行只露上半截（"模型与线" + 半个"路"）。

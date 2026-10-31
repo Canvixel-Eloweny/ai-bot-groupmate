@@ -3,7 +3,7 @@
  * 人设工厂 · 主树二级导航集成验收（真浏览器 + 真沙箱面板）。
  *
  * 覆盖：
- *  · 工厂域二级栏 = 视觉 / 人设 / 插件三个 frame 页 + 插件管理 / Skill 两个普通页，顶栏三颗圆钮已删除；
+ *  · 工厂域二级栏 = 视觉 / 人设 / 插件技能工厂三个 frame 页（后者内含插件/Skill 模式），顶栏三颗圆钮已删除；
  *  · 打开人设工厂：同一 host、persona 帧 ready，导航压在工厂之上且可点；
  *  · 人设 ↔ 视觉 ↔ 插件切换不重建 iframe，loadCount 不增长；
  *  · 离开工厂域再重进，两帧都不重载、厂内状态保留；
@@ -238,10 +238,10 @@ try {
       count: g ? (g.querySelector('.cnt') || {}).textContent : '',
       topbarBtns: ['factoryBtn', 'personaFactoryBtn', 'pluginFactoryBtn'].filter((id) => !!document.getElementById(id)).length };
   })()`);
-  ok(nav?.labels?.length === 5 && nav.labels.join('|') === '视觉工厂|人设工厂|插件工厂|插件管理|Skill'
+  ok(nav?.labels?.length === 3 && nav.labels.join('|') === '视觉工厂|人设工厂|插件技能工厂'
     && nav.frames.filter(Boolean).join('|') === 'visual-factory.html|persona-factory.html|plugin-factory.html'
-    && nav.count === '5' && nav.topbarBtns === 0,
-    `工厂二级栏 = 三 frame + 插件管理 / Skill，顶栏圆钮已删除（${JSON.stringify(nav)}）`);
+    && nav.count === '3' && nav.topbarBtns === 0,
+    `工厂二级栏 = 三 frame（插件技能工厂内含插件/Skill 模式），顶栏圆钮已删除（${JSON.stringify(nav)}）`);
 
   ok(await clickFactorySub('人设工厂'), '人设工厂二级页可点');
   const personaReady = await wait(`(() => {

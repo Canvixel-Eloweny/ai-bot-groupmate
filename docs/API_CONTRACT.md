@@ -504,6 +504,7 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 - **入参**：**原始字节**（不是 base64）；上限 `ZIP_UPLOAD_MAX`。查询串 `overwrite=1` 才允许覆盖已有包。
   `kind` 可选：带上时校验包与声明一致（`expectedKind`），且 Skill 包必须有 `index.js`
   （纯提示词 Skill 也一样，内容可为 `export {}`）。
+  `id` 可选：更新场景点名要覆盖的包 id；manifest 的 id 不一致 → 409，旧包一个字节都不动。
 - **出参**：成功 `{ ok, id, kind, dir, files, replaced }`；失败 `{ ok:false, error }`；
   **ZIP 过大 → 413**（与"上传中断"的 400 分开）。
 - **副作用**：语义三步 —— 先在内存里**全部校验**（路径 / 符号链接 / 体积 / 清单 / 双清单 /
@@ -741,6 +742,7 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 | POST | `/api/memory/review` |
 | POST | `/api/custom/preview` |
 | POST | `/api/extensions/install` |
+| POST | `/api/extensions/remove` |
 | GET | `/api/custom/export` |
 | GET | `/api/zhipu/packages` |
 | GET | `/api/models` |
@@ -852,6 +854,19 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 - **出参**：`{ok:true, kind, root, files:[{path,bytes,text?}], zipBytes, zipBase64}`；路径/体积/清单不合法 400，超过 6 MB 请求或 3 MB 内容 413。
 - **副作用**：无（内存中调 `makeZip`；校验复用 `isSafeRelPath` / `normalizeManifest`）。
 - **幂等**：是（同样的输入产出同样的 ZIP；不写任何状态）。
+
+---
+
+## 49. POST `/api/extensions/remove`
+
+卸载一个插件/Skill：删目录并清启用名单与设置。**破坏性写**。
+
+- **入参**：JSON `{kind:'plugin'|'skill', id:'英文 id'}`。目录名由服务端从扫描结果取，**客户端不能传路径**。
+- **出参**：成功 `{ok:true, id, kind, dir}`；参数不合法 / 越界 / 符号链接 / 缺清单 400；找不到 404；
+  目录删除失败 500 `{ok:false, error, configCleared:true, removed:false}`（配置已摘掉、目录仍在，提示先停机器人）。
+- **副作用**：先清 `custom.extensions.{plugins|skills}.enabled` 与 `settings[id]` 并写盘，再 `rmSync` 目录；
+  刷新扩展快照；审计记一条。
+- **幂等**：否；重复删除同一 id 返回 404。🟡 **写路由**。
 
 ### 41.2 字段契约（24 条）
 

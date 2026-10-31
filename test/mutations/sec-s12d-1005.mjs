@@ -31,6 +31,7 @@
  */
 const APP = 'panel/next/app.js';
 const SCH = 'panel/next/schema.js';
+const PF = 'panel/next/plugin-factory.html';
 
 // ── M1：api() 不再把 token 放进 Authorization（§3g 现役页三连的第二条）────────────
 const M1 = {
@@ -98,13 +99,11 @@ const M5 = {
 // ── M6：插件开关不再只动那一格（§20 ④）───────────────────────────────────────
 const M6 = {
   id: 'M6',
-  note: 'app.js 的 plugin.toggle 去掉 `touchC(\'plugins.enabled\')` —— 开关改了却不记进草稿，保存时白名单不生效。预期 BLOCKED（§20 ④）',
-  anchor: /touchC\(path\);\n    markDirty\(\); paintPage\(false\);/,
+  note: '插件技能工厂的开关不再只提交 enabled 数组 —— 开关改了却会抹掉设置。预期 BLOCKED（§20 ④）',
+  anchor: /enabled: \[\.\.\.cur\]/,
   count: 1,
-  file: APP,
-  apply: (s) => s.replace(
-    /touchC\(path\);\n    markDirty\(\); paintPage\(false\);/,
-    '/* 没记进草稿 */\n    markDirty(); paintPage(false);'),
+  file: PF,
+  apply: (s) => s.replace('enabled: [...cur]', 'enabled: [], plugins: { enabled: [] }'),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };

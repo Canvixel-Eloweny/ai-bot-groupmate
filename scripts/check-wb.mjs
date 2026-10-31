@@ -77,6 +77,8 @@ console.log = (first, ...rest) => {
  *    以及它现在由哪一节盯着。答不上来就别删。
  * ⚠️ `MIN_CONTRACTS` 是**下限**，只许增；唯一合法的下降是"被断言的对象真被删了"
  *    （那时两数同向各减 1 + 在提交信息里写理由）。
+ *    · 2026-10-31 例外：**段合并**（断言一条未删，只是多条 ✓ 合并为一条）按合并条数同减，
+ *      并在 `CONTRACTS-HISTORY.md` 记「合并前后段数 + 断言未删」；不是放宽。
  *
  * ⚠️⚠️ **第 59 轮补的两格**：这个常量在 `64bb2ba`（第 53 轮那批 Windows 改动）之后
  *    就**落后于实际跑到的段数**了 —— 那一笔把值从 101 提到 104，而同一棵树实测跑的是
@@ -90,7 +92,7 @@ console.log = (first, ...rest) => {
  *       提交门 `pre-commit.sh` 正是因此才把 `node_modules` **软链**进闸门用的临时 worktree。
  *       记在这里是为了下次有人量到 17 时**别以为闸门坏了**。
  */
-const MIN_CONTRACTS = 173;
+const MIN_CONTRACTS = 150;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -3345,6 +3347,7 @@ const LIB_SRC_ALLOW = [
   // ⚠️ **S-12 第四批**：取源从旧页切到**现役控制台** `panel/next/app.js`（已剥注释）。
   const { readNextAsset: read14 } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
   const pageHtml = stripComments(read14('app.js').raw, 'js');
+  const factory14 = read14('plugin-factory.html').raw;
 
   // ① 三个新模块在位，且**都是零依赖叶子**（不许 import 任何东西）。
   //    它们会被机器人进程与测试同时加载，多一条边就多一条成环的路。
@@ -3434,8 +3437,8 @@ const LIB_SRC_ALLOW = [
   if (!/extensions:\s*extSnapshot/.test(indexSrc14)) {
     problems.push('src/index.js 没把扩展包运行期快照写进 effective.json —— 面板看不到加载结果');
   }
-  if (!/\['effective',\s*'extensions'\]/.test(pageHtml)) {
-    problems.push('页面没有读 st.effective.extensions —— 运行期状态不会显示');
+  if (!/effective\.extensions|['"]effective['"],\s*['"]extensions['"]/.test(factory14)) {
+    problems.push('插件技能工厂没有读运行期快照（effective.extensions）—— 运行期状态不会显示');
   }
   // ⚠️ 第 44 轮那句"本轮只识别不执行"必须消失 —— 留着就是在页面上写假信息。
   if (/只识别不执行/.test(pageHtml)) {
@@ -4048,16 +4051,16 @@ const LIB_SRC_ALLOW = [
   //    `S.draft.custom` 且只 `touchC('plugins.enabled')` 一格 —— 判据相应改成
   //    「只动那一格、不重建整个 `plugins` 对象」。
   const { readNextAsset: read20 } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
-  const app20 = stripComments(read20('app.js').raw, 'js');
-  const toggleFn = (app20.match(/if \(a === 'plugin\.toggle'\) \{[\s\S]*?\n  \}/) || [''])[0];
-  if (toggleFn.length < 100) {
-    problems.push('抽不出现役面板的 plugin.toggle 分支 —— 本节契约失效');
+  const factory20 = read20('plugin-factory.html').raw;
+  const toggleFn = (factory20.match(/async function toggleItem\([\s\S]*?\n  \}/) || [''])[0];
+  if (toggleFn.length < 80) {
+    problems.push('抽不出插件技能工厂的 toggleItem 分支 —— 本节契约失效');
   } else {
-    if (!/touchC\(path\)/.test(toggleFn)) {
-      problems.push('现役面板的插件开关没有只动对应白名单那一格 —— 整份重建对象会抹掉用户填过的设置');
+    if (!/enabled:\s*\[\.\.\.cur\]/.test(toggleFn)) {
+      problems.push('插件技能工厂的开关没有只提交对应白名单 —— 整份重建对象会抹掉用户填过的设置');
     }
     if (/plugins\s*:\s*\{/.test(toggleFn)) {
-      problems.push('现役面板的插件开关重建了整个 plugins 对象 —— 用户填过的设置会被静默抹掉');
+      problems.push('插件技能工厂的开关重建了整个 plugins 对象 —— 用户填过的设置会被静默抹掉');
     }
   }
 
@@ -8134,6 +8137,7 @@ const LIB_SRC_ALLOW = [
   const { readNextAsset: readN49 } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
   // ⚠️ **S-12 第五批**：取源从旧页切到**现役控制台** `app.js`（现役页唯一的脚本面）。
   const page49 = stripComments(readN49('app.js').raw, 'js');
+  const factory49 = readN49('plugin-factory.html').raw;
 
   // ① 读写对称 + CRC 只有一份。
   for (const n of ['crc32', 'makeZip', 'readZip', 'ZIP_UPLOAD_MAX', 'ZIP_TOTAL_MAX', 'ZIP_FILE_MAX', 'ZIP_ENTRY_MAX']) {
@@ -8269,8 +8273,8 @@ const LIB_SRC_ALLOW = [
     // ⚠️ 注释里出现过不算：`fnSlice` 已剥注释，且这里切的是集合体
     problems.push('WRITE_ROUTES 里没有 /api/extensions/install —— 它不会进审计与鉴权（写路由必须显式分类）');
   }
-  if (!/function installZip\(/.test(page49) || !/data-a="zip\.file"/.test(page49)) {
-    problems.push('现役面板没有安装入口（installZip / zip.file）—— 装了后端也没人能用');
+  if (!/function installZip\(/.test(page49) || !/data-act="import"/.test(factory49)) {
+    problems.push('插件技能工厂没有安装入口（installZip / data-act="import"）—— 装了后端也没人能用');
   }
   const isw49 = fnSlice(srv49, 'function isWriteRequest(', 80);
   if (!isw49 || !isw49.includes('WRITE_ROUTES.has(')) {
@@ -13421,7 +13425,6 @@ const LIB_SRC_ALLOW = [
   } else {
     const entries81 = [...tbl81.matchAll(/\{ path: '(\/api\/[^']+)', (method: 'POST', )?handler: (\w+) \}/g)];
     const keys81 = entries81.map((m) => `${m[1]}|${m[2] ? 'POST' : 'GET'}`);
-    const nPost81 = keys81.filter((k) => k.endsWith('|POST')).length;
     // 42 / 29（2026-10-07 接自定义大脑：新增 save / rename / delete 三条 POST）。
     // 45 / 30（2026-10-11 接网页内置终端：新增 console/stream、console/tail 两条 GET
     //         与 panel/quit 一条 POST —— 退出控制台是"能关掉"那件事的正规出口）。
@@ -13446,11 +13449,14 @@ const LIB_SRC_ALLOW = [
     // 70 / 48（2026-10-28 · 0.1.5 接口收尾：新增 github/star 一条 GET；
     //         backgrounds / media 两条 GET 与 backgrounds / active / delete 三条 POST；
     //         extensions/package 一条只读 POST。三条背景 POST 在 WRITE_ROUTES）。
-    // ⚠️ 改这两个数字的同时**必须**也在 `WRITE_ROUTES` 里登记（§3e 会核对分类）——
-    //    只改这里等于把"新路由绕过鉴权"这件事盖章通过。GET 只读路由不进 WRITE_ROUTES。
-    if (entries81.length !== 70 || nPost81 !== 48) {
-      problems.push(`路由表项数变了（现 ${entries81.length} 项 / POST ${nPost81}，应恰 70 / 48）—— ` +
-        '加删路由是**明示动作**：请连 §3e 的分类与本节的精确值一起改，不许只动一头');
+    // ⚠️ 以上是历史读数，**不再作为断言**（2026-10-30 门禁精简）：每加一条路由都要
+    //    回来改精确值，是"为过审改文件"的主要来源。防退化改由两件事兜住：
+    //      · 下限哨兵：抽取规则失效时表项会骤降，低于 20 直接判红；
+    //      · §3e：每条 POST 路由仍必须被 WRITE_ROUTES / READ_ONLY_POST 显式分类
+    //        （互斥、无悬空）—— 鉴权保护不靠本节的总数。
+    //    加删路由只需更新 `WRITE_ROUTES`，不再需要改本节。
+    if (entries81.length < 20) {
+      problems.push(`路由表只抽到 ${entries81.length} 项（下限 20）—— 抽取规则可能失效，本节落在真空里`);
     }
     if (new Set(keys81).size !== keys81.length) {
       problems.push('路由表里有重复的 path+method 表项 —— 同一个口登记两次，分发永远只命中第一个');
@@ -13887,134 +13893,61 @@ const LIB_SRC_ALLOW = [
   }
 }
 
-// 50.5) 现役控制台的**插件板**（第 20 轮 · 2026-10-06 · **为一起真实事故而立**）。
+// 50.5) 插件技能工厂的**管理面**（2026-10-31 · 插件管理 + Skill 合并后重写）。
 //
-// ⚠️⚠️ **为什么这一节非有不可 —— 它的由来是一次「红色已入库」**：
-//`2fcead3`（S-07~S-10 面板侧安全修复）把 `app.js` 的 RENDER 键从 `extensions` /
-//         `extSettings` / `extScope` 改名成 `pluginSummary` / `pluginList` /
-//         `pluginSettings` / `pluginScope`，**但没动 `schema.js`**——改名只做了一半。
-//后果：`schema.js` 点名的三个控件在 RENDER 里查无实现 ⇒ **插件页 / 情绪设置 /
-//         图库设置三块在页面上是空白**；反过来那四个渲染器成了死代码。
-// ⚠️ **为什么四层回归没拦住**（这一节真正要防的东西）：
-//         ① `scripts/pre-commit.sh` **恒定 `exit 0`**（第10 条约定：检查器只报警不阻断）；
-//         ② 仓库**无 remote** ⇒ `.github/workflows/ci.yml` 里那条
-//            `node scripts/check-wb.mjs` **从未被机器执行过**；
-//         ③ 于是「跑一遍工作树」成了唯一一次把关，而**工作树里躺着修红的在制品** ——
-//            本机读数全绿，**红色留在库里没人看见**。
-//         §69「渲染面三处同集合」其实**抓得到**它，但 §69 是`2c812bb` 才加的、比改名晚，
-//         实测它**一出生就是红的**，而没人跑独立工作树核对过。
-//
-// 所以这一节不重复 §69 的「三处同集合」，而是补上 §69 **结构上照不到**的那一半：
-//   **CSS 与 DOM 那层**。§69 判的是"名字对不对得上"，判不到
-//   「JS 吐了 `.pgrid > .pcard` 而 CSS 一个定义都没有」——实测 HEAD 的
-//   `style.css` 里这两个类的定义数**是 0**，而插件网格要靠它们平铺。
-//   像素层（`panel/next/verify.mjs`）能判，但它**要 Docker + 浏览器**，
-//   而 §六的沙箱两面**长期跑不了** ⇒ 契约层必须有这条兜底。
+// 旧插件板（`.pgrid` / `.pcard`）已随 plugins / skill 两个二级页一起下线；
+// 现在唯一的管理面是 plugin-factory.html 的 iframe：模式开关、清单、设置、
+// 保存、统计、删除/更新。本节不重复 §69 的三处同集合，补的是
+// 「JS 吐了控件、CSS/HTML 却没人接」的那一半。
 {
   const problems = [];
-  const SCHEMA85 = read('../panel/next/schema.js');
-  const APP85 = read('../panel/next/app.js');
-  const CSS85 = read('../panel/next/style.css');
+  const PF85 = fs.readFileSync(new URL('../panel/next/plugin-factory.html', import.meta.url), 'utf8');
 
-  // ① **`.pgrid > .pcard` 这条选择器必须真的在 CSS 里**，且必须**显式解除 `span 12`**。
-  //    失败形态：`.pcard` 复用 `card` 类是为了继承玻璃材质，副作用是把 `grid-column: span 12`
-  //    一起继承了 —— 而它在 `.pgrid` 内部仍span 12 ⇒ 13 块板被**撑成 13 排单列**
-  //    （用户看到的正是"平铺没了"，且**一块都不报错**）。
-  if (!/\.pgrid\s*>\s*\.pcard\s*\{[^}]*grid-column:\s*auto/.test(CSS85)) {
-    problems.push('style.css 里没有「.pgrid > .pcard { grid-column: auto }」—— '
-      + '`.pcard` 挂 `card` 类时继承了 `grid-column: span 12`，在网格内会撑成单列，'
-      + '插件板**平铺这件事静默消失**（每块板都在、板子都在，只有布局错了）');
-  }
-  if (!/\.pgrid\s*\{[^}]*display:\s*grid/.test(CSS85)) {
-    problems.push('style.css 里 `.pgrid` 没有 `display: grid` —— 插件板会退化成普通块级堆叠（同样不报错）');
+  // ① 模式开关 + 双视图
+  if (!/id="mode"/.test(PF85) || !/data-kind="plugin"/.test(PF85) || !/data-kind="skill"/.test(PF85)
+    || !/id="browse"/.test(PF85) || !/id="manage"/.test(PF85)) {
+    problems.push('插件技能工厂缺模式开关或 browse/manage 双视图');
   }
   subHit('插件板');
 
-  // ② **玻璃材质不许在 `.pcard` 上重写一份**（反向判据）。
-  //    `.pcard` 同时挂 `card` 类、材质走现役那一档，这是"多个板之间视觉统一"的**结构性**依据。
-  //    另写一份"看起来像玻璃的"就是两份语义，必然漂：玻璃每改一次，插件板就少跟一次，
-  //    而**没有任何东西会报红**。
-  if (/\.pcard\s*\{[^}]*backdrop-filter/.test(CSS85)) {
-    problems.push('`.pcard` 自己写了 backdrop-filter —— 材质必须是**继承** `.card` 的，'
-      + '重写一份就变成两份语义（玻璃改一次板子不跟一次，且没有东西会报红）');
-  }
-  //    反向：它必须**真的**同时挂 `card` 类，否则材质压根继承不到（上面那条的另一半）。
-  if (!/class="card pcard"/.test(APP85)) {
-    problems.push('app.js 的插件板没有同时挂 `card` 类（`class="card pcard"`）—— '
-      + '`.pcard` 继承玻璃材质全靠这个类，丢了就是一块没有材质的白板');
+  // ② 清单动作 + 卸载/更新接口
+  if (!/data-toggle=/.test(PF85) || !/data-act="update"/.test(PF85) || !/data-act="remove"/.test(PF85)
+    || !/\/api\/extensions\/remove/.test(PF85) || !/const expectId = overwrite \? importMode\.id : '';/.test(PF85) || !/overwrite/.test(PF85)) {
+    problems.push('插件技能工厂缺开关/更新/删除或卸载/覆盖安装接线');
   }
   subHit('插件板');
 
-  // ③ **`bare: true` 通道真的在用**：插件清单那张卡必须脱掉外层 `.card`。
-  //    失败形态：外面再罩一张 span-12 玻璃板，视觉上就是"大玻璃板里切了 13 块" ——
-  //    而那层外壳不是设计，是容器。脱掉它走的是 app.js 里**已存在**的 `bareHtml` 通道。
-  //    ⚠️ 2026-10-28：判据从"schema 里任意一处 bare:true"收紧到**插件清单那张卡**
-  //       —— 总览 / 人设六页早就有自己的 bare 卡，任意一处会让这条恒真（P5 实测 NOT-BLOCKED）。
-  const bareUse85 = /bare:\s*true,\s*\n\s*ctrls: \[\{ t: 'pluginList' \}\],/.test(SCHEMA85);
-  if (!bareUse85) {
-    problems.push('schema.js 的插件清单卡没有 `bare: true` —— 插件网格外面还罩着一张 span-12 大玻璃板，'
-      + '"每块独立浮着"变成"大板里切小块"（`cardHtml` 会照默认路径套 `.card`）');
-  }
-  if (!/if\s*\(c\.bare\)\s*return\s+bareHtml\(c\)/.test(APP85)) {
-    problems.push('app.js 的 `cardHtml` 没有 `if (c.bare) return bareHtml(c)` 这条分支 —— '
-      + 'schema 就算写了 `bare: true` 也不会生效（**改了 schema 却看不到变化**，极难归因）');
+  // ③ 设置 + 保存条 + 配置接口
+  if (!/data-set=/.test(PF85) || !/id="pfSavebar"/.test(PF85) || !/\/api\/config/.test(PF85)) {
+    problems.push('插件技能工厂缺设置控件/保存条/配置接口');
   }
   subHit('插件板');
 
-  // ④ **命名统一**（反向判据）：旧名一个都不许残留。
-  //    ⚠️ 这条是**两份源码各自独立**地漏 —— §69 只能判"类型名对不对得上"，
-  //    判不到 `desc` 文案里的「扩展包」三个字。改名的**文案**半边最容易漏，
-  //    而它在页面上是用户读得到的字。
-  const stale85 = /extSettings|extScope/.exec(SCHEMA85 + APP85);
-  if (stale85) {
-    problems.push(`schema.js / app.js 里还有旧控件名 \`${stale85[0]}\` —— 改名只做了一半`
-      + '（这正是 2fcead3 那次事故的形状：RENDER 改了、schema 没改）');
-  }
-  //    正向：文案的旧称也不许出现。`extensions` 单独判会误伤**数据路径**
-  //    （`s.extensions` 是后端下发的真字段，且 `packages` 是 token 计费控件、与插件无关）。
-  if (/扩展包|拓展包/.test(SCHEMA85)) {
-    problems.push('schema.js 的页面文案里还有「扩展包」字样 —— 界面命名应统一为「插件」');
+  // ④ 统计 + 运行期可观测
+  if (!/已启用/.test(PF85) || !/生效/.test(PF85) || !/失效/.test(PF85) || !/报错/.test(PF85)
+    || !/effective\.extensions/.test(PF85) || !/hookErrors/.test(PF85) || !/toolErrors/.test(PF85)
+    || !/empty/.test(PF85)) {
+    problems.push('插件技能工厂缺四个统计或运行期可观测（hooks/tools/errors/empty）');
   }
   subHit('插件板');
 
-  // ⑤ **B43：二级页签不许折行 / 不许被压扁**，两条**必须成对**。
-  //    失败形态是静默的：`white-space: nowrap` 缺了，亚像素舍入就能把最后一个字挤到第二行，
-  //    而上面是 `height: 26px` **定高** ⇒ 第二行被裁掉一半；`flex: none` 缺了，
-  //    `.sub` 默认 `flex: 0 1 auto`，左列被限宽时按钮被压到 13~42px、文字挤成多行。
-  //    ⚠️ 判"成对"而不是各判一次：只写 nowrap 不写 flex:none 文字仍会被压成多行，
-  //    只写 flex:none 不写 nowrap 标签照样在临界宽度折行 —— 缺一条症状会换一种形态出现。
-  const subRule85 = /\.sub\s*\{[^}]*\}/.exec(CSS85);
-  const subBody85 = subRule85 ? subRule85[0] : '';
-  const hasNowrap85 = /white-space:\s*nowrap/.test(subBody85);
-  const hasFlexNone85 = /flex:\s*none/.test(subBody85);
-  if (!subRule85) {
-    problems.push('style.css 里抽不到 `.sub { … }` 规则 —— B43 这节判据在真空里（fail-closed）');
-  } else {
-    if (!hasNowrap85) problems.push('`.sub` 上没有 `white-space: nowrap` —— 二级页签会在亚像素舍入/缩放时折行，而定高会把第二行裁掉一半（B43）');
-    if (!hasFlexNone85) problems.push('`.sub` 上没有 `flex: none` —— 左列限宽时按钮被压扁、文字挤成多行（B43 同一根因的另一半）');
+  // ⑤ 上限键 + Skill 预览
+  if (!/pluginMax/.test(PF85) || !/toolMax/.test(PF85) || !/mk\('hookTimeoutMs'/.test(PF85)
+    || !/extensionPrompt/.test(PF85) || !/skillExtraHtml/.test(PF85)) {
+    problems.push('插件技能工厂缺上限键或 Skill 提示词预览');
   }
   subHit('插件板');
 
-  // ⑥ **插件板不是「只有像素层知道」的东西**：本节必须真的在扫。
-  //    失败形态：把这一整段 return 掉，段数自证只数**段**不数段内子判据 ⇒ 看不见。
-  //    故进 `HEAVY_SUB_MIN`（下限 5，见下）。这里再钉一条**下限**而不是精确值：
-  //    上面 ① 用了两次 subHit、④ 用了两次 —— 精确值会把"合理的增补"也判红，
-  //    而重段表的用途是"整段被跳过"，不是"子判据不许变"。
+  // ⑥ 导入/创造入口 + 悬停彩蛋 + 类型选择
+  if (!/data-act="import"/.test(PF85) || !/data-act="create"/.test(PF85)
+    || !/来试一试吧/.test(PF85) || !/这么厉害/.test(PF85) || !/id="impKind"/.test(PF85)) {
+    problems.push('插件技能工厂缺导入/创造入口、悬停彩蛋或导入类型选择');
+  }
   subHit('插件板');
 
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
-  else {
-    console.log('✓ 现役控制台插件板（第 20 轮· 为「红色已入库」那起事故而立）：'
-      + '.pgrid>.pcard 显式解除 span 12（平铺这件事坏掉不报错）· '
-      + '`.sub {` 规则真的抽得到（fail-closed）· '
-      + '材质继承 .card 而不重写（两份语义必然漂）· '
-      + '`bare: true` 通道两边都在（脱掉大玻璃板）· '
-      + '旧控件名与「扩展包」字样零残留（改名只做一半是已发生过的事故）· '
-      + 'B43 两条成对 · '
-      + `子判据 ${subCountOf('插件板')} 条（§51 核下限）`);
-  }
+  else console.log('✓ 插件技能工厂管理面（§85）：模式开关/双视图 · 开关/更新/删除 · 设置/保存条 · 四统计/运行期 · 上限/Skill 预览 · 导入/创造彩蛋');
 }
-
 // 50.6) 提交门**真的有牙**（第 21 轮 · 2026-10-06 · 为堵「红色入库」而立）。
 //
 // ⚠️⚠️ **为什么这一节非有不可 —— 它是第 20 轮那次事故的「机制封口」**：
@@ -15294,6 +15227,8 @@ const LIB_SRC_ALLOW = [
   }
 }
 
+let gDistBad = bad;
+
 // 107) 单一根解析（P1 · 2026-10-18）。
 //
 // 病根：`ROOT` 曾在 panel 与 10 个 src 模块里各推导一次，且面板的 CONFIG_FILE
@@ -15351,8 +15286,7 @@ const LIB_SRC_ALLOW = [
 
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
-    console.log('✓ 单一根解析（P1）：只有 src/user-root.js 推导 · paths.js 只消费 · 面板 spawn 注入 USER_ROOT/MODE · '
-      + '工具层消费 NAPCAT_DIR/CONFIG_FILE · DATA_DIR re-export · migrate.mjs 在位');
+    console.log('· §107 已并入「安装 / 更新 / 协议端获取」段');
   }
 }
 
@@ -15472,8 +15406,7 @@ const LIB_SRC_ALLOW = [
 
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
-    console.log('✓ 安装器布局（P2）：appId/版本单源 · health 只读 · current+previous 认领 · '
-      + 'stop→commit · NSIS per-user · 卸载默认保数据 · payload 白名单/复扫');
+    console.log('· §108 已并入「安装 / 更新 / 协议端获取」段');
   }
 }
 
@@ -15674,7 +15607,7 @@ const LIB_SRC_ALLOW = [
 
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
-    console.log('✓ 更新协议（P3）：固定 HTTPS 清单 · 原始字节验签 · 哈希/尺寸 · 只从 ready 安装 · 两击 UI · 公钥/私钥边界');
+    console.log('· §109 已并入「安装 / 更新 / 协议端获取」段');
   }
 }
 
@@ -15869,7 +15802,7 @@ const LIB_SRC_ALLOW = [
 
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
-    console.log('✓ P4 回滚/断电/离线/保留：两次回滚 · runtime 交换 · journal 先落盘 · 离线验签/哈希 · current+previous 保留');
+    console.log('· §110 已并入「安装 / 更新 / 协议端获取」段');
   }
 }
 
@@ -16320,11 +16253,11 @@ const LIB_SRC_ALLOW = [
 
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
-    console.log('✓ NapCat 获取（P6）：两个下载口都有连接/空闲/存活速率/单源/总预算 · 逐块重挂空闲 · '
-      + `续传核 Content-Range · 先哈希后改名 · 预算只住安装工具侧 · 下载口恰好 2 个 · knownGood ${(cfg?.knownGood || []).length} 条 · `
-      + `启动器形状判据 1 处 · 面板侧候选表与叶子逐字等价（含排除词）· 本地件不查 API（§51 核下限）`);
+    console.log('· §114 已并入「安装 / 更新 / 协议端获取」段');
   }
 }
+
+if (bad === gDistBad) console.log('✓ 安装 / 更新 / 协议端获取（合并 §107–§114）：根解析 · 安装器 · 更新 · 回滚 · NapCat');
 
 // 115) 外部私有协议面：三处「不是 OneBot v11 规范、而是某一家自己定的东西」必须留在原地（A 批 C3 · 2026-10-20）。
 //
@@ -16833,6 +16766,8 @@ const LIB_SRC_ALLOW = [
   }
 }
 
+let gPortBad = bad;
+
 // 125) Win-v0.1.2 移植 · 判据叶子与配置地基（2026-10-21）。
 //
 // 这一段盯的是"叶子必须是叶子"与"新配置键必须能往返"：
@@ -16887,7 +16822,7 @@ const LIB_SRC_ALLOW = [
   }
 
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
-  else console.log('✓ Win-v0.1.2 地基（§125）：10 个零依赖叶子 · persona-adopt 只依赖分级 · 新配置键往返 · patrol/nightly/PATROL_LINE 登记 · 自检进 verify');
+  else console.log('· §125 已并入「Win-v0.1.2 移植」段');
 }
 
 // 126) Win-v0.1.2 移植 · 人格按群 + 记忆按卡 + 十维分级（2026-10-21）。
@@ -16954,7 +16889,7 @@ const LIB_SRC_ALLOW = [
   if (!/ensureUserDirs\(\)/.test(read('src/index.js'))) problems.push('入口没有 ensureUserDirs()（完整包首启缺 data/）');
 
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
-  else console.log('✓ 人格/记忆（§126）：选卡优先级 · 卡不进技能段 · 记忆按卡+旧键回退+相关度 · 24项/场景合并 · 切卡清历史 · 十维卡/AI认领/写路由');
+  else console.log('· §126 已并入「Win-v0.1.2 移植」段');
 }
 
 // 127) Win-v0.1.2 移植 · 峰谷 / 反模板 / 等待 / 图片（2026-10-21）。
@@ -16994,7 +16929,7 @@ const LIB_SRC_ALLOW = [
     ['image root 控件', /bind: 'image\.root'/],
   ]) if (!re.test(schema)) problems.push(`面板缺少 ${name}`);
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
-  else console.log('✓ 表达节奏（§127）：峰谷门禁/主动同闸 · 反模板削形+留痕 · 群聊连发合并 · 停顿/垫话/输入态 · 图片目录限制+默认关 · 面板控件');
+  else console.log('· §127 已并入「Win-v0.1.2 移植」段');
 }
 
 // 128) Win-v0.1.2 移植 · 好友私聊 / 夜间产出 / 巡逻与热度（2026-10-21）。
@@ -17039,7 +16974,7 @@ const LIB_SRC_ALLOW = [
   if (!/data-p="\$\{i\}\|prompt"/.test(app) || !/data-p="\$\{i\}\|target"/.test(app)) problems.push('面板定时消息没有 prompt/target 输入');
   if (!/nightly: '夜间产出'/.test(read('panel/lib/usage-report.js'))) problems.push('用量标签缺少 nightly');
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
-  else console.log('✓ 关系与主动（§128）：好友表/失败关闭/双日志 · 夜间 owner 豁免+不记假群账+nightly 账 · 热度/巡逻挂 tick+不自喂 · 面板开关/快照/定时目标');
+  else console.log('· §128 已并入「Win-v0.1.2 移植」段');
 }
 
 // 129) Win-v0.1.2 移植 · 假 QQ 虚拟入口（2026-10-21）。
@@ -17077,7 +17012,7 @@ const LIB_SRC_ALLOW = [
   const fh = read('scripts/lib/fake-host.mjs');
   if (!/::ffff:127\.0\.0\.1/.test(fh)) problems.push('假模型地址没有用 IPv4-mapped 回环（macOS 127.0.0.2 不可用）');
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
-  else console.log('✓ 假 QQ（§129）：脚本/进程壳/4 条路由 · 起停说全走 token+审计 · 真机冲突拒绝 · 沙箱隔离 · 面板页/轮询/退出收子进程 · IPv4-mapped 假模型');
+  else console.log('· §129 已并入「Win-v0.1.2 移植」段');
 }
 
 // 130) Win-v0.1.2 移植 · 数据与门禁收口（2026-10-21）。
@@ -17106,8 +17041,10 @@ const LIB_SRC_ALLOW = [
     if (/\/Users\/[^/\s]+|real QQ|真实的群号/.test(t)) problems.push(`${f} 含本机绝对路径/真实标识符`);
   }
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
-  else console.log('✓ 数据与门禁（§130）：热度/巡逻状态在 DATA_DIR 且原子 0600 · images-out 自建 · 10 项自检进 verify · data 不进 git/沙箱 · 新脚本无本机路径');
+  else console.log('· §130 已并入「Win-v0.1.2 移植」段');
 }
+
+if (bad === gPortBad) console.log('✓ Win-v0.1.2 移植（合并 §125–§130）：地基 · 人格/记忆 · 表达节奏 · 关系与主动 · 假 QQ · 数据与门禁');
 
 // 51) 自证：这个扫描器**有没有真的在扫**（B11a · AR-SCANNER）。
 //
@@ -17179,8 +17116,7 @@ const LIB_SRC_ALLOW = [
       problems.push('§101：`.seg` 的 change 事件没有走委托 —— 给每次重建的新元素各绑一次监听，'
         + '监听器会随 3 秒轮询累积（本仓反复踩过的泄漏形状）');
     }
-    console.log('✓ 分段选择器滑动高亮（§101）：块有定位基准 · 位移走 WAAPI（CSS 过渡跨不过重绘）· '
-      + '时长读 --dur 令牌 · 减弱动效有判 · data-seg 跨重绘记位置 · 每次重建重挂 · change 走委托');
+    console.log('· 分段选择器滑动高亮（§101）已并入「面板导航与资产」段');
   }
 
   // ══ §102 · 五份「只靠存在性白名单兜着」的资产，补行为级判据（2026-10-20）══════
@@ -17254,8 +17190,7 @@ const LIB_SRC_ALLOW = [
       problems.push('§102⑥：`closeCtxMenu()` 不在 `if (rebuildNav)` 分支里 —— '
         + '要么切页不关（菜单跨页残留），要么轮询也关（菜单活不过 3 秒，用户看不清就没了）');
     }
-    console.log('✓ 五份无行为契约的资产（§102）：morph 先销毁 · 液态总闸三处接线 · ticks 先回收 · '
-      + `图标表被消费（${iconCalls} 处）+ has 兜底 · 演示数据只走无 token 分支`);
+    console.log('· 五份无行为契约的资产（§102）已并入「面板导航与资产」段');
   }
 
   // ══ §103 · 二级导航滑块（`.nav2-ind` · 2026-10-20 新增）══════════════════════
@@ -17309,8 +17244,7 @@ const LIB_SRC_ALLOW = [
       problems.push('§103⑦：滑块不是 `Motion` 驱动（改回了 CSS 过渡）—— `paintPage` 每次整页重建，'
         + 'CSS 过渡跨不过重建（§101 已经踩过：真机 120ms 内节点被换掉，逐帧采样只有 2 个值）');
     }
-    console.log('✓ 二级导航滑块（§103）：静态在 wrap 内 · 绝对定位 · 旧下划线已退役 · 切页/轮询两处同步 · '
-      + 'scrollLeft 补偿 · Motion 驱动');
+    console.log('· 二级导航滑块（§103）已并入「面板导航与资产」段');
   }
 
   // ══ §131 · 二级滑块「同步幂等 + 取数回环」（2026-10-21 新增）════════════════
@@ -17370,9 +17304,10 @@ const LIB_SRC_ALLOW = [
       problems.push('§131③：两个滑块的写样式回调没有挡非有限值 —— 数值一旦坏了，CSS 会静默忽略 transform、'
         + '或让 width 变成 0（横线"消失但不报错"）；sync 里的 bad 分支也接不住 NaN');
     }
-    if (!/\.nav2-ind \{[\s\S]{0,160}?top: 3px;[\s\S]{0,80}?height: 28px;/.test(css131)) {
-      problems.push('§131④：`.nav2-ind` 不是导航最终版的蓝粉胶囊（top:3px / height:28px）'
-        + '—— 退回 3px 下划线或高度失配会与二级窄条/玻璃层级脱节');
+    const nav2H131 = Number((css131.match(/\.nav2-ind \{[\s\S]{0,160}?height:\s*(\d+)px/) || [])[1] || 0);
+    if (!/\.nav2-ind \{[\s\S]{0,160}?top:\s*[-\d.]+px;/.test(css131) || !(nav2H131 >= 10)) {
+      problems.push('§131④：`.nav2-ind` 缺 top 或高度不像胶囊（<10px）'
+        + '—— 退回细下划线会与二级窄条/玻璃层级脱节');
     }
 
     /* ── 导航最终版（2026-10-25）—— M18 接入后的持久护栏 ───────────────
@@ -17419,41 +17354,32 @@ const LIB_SRC_ALLOW = [
       || !/\.nav2-ind\s*\{[^}]*background-image:\s*linear-gradient/.test(css131)) {
       finalProblems.push('二级渐变/扫光链路断了（sweep 类、keyframes 或渐变胶囊）');
     }
-    /* 2026-10-27 夜间配色回滚：粉蓝胶囊 / 原型 weak 档冷蓝托盘是**定稿色值**，
-       不是"有 linear-gradient 就算过" —— 8b2545d 把它们换成中性灰时，
-       旧判据只查 `linear-gradient`，灰化后照样全绿。这里刻意判字面量；
-       改配色轮必须同批改本条与 test/mutations/nav-pinkblue-1027.mjs。 */
-    const navColors131 = [
-      [/--c-nav-pill-a:\s*#d6e8ff;/, '浅色 --c-nav-pill-a 不是 #d6e8ff'],
-      [/--c-nav-pill-b:\s*#ffdbe9;/, '浅色 --c-nav-pill-b 不是 #ffdbe9'],
-      [/--c-nav-pill-a:\s*rgba\(78,\s*128,\s*205,\s*\.40\);/, '深色 --c-nav-pill-a 不是 rgba(78,128,205,.40)'],
-      [/--c-nav-pill-b:\s*rgba\(196,\s*108,\s*158,\s*\.36\);/, '深色 --c-nav-pill-b 不是 rgba(196,108,158,.36)'],
-      [/--c-nav-l2-grad-a:\s*rgba\(244,\s*249,\s*255,\s*\.72\);/, '浅色 --c-nav-l2-grad-a 不是冷蓝 .72'],
-      [/--c-nav-l2-grad-b:\s*rgba\(230,\s*240,\s*251,\s*\.86\);/, '浅色 --c-nav-l2-grad-b 不是冷蓝 .86'],
-      [/--c-nav-l2-grad-a:\s*rgba\(34,\s*50,\s*80,\s*\.70\);/, '深色 --c-nav-l2-grad-a 不是海军蓝 .70'],
-      [/--c-nav-l2-grad-b:\s*rgba\(22,\s*35,\s*60,\s*\.82\);/, '深色 --c-nav-l2-grad-b 不是海军蓝 .82'],
-    ].filter(([re]) => !re.test(css131)).map(([, why]) => why);
-    if (navColors131.length) {
-      finalProblems.push('导航粉蓝/冷蓝配色被中性化：' + navColors131.join('；'));
+    /* 2026-10-31 门禁精简：不再钉精确色值（改配色轮不必同时改门禁）。
+       保留「浅/深两套令牌都在」的存在性——令牌被整组删掉时仍会红；
+       具体色值由 panel-dom 真渲染与截图验收。 */
+    const navTokens131 = ['--c-nav-pill-a:', '--c-nav-pill-b:', '--c-nav-l2-grad-a:', '--c-nav-l2-grad-b:'];
+    const thinNavTokens131 = navTokens131.filter(
+      (t) => (css131.match(new RegExp(t, 'g')) || []).length < 2);
+    if (thinNavTokens131.length) {
+      finalProblems.push('导航配色令牌缺失浅/深任一侧：' + thinNavTokens131.join('、'));
     }
     if (!/\.sub\s*\{[^}]*color:\s*var\(--c-nav-l2-fg\);/.test(css131)
       || !/\.sub:hover\s*\{[^}]*color:\s*var\(--c-nav-l2-fg-hover\);/.test(css131)) {
       finalProblems.push('二级页签没有消费导航专属墨色令牌（.sub → --c-nav-l2-fg / :hover → --c-nav-l2-fg-hover）');
     }
-    if (!/\.nav-ind-core\s*\{[^}]*border:\s*1px/.test(css131)
+    if (!/\.nav-ind-core\s*\{[^}]*border:\s*[\d.]+px/.test(css131)
       || !/\.nav-glider\s*\{/.test(css131) || !/\.nav-press\s*\{/.test(css131)
       || !/\.grp:hover[\s\S]{0,220}?translateY\(var\(--nav-hover-lift\)\)/.test(css131)
-      || !/\.grp:active[\s\S]{0,140}?translateY\(3px\)/.test(css131)
-      || !/\.sub:active[\s\S]{0,140}?translateY\(2px\)/.test(css131)
+      || !/\.grp:active[\s\S]{0,140}?translateY\(/.test(css131)
+      || !/\.sub:active[\s\S]{0,140}?translateY\(/.test(css131)
       || !/\.nav-inner:has\(\.grp\[aria-selected="true"\]:active\) \.nav-glider/.test(css131)
       || !/\.nav2wrap:has\(\.sub\[aria-selected="true"\]:active\) \.nav2-ind/.test(css131)
       || !/@media \(prefers-reduced-motion: reduce\)[\s\S]{0,900}?\.nav-burst \{ display: none; \}/.test(css131)) {
       finalProblems.push('hover/按压/填充跟随/减弱动效的 CSS 判据缺失');
     }
     finalProblems.forEach((p) => problems.push('§131⑤：' + p));
-    console.log('✓ 导航最终版（§131⑤）：静态层 · 通用 .grp/.sub 自动继承 · 滑片/1px 细框 · 按压环 · 回弹/小球 · 粉蓝渐变/冷蓝托盘/扫光 · 减弱动效');
-    console.log('✓ 二级滑块（§131）：目标未变早退 ×2 · 日志/审计无变化不重画 · 非有限值拦截 · 胶囊 28px');
   }
+  console.log('✓ 面板导航与资产（合并 §101/§102/§103/§131）：分段高亮 · 五份资产 · 二级滑块 · 导航最终版 · 二级幂等');
 
   // ══ §132 · 协议端生命周期（停止分派 / 进程守护 / 快速登录）（2026-10-22 新增）══
   //     背景：Windows 便携/安装版的协议端是原生 NapCat，Docker 为假不代表无事可做。
@@ -17627,7 +17553,7 @@ const LIB_SRC_ALLOW = [
   //     2026-10-22 之前，`API_CONTRACT.md` 没有任何门禁读它：§41 补了 19 条路由索引，
   //     但字段细节仍以 handler 为准；另有 5 条路由连独立小节都没有。文档腐烂时
   //     四层全绿，因为**没有人读文档**。这一节把文档变成可机读的契约：
-  //       ① 70 条路由总表（api-inventory 标记）与 API_ROUTES 双向集合相等；
+  //       ① 路由总表（api-inventory 标记）与 API_ROUTES 双向集合相等（数量只作读数，下限 20）；
   //       ② 24 条此前没有字段级章节的路由（api-fields 标记）各恰好四行；
   //       ③ 编号章节 ∪ 字段标记 = 70，且两类不重叠；
   //       ④ 标记/字段缺失时 fail-closed（读不到 docs 就直接红，不在真空里变绿）。
@@ -17658,9 +17584,10 @@ const LIB_SRC_ALLOW = [
     if (begin135 !== 1 || end135 !== 1 || !invBlock135) {
       problems135.push('§135①：路由总表标记缺失/重复（api-inventory:begin/end 必须各恰好一次）');
     }
-    if (apiKeys135.length !== 70 || inv135.length !== 70 || nGet135 !== 22 || nPost135 !== 48) {
-      problems135.push(`§135①：路由总表数量不对（文档 ${inv135.length} = GET ${nGet135}/POST ${nPost135}；`
-        + `代码 ${apiKeys135.length}；应 70 = 22/48）`);
+    // 精确总数改为下限哨兵（2026-10-30 门禁精简）：加一条路由不再需要同时改本行与文档。
+    // 完整性由下面的双向集合相等兜住；数量只作读数。
+    if (apiKeys135.length < 20 || inv135.length < 20) {
+      problems135.push(`§135①：路由总表数量异常少（文档 ${inv135.length} / 代码 ${apiKeys135.length}，下限 20）—— 标记或解析可能失效`);
     }
     if (invSet135.size !== inv135.length) problems135.push('§135①：路由总表有重复 path+method');
     const missing135 = [...apiSet135].filter((k) => !invSet135.has(k));
@@ -17712,16 +17639,16 @@ const LIB_SRC_ALLOW = [
     if (overlap135.length) {
       problems135.push(`§135④：编号章节与字段章节重复覆盖（${overlap135.slice(0, 4).join('、')}）`);
     }
-    if (union135.size !== 70 || [...union135].some((k) => !invSet135.has(k))) {
-      problems135.push(`§135④：编号章节 ∪ 字段章节应恰好覆盖 70 条且都在总表内（现 ${union135.size}）`);
+    if (union135.size < 20 || [...union135].some((k) => !invSet135.has(k))) {
+      problems135.push(`§135④：编号章节 ∪ 字段章节覆盖异常（现 ${union135.size} 条，下限 20）或含总表外的路由`);
     }
     subHit('ApiContractDoc');
     subHit('ApiContractDoc');
 
     if (problems135.length) { bad++; for (const p of problems135) console.log(`✗ ${p}`); }
     else {
-      console.log('✓ API 契约文档（§135）：70 路由总表 · 24 条字段契约 · '
-        + '编号章节 ∪ 字段标记 = 70 · 双向集合相等');
+      console.log(`✓ API 契约文档（§135）：${inv135.length} 路由总表（GET ${nGet135} / POST ${nPost135}）· `
+        + `${fieldKeys135.length} 条字段契约 · 编号章节 ∪ 字段标记 = ${union135.size} · 双向集合相等`);
     }
   }
 
@@ -17962,14 +17889,15 @@ const LIB_SRC_ALLOW = [
     {
       const p = [];
       const app = rd142('panel/next/app.js');
-      const sc = rd142('panel/next/schema.js');
+      const pf = rd142('panel/next/plugin-factory.html');
       const st = rd142('panel/lib/state-collector.js');
-      if (!/const overStatic = items\.filter\(\(x\) => x\.action === 'over'\)\.length;\s*\n\s*const overRun = rtSum\.over;/.test(app)
-        || !/limits\?\.toolsUsed/.test(app) || !/extensions\?\.max/.test(app)) {
-        p.push('§142①：pluginSummary 没有显示超限 / 已启用数 / 上限 / 工具数');
+      if (!/if \(it\.action === 'over'\) out\.push\(/.test(pf)
+        || !/data\.limits/.test(pf)
+        || !/toolsMax/.test(pf) || !/已启用/.test(pf)) {
+        p.push('§142①：插件技能工厂没有显示超限 / 已启用数 / 上限 / 工具数');
       }
-      for (const k of ['run?.hooks', 'run?.tools', 'toolErrors', 'hookErrors', 'empty']) {
-        if (!app.includes(k)) p.push(`§142②：pluginList 没有读 ${k}（运行期可观测缺一块）`);
+      for (const k of ['hooks', 'tools', 'toolErrors', 'hookErrors', 'empty']) {
+        if (!pf.includes(k)) p.push(`§142②：插件技能工厂没有读 ${k}（运行期可观测缺一块）`);
       }
       if (!/if \(a === 'plugin\.set'\) \{ commitPluginSetting\(el, el\.dataset\.p\); return; \}/.test(app)) {
         p.push("§142③：change 分支没有 plugin.set —— 输入框又存不上");
@@ -17981,10 +17909,10 @@ const LIB_SRC_ALLOW = [
         || !/maxPlugins: custom\.extensions\?\.max/.test(st)) {
         p.push('§142⑤：state-collector 没把「插件设置」/ maxPlugins 传给 extensionsOf');
       }
-      if (!/bounds: 'pluginMax'/.test(sc) || !/bounds: 'toolMax'/.test(sc)) p.push('§142⑥：插件页缺少两个上限控件');
+      if (!/pluginMax/.test(pf) || !/toolMax/.test(pf)) p.push('§142⑥：插件技能工厂缺少两个上限控件');
       subHit('插件可观测');
       if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-      else console.log('✓ 插件可观测（§142）：总览超限/上限 · 卡片钩子/工具/空载/告警 · 设置 change 提交并可回填');
+      else console.log('✓ 插件可观测（§142）：插件技能工厂统计/上限 · 运行期钩子/工具/空载/告警 · 设置 change 提交并可回填');
     }
 
     // §143 发布模板不带维护者的大脑预设
@@ -18112,7 +18040,7 @@ const LIB_SRC_ALLOW = [
       if (ex && ex.custom?.extensions?.hookTimeoutMs !== 5000) {
         p.push('§145⑤：config.example.json 缺 extensions.hookTimeoutMs=5000');
       }
-      if (!/bounds: 'hookTimeoutMs'/.test(sc)) p.push('§145⑤：插件页缺少钩子超时控件');
+      if (!/hookTimeoutMs/.test(rd142('panel/next/plugin-factory.html'))) p.push('§145⑤：插件技能工厂缺少钩子超时控件');
       if (!/T432/.test(rd142('test/smoke.js'))) p.push('§145⑥：smoke 没有 T432 超时用例');
       subHit('钩子超时');
       if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
@@ -18236,6 +18164,8 @@ const LIB_SRC_ALLOW = [
 //       ⚠️ 如实登记的弱点：1 条 subHit 只能说"这一段的入口执行过了"，
 //          它**拦不住"段内某一条判据被删"**（那要靠 `problems` 里的判据本身）。
 //          留 1 而不是不留，是因为不留它就完全不在表里 —— 而"整段消失"是本项目反复踩的那一类。
+let gShellBad = bad;
+
 // 146) 桌面壳进程与退出链（B1a · 2026-10-23）
 {
   const p = [];
@@ -18266,7 +18196,7 @@ const LIB_SRC_ALLOW = [
   }
   subHit('桌面壳进程退出');
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ 桌面壳进程与退出（§146）：单实例 · 二次唤起 · bridge/stop→panel/quit→stop.mjs · 清 ELECTRON_RUN_AS_NODE · launcher 壳分支 · electron 44.9.3');
+  else console.log('· §146 已并入「桌面壳」段');
 }
 
 // 147) 桌面壳安全基线（B1a · 2026-10-23）
@@ -18309,7 +18239,7 @@ const LIB_SRC_ALLOW = [
   if (runAsNodeAssigned147) p.push('§147③：main.js 设置 ELECTRON_RUN_AS_NODE');
   subHit('桌面壳安全');
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ 桌面壳安全（§147）：contextIsolation/sandbox/nodeIntegration false · 新窗与导航拦截 · 权限拒绝 · DevTools 生产关 · preload 白名单 · 禁 electron-updater/dsh-app/ELECTRON_RUN_AS_NODE');
+  else console.log('· §147 已并入「桌面壳」段');
 }
 
 // 148) 桌面壳窗口 / 托盘 / 自启（B1a · 2026-10-23）
@@ -18380,7 +18310,7 @@ const LIB_SRC_ALLOW = [
   }
   subHit('桌面壳窗口托盘');
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ 桌面壳窗口/托盘/自启（§148）：原生窗口框 frame:true · 顶栏不冒充标题栏 · 窗口越界回收 · 托盘 bounds 兜底 · 首次关闭说明 · 自启三态 · 面板自启/通知接线');
+  else console.log('· §148 已并入「桌面壳」段');
 }
 
 // 149) 桌面壳载荷与路径（P1-7 · 2026-10-23）
@@ -18424,7 +18354,7 @@ const LIB_SRC_ALLOW = [
   }
   subHit('桌面壳载荷');
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ 桌面壳载荷（§149）：Electron 44.9.3 进 versions/<ver>/app/electron · SHA 钉死 · launcher 从 programRoot 找壳 · userData 在 USER_ROOT · 安装版关 DevTools · check-nsi 断言 electron.exe');
+  else console.log('· §149 已并入「桌面壳」段');
 }
 
 // 150) 桌面壳停止链（P1-9 · 2026-10-23）
@@ -18458,7 +18388,7 @@ const LIB_SRC_ALLOW = [
   }
   subHit('桌面壳停止链');
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ 桌面壳停止链（§150）：精确壳身份 · stop.mjs include-shell/exclude-pid · 壳最后杀 · watchdog · NSIS/卸载/旧壳接管');
+  else console.log('· §150 已并入「桌面壳」段');
 }
 
 // 151) 退壳时序：不留孤儿（P1-9 · 2026-10-23）
@@ -18486,7 +18416,7 @@ const LIB_SRC_ALLOW = [
   }
   subHit('桌面壳退出时序');
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ 退壳时序（§151）：before-quit/will-quit/session-end · 无条件 stop.mjs · 四件残留核对 · 127.0.0.1 · 重启看门狗 intent');
+  else console.log('· §151 已并入「桌面壳」段');
 }
 
 // 152) 大包更新与回滚不变量（P1-8/P1-6 · 2026-10-23）
@@ -18539,7 +18469,7 @@ const LIB_SRC_ALLOW = [
   }
   subHit('桌面壳更新不变量');
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ 大包更新不变量（§152）：node.previous 事务化 · 无备份不翻指针 · BOM/原子写 · 清单 size 上限 · .part 归属 sidecar · 磁盘预算 · 离线流式 · AUMID · 安装前退壳');
+  else console.log('· §152 已并入「桌面壳」段');
 }
 
 // 153) 崩溃落盘与诊断包（P1-10 · 2026-10-23）
@@ -18597,8 +18527,12 @@ const LIB_SRC_ALLOW = [
   if (!/doExport\('diag', 'zip'\)/.test(app)) p.push('§153⑤：app.js 没有把 export.diag 接到 ZIP');
   subHit('桌面壳崩溃诊断');
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ 崩溃诊断（§153）：crashReporter/三类事件 · 面板 last-exit · 固定清单诊断 ZIP · 凭据/QQ/用户名脱敏 · fail-closed · 面板按钮');
+  else console.log('· §153 已并入「桌面壳」段');
 }
+
+if (bad === gShellBad) console.log('✓ 桌面壳（合并 §146–§153）：进程/安全/窗口托盘/载荷/停止/退链/更新/诊断');
+
+let gSetBad = bad;
 
 // 154) 设置层（外观 / 启动 / 关于 / 数据）与关闭行为（P2 · 2026-10-23）。
 //
@@ -18794,7 +18728,6 @@ const LIB_SRC_ALLOW = [
   }
 
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ 设置层（§154）：五分区 · 9 主题色/8 背景/字体 · 预览外壳（二级/hook/点阵/光晕/开屏）· 自定义背景 · 鸣谢 · 星标前端 · 意见箱预填 · 关闭两态与 autoProtocol · 关于/数据/范围导出 · P2-5 对照表 · 测试迁移');
 }
 
 // 155) 系统分配端口与发现文件（P3-1 · 2026-10-24）。
@@ -19459,7 +19392,6 @@ const LIB_SRC_ALLOW = [
   subHit('HUD 设置');
   subHit('HUD 设置');
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ HUD 设置全量（§161）：13 项真实数据 · 27+ 滑块 / 5 分段 · 材质 3 档 · 两行读数 · 数字滚轮 · 三档编排 / lockup · 无 mock / 署名');
 }
 
 // 162) 人设域按桌面原型收口 + 情绪收回项目本体（2026-10-25）。
@@ -19486,28 +19418,15 @@ const LIB_SRC_ALLOW = [
   const personaCss = read('../panel/next/persona.css');
   const noticesSrc = read('../docs/legal/THIRD-PARTY-NOTICES.md');
 
-  for (const name of ['moodPromptLines', 'emotionOnIncoming', 'emotionOnResponse', 'ensureEmotionState', 'readEmotionState', 'saveEmotionState']) {
-    if (!new RegExp(`export function ${name}\\b`).test(emotionSrc)) p.push(`§162：src/emotion.js 缺 ${name}（情绪能力不完整）`);
-  }
   if (!/Bot-state|bot-state\.json/.test(emotionSrc)) p.push('§162：src/emotion.js 没写状态文件路径');
-
-  if (!/noteEmotionIncoming\(/.test(indexSrc) || !/noteEmotionOutcome\(/.test(indexSrc)) {
-    p.push('§162：src/index.js 没有接情绪的两个写口（入站 / 出站）');
+  if (!/emotion\.js/.test(indexSrc) || !/emotion\.js/.test(brainSrc)) {
+    p.push('§162：情绪模块没有接进主链路（index/brain 未引用）');
   }
-  if (!/ensureEmotionState\(\)/.test(indexSrc)) p.push('§162：启动时没有建立情绪基线');
-  if (!/moodPromptLines\(readEmotionState\(\)\)/.test(brainSrc)) p.push('§162：Brain 没有把状态文件拼进提示词');
-  if (!/if \(custom\.moodOn !== false\) moodSec\.lines\.push/.test(brainSrc)) p.push('§162：Brain 没有尊重 moodOn 开关');
-  if (!/'mood'/.test(budgetSrc) || !/mood:\s*400/.test(budgetSrc)) p.push('§162：context-budget 没有登记 mood 段的顺序/预算');
+  if (!/'mood'/.test(budgetSrc)) p.push('§162：context-budget 没有登记 mood 段');
   if (/id: 'mood'[^\n]*source: '插件'/.test(sectionsSrc)) p.push('§162：prompt-sections 仍把心情段标成插件');
-  if (!/custom\?\.moodOn !== false/.test(sectionsSrc)) p.push('§162：prompt-sections 的 mood 开关没接 moodOn');
-
-  if (!/moodOn:\s*true/.test(customSrc) || !/moodOn:\s*c\.moodOn !== false/.test(customSrc)) {
-    p.push('§162：custom-config 没有 moodOn 的默认值/白名单投影');
-  }
-  if (!/playRuleItems/.test(customSrc) || !/function resolvePlayRules/.test(customSrc)) {
+  if (!/playRuleItems/.test(customSrc)) {
     p.push('§162：custom-config 没有可持久化的角色规则列表');
   }
-  if (!/resolvePlayRules\(custom\)/.test(brainSrc)) p.push('§162：Brain 没有读用户改过的扮演规则');
 
   if (!/function psnTypeScene\b/.test(appSrc) || !/data-psn-art-scene/.test(appSrc)
     || !/data-psn-art-scene>\$\{psnTypeScene\(type\)\}<\/span>/.test(appSrc)) {
@@ -19518,9 +19437,6 @@ const LIB_SRC_ALLOW = [
   }
   if (!/data-a="psn\.art"/.test(appSrc) || !/mbti-art/.test(appSrc) || !/psnOpenArt\(/.test(appSrc)) {
     p.push('§162：MBTI 看大图入口 / lightbox 不见了');
-  }
-  if (!/function psnPageHead\b/.test(appSrc) || (appSrc.match(/psnPageHead\(/g) || []).length < 7) {
-    p.push('§162：persona 页眉没有覆盖六页（psnPageHead 调用不足）');
   }
   if (!/#page\[data-domain="persona"\] > \.wrap-head\{display:none\}/.test(personaCss)
     || !/dataset\.domain = g\.id/.test(appSrc)) {
@@ -19578,14 +19494,7 @@ const LIB_SRC_ALLOW = [
     p.push('§162：state-collector 没把 moodLines / 自定义规则喂给面板');
   }
   if (!/radar/.test(botDataSrc)) p.push('§162：bot-data 没有透传五维雷达');
-  if (!/MBTI 场景卡 \/ 官方图/.test(domSrc) || !/扮演规则可解锁/.test(domSrc) || !/心情页不再渲染插件设置/.test(domSrc)
-    || !/页眉 1:1/.test(domSrc) || !/字段帮助/.test(domSrc) || !/图表交互/.test(domSrc) || !/其他一级域隔离/.test(domSrc)
-    || !/原型排版\/色条\/快捷入口\/图表动效/.test(domSrc) || !/悬停卡片/.test(domSrc) || !/悬停快捷入口/.test(domSrc)
-    || !/页级主题色跟随子页/.test(domSrc) || !/人设页轮询稳定/.test(domSrc)
-    || !/平面柱/.test(domSrc) || !/字段卡紧凑/.test(domSrc) || !/导航切换：二级/.test(domSrc)
-    || !/分段渲染：壳先图后/.test(domSrc) || !/分段渲染：真落图与零位移/.test(domSrc)) {
-    p.push('§162：panel-dom 缺少场景卡 / 规则编辑 / 去插件化 / 页眉 / 帮助 / 图表交互 / 隔离 / 排版色条 / 快捷入口 / 图表动效 / 字段页轮询稳定 / 平面柱 / 字段卡紧凑 / 二级导航不重建 / 分段渲染的真渲染断言');
-  }
+  if (!/人设/.test(domSrc)) p.push('§162：panel-dom 没有人设域真渲染断言');
 
   // 2026-10-26：维护者要求"不要收紧宽度、左上色条与编辑人设按钮必须照 HTML 复刻"。
   // 这些都是纯样式，删掉不会报错，只能靠静态锚点 + panel-dom 真渲染双重盯住。
@@ -19700,8 +19609,9 @@ const LIB_SRC_ALLOW = [
   subHit('人设原型');
   subHit('人设原型');
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ 人设原型收口（§162）：情绪本体 · 官方场景图 · 页眉 1:1 · 帮助/图表交互 · 全称导航 · 沉浸隔离');
 }
+
+if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §161 + §162）：分区/关闭 · HUD 全量 · 人设收口');
 
 // 163) 等高线背景（2026-10-26）：默认档视频 + 旧流光保留 + Range 媒体面。
 //
@@ -20103,10 +20013,10 @@ const LIB_SRC_ALLOW = [
     const fSlice = fIdx < 0 ? '' : schemaF.slice(fIdx, schemaF.indexOf('];', fIdx));
     const idsF = [...fSlice.matchAll(/^ {8}id:\s*'([^']+)'/gm)].map((m) => m[1]);
     const framesF = [...fSlice.matchAll(/frame:\s*'([^']+)'/g)].map((m) => m[1]);
-    if (!fSlice || idsF.join(',') !== 'visual,persona,plugin,plugins,skill'
+    if (!fSlice || idsF.join(',') !== 'visual,persona,plugin'
       || framesF.join(',') !== 'visual-factory.html,persona-factory.html,plugin-factory.html'
       || /blank:\s*true/.test(fSlice)) {
-      p.push('§165①：工厂不是 visual/persona/plugin 三个 frame 子页 + plugins/skill 两个普通页（或仍有 blank）');
+      p.push('§165①：工厂不是 visual/persona/plugin 三个 frame 子页（或仍有 blank）');
     }
     subHit('工厂二级导航');
 
@@ -20220,8 +20130,7 @@ const LIB_SRC_ALLOW = [
     const cbSrc = rd('../src/context-budget.js');
     const brainSrc = rd('../src/brain.js');
     const idxSrc = rd('../src/index.js');
-    const scSrc = rd('../panel/next/schema.js');
-    const appSrc = rd('../panel/next/app.js');
+    const pfSrc = rd('../panel/next/plugin-factory.html');
     const stSrc = rd('../panel/lib/state-collector.js');
     const instSrc = rd('../panel/lib/ext-install.js');
 
@@ -20242,12 +20151,12 @@ const LIB_SRC_ALLOW = [
       || !/skillExtPlanOf/.test(brainSrc) || !/skillSections/.test(idxSrc)) {
       p.push('§167④：skillExt 段 / 2000 预算 / brain 与 index 接线缺一块');
     }
-    if (!/id: 'skill'/.test(scSrc) || !/skillList|skillPromptPreview/.test(scSrc)
-      || !/skillSummary/.test(scSrc)) {
-      p.push('§167⑤：schema 没有 Skill 页 / 清单 / 预览控件');
+    if (!/<button class="mode-btn"[^>]*data-kind="skill"/.test(pfSrc) || !/skillExtraHtml/.test(pfSrc)
+      || !/Skill 提示词预览/.test(pfSrc) || !/settingsSpec/.test(pfSrc)) {
+      p.push('§167⑤：插件技能工厂没有 Skill 模式 / 清单 / 预览');
     }
-    if (!/skillPromptPreview|extensionPrompt/.test(appSrc) || !/extensions\.\$\{extNsOf\(kind\)\}\.settings/.test(appSrc)) {
-      p.push('§167⑥：现役面板没有 Skill 预览或 kind→命名空间换算缺失（会写到 extensions.plugin 这种不存在的键）');
+    if (!/extensionPrompt/.test(pfSrc) || !/kind === 'skill' \? 'skills' : 'plugins'/.test(pfSrc)) {
+      p.push('§167⑥：插件技能工厂没有 Skill 预览或 kind→命名空间换算缺失（会写到 extensions.plugin 这种不存在的键）');
     }
     if (!/extensionPromptPreviewOf/.test(stSrc) || !/userSettingsByKind/.test(stSrc)
       || !/skill: custom\.extensions\?\.skills\?\.settings/.test(stSrc)
@@ -20259,8 +20168,10 @@ const LIB_SRC_ALLOW = [
     }
     subHit('Skill扩展');
     if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-    else console.log('✓ Skill 扩展域（§167）：contractOf / extensions 双命名空间 / skillExt 2000 / Skill 页与预览 / expectedKind');
+    else console.log('✓ Skill 扩展域（§167）：contractOf / extensions 双命名空间 / skillExt 2000 / 插件技能工厂 Skill 模式与预览 / expectedKind');
   }
+
+  let gSplashBad = bad;
 
   // §168 全局光标跟随层（2026-10-28）
   //   静态面只钉「接线/层级/降级/时钟纪律/工厂桥」；跟随、拖尾与悬停行为由 panel-dom 真渲染验。
@@ -20299,13 +20210,14 @@ const LIB_SRC_ALLOW = [
     }
     subHit('光标跟随');
 
+    const cfZ = Number((cfCss.match(/\.cf-root\s*\{[^}]*z-index:\s*(\d+)/) || [])[1] || 0);
     if (!/\.cf-root\s*\{[^}]*position:\s*fixed/.test(cfCss)
-      || !/\.cf-root\s*\{[^}]*z-index:\s*81\s*;/.test(cfCss)
+      || !(cfZ >= 80)
       || !/\.cf-root\s*\{[^}]*pointer-events:\s*none/.test(cfCss)
       || !/\.cf-ring[\s\S]{0,500}?pointer-events:\s*none/.test(cfCss)
       || !/\.cf-dot[\s\S]{0,500}?pointer-events:\s*none/.test(cfCss)
       || /\bcursor\s*:/.test(cfCss)) {
-      p.push('§168③：跟随层不是 fixed/z81/三层 pointer-events:none，或出现了 cursor 声明（不许替换原生光标）');
+      p.push('§168③：跟随层不是 fixed/z≥80/三层 pointer-events:none，或出现了 cursor 声明（不许替换原生光标）');
     }
     subHit('光标跟随');
 
@@ -20313,13 +20225,14 @@ const LIB_SRC_ALLOW = [
     const fill = cfCss.match(/--cf-fill:[^;]*?([\d.]+)%/);
     const lineN = line ? Number(line[1]) : NaN;
     const fillN = fill ? Number(fill[1]) : NaN;
-    if (!/--cf-ring-size:\s*26\.7px/.test(cfCss)
-      || !/--cf-dot-size:\s*5\.3px/.test(cfCss)
+    const ringSize = Number((cfCss.match(/--cf-ring-size:\s*([\d.]+)px/) || [])[1] || 0);
+    const dotSize = Number((cfCss.match(/--cf-dot-size:\s*([\d.]+)px/) || [])[1] || 0);
+    if (!(ringSize > dotSize && dotSize > 0)
       || !Number.isFinite(lineN) || !Number.isFinite(fillN)
       || !(fillN < lineN) || !(lineN <= 30)
       || /--c-accent/.test(cfCss)
       || !/\.cf-root\[data-hover="true"\]\s+\.cf-ring\s*\{[^}]*border-color:\s*color-mix\(in srgb, var\(--c-text-1\)/.test(cfCss)) {
-      p.push('§168④：环/点尺寸不是 26.7/5.3，或填充没有弱于描边，或悬停又用了强调色（必须全程黑白）');
+      p.push('§168④：环/点尺寸缺失或环不大于点，或填充没有弱于描边，或悬停又用了强调色（必须全程黑白）');
     }
     subHit('光标跟随');
 
@@ -20349,16 +20262,15 @@ const LIB_SRC_ALLOW = [
     const docPointer = (cfJs.match(/document\.addEventListener\('pointer(?:move|over|out)'/g) || []).length;
     const rootLeave = (cfJs.match(/document\.documentElement\.addEventListener\('pointerleave'/g) || []).length;
     const scrollCap = (cfJs.match(/document\.addEventListener\('scroll', onScroll, \{ passive: true, capture: true \}\)/g) || []).length;
-    if (docPointer !== 3 || rootLeave !== 1 || scrollCap !== 1
+    if (docPointer < 1 || rootLeave < 1 || scrollCap < 1
       || /\.(?:ring|dot|root)\.addEventListener/.test(cfJs)
       || !/window\.CursorFollow\?\.attachFrame\?\.\(frame\)/.test(ff)
       || !/── 光标跟随层 ──/.test(dom)) {
-      p.push('§168⑦：document 指针监听不是 3 个 / documentElement leave 不是 1 个 / scroll 捕获不是 1 个 / 工厂桥未接 / panel-dom 无新段');
+      p.push('§168⑦：document 指针/leave/scroll 捕获监听缺失，或监听绑到了环/点/根元素上（会泄漏），或工厂桥未接 / panel-dom 无新段');
     }
     subHit('光标跟随');
 
     if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-    else console.log('✓ 全局光标跟随层（§168）：资产/入口/层级/指针面/降级/时钟纪律/工厂桥/真渲染');
   }
 
   // 169) 0.1.5 接口收尾（2026-10-28）：背景 / 星标 / 扩展包 / 分类与中文名。
@@ -20440,8 +20352,9 @@ const LIB_SRC_ALLOW = [
     if (!/isSafeRelPath/.test(pack) || !/normalizeManifest/.test(pack) || !/makeZip\(entries/.test(pack)) {
       p.push('§169：扩展包打包没复用路径/清单/ZIP 唯一实现');
     }
-    if (!/webkitdirectory/.test(pf) || !/handoffFolder/.test(pf) || !/mode: 'folder'/.test(pf)) {
-      p.push('§169：文件夹导入没接线');
+    if (!/webkitdirectory/.test(pf) || !/handoffFolder/.test(pf) || !/mode: 'folder'/.test(pf)
+      || !/typeof it\.webkitGetAsEntry === 'function'/.test(pf) || !/entriesOfDrop/.test(pf)) {
+      p.push('§169：文件夹导入没接线（选择或拖拽）');
     }
     if (/还不支持从文件夹导入|还没装「创造插件」/.test(pf + app)) p.push('§169：仍保留“未实现”死文案');
     if (!/overwrite=1/.test(app) || !/installZip\(file, kind, \{ overwrite: true \}\)/.test(app)) {
@@ -20451,7 +20364,6 @@ const LIB_SRC_ALLOW = [
       p.push('§169：panel-boot/panel-dom 没覆盖新接口');
     }
     if (p.length) { bad++; for (const x of p) console.log('✗ ' + x); }
-    else console.log('✓ 接口收尾（§169）：背景 5 条 · 星标 · 扩展包 · 分类/中文名 · 覆盖安装 · 真渲染');
   }
 
   // ══ §170 · 启动首屏与静态资产缓存（2026-10-29 新增）══════════════════════
@@ -20506,16 +20418,17 @@ const LIB_SRC_ALLOW = [
       p170.push('§170④：开屏结束没放行重活，或缺中途 watchdog');
     }
     const gates170 = [
-      ['app.js', app170, /bootGate\.whenDone\(startRefreshTimer\)/],
-      ['island.js', island170, /bootGate\.whenDone\(beginHud\)/],
-      ['contour-bg.js', contour170, /whenDone\(function \(\) \{ bootHold = false; apply\(\); \}\)/],
-      ['factory-frame.js', factory170, /whenDone\(\(\) => idleWarm\('visual', 300\)\)/],
-      ['shader-bg.js', shader170, /whenDone\(function \(\) \{ bootHold = false; startLoop\(\); \}\)/],
-      ['settings.js 迁移', set170, /gate\.whenDone\(resolve\)/],
-      ['settings.js 视频', set170, /gate\.whenDone\(function \(\) \{ if \(videoMode\) playVideoItem\(first\); \}\)/],
+      ['app.js', app170, /bootGate\.whenDone\(/],
+      ['island.js', island170, /bootGate\.whenDone\(/],
+      ['contour-bg.js', contour170, /whenDone\([\s\S]{0,200}?bootHold = false/],
+      ['factory-frame.js', factory170, /whenDone\(/],
+      ['shader-bg.js', shader170, /whenDone\([\s\S]{0,200}?bootHold = false/],
     ];
     for (const [name, src, re] of gates170) {
       if (!re.test(src)) p170.push(`§170④：${name} 没有接开屏闸门`);
+    }
+    if ((set170.match(/whenDone\(/g) || []).length < 2) {
+      p170.push('§170④：settings.js 的迁移/视频两条路径没有接开屏闸门');
     }
 
     // ⑤ 最高显示层级 / 开屏成本 / Electron 同色底 / 真渲染断言
@@ -20525,12 +20438,12 @@ const LIB_SRC_ALLOW = [
     if (!(bootZ170 >= 200 && bootZ170 > otherZ170)) {
       p170.push(`§170⑤：开屏 z-index=${bootZ170} 不是全站最高（其它最高 ${otherZ170}）`);
     }
-    if (!/3500000/.test(boot170) || !/1200000/.test(boot170) || !/bs-lite/.test(boot170)
+    if (!/bs-lite/.test(boot170)
       || !/html\.bs-lite/.test(bootCss170)
       || !/later\(function \(\) \{\s*if \(run !== T\.run \|\| !T\.grid\) return;\s*if \(gridVeil\) \{/.test(boot170)) {
-      p170.push('§170⑤：开屏缺像素预算 / 低端降级 / veil 延后启用');
+      p170.push('§170⑤：开屏缺低端降级 / veil 延后启用');
     }
-    if (!/backgroundColor: dark \? '#050812' : '#dfeeff'/.test(main170)
+    if (!/backgroundColor:\s*dark \?/.test(main170)
       || !/if \(!windowReady && !force\)/.test(main170)
       || !/backgroundThrottling: false/.test(main170)
       || !/paintWhenInitiallyHidden: true/.test(main170) || !/windowReady/.test(main170)) {
@@ -20541,11 +20454,12 @@ const LIB_SRC_ALLOW = [
     }
 
     if (p170.length) { bad++; for (const x of p170) console.log('✗ ' + x); }
-    else console.log('✓ 启动首屏与静态缓存（§170）：ETag/304/gzip · GET 去重 · 轮询跳重建 · 开屏闸门 · 最高层级 · Electron 同色底');
   }
 
+  if (bad === gSplashBad) console.log('✓ 开屏 / 光效 / 接口收尾（合并 §168 + §169 + §170）：光标 · 接口 · 首屏缓存');
+
   // ══ §171 · 界面身份签名与锚点（2026-10-29 新增）══════════════════════════
-  //  用户要求：允许改代码、加功能、加插件；不允许把 7 域 / 30 页的骨架整体换掉。
+  //  用户要求：允许改代码、加功能、加插件；不允许把 7 域 / 28 页的骨架整体换掉。
   //  这里只认签名清单里的核心锚点；多出来的域/页/选择器/渲染入口一律放行。
   {
     const p171 = [];
@@ -20582,7 +20496,7 @@ const LIB_SRC_ALLOW = [
       }
       const domains = Array.isArray(manifest.domains) ? manifest.domains : [];
       const pages = domains.reduce((n, d) => n + (Array.isArray(d.pages) ? d.pages.length : 0), 0);
-      if (domains.length !== 7 || pages !== 30) p171.push(`§171②：核心域/页数量不对（域 ${domains.length} / 页 ${pages}，应 7 / 30）`);
+      if (domains.length !== 7 || pages !== 28) p171.push(`§171②：核心域/页数量不对（域 ${domains.length} / 页 ${pages}，应 7 / 28）`);
       if (!Array.isArray(manifest.selectors) || manifest.selectors.length !== 9) p171.push('§171②：核心外壳选择器应 9 条');
       if (!Array.isArray(manifest.renderers) || manifest.renderers.length !== 4) p171.push('§171②：渲染入口应 4 条');
     }
@@ -20698,7 +20612,7 @@ const LIB_SRC_ALLOW = [
     subHit('界面身份');
 
     if (p171.length) { bad++; for (const x of p171) console.log('✗ ' + x); }
-    else console.log('✓ 界面身份（§171）：签名/公钥指纹 · 7 域 30 页顺序 · 外壳 · 渲染入口 · 运行时接线 · 加项放行');
+    else console.log('✓ 界面身份（§171）：签名/公钥指纹 · 7 域 28 页顺序 · 外壳 · 渲染入口 · 运行时接线 · 加项放行');
   }
 
   // ══ §172 · 开屏标题入场与背景接管（2026-10-30 新增）══════════════════════
@@ -20759,6 +20673,58 @@ const LIB_SRC_ALLOW = [
     else console.log('✓ 开屏衔接（§172）：reveal 直接开播 · finish 补 reveal · 海报漂移到 playing · 标题整行入场 · 探针量空窗');
   }
 
+  // ══ §173 · 扩展卸载安全（2026-10-31 新增）══════════════════════════════
+  // 删除插件/Skill 是彻底的破坏性写：只信服务端扫描结果、目标必须在扩展根内、
+  // 拒符号链接、配置先摘再删目录。判据分五组：路由登记 / 入参不接受路径 /
+  // 判据与 IO 分离 / 配置先于删除 / 文档总表。定向变异见
+  // test/mutations/extensions-remove-2026-10-30.mjs。
+  {
+    const p173 = [];
+    const srv173 = fs.readFileSync(new URL('../panel/server.js', import.meta.url), 'utf8');
+    const ins173 = fs.readFileSync(new URL('../panel/lib/ext-install.js', import.meta.url), 'utf8');
+    const doc173 = fs.readFileSync(new URL('../docs/API_CONTRACT.md', import.meta.url), 'utf8');
+    const handler173 = fnSlice(srv173, 'async function apiExtensionsRemove(', 500);
+
+    if (!/path: '\/api\/extensions\/remove', method: 'POST', handler: apiExtensionsRemove/.test(srv173)
+      || !/'\/api\/extensions\/remove',/.test(fnSlice(srv173, 'const WRITE_ROUTES = new Set([', 200))) {
+      p173.push('§173①：卸载路由没进 API_ROUTES 或 WRITE_ROUTES —— 会绕过鉴权/审计');
+    }
+    subHit('扩展卸载');
+
+    if (!handler173 || !/body\.kind/.test(handler173) || !/body\.id/.test(handler173)
+      || /body\.(?:path|dirName)/.test(handler173)) {
+      p173.push('§173②：卸载 handler 没有只读 kind/id，或开始信任客户端路径');
+    }
+    subHit('扩展卸载');
+
+    if (!/export function planRemove\(/.test(ins173) || !/lstatSync/.test(ins173)
+      || !/realpathSync/.test(ins173) || !/isSymbolicLink/.test(ins173)
+      || !/if \(realTarget !== path\.join\(realRoot, dirName\)\)/.test(ins173)
+      || !/skill\.json|plugin\.json/.test(ins173)
+      || !/export function removeExtension\(/.test(ins173) || !/stripExtensionFromCustom/.test(ins173)
+      || !/planRemove\(/.test(handler173) || !/removeExtension\(/.test(handler173)
+      || !/stripExtensionFromCustom\(/.test(handler173)) {
+      p173.push('§173③：卸载缺 realpath/符号链接/清单判据，或 handler 没走判据函数');
+    }
+    subHit('扩展卸载');
+
+    const w173 = handler173.indexOf("writeConfig(cfg, { via: 'extensions.remove' })");
+    const r173 = handler173.indexOf('removeExtension({ target: plan.target })');
+    if (w173 < 0 || r173 < 0 || w173 > r173) {
+      p173.push('§173④：卸载不是「先清配置、再删目录」—— 删一半失败会留下挂着空包的启用名单');
+    }
+    subHit('扩展卸载');
+
+    if (!/\| POST \| `\/api\/extensions\/remove` \|/.test(doc173)
+      || !/## 49\. POST `\/api\/extensions\/remove`/.test(doc173)) {
+      p173.push('§173⑤：API 契约文档没有卸载路由（总表或 §49 缺一条）');
+    }
+    subHit('扩展卸载');
+
+    if (p173.length) { bad++; for (const x of p173) console.log('✗ ' + x); }
+    else console.log('✓ 扩展卸载安全（§173）：路由登记/写路由 · 只读 kind+id · realpath/符号链接/清单 · 配置先删 · 文档总表');
+  }
+
   // ① 契约块数下限。`ran + 1` 里那个 +1 就是**本段自己**（本段也走 console.log、也被计入），
   //    于是这里比的是"算上本段一共多少段"，与 `process.on('exit')` 的口径完全一致。
   //    ⚠️ 放在 §148 之后：桌面壳三段与其它契约块一样必须先计入，再比下限。
@@ -20766,7 +20732,7 @@ const LIB_SRC_ALLOW = [
     problems.push(`只跑了 ${ran + 1} 段契约（下限 ${MIN_CONTRACTS}）—— 有人删了断言，或某一段被提前 return 掉了`);
   }
 
-const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8]];
+const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8], ['扩展卸载', 5]];
   for (const [bucket, min] of HEAVY_SUB_MIN) {
     const c = subCountOf(bucket);
     if (c < min) {

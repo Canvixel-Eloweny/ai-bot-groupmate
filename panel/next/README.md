@@ -57,20 +57,20 @@
 - 窄屏：≤860px 侧栏变顶部横条；≤700px 色板 4 列、≤600px 内容区仍可滚动。P2-4 在
   `test/panel-dom.mjs` 里按 1280×680 / 1024×728 / 800×560 / 600×440 四档真渲染并截图。
 
-## 工厂域（2026-10-28：三个工厂 + 插件管理 / Skill · 二级导航承载）
+## 工厂域（2026-10-31：三个工厂 · 插件技能工厂含插件与 Skill）
 
-一级「工厂」下有 **五个二级页**：前三个是完整工具（frame 页），后两个是普通卡片页。
+一级「工厂」下有 **三个二级页**，三个都是完整工具（frame 页）。
 
 | 二级页 | 承载 |
 |---|---|
 | 视觉工厂 | `visual-factory.html`（frame） |
 | 人设工厂 | `persona-factory.html`（frame） |
-| 插件工厂 | `plugin-factory.html`（frame） |
-| 插件管理 | 普通卡片页（`schema.js` 的 plugins 页：启用 / 设置 / 上限 / ZIP） |
-| Skill | 普通卡片页（`schema.js` 的 skill 页：启用 / 预览 / 设置 / ZIP） |
+| 插件技能工厂 | `plugin-factory.html`（frame；左上模式开关：插件工厂 / Skill 工厂） |
 
-- `schema.js` 的 `factory.subs` 顺序为 visual → persona → plugin → plugins → skill；
-  前三个 `frame` 页带 `frame: '<file>'`，后两个不带；点一级「工厂」默认落视觉工厂（`S.si = 0`）。
+- 2026-10-31：原「插件管理」「Skill」两个普通卡片页已并入插件技能工厂；
+  插件与 Skill 共用同一套宿主，页内「管理插件与技能」进入管理模式。
+- `schema.js` 的 `factory.subs` 顺序为 visual → persona → plugin；
+  三页都带 `frame: '<file>'`；点一级「工厂」默认落视觉工厂（`S.si = 0`）。
 - 三份 iframe 由 `factory-frame.js` 常驻在 `#factoryHost`，只显隐不重建；切换时新帧做
   0.22s 上浮淡入（`.factory-pane.is-enter`），`prefers-reduced-motion` 下直接落位。
   普通页没有 `data-frame` 时，`factory-frame.js` 会把三份 pane 全隐藏，不会留下 iframe 残影。
@@ -91,7 +91,7 @@
   离开导航 2.5s 再收。尺寸用 CSS 像素，不随窗口缩放，严格小范围避免误触。
   离开工厂域立刻复位为常显。隐藏态 `navrow.inert` + `visibility:hidden`，键盘可用热区按钮呼出；
   设置层打开时热区与 nav 一起 inert。
-- `test/panel-dom.mjs` 专钉：三 frame + 插件管理 / Skill 两个普通页、顶栏无圆钮、host 几何/层级、
+- `test/panel-dom.mjs` 专钉：三 frame（插件技能工厂内含插件与 Skill 两种模式）、顶栏无圆钮、host 几何/层级、
   二级按钮与工厂都可点、3.6s 不重载不重播、切帧不重载、离开收起、重进保留；
   另钉自动上收 / 热区呼出 / 2.5s 再收 / 离开复位。普通页上导航常显（只有 frame 页会自动上收）。
   `panel/next/verify.mjs` 另有同一组断言；`§165`/`§166` 静态契约 + 两套变异兜底。

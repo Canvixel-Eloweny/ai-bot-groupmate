@@ -15,6 +15,7 @@ const HOST = 'src/plugin-host.js';
 const BUDGET = 'src/context-budget.js';
 const SCHEMA = 'panel/next/schema.js';
 const APP = 'panel/next/app.js';
+const PF = 'panel/next/plugin-factory.html';
 const COLLECTOR = 'panel/lib/state-collector.js';
 
 export default [
@@ -66,11 +67,13 @@ export default [
   },
   {
     id: 'M5',
-    note: 'Schema 里把 Skill 页改名 —— §167⑤ 必须变红（维护域不再有 Skill 入口）。预期 BLOCKED',
-    anchor: /id: 'skill',/,
+    note: '插件技能工厂的 Skill 模式开关被改名 —— §167⑤ 必须变红（工厂不再有 Skill 入口）。预期 BLOCKED',
+    anchor: /<button class="mode-btn" type="button" data-kind="skill" aria-pressed="false">Skill 工厂<\/button>/,
     count: 1,
-    file: SCHEMA,
-    apply: (s) => s.replace(/id: 'skill',/, "id: 'skill-x',"),
+    file: PF,
+    apply: (s) => s.replace(
+      '<button class="mode-btn" type="button" data-kind="skill" aria-pressed="false">Skill 工厂</button>',
+      '<button class="mode-btn" type="button" data-kind="skill-x" aria-pressed="false">Skill 工厂</button>'),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

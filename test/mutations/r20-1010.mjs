@@ -47,78 +47,6 @@ const CSS = 'panel/next/style.css';
 const SCHEMA = 'panel/next/schema.js';
 const APP = 'panel/next/app.js';
 
-// ── P1：`.pgrid > .pcard` 不解除 span 12（平铺静默消失）────────────────────
-// ⚠️ 写成**合法 CSS**：只删那一条声明，别的都不动 —— 那才是真故障
-//    （板还在、块都在，只有布局错了），语法错反而会被别的判据先拦住。
-const P1 = {
-  id: 'P1',
-  note: 'style.css 里 .pgrid > .pcard 不再显式解除 span 12（13 块板撑成13 排单列）——',
-  anchor: /^\.pgrid > \.pcard \{ grid-column: auto; \}$/m,
-  count: 1,
-  file: CSS,
-  apply: (s) => s.replace('.pgrid > .pcard { grid-column: auto; }', '.pgrid > .pcard { align-self: start; }'),
-  layer: 'check-wb',
-  expect: 'BLOCKED',
-};
-
-// ── P2：`.pgrid` 不再是 grid（退化成块级堆叠，同样不报错）──────────────────
-// ⚠️⚠️ **本条改过一次**：初版写成「在 `.pgrid {` 后面**插入** `display: block;`」，
-//    实测 **NOT-BLOCKED**。复现后确认是**变异自己写错了**，不是判据失效：
-//    插进去的那行排在原有 `display: grid;` **之前**，而 CSS 同属性**后者覆盖前者**
-//    ⇒ 网格其实还在，`.pgrid` 仍是 grid ⇒ §85①「不该报红而没报」是对的。
-//    正解是**替换掉那一条**，让 `display: grid` 真的消失。
-//    ⚠️ 记这一笔是因为它正是「变异无效」与「判据失效」的区别所在：
-//    量尺只查锚点与惰性，**查不出"这条变异其实没打中东西"** —— 只能靠实跑看。
-const P2 = {
-  id: 'P2',
-  note: 'style.css 里 .pgrid 的 display:grid 被换成 block（插件板退化成普通堆叠）——',
-  anchor: /^\.pgrid \{$/m,
-  count: 1,
-  file: CSS,
-  apply: (s) => s.replace('.pgrid {\n  display: grid;', '.pgrid {\n  display: block;'),
-  layer: 'check-wb',
-  expect: 'BLOCKED',
-};
-
-// ── P3：材质重写一份（两份语义必然漂）────────────────────────────────────
-const P3 = {
-  id: 'P3',
-  note: '.pcard 自己写 backdrop-filter（材质不再继承 .card，变成两份语义）——',
-  anchor: /^\.pgrid > \.pcard \{ grid-column: auto; \}$/m,
-  count: 1,
-  file: CSS,
-  apply: (s) => s.replace(
-    '.pgrid > .pcard { grid-column: auto; }',
-    '.pgrid > .pcard { grid-column: auto; backdrop-filter: blur(9px); }'
-  ),
-  layer: 'check-wb',
-  expect: 'BLOCKED',
-};
-
-// ── P4：不挂 card 类（玻璃材质继承不到 ⇒ 一块没有材质的白板）──────────────
-const P4 = {
-  id: 'P4',
-  note: 'app.js 插件板不再同时挂 card 类（玻璃材质继承不到）——',
-  anchor: /class="card pcard"/g,
-  count: 2,
-  file: APP,
-  apply: (s) => s.replace(/class="card pcard"/g, 'class="pcard"'),
-  layer: 'check-wb',
-  expect: 'BLOCKED',
-};
-
-// ── P5：bare: true 被删（外面又罩一张 span-12 大玻璃板）────────────────────
-const P5 = {
-  id: 'P5',
-  note: 'schema.js 插件清单那张卡不再脱掉外层 .card（大玻璃板把插件网格包住）——',
-  anchor: /bare: true,\n            ctrls: \[\{ t: 'pluginList' \}\],/,
-  count: 1,
-  file: SCHEMA,
-  apply: (s) => s.replace("bare: true,\n            ctrls: [{ t: 'pluginList' }],", "ctrls: [{ t: 'pluginList' }],"),
-  layer: 'check-wb',
-  expect: 'BLOCKED',
-};
-
 // ── P6：cardHtml 的 bare 分支被删（改了 schema 却看不到变化）──────────────
 const P6 = {
   id: 'P6',
@@ -142,24 +70,6 @@ const P7 = {
   count: 1,
   file: SCHEMA,
   apply: (s) => s.replace("{ t: 'psnMood' }", "{ t: 'extSettings' }"),
-  layer: 'check-wb',
-  expect: 'BLOCKED',
-};
-
-// ── P8：文案「扩展包」回来（§69 结构上判不到这一半）───────────────────────
-// ⚠️ 注意锚点选的是**英文旧名**所在处之外的位置：这一条改的是中文文案，
-//    §85④ 的正向判据查`/扩展包|拓展包/`（schema.js 原文）。改成合法字符串，
-//    不是语法错 —— 否则会被 T376 那条"剥后仍可解析"先拦住，测不到本条判据。
-const P8 = {
-  id: 'P8',
-  note: 'schema.js 页面文案里「扩展包」字样回来（界面命名不统一）——',
-  anchor: /装在 <code>plugins\/<\/code> 里的确定性扩展/,
-  count: 1,
-  file: SCHEMA,
-  apply: (s) => s.replace(
-    '装在 <code>plugins/</code> 里的确定性扩展',
-    '装在 <code>plugins/</code> 与 <code>skills/</code> 里的第三方扩展包'
-  ),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };
@@ -194,4 +104,4 @@ const P10 = {
   expect: 'BLOCKED',
 };
 
-export default [P1, P2, P3, P4, P5, P6, P7, P8, P9, P10];
+export default [P6, P7, P9, P10];

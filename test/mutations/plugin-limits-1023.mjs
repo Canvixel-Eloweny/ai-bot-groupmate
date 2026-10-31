@@ -150,13 +150,11 @@ export default [
   },
   {
     id: 'P14',
-    note: '总览不再显示超限数——§142① 必须变红。预期 BLOCKED',
-    file: 'panel/next/app.js',
-    anchor: /const overStatic = items\.filter\(\(x\) => x\.action === 'over'\)\.length;\n    const overRun = rtSum\.over;/,
+    note: '插件技能工厂不再显示超上限标签——§142① 必须变红。预期 BLOCKED',
+    file: 'panel/next/plugin-factory.html',
+    anchor: /if \(it\.action === 'over'\) out\.push\(/,
     count: 1,
-    apply: (s) => s.replace(
-      /const overStatic = items\.filter\(\(x\) => x\.action === 'over'\)\.length;\n    const overRun = rtSum\.over;/,
-      'const overStatic = 0;\n    const overRun = rtSum.over;'),
+    apply: (s) => s.replace(/if \(it\.action === 'over'\) out\.push\(/, 'if (false) out.push('),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

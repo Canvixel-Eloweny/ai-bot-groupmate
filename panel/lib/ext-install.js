@@ -135,6 +135,9 @@ export function planInstall(entries, { roots = [], expectedKind = null } = {}) {
 /** 默认真 IO（可被入参替换 —— 测试用假 IO 才能确定性地制造"写到一半失败"） */
 const REAL_IO = {
   existsSync: fs.existsSync,
+  lstatSync: fs.lstatSync,
+  statSync: fs.statSync,
+  realpathSync: fs.realpathSync,
   mkdirSync: fs.mkdirSync,
   renameSync: fs.renameSync,
   writeFileSync: fs.writeFileSync,
@@ -156,16 +159,30 @@ const textOf = (w) => String(
 /**
  * 装一个 ZIP。**三步**：备份 → 原子替换 → 提交；任一步失败都回到原样。
  *
- * @param {{bytes:Buffer, roots:Array<object>, overwrite?:boolean, io?:object}} o
+ * @param {{bytes:Buffer, roots:Array<object>, overwrite?:boolean, io?:object,
+ *          expectedKind?:string|null, expectedId?:string}} o
  * @returns {{ok:true, id:string, kind:string, dir:string, root:string, files:number, replaced:boolean}
  *          | {ok:false, code:number, error:string}}
  */
-export function installArchive({ bytes, roots = [], overwrite = false, io = REAL_IO, expectedKind = null } = {}) {
+export function installArchive({
+  bytes, roots = [], overwrite = false, io = REAL_IO, expectedKind = null, expectedId = '',
+} = {}) {
   const z = readZip(bytes);
   if (!z.ok) return { ok: false, code: 400, error: z.error };
 
   const plan = planInstall(z.entries, { roots, expectedKind });
   if (!plan.ok) return { ok: false, code: 400, error: plan.error };
+
+  // 更新场景：页面已经点名了要覆盖的包 id，就不允许“选错包”静默装成另一个。
+  // 放在任何落盘之前 —— 拒绝时旧包一个字节都不动。
+  const wantId = String(expectedId || '');
+  if (wantId && plan.id !== wantId) {
+    return {
+      ok: false,
+      code: 409,
+      error: `这个包的 id 是「${plan.id}」，与要更新的「${wantId}」不一致 —— 已拒绝，旧包未改动`,
+    };
+  }
 
   const target = path.join(plan.root.dir, plan.pkgDir);
   const exists = io.existsSync(target);
@@ -227,4 +244,94 @@ export function installArchive({ bytes, roots = [], overwrite = false, io = REAL
     files: plan.files.length,
     replaced: hadBackup,
   };
+}
+
+/**
+ * 卸载前的**判据**：客户端只给 kind + id，目录名一律从服务端扫描结果取。
+ * 这样即使有人伪造 `id`，也拿不到任意路径；目标必须真在扩展根下、
+ * 不是符号链接、且含对应清单，才允许删。
+ *
+ * @param {{item:object, kind:string, roots:Array<object>, io?:object}} o
+ * @returns {{ok:true, root:object, dirName:string, target:string}|{ok:false, error:string}}
+ */
+export function planRemove({ item, kind, roots = [], io = REAL_IO } = {}) {
+  const k = kind === 'skill' ? 'skill' : kind === 'plugin' ? 'plugin' : '';
+  if (!k) return { ok: false, error: '卸载类型只能是 plugin 或 skill' };
+  const id = String(item?.id || '');
+  if (!isValidPluginId(id)) return { ok: false, error: `扩展 id「${id}」不合法` };
+  const dirName = String(item?.dirName || '');
+  if (!dirName || dirName !== path.basename(dirName) || dirName === '.' || dirName === '..') {
+    return { ok: false, error: '扩展目录名不安全，拒绝卸载' };
+  }
+  const root = (Array.isArray(roots) ? roots : []).find((r) => r?.kind === k);
+  if (!root?.dir) return { ok: false, error: `找不到 ${k} 的安装目录` };
+  const rootDir = path.resolve(root.dir);
+  const target = path.join(rootDir, dirName);
+  if (path.dirname(target) !== rootDir) return { ok: false, error: '目标不在扩展根下，拒绝卸载' };
+
+  let st;
+  try { st = io.lstatSync(target); } catch { return { ok: false, error: '扩展目录不存在（可能已经被删）' }; }
+  if (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) {
+    return { ok: false, error: '扩展目录是符号链接，拒绝卸载' };
+  }
+  if (typeof st.isDirectory === 'function' && !st.isDirectory()) {
+    return { ok: false, error: '扩展目标不是目录，拒绝卸载' };
+  }
+
+  let realRoot = '';
+  let realTarget = '';
+  try {
+    realRoot = io.realpathSync(rootDir);
+    realTarget = io.realpathSync(target);
+  } catch (e) {
+    return { ok: false, error: `无法解析扩展路径：${msgOf(e)}` };
+  }
+  if (realTarget !== path.join(realRoot, dirName)) {
+    return { ok: false, error: '扩展目录解析后不在扩展根下，拒绝卸载' };
+  }
+
+  const manifest = k === 'skill' ? 'skill.json' : 'plugin.json';
+  if (!io.existsSync(path.join(target, manifest))) {
+    return { ok: false, error: `目标里没有 ${manifest}，不像一个 ${k === 'skill' ? 'Skill' : '插件'}包` };
+  }
+  return { ok: true, root, dirName, target };
+}
+
+/**
+ * 真正删目录。配置清理在调用方先做 —— 这样删目录失败时启用名单已经不再指向它，
+ * 用户看到的是「目录还在」而不是「配置还勾着一个不存在的包」。
+ */
+export function removeExtension({ target, io = REAL_IO } = {}) {
+  if (!target) return { ok: false, error: '没有卸载目标' };
+  try {
+    io.rmSync(target, { recursive: true, force: false });
+  } catch (e) {
+    const code = String(e?.code || '');
+    const hint = code === 'EPERM' || code === 'EBUSY' || code === 'EACCES'
+      ? '（目录可能正被机器人加载：先停止机器人或重启后再试）'
+      : '';
+    return { ok: false, error: `卸载目录失败${hint}：${msgOf(e)}` };
+  }
+  return { ok: true };
+}
+
+/**
+ * 从 custom 配置里摘掉一个扩展的启用标记与设置。
+ * 深拷贝后返回，调用方负责 writeConfig —— 判据与落盘分开，测试才能逐格喂反例。
+ */
+export function stripExtensionFromCustom(custom, kind, id) {
+  const src = custom && typeof custom === 'object' ? custom : {};
+  const c = JSON.parse(JSON.stringify(src));
+  const ns = kind === 'skill' ? 'skills' : 'plugins';
+  const ex = c.extensions && typeof c.extensions === 'object' ? c.extensions : null;
+  if (ex) {
+    if (Array.isArray(ex[ns]?.enabled)) ex[ns].enabled = ex[ns].enabled.filter((x) => x !== id);
+    if (ex[ns]?.settings && typeof ex[ns].settings === 'object') delete ex[ns].settings[id];
+  }
+  // 旧面板写的派生别名：一份并集，删 id 对两类都成立。
+  if (c.plugins && typeof c.plugins === 'object') {
+    if (Array.isArray(c.plugins.enabled)) c.plugins.enabled = c.plugins.enabled.filter((x) => x !== id);
+    if (c.plugins.settings && typeof c.plugins.settings === 'object') delete c.plugins.settings[id];
+  }
+  return c;
 }

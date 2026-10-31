@@ -18,7 +18,7 @@
 | 是否保证执行 | 钩子命中就必跑 | **不保证**：由模型判断是否调用工具 |
 | 白名单 | `custom.extensions.plugins.enabled` | `custom.extensions.skills.enabled` |
 | 设置 | `custom.extensions.plugins.settings.<id>` | `custom.extensions.skills.settings.<id>` |
-| 控制台页 | 工厂 → 插件管理 | 工厂 → Skill |
+| 控制台页 | 工厂 → 插件技能工厂（插件模式） | 工厂 → 插件技能工厂（Skill 模式） |
 
 两种 kind **共享**：
 
@@ -135,9 +135,9 @@ Skill 导出 `hooks` 时**仍会加载**，但运行期标 `mixed`、面板显�
 
 ## 4. 面板能看到什么
 
-- **插件页**：静态扫描结果（可加载 / 未启用 / 有问题 / 超上限）、运行期状态、钩子/工具/空载徽标、
-  每个包的设置控件。
-- **Skill 页**：同样的卡片 + `提示词 N` 徽标（清单 `prompt.sections` 段数）、
+- **插件技能工厂（插件模式）**：静态扫描结果（可加载 / 未启用 / 有问题 / 超上限）、运行期状态、钩子/工具/空载徽标、
+  每个包的设置控件；「管理插件与技能」进入管理模式。
+- **插件技能工厂（Skill 模式）**：同样的清单 + `提示词 N` 徽标（清单 `prompt.sections` 段数）、
   纯提示词/混合型标记、以及**模型可见预览**：
   - 运行期数据可用时显示“此刻注入”，并列出真实工具名；
   - 机器人没在跑时显示“机器人未运行：启用后将注入”（静态预览，不伪造运行期工具名）。
@@ -176,7 +176,7 @@ Skill 导出 `hooks` 时**仍会加载**，但运行期标 `mixed`、面板显�
 NODE_OPTIONS= node scripts/check-wb.mjs     # 契约（§167 Skill 扩展域）
 NODE_OPTIONS= node scripts/mutate-lint.mjs  # 变异清单锚点
 NODE_OPTIONS= node test/smoke.js            # T437–T446 行为
-NODE_OPTIONS= node test/panel-dom.mjs       # Skill 页真实渲染
+NODE_OPTIONS= node test/panel-dom.mjs       # 插件技能工厂的 Skill 模式真实渲染
 npm run verify                              # 全套
 ```
 

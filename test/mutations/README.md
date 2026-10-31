@@ -382,7 +382,7 @@ NODE_OPTIONS= node scripts/mutate.mjs --restore     # 万一进程被杀，用�
 | P11 | 带图额度下限被删 | check-wb | §141② | BLOCKED |
 | P12 | view_image 退回 400 | check-wb | §141③ | BLOCKED |
 | P13 | 空载标记恒假 | smoke | T431 | BLOCKED |
-| P14 | 总览不显示超限数 | check-wb | §142① | BLOCKED |
+| P14 | 工厂不显示超上限标签 | check-wb | §142① | BLOCKED |
 
 | P15 | 发布模板塞回自定义大脑 | check-wb | §143② | BLOCKED |
 
@@ -398,3 +398,14 @@ NODE_OPTIONS= node scripts/mutate.mjs --restore     # 万一进程被杀，用�
 | L6 | 不注入 hookTimeoutMs | check-wb | §145③ | BLOCKED |
 | L7 | 模板缺 hookTimeoutMs | check-wb | §145⑤ | BLOCKED |
 | L8 | readCustom 不返回 skillPrompt | check-wb | §144③ | BLOCKED |
+
+## B8 · 插件技能工厂合并 / 扩展卸载（2026-10-31）
+
+| 文件 | 变异 | 覆盖 | 结果 |
+|---|---|---|---|
+| `factory-merge-2026-10-30.mjs` | M1–M5 | §85/§167/§171 工厂管理面 | **5/5 BLOCKED** |
+| `extensions-remove-2026-10-30.mjs` | M1–M3 | §173 卸载安全 | **3/3 BLOCKED** |
+
+- 同轮重锚：`extensions-skill-2026-10-28.mjs` M5（Skill 模式）、`interfaces-2026-10-28.mjs` M10（folder 导入）、`plugin-limits-1023.mjs` P14（超上限标签）、`sec-s12d-1005.mjs` M6（开关只提交 enabled 数组）。
+- `r20-1010.mjs` 的 P1–P5/P8 随旧插件板（`.pgrid`/`.pcard`）下线退役，文件保留 P6/P7/P9/P10（10→4）。
+

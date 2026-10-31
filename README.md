@@ -216,7 +216,7 @@ Custom models are stored in `llm.customBrains`, one entry per brain, not in `llm
 | Execution | Guaranteed when a hook fires | The model decides whether to call the tool |
 | Prompt | Optional extension guidance | Optional `skillExt` section |
 | Enable list | `custom.extensions.plugins.enabled` | `custom.extensions.skills.enabled` |
-| Console page | Factory → Plugins | Factory → Skills |
+| Console page | Factory → Plugin & Skill Factory (plugin mode) | Factory → Plugin & Skill Factory (Skill mode) |
 
 A minimal prompt-only skill is two files:
 

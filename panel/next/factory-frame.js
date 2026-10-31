@@ -3,7 +3,7 @@
  * ══════════════════════════════════════════════════════════════════════
  *   · visual  = 液态玻璃制作工厂（visual-factory.html）
  *   · persona = 人设工厂（persona-factory.html）
- *   · plugin  = 插件工厂（plugin-factory.html）
+ *   · plugin  = 插件技能工厂（plugin-factory.html）
  *
  * 三份 iframe 常驻、只显隐不重建；切换用 0.22s 上浮淡入。
  * 唯一状态源是 `#page[data-frame]`：app.js 的 paintPage 按当前 schema 子页写入，
@@ -21,8 +21,8 @@ const FRAMES = {
     loading: '正在准备人设工厂…', probe: '.site-header',
   },
   plugin: {
-    src: 'plugin-factory.html', label: '插件工厂',
-    loading: '正在准备插件工厂…', probe: '.app',
+    src: 'plugin-factory.html', label: '插件技能工厂',
+    loading: '正在准备插件技能工厂…', probe: '.app',
   },
 };
 const ORDER = ['visual', 'persona', 'plugin'];

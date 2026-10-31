@@ -99,14 +99,11 @@ export default [
   },
   {
     id: 'M9',
-    note: 'Electron 窗口底色退回旧值（首绘前先露浅灰空窗）—— §170⑤ 必须变红。预期 BLOCKED',
+    note: 'Electron 窗口底色整行被删（首绘前会露出无同色底的浅灰空窗）—— §170⑤ 必须变红。预期 BLOCKED',
     file: MAIN,
-    anchor: /backgroundColor: dark \? '#050812' : '#dfeeff',/,
+    anchor: /^    backgroundColor: dark \? '#050812' : '#dfeeff',\n/m,
     count: 1,
-    apply: (s) => s.replace(
-      "backgroundColor: dark ? '#050812' : '#dfeeff',",
-      "backgroundColor: dark ? '#0b1226' : '#f5f7fc',",
-    ),
+    apply: (s) => s.replace(/^    backgroundColor: dark \? '#050812' : '#dfeeff',\n/m, ''),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

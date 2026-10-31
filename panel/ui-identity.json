@@ -2,7 +2,7 @@
   "schema": 1,
   "kind": "ui-identity",
   "appId": "com.estrellabot.windows",
-  "signedAt": "2026-10-29T12:28:05.571Z",
+  "signedAt": "2026-10-31T11:35:07.231Z",
   "domains": [
     {
       "id": "run",
@@ -154,15 +154,7 @@
         },
         {
           "id": "plugin",
-          "label": "插件工厂"
-        },
-        {
-          "id": "plugins",
-          "label": "插件管理"
-        },
-        {
-          "id": "skill",
-          "label": "Skill"
+          "label": "插件技能工厂"
         }
       ]
     }
