@@ -2009,6 +2009,37 @@ check('VT 揭开动画真的接线（data-vt 挂上且动画后摘掉）',
   theme?.vtMark === 'circle-blur' && theme?.vtCleared === true,
   `点击瞬间=${theme?.vtMark || '(无)'}`);
 
+/* 更新入口（2026-10-31）：两个「更新」按钮与齿轮蓝点共用 UPDATE_CTA_PHASES。
+   无新版全隐；available 全亮。用 S.state 注入夹具 + 同一事件，不另造第二条渲染路径。 */
+const updCta = await evalJs(`return (() => {
+  const S = window.__next;
+  if (!S || !S.state) return { err: '拿不到页面状态' };
+  const prev = S.state.update;
+  const q = (id) => document.getElementById(id);
+  const read = () => ({
+    about: q('aboutUpdateCta') ? !q('aboutUpdateCta').hidden : null,
+    rail: q('railUpdateCta') ? !q('railUpdateCta').hidden : null,
+    dot: q('setGearDot') ? !q('setGearDot').hidden : null,
+  });
+  const paint = () => document.dispatchEvent(new CustomEvent('next:update-state'));
+  S.state.update = { enabled: true, phase: 'up_to_date', currentVersion: '0.1.6', latest: null };
+  paint();
+  const off = read();
+  S.state.update = { enabled: true, phase: 'available', currentVersion: '0.1.6', latest: { version: '9.9.9' } };
+  paint();
+  const on = read();
+  const label = q('aboutUpdateCta') ? q('aboutUpdateCta').getAttribute('aria-label') : '';
+  S.state.update = prev;
+  paint();
+  return { off, on, label };
+})()`);
+check('更新入口：只在有新版时出现，两个按钮与齿轮蓝点同源',
+  updCta && !updCta.err
+    && updCta.off.about === false && updCta.off.rail === false && updCta.off.dot === false
+    && updCta.on.about === true && updCta.on.rail === true && updCta.on.dot === true
+    && /9\.9\.9/.test(updCta.label),
+  updCta ? JSON.stringify(updCta) : '');
+
 /* ── ⑥ **真写一次**（唯一一条端到端写路径验证）────────────────────────────
    为什么必须真写：读路径全绿**完全不证明**写路径是通的 —— token 没注入、方法写错、
    URL 拼错，三种情况都只表现为"点了没反应"，而读一切正常。
@@ -2486,6 +2517,50 @@ check('窄视口下装不下的页签真的能横向滚动（不是溢出玻璃�
 /* 复原到默认宽度：后面那组「页面干净」断言在正常宽度下量才与历史可比。 */
 await send('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: HEIGHT, deviceScaleFactor: 2, mobile: false });
 await sleep(400);
+
+/* ── 常规页安全内缩（2026-11-01）：齿轮不压内容 ─────────────────────────
+   与 test/panel-dom.mjs 的四档同源，这一条盯**默认宽度**（1440）：页面内容的
+   左留白必须把左下角齿轮整颗让出来（齿轮右缘 → 内容左缘 ≥ 79px），且左右留白
+   相等。窄屏只缩内容宽度，不许内容从齿轮底下穿过去。 */
+await evalJs(`
+  const g = [...document.querySelectorAll('#nav1 .grp')].find((b) => /运行/.test(b.textContent));
+  if (g) g.click();
+  await new Promise((r) => setTimeout(r, 220));
+  const s = [...document.querySelectorAll('#nav2 .sub')].find((b) => /总览/.test(b.textContent));
+  if (s) s.click();
+  await new Promise((r) => setTimeout(r, 650));
+  scrollTo(0, 0);
+  return true;
+`);
+const inset1440 = await evalJs(`
+  const page = document.getElementById('page');
+  const gear = document.getElementById('setGear');
+  if (!page || !gear) return { error: '缺少 page/gear' };
+  const pr = page.getBoundingClientRect();
+  const gr = gear.getBoundingClientRect();
+  const cs = getComputedStyle(page);
+  const padL = parseFloat(cs.paddingLeft), padR = parseFloat(cs.paddingRight);
+  const cw = document.documentElement.clientWidth;
+  const left = pr.left + padL, right = pr.right - padR;
+  const hit = document.elementFromPoint(gr.left + gr.width / 2, gr.top + gr.height / 2);
+  return {
+    title: (document.querySelector('#page h1') || {}).textContent || '',
+    contentW: right - left, padL, padR,
+    leftGutter: left, rightGutter: cw - right,
+    gearRight: gr.right, gearGap: left - gr.right,
+    overflowX: document.documentElement.scrollWidth - cw,
+    gearHit: !!hit && (hit === gear || gear.contains(hit)),
+  };
+`);
+check('常规页内容避开齿轮且左右留白相等（1440）',
+  !!inset1440 && !inset1440.error && /运行总览/.test(inset1440.title)
+    && Math.abs(inset1440.padL - inset1440.padR) <= 0.5
+    && Math.abs(inset1440.leftGutter - inset1440.rightGutter) <= 1
+    && inset1440.gearGap >= 79 && inset1440.overflowX <= 1 && inset1440.gearHit,
+  inset1440
+    ? `内容 ${inset1440.contentW?.toFixed(0)}px · 左右留白 ${inset1440.leftGutter?.toFixed(0)}/${inset1440.rightGutter?.toFixed(0)}`
+      + ` · 齿轮右缘 ${inset1440.gearRight} → 间距 ${inset1440.gearGap?.toFixed(0)}px · 横溢 ${inset1440.overflowX}px · 齿轮可点=${inset1440.gearHit}`
+    : '探针失败');
 
 /* ── ⑪ HUD 设置页（2026-10-25）：全量控件与真实交互 ─────────────────────
    这一页以前只有 7 项开关 + 4 个参数；现在与 HUD 原型的 LAB 对齐。

@@ -1458,3 +1458,65 @@ CONTRACTS-HISTORY P7 行与本节。
   比对文件一律走 SHA256。
 - 产物：25,617,901 B，sha256 `b237c50cbc2561b526ffc4029686f1d80f2c533c5269d2b22c380d3074692102`；
   交付目录已换 r9（r5–r8 归入 `superseded/`，未删除）；SUMS/README 同步。发群（G6）仍维护者手动。
+
+## 26. 中文路径安装失败（2026-10-31 · 根因与修复）
+
+### 26.1 症状与复现
+
+- 群友反馈：安装包放在中文路径下（或用户名是中文）时，安装器弹「安装失败」。
+- VM 复现（英文 Windows / CP1252 · NSIS 3.13 · 内嵌 Node 22.23.3）：
+  装到 `C:\Users\MoonEstrella\安装测试\Estrella-Bot 中文`，安装器 exit 2（ERR_INSTALL）；
+  `.txn.json` 停在 `in_progress`、`entries: []`；`userdata\update\logs` 里**没有**日志。
+  手动重跑 install-commit 得退出码 `-1073740791`（0xC0000409，STATUS_STACK_BUFFER_OVERRUN）——
+  **不是 JS 异常**，catch 与事务回滚都没机会跑。
+
+### 26.2 根因（两条，都是非 ASCII 路径）
+
+1. **`fs.cpSync` 在中文源路径上硬崩**：install-commit 的 `copyDir` 用它复制
+   `stage/app`、`runtime/node`、`tools` 等目录；只要**源根路径**含非 ASCII 就 0xC0000409。
+   最小对照（同一条中文源路径）：`fs.cpSync` 崩；`copyFileSync` / `mkdirSync` /
+   `renameSync` / `rmSync` / `fs.promises.cp` / 手写递归复制**全部正常**；
+   源为 ASCII、子项含中文也正常 —— 触发点就是「源根路径本身」。
+2. **PowerShell stdout 按 OEM 码页编码**：`stop.mjs` 的进程表
+   （`Get-CimInstance | ConvertTo-Json`）在英文 Windows 上把中文路径输出成 `?`
+   （实测码点 `63,63,63,63`），中文 Windows 上是 CP936（Node 按 UTF-8 解码 → 乱码）。
+   结果：`classifyProcess` 认不出本安装根的 Electron 壳；升级/卸载时旧壳停不掉，
+   `versions/<ver>` 被占用 → rename 失败（应用运行中升级必失败）。
+
+⚠️ **乱码目录的来源也是 cpSync**：崩溃前它已经按 ANSI 码页写过目标路径，实测残留
+`C:\Users\MoonEstrella\å®‰è£…æµ‹è¯•\Estrella-Bot ä¸­æ–‡\versions\0.1.6.new-*\app`
+（`安装测试` 的 UTF-8 字节按 CP1252 显示的形状）。这正是 r12 报告里「磁盘出现
+`å®‰è£…` 类乱码目录」的来源 —— 它指向 cpSync 的路径转换，**不是** NSIS / nsExec。
+
+### 26.3 修法
+
+- `install-layout.mjs` 新增 `copyTreeSync()`（手写递归：stat / readdir / mkdir /
+  copyFile / utimes），`install-commit.copyDir` 只走它；安装期工具禁止 `fs.cpSync`。
+- `install-layout.mjs` 与 `src/bridge-proc.js` 各导出 `PS_UTF8_OUT`
+  （`[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; `）；`stop.mjs` /
+  `launcher.mjs` / `panel/server.js` 的进程表查询统一前置。两份定义对应两个运行世界
+  （安装工具 / 应用），各自被本世界复用。
+- 门禁：`check-wb` §174（① 原语在位 + ② copyDir 接线 + ③ 安装期工具无 cpSync +
+  ④ 测试绑定 + ⑤ 五处进程表 PS 输出切 UTF-8）；定向变异
+  `test/mutations/install-unicode-1031.mjs` M1–M8；`installer-p2` 新增 copyTreeSync 用例。
+- 契约段数 150 → 151；变异 145 份 / 1227 条（失效 0 / 惰性 0）。
+
+### 26.4 真机验收（VM · 英文 Windows/CP1252，比中文 Windows 更苛刻）
+
+| # | 场景 | 结果 |
+|---|---|---|
+| A | 中文 EXE 路径 + 中文 TEMP + 中文安装根 + 中文 userRoot | exit 0 · `.txn` committed · 注册表码点 `23433,35013,27979,35797` / `20013,25991` · 快捷方式/卸载器在位 · config 生成 |
+| G | 从中文路径启动（VBS → Electron → panel） | `/api/state` 200 · `stop --include-shell` 后 electron=0 / node=0 |
+| D | **应用运行中**升级 | exit 0 · config 哈希不变 · 旧壳已停 |
+| E | **应用运行中**卸载（保留数据） | 程序 + 注册表删除 · 数据保留 · electron=0 / node=0 |
+| B | 全 ASCII 控制组 | 安装/卸载 exit 0 · 数据保留 |
+| F | 重装后 `/S /DELETEUSERDATA` | userData 删除 · 注册表删除 |
+
+- 验收构建：202,379,832 B · sha256 `d0aed1a3358d8f7edcfac6e09110415df69b7a35298d9bab8e5ff1e58a1c4a12` · 0 warning。
+- 已知残留（与 Unicode 无关）：安装成功后 `$INSTDIR\.stage-<ver>` **空目录**可能留下 ——
+  NSIS 的 `SetOutPath` 把进程 CWD 设进 stage，`RMDir /r` 删不掉当前目录；
+  文件已清空，launcher 会清 stale stage。
+- ⚠️ 中文 Windows（CP936）未单独跑（本 VM 是英文 Windows，OEM 码页无法表示中文）。
+- ⚠️ **nsExec 不是根因**：NSIS 3.13 探针实测 `nsExec` / `ExecWait` 传中文 exe 路径与
+  中文参数都正确（码点逐项一致）；r12 会话里看到的 `å®‰è£…` 是 UTF-8 文件按 ANSI
+  读取的**显示假象**（同轮已复现该形状）。别再把「换 ExecWait / ASCII 交接文件」当修法。

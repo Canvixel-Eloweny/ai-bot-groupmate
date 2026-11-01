@@ -92,7 +92,7 @@ console.log = (first, ...rest) => {
  *       提交门 `pre-commit.sh` 正是因此才把 `node_modules` **软链**进闸门用的临时 worktree。
  *       记在这里是为了下次有人量到 17 时**别以为闸门坏了**。
  */
-const MIN_CONTRACTS = 150;
+const MIN_CONTRACTS = 152;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -18674,9 +18674,29 @@ let gSetBad = bad;
   if (/Node 24/.test(setJs) || /Node 24/.test(html)) {
     p.push('§154④：关于卡写死了 Node 24 —— 实际运行时由 /api/state 下发');
   }
-  if (!/data-a="update\.check"/.test(html) || !/data-a="export\.all"/.test(html)
-    || !/data-a="export\.diag"/.test(html)) {
-    p.push('§154④：关于/数据缺检查更新或导出入口');
+  if (!/id="aboutUpdateCta"/.test(html) || !/id="railUpdateCta"/.test(html)
+    || !/data-a="update\.goto"/.test(html)
+    || !/data-a="export\.all"/.test(html) || !/data-a="export\.diag"/.test(html)) {
+    p.push('§154④：关于/数据缺更新入口或导出入口');
+  }
+  if (!/id="setGearDot"/.test(html) || !/\.set-fab-dot/.test(setCss)) {
+    p.push('§154④：设置齿轮缺更新蓝点（有新版本时只能打开设置才发现）');
+  }
+  if (!/const UPDATE_CTA_PHASES = new Set\(\['available', 'downloading', 'ready'\]\)/.test(setJs)
+    || !/aboutUpdateCta/.test(setJs) || !/railUpdateCta/.test(setJs) || !/setGearDot/.test(setJs)) {
+    p.push('§154④：更新入口与蓝点没有绑定同一份 phase 集合（三处会分家）');
+  }
+  if (!/const show = u\.enabled === true && UPDATE_CTA_PHASES\.has\(String\(u\.phase \|\| ''\)\)/.test(setJs)) {
+    p.push('§154④：更新入口的 show 判据不是 enabled + phase 集合（蓝点可能常亮/常灭）');
+  }
+  if (!/btn\.hidden = !show/.test(setJs) || !/dot\.hidden = !show/.test(setJs)) {
+    p.push('§154④：更新按钮与蓝点的 hidden 没有绑到同一个 show（会出现只亮一处）');
+  }
+  if (!/id="setGearDot"[^>]*\shidden(?=[\s>])/.test(html)) {
+    p.push('§154④：齿轮蓝点没有默认隐藏（无新版时也会亮）');
+  }
+  if (/data-a="update\.check"/.test(html)) {
+    p.push('§154④：关于页还留着常驻的「检查更新」—— 新入口只应在有新版时出现');
   }
   const fbAt = setJs.indexOf('const fbForm');
   const fbEnd = setJs.indexOf('const fmtBytes');
@@ -18706,6 +18726,9 @@ let gSetBad = bad;
   }
   if (!/setGear/.test(dom) || !/data-accent-opt/.test(dom) || !/设置层/.test(dom)) {
     p.push('§154④：panel-dom 没有覆盖设置层（P2-3 的"面板没控件"会复发）');
+  }
+  if (!/aboutUpdateCta/.test(dom) || !/railUpdateCta/.test(dom) || !/setGearDot/.test(dom)) {
+    p.push('§154④：panel-dom 没有覆盖更新入口的显隐与齿轮蓝点');
   }
   if (!/setGear/.test(verify)) {
     p.push('§154④：panel/verify.mjs 没有改到设置层主题入口');
@@ -19500,15 +19523,15 @@ let gSetBad = bad;
   // 这些都是纯样式，删掉不会报错，只能靠静态锚点 + panel-dom 真渲染双重盯住。
   for (const [name, needle] of [
     ['卡片左上色条', '.psn .card::before{'],
-    ['色条 hover 96px', '.psn .card:hover::before,.psn .card:focus-within::before{width:96px}'],
+    ['色条 hover 规则', '.psn .card:hover::before,.psn .card:focus-within::before{'],
     ['快捷入口胶囊', '.psn .layer-foot .linklike,'],
     ['快捷入口灰底', 'background:var(--quick-bg)'],
     ['原型内容宽 1352', 'max-width: 1352px;'],
     ['页级主题色', '.psn[data-psn-page="mbti"]{--page-lc:var(--layer-2)}'],
-    ['雷达入场', 'psn-radar-in 1s'],
-    ['雷达点 pop', 'psn-point-pop .5s'],
-    ['柱状生长', 'psn-bar-grow 1s'],
-    ['折线绘制', 'psn-line-draw 1.15s'],
+    ['雷达入场', 'psn-radar-in'],
+    ['雷达点 pop', 'psn-point-pop'],
+    ['柱状生长', 'psn-bar-grow'],
+    ['折线绘制', 'psn-line-draw'],
     ['轮询重画不重播入场', '#page.psn-no-enter .psn{animation:none}'],
     ['平面柱数字居中', 'translate:-50% 0;'],
     ['柱顶百分比间距', 'bottom:calc(var(--h,0) * 1% + 8px)'],
@@ -19521,6 +19544,14 @@ let gSetBad = bad;
     ['页级入场无 blur', 'psn-page-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}'],
   ]) {
     if (!personaCss.includes(needle)) p.push(`§162：${name}不见了（${needle}）`);
+  }
+  /* 2026-10-31 门禁精简：动画**时长**不再钉字面量（改节奏不必改门禁）；
+     但「名字还在引用、@keyframes 被删」是静默失效，所以定义必须逐条在位。
+     时长与缓动的真值由 panel-dom 计算样式（animation-name）+ 截图验收。 */
+  for (const kf of ['psn-radar-in', 'psn-point-pop', 'psn-bar-grow', 'psn-line-draw']) {
+    if (!new RegExp(`@keyframes ${kf}\\{`).test(personaCss)) {
+      p.push(`§162：缺 @keyframes ${kf}（动画名仍被引用，但永不生效）`);
+    }
   }
   if (/\.psn \.cyl::before\{/.test(personaCss)) {
     p.push('§162：情绪柱又长出 3D 椭圆帽（维护者要求平面 2D）');
@@ -20725,6 +20756,145 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
     else console.log('✓ 扩展卸载安全（§173）：路由登记/写路由 · 只读 kind+id · realpath/符号链接/清单 · 配置先删 · 文档总表');
   }
 
+  // ══ §174 · 安装事务的目录复制不许用 fs.cpSync（2026-10-31 · 中文路径安装失败）══
+  //
+  // 真机复现（VM · 英文 Windows/CP1252 · NSIS 3.13 · 内嵌 Node 22.23.3）：
+  //   装到 `C:\Users\MoonEstrella\安装测试\Estrella-Bot 中文`，install-commit 写完
+  //   `.txn.json`(in_progress) 后死在第一步 copyDir：退出码 0xC0000409
+  //   （STATUS_STACK_BUFFER_OVERRUN）。**不是 JS 异常**，catch 与事务恢复都没机会跑，
+  //   安装器只显示「安装失败（exit -1073740791）」。
+  //   最小对照（同一条中文源路径）：fs.cpSync 崩；copyFileSync / mkdirSync /
+  //   renameSync / rmSync / fs.promises.cp 与手写递归复制全部正常。
+  // ⇒ 安装期目录复制只许走 copyTreeSync；安装期工具里再出现 fs.cpSync 即违约。
+  //   定向变异见 test/mutations/install-unicode-1031.mjs。
+  {
+    const p174 = [];
+    const rd174 = (rel) => stripComments(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
+    const layout174 = rd174('../packaging/windows/tools/lib/install-layout.mjs');
+    const commit174 = rd174('../packaging/windows/tools/install-commit.mjs');
+    const test174 = rd174('../test/installer-p2.mjs');
+
+    if (!/export function copyTreeSync\(/.test(layout174) || /fs\.cpSync\s*\(/.test(layout174)) {
+      p174.push('§174①：install-layout.mjs 缺 copyTreeSync，或又用回 fs.cpSync —— 中文源路径会 0xC0000409 硬崩');
+    }
+    subHit('安装中文路径');
+    if (!/const copyDir = \(src, dest\) => \{[\s\S]{0,200}copyTreeSync\(src, dest\)/.test(commit174)
+      || /fs\.cpSync\s*\(/.test(commit174)) {
+      p174.push('§174②：install-commit 的 copyDir 没走 copyTreeSync，或又出现 fs.cpSync');
+    }
+    subHit('安装中文路径');
+    const libDir174 = new URL('../packaging/windows/tools/lib/', import.meta.url);
+    const offenders174 = [
+      ...['bootstrap.mjs', 'stop.mjs', 'launcher.mjs'].map((n) => ['tools/' + n, rd174('../packaging/windows/tools/' + n)]),
+      ...fs.readdirSync(libDir174).filter((n) => n.endsWith('.mjs'))
+        .map((n) => ['tools/lib/' + n, rd174('../packaging/windows/tools/lib/' + n)]),
+    ].filter(([, text]) => /fs\.cpSync\s*\(/.test(text)).map(([name]) => name);
+    if (offenders174.length) {
+      p174.push(`§174③：安装期工具里又出现 fs.cpSync：${offenders174.join('、')} —— 中文源路径会硬崩`);
+    }
+    subHit('安装中文路径');
+    if (!/copyTreeSync/.test(test174)) {
+      p174.push('§174④：installer-p2 没有覆盖 copyTreeSync —— 换掉实现时没人发现');
+    }
+    subHit('安装中文路径');
+    const bp174 = rd174('../src/bridge-proc.js');
+    const srv174 = rd174('../panel/server.js');
+    const stop174 = rd174('../packaging/windows/tools/stop.mjs');
+    const lau174 = rd174('../packaging/windows/tools/launcher.mjs');
+    if (!/export const PS_UTF8_OUT = '\[Console\]::OutputEncoding=/.test(layout174)
+      || !/export const PS_UTF8_OUT = '\[Console\]::OutputEncoding=/.test(bp174)
+      || !/WIN_PS_SCRIPT = PS_UTF8_OUT \+/.test(bp174)
+      || !/const ps = PS_UTF8_OUT \+/.test(stop174)
+      || !/const ps = PS_UTF8_OUT \+/.test(srv174)
+      || !/\$\{PS_UTF8_OUT\}/.test(lau174)) {
+      p174.push('§174⑤：进程表 PowerShell 没切 UTF-8 输出 —— 中文路径会变 ? / 乱码，旧壳停不掉、升级 rename 必失败');
+    }
+    subHit('安装中文路径');
+
+    if (p174.length) { bad++; for (const x of p174) console.log('✗ ' + x); }
+    else console.log('✓ 安装事务目录复制（§174）：只走 copyTreeSync · 安装期工具无 fs.cpSync · 进程表 PS 输出切 UTF-8 · 测试绑定');
+  }
+
+  // ══ §175 · 常规页安全内缩（2026-11-01 · 齿轮不压内容）═══════════════════
+  //
+  // 用户实测（图 1 → 图 2）：窗口横向收窄时，页面内容随 12 列网格一路向左扩张，
+  // 最后从左下角那颗 **fixed 的设置齿轮**底下穿过去；齿轮 z-index 78 在内容之上，
+  // 于是齿轮把卡片信息整个盖住 —— 症状是"按钮压在面板上"。
+  // 修法不是整块等比缩放（字号会跟着变小），而是给「页面内容」一条**左右相等**的
+  // 安全带：宽屏维持原样，窗口窄到安全带吃满时只缩内容宽度，齿轮永远待在左留白里。
+  //   136 = 齿轮 left 24 + 直径 32 + 视觉间距 80；≤1024 齿轮 left 16 → 128。
+  // ⚠️ 公式里用 `100%` 不是 `100vw`：style.css 有 10px 自定义滚动条，`100vw` 含
+  //    滚动条，会把 1560–1784 过渡带的内缩多算约 5px（间距从 80 掉到 75 且左右不等）。
+  // ⚠️ ≤599 整条回退 16px：Electron 最小窗宽 600，手机屏上 128px 安全带会把内容
+  //    压到 140px 宽 —— 那一档维持"齿轮压在内容上"的现状，不在本轮范围。
+  // 定向变异见 test/mutations/page-safe-inset-1101.mjs。
+  {
+    const p175 = [];
+    const css175 = read('../panel/next/style.css');
+    const set175 = read('../panel/next/settings.css');
+    const pd175 = read('../test/panel-dom.mjs');
+    const vf175 = read('../panel/next/verify.mjs');
+    // ⚠️ **行首锚定**取基础规则：`.page.page--blank` 与 `body.is-frame-page .foot`
+    //    都含 `.page` / `.foot` 字样，不锚行首就会拿错规则、判据对着错的块打绿。
+    const pageRule = (css175.match(/(?:^|\n)\.page\s*\{[^}]*\}/) || [''])[0];
+    const footRule = (css175.match(/(?:^|\n)\.foot\s*\{[^}]*\}/) || [''])[0];
+
+    if (!/--page-max:\s*1560px;/.test(css175)) {
+      p175.push('§175①：--page-max 不是 1560px —— clamp 的基准宽漂了，过渡带会整体错位');
+    }
+    subHit('常规页安全内缩');
+    if (!/--page-safe-inline:\s*136px;/.test(css175)) {
+      p175.push('§175②：基础安全内缩不是 136px（齿轮 24+32+80）—— 齿轮会重新压到卡片信息');
+    }
+    subHit('常规页安全内缩');
+    const padExpr = (css175.match(/--page-pad-inline:\s*([\s\S]{0,240}?)\);/) || ['', ''])[1];
+    if (!/clamp\(/.test(padExpr) || !/calc\(/.test(padExpr) || !/100%/.test(padExpr)
+      || !/var\(--page-safe-inline\)/.test(padExpr) || !/var\(--page-max\)/.test(padExpr)
+      || !/\/\s*2/.test(padExpr)) {
+      p175.push('§175③：--page-pad-inline 的 clamp 公式被改（要 clamp+calc+100%+safe/max 同尺）'
+        + ' —— 换成 100vw 会把 10px 滚动条算进内缩，左右留白不再相等');
+    }
+    subHit('常规页安全内缩');
+    if (!/padding-inline:\s*var\(--page-pad-inline\);/.test(pageRule)
+      || !/max-width:\s*var\(--page-max\)/.test(pageRule)
+      || !/repeat\(12,\s*minmax\(0,\s*1fr\)\)/.test(pageRule)) {
+      p175.push('§175④：.page 没消费安全内缩 / 基准宽不是变量 / 12 列退回裸 1fr'
+        + ' —— 窄档内容会把网格撑破，安全带也就白留了');
+    }
+    subHit('常规页安全内缩');
+    if (!/padding-inline:\s*var\(--page-pad-inline\);/.test(footRule)) {
+      p175.push('§175⑤：.foot 没消费安全内缩 —— 页脚是最后一行内容，齿轮正好压在它上面');
+    }
+    subHit('常规页安全内缩');
+    if (/\.page[^\n]*\.foot\s*\{[^}]*padding-(?:left|right)/.test(css175)) {
+      p175.push('§175⑥：≤900 分组又把 .page/.foot 的左右内边距写回 var(--s4) —— 安全带会被整条覆盖');
+    }
+    subHit('常规页安全内缩');
+    if (!/@media\s*\(max-width:\s*1024px\)\s*\{\s*:root\s*\{\s*--page-safe-inline:\s*128px;\s*\}\s*\}/.test(css175)
+      || !/@media\s*\(max-width:\s*599px\)\s*\{\s*:root\s*\{\s*--page-pad-inline:\s*var\(--s4\);\s*\}\s*\}/.test(css175)) {
+      p175.push('§175⑦：1024（→128）或 599（手机档回退 16）断点缺失 —— 齿轮挪到 left:16 后间距会掉到 72，'
+        + '而手机屏会被留白吃掉 256px');
+    }
+    subHit('常规页安全内缩');
+    if (!/\.page\.page--blank\s*\{[^}]*padding:\s*0;[^}]*max-width:\s*none/.test(css175)
+      || !/\.page\.page--frame\s*\{[^}]*padding:\s*0;[^}]*max-width:\s*none/.test(css175)) {
+      p175.push('§175⑧：工厂全幅页 / 空白页不再全幅 —— 它们要自己铺满顶栏以下');
+    }
+    subHit('常规页安全内缩');
+    if (!/\.set-fab\s*\{[^}]*left:\s*24px;[^}]*bottom:\s*24px;[^}]*width:\s*32px;/.test(set175)
+      || !/\.set-fab\s*\{\s*left:\s*16px;\s*bottom:\s*16px;\s*\}/.test(set175)) {
+      p175.push('§175⑨：settings.css 的 .set-fab left/width 与 136/128 失配 —— 安全带是按齿轮位置算出来的');
+    }
+    subHit('常规页安全内缩');
+    if (!/gearGap/.test(pd175) || !/safe-inset-/.test(pd175) || !/常规页内容避开齿轮/.test(vf175)) {
+      p175.push('§175⑩：panel-dom 四档或 verify 1440 的运行时判据不见了 —— 静态扫描对排版是瞎的');
+    }
+    subHit('常规页安全内缩');
+
+    if (p175.length) { bad++; for (const x of p175) console.log('✗ ' + x); }
+    else console.log('✓ 常规页安全内缩（§175）：三处同尺 · .page/.foot 消费 · ≤900 不覆盖 · 全幅页保留 · 齿轮几何同步 · 真渲染绑定');
+  }
+
   // ① 契约块数下限。`ran + 1` 里那个 +1 就是**本段自己**（本段也走 console.log、也被计入），
   //    于是这里比的是"算上本段一共多少段"，与 `process.on('exit')` 的口径完全一致。
   //    ⚠️ 放在 §148 之后：桌面壳三段与其它契约块一样必须先计入，再比下限。
@@ -20732,7 +20902,7 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
     problems.push(`只跑了 ${ran + 1} 段契约（下限 ${MIN_CONTRACTS}）—— 有人删了断言，或某一段被提前 return 掉了`);
   }
 
-const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8], ['扩展卸载', 5]];
+const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8], ['扩展卸载', 5], ['安装中文路径', 5], ['常规页安全内缩', 10]];
   for (const [bucket, min] of HEAVY_SUB_MIN) {
     const c = subCountOf(bucket);
     if (c < min) {

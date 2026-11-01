@@ -78,6 +78,7 @@
     <symbol id="si-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
     <symbol id="si-github" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.1-1.47-1.1-1.47-.9-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0 1 12 6.8c.85 0 1.7.11 2.5.33 1.9-1.29 2.74-1.02 2.74-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></symbol>
     <symbol id="si-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.6v12.8a.7.7 0 0 0 1.07.6l10.2-6.4a.7.7 0 0 0 0-1.2L9.07 5a.7.7 0 0 0-1.07.6z"/></symbol>
+    <symbol id="si-update" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v9.5"/><path d="M8 10l4 4 4-4"/><path d="M4.5 15.5v4h15v-4"/></symbol>
     <symbol id="si-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7L4 12l5 5"/><path d="M4 12h9a6 6 0 0 1 0 12h-1"/></symbol>
     <symbol id="si-badge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10.5" r="2.1"/><path d="M5.8 16c.5-1.8 1.7-2.8 3.2-2.8s2.7 1 3.2 2.8"/><path d="M14.5 9.5h3.2M14.5 13h2.4"/></symbol>
     <symbol id="si-star5" viewBox="0 0 24 24" fill="currentColor"><path clip-rule="evenodd" fill-rule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.006 5.404.434c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.434 2.082-5.005Z"/></symbol>
@@ -201,6 +202,7 @@
 <button class="set-fab" id="setGear" type="button" aria-label="打开设置" aria-expanded="false" aria-controls="settingsPanel" title="设置">
   <span class="set-fab-rot" id="setGearRot"><svg aria-hidden="true"><use href="#si-gear"/></svg></span>
   <span class="set-fab-label">设置</span>
+  <span class="set-fab-dot" id="setGearDot" aria-hidden="true" hidden></span>
 </button>
 <span class="gear-aura" aria-hidden="true"></span>
 
@@ -255,7 +257,10 @@
           <span class="set-rail-en" aria-hidden="true"><span>DATA</span></span>
           <span class="set-rail-dot" aria-hidden="true"></span>
         </button>
-        <span class="set-rail-version" id="setRailVersion">v—</span>
+        <div class="set-rail-foot">
+          <span class="set-rail-version" id="setRailVersion">v—</span>
+          <button class="set-upd-btn" id="railUpdateCta" type="button" data-a="update.goto" aria-label="更新" hidden><svg aria-hidden="true"><use href="#si-update"/></svg><span>更新</span></button>
+        </div>
       </nav>
 
       <div class="set-scroll" id="settingsScroll">
@@ -515,7 +520,7 @@
               <div class="set-verhero">
                 <span class="set-vermark" aria-hidden="true"><svg><use href="#si-star"/></svg></span>
                 <div class="set-vermeta"><b>Estrella Bot</b><span id="aboutVersion">版本读取中…</span><span id="aboutBuild">桌面版</span></div>
-                <button class="btn btn-sm" type="button" data-a="update.check"><svg width="13" height="13" aria-hidden="true"><use href="#si-play"/></svg>检查更新</button>
+                <button class="set-upd-btn" id="aboutUpdateCta" type="button" data-a="update.goto" aria-label="更新" hidden><svg aria-hidden="true"><use href="#si-update"/></svg><span>更新</span></button>
               </div>
               <dl class="set-kv">
                 <dt>更新通道</dt><dd>稳定版</dd>
@@ -524,7 +529,7 @@
                 <dt>界面身份</dt><dd id="aboutUiIdentity">—</dd>
                 <dt>上次检查</dt><dd id="aboutUpdateState">以「维护 → 面板维护」的更新卡为准</dd>
               </dl>
-              <p class="set-hint">下载、校验与安装仍在「维护 → 面板维护」的更新卡里完成；这里只发起同一次检查，不复制第二套安装流程。</p>
+              <p class="set-hint">检测到新版本时这里会出现「更新」；下载、校验与安装仍在「维护 → 面板维护」的更新卡里完成，不复制第二套安装流程。</p>
             </div>
           </div>
 

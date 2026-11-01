@@ -20,6 +20,7 @@ import {
   assertUserRootOutsideInstallRoot,
   assertWritableDir,
   compareVersions,
+  copyTreeSync,
   isMainModule,
   pathEq,
   readCurrentInfo,
@@ -49,8 +50,7 @@ const exists = (p) => { try { return fs.existsSync(p); } catch { return false; }
 const rm = (p) => { try { fs.rmSync(p, { recursive: true, force: true }); } catch { /* best effort */ } };
 const copyDir = (src, dest) => {
   if (!exists(src)) throw new Error(`payload 缺目录：${src}`);
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.cpSync(src, dest, { recursive: true, force: true, errorOnExist: false, preserveTimestamps: true });
+  copyTreeSync(src, dest);
 };
 const copyFile = (src, dest) => {
   if (!exists(src)) throw new Error(`payload 缺文件：${src}`);

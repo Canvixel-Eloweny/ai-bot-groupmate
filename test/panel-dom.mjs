@@ -1350,6 +1350,15 @@ try {
     const priList = document.querySelector('.psn .priority-card .pri-list');
     return {
       psnW: psn.getBoundingClientRect().width, psnMax: getComputedStyle(psn).maxWidth,
+      /* 页面内容可用宽 = #page 宽 − 左右内缩（常规页安全内缩 2026-11-01）。
+         人设页 1352 是**上限**不是固定宽，期望值必须跟着这把尺现算。
+         ⚠️ 这段在 evalJs 的模板字符串里：注释里出现反引号会**提前闭合字符串**，
+            报错指向探针开头，症状是 ".psn is not a function"（本轮实测踩过）。 */
+      psnAvail: (() => {
+        const pg = document.getElementById('page');
+        const pc = getComputedStyle(pg);
+        return pg.getBoundingClientRect().width - parseFloat(pc.paddingLeft) - parseFloat(pc.paddingRight);
+      })(),
       cardW: card.getBoundingClientRect().width, cardRect: rr(card), footRect: rr(foot),
       barW: bar.width, barH: bar.height, barBg: bar.backgroundColor,
       footH: foot.getBoundingClientRect().height, footMinH: fs.minHeight,
@@ -1366,9 +1375,16 @@ try {
       priJustify: priList ? getComputedStyle(priList).justifyContent : '',
     };
   })()`);
+  /* 期望宽按**页面内容可用宽**现算（2026-11-01 常规页安全内缩）：`.psn` 的 1352 是
+     `max-width` 上限，不是固定宽。页面内容让出左下角齿轮的安全带后，1440 档可用宽
+     从 1392 降到 1168，卡宽随 12 列一起缩 —— 写死 1352/329 会把"内容变窄"这件正确
+     的事报成故障。上限 1352 仍然钉住（`psnMax`），只是实际宽跟着可用宽走。
+     卡宽 = 3 列 + 2 条 12px 缝 = (可用宽 − 11 缝×12) / 12 × 3 + 24。 */
+  const psnExpW = psnLayout && !psnLayout.err ? Math.min(1352, psnLayout.psnAvail) : 0;
+  const psnExpCard = psnExpW ? ((psnExpW - 132) / 12) * 3 + 24 : 0;
   ok(psnLayout && !psnLayout.err
-    && psnLayout.psnMax === '1352px' && Math.abs(psnLayout.psnW - 1352) <= 1
-    && Math.abs(psnLayout.cardW - 329) <= 1
+    && psnLayout.psnMax === '1352px' && Math.abs(psnLayout.psnW - psnExpW) <= 1
+    && Math.abs(psnLayout.cardW - psnExpCard) <= 1
     && psnLayout.barW === '40px' && psnLayout.barH === '3px' && psnLayout.barBg !== 'rgba(0, 0, 0, 0)'
     && Math.abs(psnLayout.footH - 30) <= 0.5 && psnLayout.footMinH === '30px'
     && psnLayout.footBorderLeft === '2px' && psnLayout.footBg !== 'rgba(0, 0, 0, 0)'
@@ -1380,7 +1396,7 @@ try {
     && Math.abs(psnLayout.cylValDx) <= 0.75
     && psnLayout.cylValGap >= 6 && psnLayout.cylValGap <= 12
     && psnLayout.priJustify === 'flex-start',
-  `原型排版/色条/快捷入口/图表动效：宽 ${psnLayout?.psnW}（max ${psnLayout?.psnMax}）· 卡 ${psnLayout?.cardW} · 色条 ${psnLayout?.barW}×${psnLayout?.barH} · 入口 ${psnLayout?.footH}px/左边 ${psnLayout?.footBorderLeft} · radar=${psnLayout?.radarAnim}/${psnLayout?.radarPointAnim} · cyl=${psnLayout?.cylAnim} · line=${psnLayout?.lineAnim}/${psnLayout?.linePointAnim} · orbit=${psnLayout?.orbit} · 平面柱=${psnLayout?.cylFlat} · 数字居中=${psnLayout?.cylValDx}px/距柱顶 ${psnLayout?.cylValGap}px · translate=${psnLayout?.valTranslate} · 优先级=${psnLayout?.priJustify}${psnLayout?.err ? ' · ' + psnLayout.err : ''}`);
+  `原型排版/色条/快捷入口/图表动效：宽 ${psnLayout?.psnW}/期望 ${psnExpW.toFixed(0)}（上限 ${psnLayout?.psnMax}）· 卡 ${psnLayout?.cardW}/期望 ${psnExpCard.toFixed(0)} · 色条 ${psnLayout?.barW}×${psnLayout?.barH} · 入口 ${psnLayout?.footH}px/左边 ${psnLayout?.footBorderLeft} · radar=${psnLayout?.radarAnim}/${psnLayout?.radarPointAnim} · cyl=${psnLayout?.cylAnim} · line=${psnLayout?.lineAnim}/${psnLayout?.linePointAnim} · orbit=${psnLayout?.orbit} · 平面柱=${psnLayout?.cylFlat} · 数字居中=${psnLayout?.cylValDx}px/距柱顶 ${psnLayout?.cylValGap}px · translate=${psnLayout?.valTranslate} · 优先级=${psnLayout?.priJustify}${psnLayout?.err ? ' · ' + psnLayout.err : ''}`);
 
   if (psnLayout && !psnLayout.err) {
     await send('Input.dispatchMouseEvent', {
@@ -2052,7 +2068,12 @@ try {
       autoStart: q('[data-set="autoStart"]'),
       autoProtocol: q('[data-set="autoProtocol"]'),
       openOnStart: q('[data-set="openOnStart"]'),
-      updateBtn: q('[data-a="update.check"]'),
+      updateCta: q('#aboutUpdateCta'),
+      railUpdateCta: q('#railUpdateCta'),
+      gearDot: q('#setGearDot'),
+      updateCtaHidden: (document.getElementById('aboutUpdateCta') || {}).hidden === true,
+      railUpdateCtaHidden: (document.getElementById('railUpdateCta') || {}).hidden === true,
+      gearDotHidden: (document.getElementById('setGearDot') || {}).hidden === true,
       exportAll: q('[data-a="export.all"]'),
       exportDiag: q('[data-a="export.diag"]'),
       repo: (document.getElementById('repoOpen') || {}).href || '',
@@ -2145,8 +2166,10 @@ try {
       `背景 8 套、恰有一个选中、速度 4 档（swatches=${shellUi.bgSwatches} · checked=${shellUi.bgChecked} · speed=${shellUi.speeds}）`);
     ok(shellUi.mode && shellUi.closeBoth && shellUi.autoStart && shellUi.autoProtocol && shellUi.openOnStart,
       '启动/关闭控件齐全（打开方式、关闭两态、自启、协议端、自动打开）');
-    ok(shellUi.exportAll && shellUi.exportDiag && shellUi.updateBtn,
-      '关于/数据入口齐全（检查更新、导出全部、诊断包）');
+    ok(shellUi.exportAll && shellUi.exportDiag && shellUi.updateCta && shellUi.railUpdateCta && shellUi.gearDot,
+      '关于/数据入口齐全（更新按钮 ×2、齿轮蓝点、导出全部、诊断包）');
+    ok(shellUi.updateCtaHidden && shellUi.railUpdateCtaHidden && shellUi.gearDotHidden,
+      `无新版时更新入口默认隐藏（按钮=${shellUi.updateCtaHidden}/${shellUi.railUpdateCtaHidden} · 蓝点=${shellUi.gearDotHidden}）`);
     ok(/^https:\/\/github\.com\//.test(shellUi.repo) && !!shellUi.runtime && shellUi.runtime !== '—',
       `关于卡有真实来源（repo=${shellUi.repo} · runtime=${shellUi.runtime}）`);
     ok(shellUi.railNav.every((x) => x.ok),
@@ -2154,6 +2177,42 @@ try {
     ok(shellUi.closed === 'false' && shellUi.expandedAfter === 'false' && shellUi.inertAfter === false,
       `Esc 能关闭并解除背景 inert（open=${shellUi.closed} · expanded=${shellUi.expandedAfter}）`);
   }
+
+  /* ── 更新入口显隐（2026-10-31）：两个按钮 + 齿轮蓝点必须同一拍 ────────
+     判据只认 phase：up_to_date 全隐；available / downloading 全亮。
+     用 S.state 注入夹具后派发 next:update-state，与生产刷新走同一条路。 */
+  console.log('\n── 设置层：更新入口显隐 ──');
+  const updCtaUi = await evalJs(`(() => {
+    const S = window.__next;
+    if (!S || !S.state) return { err: '拿不到 S.state' };
+    const prev = S.state.update;
+    const q = (id) => document.getElementById(id);
+    const read = () => ({
+      about: q('aboutUpdateCta') ? !q('aboutUpdateCta').hidden : null,
+      rail: q('railUpdateCta') ? !q('railUpdateCta').hidden : null,
+      dot: q('setGearDot') ? !q('setGearDot').hidden : null,
+    });
+    const paint = () => document.dispatchEvent(new CustomEvent('next:update-state'));
+    S.state.update = { enabled: true, phase: 'up_to_date', currentVersion: '0.1.6', latest: null };
+    paint();
+    const off = read();
+    S.state.update = { enabled: true, phase: 'available', currentVersion: '0.1.6', latest: { version: '9.9.9' } };
+    paint();
+    const on = read();
+    const label = q('aboutUpdateCta') ? q('aboutUpdateCta').getAttribute('aria-label') : '';
+    S.state.update = { enabled: true, phase: 'downloading', currentVersion: '0.1.6', latest: { version: '9.9.9' } };
+    paint();
+    const mid = read();
+    S.state.update = prev;
+    paint();
+    return { off, on, mid, label, restored: read() };
+  })()`);
+  ok(updCtaUi && !updCtaUi.err
+    && updCtaUi.off.about === false && updCtaUi.off.rail === false && updCtaUi.off.dot === false
+    && updCtaUi.on.about && updCtaUi.on.rail && updCtaUi.on.dot
+    && updCtaUi.mid.about && updCtaUi.mid.rail && updCtaUi.mid.dot
+    && /9\.9\.9/.test(updCtaUi.label),
+    `更新入口只在有新版时出现，按钮与蓝点同源（${updCtaUi?.err || JSON.stringify(updCtaUi)}）`);
 
   /* ── 设置层：自定义背景服务端化（2026-10-28）──────────────────────────
      不经过文件选择器：DataTransfer 造一个真实 File 塞进 #cbgAnyInput，
@@ -2803,6 +2862,109 @@ try {
       return true;
     })()`);
   }
+  await send('Emulation.clearDeviceMetricsOverride');
+  await sleep(200);
+
+  /* ── 常规页安全内缩：齿轮不压内容（2026-11-01）──────────────────────────
+     左下角设置齿轮是 fixed 的；窗口变窄时页面内容会一路向左扩张，最后从齿轮
+     底下穿过去，齿轮就压在卡片信息上（用户截图的图 2）。判据三件事：
+       ① 齿轮右缘 → 页面内容左缘 ≥ 79px（设计值 80，留 1px 抖动）；
+       ② 内容左留白 == 右留白（±1px）—— 窄屏只缩内容宽度，不偏左；
+       ③ 首卡 / 全部子节点 / 页脚的左缘都落在这条留白线上，且齿轮仍可点、无横溢。
+     ⚠️ 这四档同时是 §175 的运行时锚点：CSS 里那三个变量被人改回 24px 时，
+        这里必须变红，不能只靠静态扫描。 */
+  console.log('\n── 常规页安全内缩：齿轮不压内容 ──');
+  const insetGo = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const g = [...document.querySelectorAll('#nav1 .grp')]
+      .find((x) => /运行/.test(x.title || x.textContent));
+    if (!g) return { error: '没找到「运行」分组' };
+    g.click(); await sleep(220);
+    const s = [...document.querySelectorAll('#nav2 .sub')]
+      .find((x) => /总览/.test(x.title || x.textContent));
+    if (!s) return { error: '没找到「总览」页签' };
+    s.click(); await sleep(460);
+    for (let i = 0; i < 30 && !document.getElementById('card-chain'); i++) await sleep(100);
+    const l = document.getElementById('settingsLayer');
+    if (l && l.dataset.open === 'true') { document.getElementById('setGear').click(); await sleep(260); }
+    scrollTo(0, 0); await sleep(160);
+    return { title: (document.querySelector('#page h1') || {}).textContent || '' };
+  })()`);
+  ok(insetGo && !insetGo.error && /运行总览/.test(insetGo.title),
+    `已回到总览页（${insetGo?.error || insetGo?.title || '未渲染'}）`);
+  for (const c of [{ w: 1280, h: 680 }, { w: 1024, h: 728 }, { w: 800, h: 560 }, { w: 600, h: 440 }]) {
+    await send('Emulation.setDeviceMetricsOverride', {
+      width: c.w, height: c.h, deviceScaleFactor: 1, mobile: false,
+    });
+    await sleep(460);
+    const m = await evalJs(`(async () => {
+      const page = document.getElementById('page');
+      const gear = document.getElementById('setGear');
+      const foot = document.querySelector('.foot');
+      const chain = document.getElementById('card-chain');
+      if (!page || !gear || !foot) return { error: '缺少 page/gear/foot' };
+      const pr = page.getBoundingClientRect();
+      const gr = gear.getBoundingClientRect();
+      const cs = getComputedStyle(page);
+      const padL = parseFloat(cs.paddingLeft), padR = parseFloat(cs.paddingRight);
+      const cw = document.documentElement.clientWidth;
+      const left = pr.left + padL, right = pr.right - padR;
+      const kids = [...page.children]
+        .map((el) => el.getBoundingClientRect())
+        .filter((r) => r.width > 1 && r.height > 1)
+        .map((r) => r.left);
+      const fr = foot.getBoundingClientRect();
+      const hit = document.elementFromPoint(gr.left + gr.width / 2, gr.top + gr.height / 2);
+      return {
+        padL, padR,
+        contentW: right - left,
+        leftGutter: left,
+        rightGutter: cw - right,
+        gearRight: gr.right,
+        gearGap: left - gr.right,
+        cardLeft: chain ? chain.getBoundingClientRect().left : null,
+        minChildLeft: kids.length ? Math.min(...kids) : null,
+        footLeft: fr.left + parseFloat(getComputedStyle(foot).paddingLeft),
+        overflowX: document.documentElement.scrollWidth - cw,
+        gearHit: !!hit && (hit === gear || gear.contains(hit)),
+      };
+    })()`);
+    await shot(`safe-inset-${c.w}x${c.h}.png`);
+    ok(m && !m.error
+      && Math.abs(m.padL - m.padR) <= 0.5
+      && Math.abs(m.leftGutter - m.rightGutter) <= 1
+      && m.gearGap >= 79
+      && m.cardLeft !== null && Math.abs(m.cardLeft - m.leftGutter) <= 1
+      && m.minChildLeft !== null && m.minChildLeft >= m.leftGutter - 1
+      && Math.abs(m.footLeft - m.leftGutter) <= 1
+      && m.overflowX <= 1
+      && m.gearHit,
+      `${c.w}×${c.h}：内容 ${m?.contentW?.toFixed(0)}px · 左右留白 ${m?.leftGutter?.toFixed(0)}/${m?.rightGutter?.toFixed(0)}`
+        + ` · 齿轮右缘 ${m?.gearRight} → 间距 ${m?.gearGap?.toFixed(0)}px · 首卡左缘 ${m?.cardLeft?.toFixed(0)}`
+        + ` · 页脚左缘 ${m?.footLeft?.toFixed(0)} · 横溢 ${m?.overflowX}px · 齿轮可点=${m?.gearHit}`
+        + `${m?.error ? ' · ' + m.error : ''}`);
+  }
+  /* ≤599 是 Web 手机档：安全带整条回退到原来的 16px（Electron 最小窗宽 600，
+     手机屏上留 128px 会把内容压到 140px 宽）。这一条只判"回退确实生效 + 左右仍对称"，
+     **不判齿轮间距** —— 那一档的重叠是有意保留的现状，另立方案才修。 */
+  await send('Emulation.setDeviceMetricsOverride', { width: 599, height: 440, deviceScaleFactor: 1, mobile: false });
+  await sleep(420);
+  const m599 = await evalJs(`(async () => {
+    const page = document.getElementById('page');
+    const cs = getComputedStyle(page);
+    const pr = page.getBoundingClientRect();
+    const cw = document.documentElement.clientWidth;
+    const padL = parseFloat(cs.paddingLeft), padR = parseFloat(cs.paddingRight);
+    return {
+      padL, padR,
+      left: pr.left + padL,
+      rightGutter: cw - (pr.right - padR),
+      overflowX: document.documentElement.scrollWidth - cw,
+    };
+  })()`);
+  ok(!!m599 && m599.padL === 16 && m599.padR === 16
+    && Math.abs(m599.left - m599.rightGutter) <= 1 && m599.overflowX <= 1,
+    `599×440 手机档回退 16px：左右内缩 ${m599?.padL}/${m599?.padR} · 留白 ${m599?.left?.toFixed(0)}/${m599?.rightGutter?.toFixed(0)} · 横溢 ${m599?.overflowX}px（齿轮重叠是现状）`);
   await send('Emulation.clearDeviceMetricsOverride');
   await sleep(200);
 

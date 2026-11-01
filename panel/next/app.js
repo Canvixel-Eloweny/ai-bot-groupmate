@@ -430,6 +430,8 @@ async function refresh(silent = false) {
   try {
     S.state = await api('/api/state', silent ? { dedupe: false } : undefined);
     if (!S.online) S.online = true;
+    /* 设置层用它刷新「更新」按钮与齿轮蓝点；每 3 秒一次，handler 里带幂等键。 */
+    try { document.dispatchEvent(new CustomEvent('next:update-state')); } catch { /* 设置层尚未初始化 */ }
   } catch (e) {
     if (S.online) { S.online = false; toast(`与后端断开：${e.message}`, 'bad'); }
     // ⚠️ 只有**原型模式**才回落到演示数据（2026-10-12 · 真机修正）。

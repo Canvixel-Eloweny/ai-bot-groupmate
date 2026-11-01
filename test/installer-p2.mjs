@@ -19,6 +19,7 @@ import {
   assertUserRootOutsideInstallRoot,
   classifyProcess,
   compareVersions,
+  copyTreeSync,
   effectiveProgram,
   pathInside,
   readCurrentInfo,
@@ -301,6 +302,23 @@ ck('resolveImportSource：旧包根/userdata/app 三形态', () => {
   assert.equal(resolveImportSource(path.join(t, 'old')).layout, 'app');
   fs.mkdirSync(path.join(t, 'bare'));
   assert.equal(resolveImportSource(path.join(t, 'bare')).layout, 'root');
+  fs.rmSync(t, { recursive: true, force: true });
+});
+
+ck('copyTreeSync：中文路径/嵌套/空目录/时间戳都能复制（安装期唯一目录复制原语）', () => {
+  const t = tmp('p2-copytree-');
+  const src = path.join(t, '源 目录');
+  const dest = path.join(t, '目标');
+  fs.mkdirSync(path.join(src, '子目录', '空目录'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'a.txt'), 'a');
+  fs.writeFileSync(path.join(src, '子目录', 'b.txt'), 'b');
+  const stamp = new Date('2026-10-01T00:00:00Z');
+  fs.utimesSync(path.join(src, 'a.txt'), stamp, stamp);
+  copyTreeSync(src, dest);
+  assert.equal(fs.readFileSync(path.join(dest, 'a.txt'), 'utf8'), 'a');
+  assert.equal(fs.readFileSync(path.join(dest, '子目录', 'b.txt'), 'utf8'), 'b');
+  assert.ok(fs.statSync(path.join(dest, '子目录', '空目录')).isDirectory());
+  assert.equal(Math.round(fs.statSync(path.join(dest, 'a.txt')).mtimeMs / 1000), Math.round(stamp.getTime() / 1000));
   fs.rmSync(t, { recursive: true, force: true });
 });
 

@@ -266,8 +266,14 @@ export const POWERSHELL = resolveProcTool('powershell', [
   'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
 ]);
 
+/**
+ * 要**解析**的 PowerShell 输出必须先切 UTF-8：PS 5.1 重定向 stdout 时按 OEM 码页编码，
+ * 中文路径会变 `?`（英文 Windows）或乱码（中文 Windows），进程身份匹配随之失效。
+ */
+export const PS_UTF8_OUT = '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; ';
+
 /** 只列 `node.exe`（候选池必然是我们这类进程），字段够 `isOurBridge` 的三条判据用。 */
-const WIN_PS_SCRIPT = "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" "
+const WIN_PS_SCRIPT = PS_UTF8_OUT + "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" "
   + '| Select-Object ProcessId,ExecutablePath,CommandLine '
   + '| ConvertTo-Json -Compress -Depth 3';
 

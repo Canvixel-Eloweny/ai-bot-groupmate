@@ -18,6 +18,9 @@ const ACCENTS = [
   { id: 'graphite', name: '石墨', l: '#3f4652', d: '#c2cad6' },
 ];
 const REPO_FALLBACK = 'https://github.com/Canvixel-Eloweny/ai-bot-groupmate';
+/* 更新入口（2026-10-31）：只有“已发现版本 / 正在下载 / 已下载待装”才出现。
+   两个「更新」按钮与齿轮蓝点共用这一个集合 —— 三处分家会出现“蓝点亮着、按钮不在”。 */
+const UPDATE_CTA_PHASES = new Set(['available', 'downloading', 'ready']);
 /* 工厂域转场动画：纯本机外观偏好（localStorage），默认开启。
    app.js 的导航触发器也 import 这一个函数 —— 键名只在这里写一次，
    避免"开关写一个键、触发器读另一个键"那种静默失效。 */
@@ -479,8 +482,43 @@ export function initSettings(deps) {
     });
   }
 
-  const updateBtn = panel && panel.querySelector('[data-a="update.check"]');
-  if (updateBtn) setTimeout(() => updateBtn.addEventListener('click', () => setTimeout(paintAbout, 1500)), 0);
+  /* ── 更新入口：两个「更新」按钮 + 齿轮蓝点 ───────────────────────────
+     判据只有 UPDATE_CTA_PHASES 一处；按钮只负责把用户送回「维护 → 面板维护」
+     的更新卡（data-a="update.goto"），不复制下载/安装流程。
+     ⚠️ 显隐用 hidden 属性而不是只靠 CSS —— 不可点时也必须从无障碍树里消失。 */
+  let updateCtaKey = '';
+  function paintUpdateAffordance() {
+    const u = stateOf().update || {};
+    const show = u.enabled === true && UPDATE_CTA_PHASES.has(String(u.phase || ''));
+    const version = u.latest && u.latest.version ? String(u.latest.version) : '';
+    const key = `${show ? 1 : 0}|${version}`;
+    if (key === updateCtaKey) return;
+    updateCtaKey = key;
+    const label = version ? `更新到 v${version}` : '更新';
+    for (const id of ['aboutUpdateCta', 'railUpdateCta']) {
+      const btn = $(id);
+      if (!btn) continue;
+      btn.hidden = !show;
+      if (show) {
+        btn.setAttribute('aria-label', label);
+        btn.title = label;
+      } else {
+        btn.removeAttribute('title');
+      }
+    }
+    const dot = $('setGearDot');
+    if (dot) dot.hidden = !show;
+  }
+  /* 「上次检查」那一行也要跟着刷新（下载进度会变），不能只刷新入口显隐。 */
+  document.addEventListener('next:update-state', () => {
+    paintAbout();
+    paintUpdateAffordance();
+  });
+  for (const id of ['aboutUpdateCta', 'railUpdateCta']) {
+    const btn = $(id);
+    /* 先收起设置层，再让 app.js 的 data-a 处理 update.goto —— 否则跳过去的是被遮住的面板。 */
+    if (btn) btn.addEventListener('click', () => close());
+  }
 
   /* 星数：只走同源接口；接口不存在时显示缓存或 —，绝不直连 GitHub API（CSP）。 */
   const STARS_CACHE_KEY = 'estrella-github-stars-v1';
@@ -2579,6 +2617,7 @@ export function initSettings(deps) {
     paintBackground();
     paintLaunch();
     paintAbout();
+    paintUpdateAffordance();
     paintFactoryWipe();
   }
 

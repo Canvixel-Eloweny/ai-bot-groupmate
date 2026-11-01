@@ -77,6 +77,9 @@ html.settings-open .mock-card {
 }
 
 /* ── 齿轮：32px 视觉直径 + 44px 命中区 ───────────────────────────────── */
+/* ⚠️ 这里的 left/width 与 style.css 的 `--page-safe-inline` 是同一把尺：
+   24+32+80=136（>1024）、16+32+80=128（≤1024）。页面内容靠这条安全带躲开齿轮，
+   改这里不同改那边，齿轮就会重新压到卡片上 —— §175 与 panel-dom 四档会红。 */
 .set-fab {
   position: fixed; left: 24px; bottom: 24px; z-index: 78;
   width: 32px; height: 32px; padding: 0;
@@ -121,6 +124,17 @@ html.settings-open .mock-card {
 }
 .set-fab:hover .set-fab-label,
 .set-fab:focus-visible .set-fab-label { opacity: 1; transform: translate(0, -50%); }
+
+/* 有新版时的齿轮蓝点（2026-10-31）：左上角，与两个「更新」按钮同源。
+   设置层打开时齿轮已被强调色填满 —— 点会让位给页内的更新按钮。 */
+.set-fab-dot {
+  position: absolute; left: -2px; top: -2px; z-index: 2;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--c-accent);
+  box-shadow: 0 0 0 2px var(--c-surface), 0 0 8px color-mix(in srgb, var(--c-accent) 60%, transparent);
+  pointer-events: none;
+}
+.set-fab-dot[hidden], .set-fab.is-open .set-fab-dot { display: none; }
 
 /* 齿轮外部缓光：独立慢速极光，不参与面板裁剪。 */
 .gear-aura {
@@ -474,9 +488,14 @@ html[data-theme="dark"] .set-rail-hp {
   width: 12px; height: 7px; overflow: visible;
   transition: top 340ms var(--hook-spring);
 }
+.set-rail-foot {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: auto; padding: 12px 12px 2px;
+}
 .set-rail-version {
   position: relative; z-index: 1;
-  margin-top: auto; padding: 12px 12px 2px;
+  margin-top: 0; padding: 0;
   font-size: var(--t-xs); color: var(--c-text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -774,6 +793,25 @@ html[data-theme="dark"] .set-acc-dot { background: var(--dot-d, var(--c-accent))
 .set-vermeta { min-width: 0; flex: 1; }
 .set-vermeta b { display: block; font-size: 14px; font-weight: 600; }
 .set-vermeta span { display: block; margin-top: 2px; font-size: var(--t-xs); color: var(--c-text-3); }
+
+/* 「更新」按钮（2026-10-31）：参考图的蓝色实心胶囊；只在 UPDATE_CTA_PHASES 命中时出现。
+   颜色走当前强调色令牌，不另起第二个品牌色。 */
+.set-upd-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; padding: 0 14px; flex: none;
+  border: 1px solid transparent; border-radius: var(--r2);
+  background: var(--c-accent); color: var(--c-on-accent);
+  font: inherit; font-size: var(--t-sm); font-weight: 500; line-height: 1;
+  white-space: nowrap; cursor: pointer;
+  box-shadow: 0 8px 18px -12px var(--c-accent);
+  transition: background 180ms var(--ease), transform 160ms var(--ease),
+              box-shadow 180ms var(--ease);
+}
+.set-upd-btn[hidden] { display: none; }
+.set-upd-btn svg { width: 15px; height: 15px; flex: none; }
+.set-upd-btn:hover { background: var(--c-accent-hover); }
+.set-upd-btn:active { transform: scale(.96); }
+.set-upd-btn:focus-visible { outline: 2px solid var(--c-accent-ring); outline-offset: 2px; }
 .set-kv { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 7px 14px; margin: 12px 0 0; font-size: var(--t-sm); color: var(--c-text-2); }
 .set-kv dt { color: var(--c-text-3); }
 .set-kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
@@ -1393,7 +1431,7 @@ html[data-theme="dark"] .splash-stage {
 
 /* ── 响应式 ──────────────────────────────────────────────────────────── */
 @media (max-height: 640px) and (min-width: 861px) {
-  .set-rail-version { display: none; }
+  .set-rail-foot { display: none; }
 }
 @media (max-width: 1024px) {
   .settings-panel, .settings-shadow {
@@ -1430,7 +1468,7 @@ html[data-theme="dark"] .splash-stage {
   .set-rail-icon::before { inset: -4px; }
   .set-rail-icon svg { width: 12px; height: 12px; }
   .set-rail-dot { width: 5px; height: 5px; }
-  .set-rail-version { display: none; }
+  .set-rail-foot { display: none; }
   .set-scroll { padding: 18px 18px 26px; }
   .set-fab-label { display: none; }
 }
@@ -1500,7 +1538,7 @@ html[data-theme="dark"] .splash-stage {
   .set-acc { padding: 8px 2px 6px; }
   .set-acc-dot { width: 25px; height: 25px; }
   .set-verhero { flex-wrap: wrap; }
-  .set-verhero .btn { margin-left: 60px; }
+  .set-verhero .btn, .set-verhero .set-upd-btn { margin-left: 60px; }
   .set-exportsum { flex-direction: column; align-items: stretch; }
   .set-export { flex-direction: column; align-items: stretch; }
   .supporters-head { align-items: flex-start; }
@@ -1518,7 +1556,7 @@ html[data-theme="dark"] .splash-stage {
   .settings-panel, .settings-shadow, .set-switch, .set-switch::after,
   .set-seg-thumb, .set-seg button, .set-acc-dot, .set-acc-dot svg,
   #settingsPanel .bg-sw-color, .set-speed button, .set-rail-item, .set-rail-sub,
-  .set-rail-sub-item, .set-close, .set-font, .crop-stage img {
+  .set-rail-sub-item, .set-close, .set-font, .set-upd-btn, .set-fab-dot, .crop-stage img {
     transition-duration: .01ms !important;
     animation-duration: .01ms !important;
   }

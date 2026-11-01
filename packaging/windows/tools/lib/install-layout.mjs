@@ -27,6 +27,16 @@ const HEALTH = new Set(['pending', 'ok', 'failed']);
 export const installerMode = () => process.env.ESTRELLA_NSIS === '1';
 export const installerAscii = (s) => (installerMode() ? String(s).replace(/[^\x00-\x7F]+/g, '?') : String(s));
 
+/**
+ * 要**解析**的 PowerShell 输出必须先切 UTF-8。
+ *
+ * PowerShell 5.1 把 stdout 重定向出去时按控制台/OEM 码页编码：英文 Windows 是 CP437
+ * （中文路径直接变 `?`，实测 codepoints 63,63,63,63），中文 Windows 是 CP936
+ * （后台按 UTF-8 解码 → 乱码）。两者都会让「按 installRoot 精确匹配进程」永远失败：
+ * 安装/升级/卸载停不掉旧的 Electron 壳，`versions/<ver>` 被占用后 rename 失败。
+ */
+export const PS_UTF8_OUT = '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; ';
+
 /** 路径里出现这些（按相对路径段）就拒绝进入安装 payload。 */
 export const DEFAULT_ALLOWED = [
   /^(app|runtime|tools|launcher|resources)(\/|$)/,
@@ -109,6 +119,34 @@ export function sha256FileSync(file) {
     try { fs.closeSync(fd); } catch { /* 已关 */ }
   }
   return h.digest('hex');
+}
+
+/**
+ * 递归复制目录树（同步）。
+ *
+ * ⚠️ 不要换回 `fs.cpSync`：安装器内嵌 Node 22.23.3，Windows 上只要**源根路径**
+ * 含非 ASCII（中文用户名 / 中文安装目录），cpSync 会以 0xC0000409 直接终止进程 ——
+ * 不是 JS 异常，catch 不到，事务日志停在 in_progress（2026-10-31 真机复现）。
+ * 同轮对照：copyFileSync / mkdirSync / renameSync / rmSync / fs.promises.cp 均正常，
+ * 手写递归复制正常。
+ */
+export function copyTreeSync(src, dest, { seen = new Set() } = {}) {
+  const st = fs.statSync(src);
+  if (st.isDirectory()) {
+    const real = fs.realpathSync(src);
+    if (seen.has(real)) throw new Error(`复制遇到自引用目录/链接：${src}`);
+    seen.add(real);
+    fs.mkdirSync(dest, { recursive: true });
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      copyTreeSync(path.join(src, entry.name), path.join(dest, entry.name), { seen });
+    }
+    seen.delete(real);
+    return;
+  }
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(src, dest);
+  try { fs.chmodSync(dest, st.mode & 0o777); } catch { /* Windows 上无意义 */ }
+  try { fs.utimesSync(dest, st.atime, st.mtime); } catch { /* 时间戳尽力而为 */ }
 }
 
 /** 读程序根的 package.json，并校验 appId / version 都是非空字符串。 */

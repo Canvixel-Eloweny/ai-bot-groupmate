@@ -23,6 +23,7 @@ import { spawnSync } from 'node:child_process';
 import {
   classifyProcess,
   isMainModule,
+  PS_UTF8_OUT,
   readCurrentInfo,
   readInstallInfo,
 } from './lib/install-layout.mjs';
@@ -131,7 +132,7 @@ function powershellExe() {
 /** 读全量进程表（Windows 用 CIM；POSIX 用 ps，便于本机纯测试）。 */
 export function listProcesses({ platform = process.platform } = {}) {
   if (platform === 'win32') {
-    const ps = "$ErrorActionPreference='SilentlyContinue'; "
+    const ps = PS_UTF8_OUT + "$ErrorActionPreference='SilentlyContinue'; "
       + 'Get-CimInstance Win32_Process | '
       + 'Select-Object ProcessId,Name,ExecutablePath,CommandLine | '
       + 'ConvertTo-Json -Compress';

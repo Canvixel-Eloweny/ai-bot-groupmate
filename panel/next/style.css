@@ -393,6 +393,22 @@
 
   /* 间距阶梯 */
   --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
+  /* 常规页安全内缩（2026-11-01）：左下角设置齿轮是 fixed 的，页面内容一旦拉满
+     就会钻到齿轮底下，把卡片信息压在它圆底下。这里给「页面内容」留一条左右相等的
+     安全带：宽屏维持原样，窗口窄到安全带已经吃满时**只缩内容宽度**，不再让内容
+     继续向左扩张。136 = 齿轮 left 24 + 直径 32 + 视觉间距 80。
+     ⚠️ 用 `100%` 不用 `100vw`：本文件有 10px 自定义滚动条，`100vw` 含滚动条，会把
+        1560–1784 过渡带的内缩多算约 5px；`100%` 在 `padding-inline` 上按 body
+        内容宽解析，天然排掉滚动条。
+     ⚠️ 与 `settings.css` 的 `.set-fab` left/width 同源（24/32、≤1024 16/32），
+        改一边必须改另一边 —— §175 与 panel-dom 四档会红。 */
+  --page-max: 1560px;
+  --page-safe-inline: 136px;
+  --page-pad-inline: clamp(
+    var(--s5),
+    calc(var(--page-safe-inline) - (100% - var(--page-max)) / 2),
+    var(--page-safe-inline)
+  );
   /* 圆角阶梯：控件 8 / 小控件 6 / 容器 10 / 卡片 14 / 胶囊 */
   --r-sm: 6px; --r1: 8px; --r2: 10px; --r3: 14px; --r-pill: 999px;
   /* 字号阶梯（6 档，不出现即兴值） */
@@ -448,6 +464,12 @@
   --dur: .16s;
   --ease: cubic-bezier(.4, 0, .2, 1);
 }
+
+/* 安全内缩随齿轮位置分档：settings.css 在 ≤1024 把齿轮挪到 left:16（→128），
+   ≤599 是 Web 手机档 —— Electron 最小窗宽 600，手机屏上 128px 安全带会把内容
+   压到 140px 宽，所以这一档整条回退到原来的 16px 内边距（齿轮重叠维持现状）。 */
+@media (max-width: 1024px) { :root { --page-safe-inline: 128px; } }
+@media (max-width: 599px) { :root { --page-pad-inline: var(--s4); } }
 
 /* 顶栏「文」按钮切换的本地偏好；默认不命中，保持无衬线。 */
 html[data-font-style="serif"] {
@@ -1278,10 +1300,11 @@ body.eg-on .nav2wrap::before {
 
 /* ── 页面网格与卡片 ───────────────────────────────────────────────────── */
 .page {
-  display: grid; grid-template-columns: repeat(12, 1fr);
+  display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: var(--s4); align-items: start;
-  padding: var(--s5);
-  max-width: 1560px; margin: 0 auto;
+  padding-block: var(--s5);
+  padding-inline: var(--page-pad-inline);
+  max-width: var(--page-max); margin: 0 auto;
 }
 /* 通用空态页（当前无页面使用）：导航按钮保留，页面不挂内容。 */
 .page.page--blank {
@@ -2452,8 +2475,9 @@ html[data-theme="dark"] .busy {
 /* ── 页脚 ─────────────────────────────────────────────────────────────── */
 .foot {
   display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
-  padding: var(--s4) var(--s5) var(--s6);
-  max-width: 1560px; margin: 0 auto;
+  padding-block: var(--s4) var(--s6);
+  padding-inline: var(--page-pad-inline);
+  max-width: var(--page-max); margin: 0 auto;
   color: var(--c-text-3); font-size: var(--t-sm);
 }
 .foot code { background: var(--c-sunken); padding: 1px 5px; border-radius: var(--r-sm); }
@@ -2472,7 +2496,10 @@ html[data-theme="dark"] .busy {
   /* ⚠️ `.nav1` **不在**这一组里：它的左右内边距要同时兜住刘海安全区
      （`max(--s5, env(safe-area-inset-*))`），被这里一句 `padding-*: var(--s4)`
      覆盖掉，安全区就没了 —— 下面单独给它一条。 */
-  .page, .banners:not(:empty), .foot { padding-left: var(--s4); padding-right: var(--s4); }
+  /* ⚠️ `.page` / `.foot` **不在**这一组里（2026-11-01）：它们的左右内边距现在由
+     `--page-pad-inline`（常规页安全内缩）负责，被这里一句 `padding-*: var(--s4)`
+     覆盖掉，左下角齿轮就会重新压到卡片上。`.nav1` 同样不在（刘海安全区，见上）。 */
+  .banners:not(:empty) { padding-left: var(--s4); padding-right: var(--s4); }
   /* ⚠️ `.nav2wrap` 不在上一组里（B30）：它的右内边距要额外加 `--nav2-cut`
      （斜角切割的进深），被那句 `padding-*: var(--s4)` 覆盖的话，
      最后一个 tab 的右端会被斜边吃掉一截 —— 所以单独给它一条。 */

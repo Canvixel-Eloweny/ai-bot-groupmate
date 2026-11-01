@@ -190,10 +190,10 @@ export default [
     file: 'panel/next/persona.css',
     anchor: /\.psn \.card:hover::before,\.psn \.card:focus-within::before\{width:96px\}/,
     count: 1,
-    apply: (src) => src.replace('.psn .card:hover::before,.psn .card:focus-within::before{width:96px}', '.psn .card:hover::before,.psn .card:focus-within::before{width:80px}'),
+    apply: (src) => src.replace('.psn .card:hover::before,.psn .card:focus-within::before{width:96px}', ''),
     layer: 'check-wb',
     expect: 'BLOCKED',
-    note: '色条 hover 不再拉到 96px —— §162 必须红',
+    note: '色条 hover 规则整条被删（hover 不再拉长）—— §162 存在性判据必须红（96px 由 panel-dom 计算样式守）',
   },
   {
     id: 'M16',
@@ -228,12 +228,12 @@ export default [
   {
     id: 'M19',
     file: 'panel/next/persona.css',
-    anchor: /psn-bar-grow 1s/,
+    anchor: /@keyframes psn-bar-grow\{/,
     count: 1,
-    apply: (src) => src.replace('psn-bar-grow 1s', 'psn-bar-grow 0s'),
+    apply: (src) => src.replace(/@keyframes psn-bar-grow\{[^\n]*\}\}/, ''),
     layer: 'check-wb',
     expect: 'BLOCKED',
-    note: '柱状图生长动画被改成 0s（只剩静态柱）—— §162 必须红',
+    note: '柱状生长的 @keyframes 整条被删（名字还在引用、动画永不生效）—— §162 动画名存在判据必须红',
   },
   {
     id: 'M20',

@@ -20,6 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   effectiveProgram,
   isMainModule,
+  PS_UTF8_OUT,
   readCurrentInfo,
   readInstallInfo,
   readPackageInfo,
@@ -96,7 +97,7 @@ function processCommandLine(pid) {
   try {
     if (IS_WIN) {
       const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
-        `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`],
+        `${PS_UTF8_OUT}(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`],
       { encoding: 'utf8', windowsHide: true, timeout: 8000 });
       return String(r.stdout || '').trim();
     }

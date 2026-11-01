@@ -45,7 +45,7 @@ import {
   //    `winProcFromRow` + `winRowsOf`（吃**已经反序列化好的行**）—— 快照那份本来就是对象，
   //    先前为了复用解析而 `JSON.stringify` 再 `JSON.parse` 绕一圈，纯属白烧 CPU；
   //    "字段怎么读"仍然只有 `winProcFromRow` 那一份（它也被 parseWinNodeProcesses 用着）。
-  POWERSHELL, winRowsOf, winProcFromRow, encodePwshCommand,
+  POWERSHELL, PS_UTF8_OUT, winRowsOf, winProcFromRow, encodePwshCommand,
 } from '../src/bridge-proc.js';
 // D19 · 机器人进程侧的实例锁。**只读**：判据（"锁长什么样"）用 `src/bridge-lock.js`
 // 的 `parseLock` —— 面板不许再写一份"锁的格式"。
@@ -1337,7 +1337,7 @@ async function winProcessSnapshot(maxAgeMs = 15000) {
   const flight = (async () => {
     // `ProcessId` / `ExecutablePath` 是为「实例数」那一侧加的：`isOurBridge` 的三条判据
     // 都要它们，而原来那份只筛 node.exe 的查询正是为了拿这两个字段。
-    const ps = '$os = Get-CimInstance Win32_OperatingSystem '
+    const ps = PS_UTF8_OUT + '$os = Get-CimInstance Win32_OperatingSystem '
       + '| Select-Object TotalVisibleMemorySize,FreePhysicalMemory; '
       + '$ps = Get-CimInstance Win32_Process '
       + '| Select-Object ProcessId,Name,ExecutablePath,CommandLine,WorkingSetSize; '

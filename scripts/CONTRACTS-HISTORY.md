@@ -1705,3 +1705,63 @@
 //  ④ 同轮：check-wb 150/150；port-1021-gates 4/4 BLOCKED；npm run verify 见当日日志。
 //  ⑤ 坑：组的 ✓ 只在 `bad === 组起点快照` 时打印；直接删 ✓ 不降 MIN 会假红。
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  §M-3 · 人设 hover 宽度与动画时长放松（2026-10-31 · 门禁精简第 4 批）
+// ══════════════════════════════════════════════════════════════════════════════
+//  ① 判据：§162 的 `width:96px` 与 `psn-radar-in 1s / psn-point-pop .5s /
+//     psn-bar-grow 1s / psn-line-draw 1.15s` 不再钉像素与时长，改为
+//     「hover 选择器在位 + 四个 @keyframes 定义在位」；像素与 animation-name 的
+//     真值由 panel-dom 计算样式（psnMax 1352px / barW 96px / 四个动画名）守。
+//  ② 段数：152 → 152（本批不新增段；150→152 是并行的工厂批次抬的）。
+//  ③ 变异：M15 改「删 hover 规则整条」、M19 改「删 @keyframes psn-bar-grow」；
+//     persona M14–M29 22/22、persona-switch PS1–PS6 6/6 BLOCKED。
+//  ④ 同轮：check-wb 152/152；mutate-lint 146 份 / 1230 条，锚点 0 失效 / 0 惰性。
+//  ⑤ 坑：只查「动画名还在不在」会漏「名字仍被引用、@keyframes 被删」这种静默失效——
+//     M19 第一版就是这样 NOT-BLOCKED，补 keyframes 存在判据后才红。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §174 · 安装事务目录复制（2026-10-31 · 中文路径安装失败）
+// ══════════════════════════════════════════════════════════════════════════════
+//  ① 判据：install-layout 提供 copyTreeSync，install-commit.copyDir 只走它；
+//     安装期工具（install-commit / bootstrap / stop / launcher）不得出现 fs.cpSync；
+//     进程表 PowerShell（install-layout / bridge-proc / stop / launcher / panel 快照）
+//     必须用 PS_UTF8_OUT 切 stdout 编码（否则中文路径变 `?`，旧壳停不掉）；
+//     installer-p2 绑定 copyTreeSync（中文源目录 / 空目录 / 时间戳）。
+//  ② 段数：MIN 150 → **151**（+1，新增 §174）。
+//  ③ 变异：新增 test/mutations/install-unicode-1031.mjs（M1–M8）。
+//  ④ 真机：VM 英文 Windows/CP1252 + NSIS 3.13 + 内嵌 Node 22.23.3；装到
+//     `C:\Users\MoonEstrella\安装测试\Estrella-Bot 中文` 复现 exit 2 /
+//     `.txn.json` in_progress / 子进程 0xC0000409。最小对照：同一条中文源路径上
+//     fs.cpSync 崩；copyFileSync / mkdirSync / renameSync / rmSync /
+//     fs.promises.cp / 手写递归复制全部正常。
+//  ⑤ 坑：崩的是 `fs.cpSync` 的**同步**实现，不是「Node 不能处理中文路径」——
+//     别顺手把中文路径写进不支持清单，也别用「换安装盘」当修复（用户名仍在数据根）。
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §175 · 常规页安全内缩（2026-11-01 · 齿轮不压内容）
+// ══════════════════════════════════════════════════════════════════════════════
+//  ① 判据：style.css 的 `--page-max`(1560) / `--page-safe-inline`(136，≤1024 128) /
+//     `--page-pad-inline`（clamp+calc，**用 100% 不用 100vw**）三处同尺；`.page` 与
+//     `.foot` 都消费它；≤900 分组不许再把 `.page/.foot` 写回 var(--s4)；
+//     `.page.page--blank` / `.page.page--frame` 保留 `padding:0;max-width:none`；
+//     settings.css `.set-fab` 的 left/width（24/32、≤1024 16/32）与 136/128 同源；
+//     panel-dom 四档 + 面板 verify 1440 各有一条运行时判据绑定。
+//  ② 段数：MIN 151 → **152**（+1，新增 §175）。重段桶新增「常规页安全内缩」= 10 条子判据。
+//  ③ 变异：新增 test/mutations/page-safe-inset-1101.mjs（M1 安全值改回 24 /
+//     M2 .page/.foot 不再消费 / M3 ≤900 分组重新覆盖）—— 3/3 BLOCKED，INVALID 0。
+//  ④ 同轮测试：check-wb 152/152（在 HEAD 基线的隔离树复跑，主树连跑两次亦 0 ✗）；
+//     mutate-lint 146 份 / 1230 条 · 失效 0 · 惰性 0；panel-dom 1280×680 内容 1008、
+//     1024×728 → 768、800×560 → 544、600×440 → 344，四档齿轮间距恒 80、左右留白相等、
+//     横溢 0、齿轮可点，28 页遍历仍零错误零白屏；沙箱 214 通过 / 0 失败（内含面板
+//     verify 143/144 通过 + 1 条显式跳过、0 失败）。人设页 1352 判据改为按可用宽现算。
+//  ⑤ 坑：三条都实测踩过 ——
+//     · `100vw` 含 10px 自定义滚动条，会把 1560–1784 过渡带的内缩多算约 5px，
+//       左右留白不再相等；`100%` 在 `padding-inline` 上按 body 内容宽解析才对。
+//     · 静态扫描取 `.foot` 必须**行首锚定**：第一处含 `.foot` 的规则是
+//       `body.is-frame-page .foot{display:none}`，不锚行首就判错了块还打绿。
+//     · 注入浏览器的探针字符串里**不许出现反引号**（含注释）：会把 evalJs 的模板
+//       字符串提前闭合，症状是 ".psn is not a function"，报错行指向探针开头。
+//     · 另记一条共享工作树的坑：并行会话正在写 app.js 时，check-wb 会读到半写内容
+//       报出瞬时假红（本轮 §162 出现过一次，连跑两次即 0 ✗）；变异器会改写真实
+//       工作树，所以定向变异一律在 HEAD 隔离树里跑，不在共享树上跑。
+
