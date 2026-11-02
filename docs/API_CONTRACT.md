@@ -688,9 +688,10 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 
 ## 41. 补充路由契约（2026-10-22）
 
-> 70 条 API 中，46 条已在 §1–§40 有独立字段章节；剩下的 **24 条**在本节补字段级契约
+> 71 条 API 中，46 条已在 §1–§40 有独立字段章节；剩下的 **24 条**在本节补字段级契约
 > （其中 19 条此前连独立小节都没有，另外 5 条此前只在表格/导语里出现过）。
-> 2026-10-28 的 7 条新路由放在 §42–§48（都有独立编号章节，不占这 24 条字段契约）。
+> 2026-10-28 的 7 条新路由放在 §42–§48（都有独立编号章节，不占这 24 条字段契约）；
+> 2026-11-01 新增 1 条只读 POST `/api/extensions/prompt`（§50）。
 > 写路由仍统一走 token + 审计（`WRITE_ROUTES`）；业务失败通常是 **HTTP 200 + `ok:false`**，
 > 只有参数/传输/鉴权失败才用 4xx/5xx。
 
@@ -773,6 +774,7 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 | POST | `/api/backgrounds/active` |
 | POST | `/api/backgrounds/delete` |
 | POST | `/api/extensions/package` |
+| POST | `/api/extensions/prompt` |
 <!-- api-inventory:end -->
 
 ---
@@ -867,6 +869,18 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 - **副作用**：先清 `custom.extensions.{plugins|skills}.enabled` 与 `settings[id]` 并写盘，再 `rmSync` 目录；
   刷新扩展快照；审计记一条。
 - **幂等**：否；重复删除同一 id 返回 404。🟡 **写路由**。
+
+---
+
+## 50. POST `/api/extensions/prompt`
+
+插件工厂「创造」弹窗的复制提示词：把用户填写的基本信息与宿主接口规范拼成一段提示词，**不落盘**。
+前端复制后交给外部 AI；AI 产出的文件仍走 §28 安装接口导入。
+
+- **入参**：`{meta:{kind:'plugin'|'skill', id?, name, description?, category?, toolName?, toolDescription?, prompt?, tags?}}`。
+- **出参**：`{ok:true, kind, name, tags:[string], prompt:string}`；缺 name 或 id 不合法时 400 `{ok:false,error}`。
+- **副作用**：无（纯字符串拼装；apiVersion / 钩子点 / 标签归一化都从宿主常量取）。
+- **幂等**：是（同输入同输出）。**只读 POST**（`READ_ONLY_POST`，不要求 token、不进写路由审计）。
 
 ### 41.2 字段契约（24 条）
 

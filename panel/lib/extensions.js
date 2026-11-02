@@ -23,6 +23,7 @@
  */
 
 import { loadExtensions } from '../../src/plugin-host.js';
+import { normalizeTagList } from '../../src/plugin-manifest.js';
 import { settingsSpec } from '../../src/plugin-settings.js';
 import { USER_ROOT } from './paths.js';
 
@@ -62,6 +63,8 @@ function projectItem(p) {
     kind: p.kind ?? null,
     // 插件工厂的左侧分类树按清单 category 聚合（2026-10-28）。空 category 归 other。
     category: String(p.manifest?.category || '').slice(0, 40),
+    // 展示用标签（2026-11-01）：只下发归一化后的字符串，旧包没有就是空数组。
+    tags: normalizeTagList(p.manifest?.tags),
     settingMeta: Object.fromEntries(
       Object.entries(p.manifest?.configSchema || {}).map(([k, v]) => [k, {
         label: String(v?.label || ''),

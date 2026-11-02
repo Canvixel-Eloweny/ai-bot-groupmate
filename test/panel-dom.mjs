@@ -885,6 +885,7 @@ try {
     let tree = { cats: [], labels: [], folderText: '', createOpen: false, createFields: 0 };
     if (gFrame && gFrame.contentDocument) {
       const pd = gFrame.contentDocument;
+      const pwin = gFrame.contentWindow;
       for (let i = 0; i < 40; i++) {
         if (pd.querySelectorAll('#treeRows .row-btn[data-cat]').length >= 2) break;
         await sleep(100);
@@ -896,12 +897,69 @@ try {
         folderText: ((pd.querySelector('[data-imp="folder"]') || {}).textContent || ''),
         createOpen: false,
         createFields: pd.querySelectorAll('#createScrim input, #createScrim select, #createScrim textarea').length,
+        copy: null,
+        skillCopy: null,
       };
       const createBtn = pd.querySelector('[data-act="create"]');
       if (createBtn) {
         createBtn.click();
-        await sleep(120);
+        await sleep(160);
         tree.createOpen = !!pd.getElementById('createScrim') && pd.getElementById('createScrim').hidden === false;
+        const copyBtn = pd.querySelector('[data-create="copy"]');
+        let clip = '';
+        try {
+          Object.defineProperty(pwin.navigator, 'clipboard', {
+            configurable: true,
+            value: { writeText: async (text) => { clip = String(text); } },
+          });
+        } catch { /* 剪贴板桩失败时下面会走 execCommand 兜底 */ }
+        const set = (id, value) => {
+          const el = pd.getElementById(id);
+          if (!el) return;
+          el.value = value;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        set('crKind', 'plugin');
+        set('crCategory', '工具');
+        set('crId', 'qa-copy');
+        set('crName', '复制测试');
+        set('crDesc', '验证提示词包含表单信息与接口规范');
+        set('crTool', 'qa_copy_tool');
+        set('crToolDesc', 'QA 用的工具');
+        set('crTags', '工具, QA');
+        if (copyBtn) copyBtn.click();
+        for (let i = 0; i < 60 && !/plugin\.json/.test(clip); i++) await sleep(50);
+        const state = pd.getElementById('crCopyState');
+        const preview = pd.getElementById('crPreview');
+        tree.copy = {
+          label: copyBtn ? copyBtn.textContent.trim() : '',
+          hasCopy: !!copyBtn,
+          hasInstall: !!pd.querySelector('[data-create="install"]'),
+          hasTags: !!pd.getElementById('crTags'),
+          clipLen: clip.length,
+          clipHasManifest: /plugin\.json/.test(clip),
+          clipHasApi: /apiVersion/.test(clip),
+          clipHasRegister: /registerTool/.test(clip),
+          clipHasExecute: /execute\\(ctx, args\\)/.test(clip),
+          clipHasUser: /qa-copy/.test(clip) && /复制测试/.test(clip) && /工具/.test(clip),
+          state: state && !state.hidden ? state.textContent : '',
+          preview: preview && !preview.hidden ? preview.textContent.slice(0, 200) : '',
+        };
+        const kind = pd.getElementById('crKind');
+        if (kind) {
+          kind.value = 'skill';
+          kind.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        set('crPrompt', '用户问天气时参考这个 Skill。');
+        clip = '';
+        if (copyBtn) copyBtn.click();
+        for (let i = 0; i < 60 && !/skill\.json/.test(clip); i++) await sleep(50);
+        tree.skillCopy = {
+          clipLen: clip.length,
+          clipHasSkill: /skill\.json/.test(clip),
+          clipHasSections: /prompt\.sections/.test(clip),
+          clipHasExport: /export \{\}/.test(clip),
+        };
         const close = pd.querySelector('[data-create="close"]');
         if (close) close.click();
         await sleep(80);
@@ -1003,8 +1061,17 @@ try {
     `插件技能工厂分类树来自清单 category（${JSON.stringify(fx.tree.cats)} / ${JSON.stringify(fx.tree.labels)}）`);
     ok(/选择文件夹/.test(fx.tree.folderText) && !/不支持/.test(fx.tree.folderText),
       `文件夹导入不再写死不支持（${JSON.stringify(fx.tree.folderText)}）`);
-    ok(fx.tree.createOpen && fx.tree.createFields >= 7,
-      `创造插件弹窗能打开且有完整字段（open=${fx.tree.createOpen} · fields=${fx.tree.createFields}）`);
+    ok(fx.tree.createOpen && fx.tree.createFields >= 8 && fx.tree.copy && fx.tree.copy.hasTags,
+      `创造插件弹窗能打开且有完整字段（open=${fx.tree.createOpen} · fields=${fx.tree.createFields} · tags=${fx.tree.copy?.hasTags}）`);
+    ok(fx.tree.copy && fx.tree.copy.hasCopy && !fx.tree.copy.hasInstall && /复制提示词/.test(fx.tree.copy.label),
+      `「安装」已改为「复制提示词」（copy=${fx.tree.copy?.hasCopy} · install=${fx.tree.copy?.hasInstall} · label=${fx.tree.copy?.label}）`);
+    ok(fx.tree.copy && fx.tree.copy.clipHasManifest && fx.tree.copy.clipHasApi
+      && fx.tree.copy.clipHasRegister && fx.tree.copy.clipHasExecute && fx.tree.copy.clipHasUser
+      && /已复制/.test(fx.tree.copy.state),
+    `复制出的插件提示词含表单信息 + 接口规范（${JSON.stringify(fx.tree.copy)}）`);
+    ok(fx.tree.skillCopy && fx.tree.skillCopy.clipHasSkill && fx.tree.skillCopy.clipHasSections
+      && fx.tree.skillCopy.clipHasExport,
+    `Skill 提示词含 skill.json / prompt.sections / export {}（${JSON.stringify(fx.tree.skillCopy)}）`);
     ok(fx.back.active === 'visual' && fx.back.sameFrame && !fx.back.visualHidden
       && fx.back.loads === fx.open.loads && fx.back.keep === 1,
     `插件 → 视觉回到原帧、状态保留（${JSON.stringify(fx.back)}）`);
@@ -2178,6 +2245,75 @@ try {
       `Esc 能关闭并解除背景 inert（open=${shellUi.closed} · expanded=${shellUi.expandedAfter}）`);
   }
 
+  /* ── 设置层：打开方式立即切换（2026-11-01）──────────────────────────
+     旧配置 modeExplicit=false 在桌面壳里应显示「独立窗口」；点「浏览器标签页」
+     必须真的调用壳的 openInBrowser（不是只存配置），点「独立窗口」必须调用 showWindow。 */
+  console.log('\n── 设置层：打开方式立即切换 ──');
+  const modeSwitch = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const gear = document.getElementById('setGear');
+    const layer = document.getElementById('settingsLayer');
+    const S = window.__next;
+    const launch = () => (S && S.state && S.state.config && S.state.config.launch) || {};
+    if (layer.dataset.open === 'true') { gear.click(); await sleep(280); }
+    const before = { ...launch() };
+    const calls = [];
+    window.estrellaShell = {
+      isShell: true, platform: 'test',
+      openInBrowser: async () => { calls.push('open'); return { ok: true, hidden: true }; },
+      showWindow: async () => { calls.push('show'); return { ok: true }; },
+      hideWindow: async () => { calls.push('hide'); return { ok: true, hidden: true }; },
+    };
+    gear.click();
+    await sleep(320);
+    const btn = (mode) => document.querySelector('#setModeSeg [data-mode-opt="' + mode + '"]');
+    const initial = {
+      shellShown: btn('window').getAttribute('aria-pressed') === 'true',
+      explicit: launch().modeExplicit === true,
+      mode: launch().mode,
+    };
+    btn('browser').click();
+    for (let i = 0; i < 40 && !calls.includes('open'); i++) await sleep(50);
+    await sleep(260);
+    const afterOpen = {
+      calls: calls.slice(), mode: launch().mode,
+      explicit: launch().modeExplicit === true,
+      pressed: btn('browser').getAttribute('aria-pressed'),
+    };
+    btn('window').click();
+    for (let i = 0; i < 40 && !calls.includes('show'); i++) await sleep(50);
+    await sleep(260);
+    const afterShow = {
+      calls: calls.slice(), mode: launch().mode,
+      explicit: launch().modeExplicit === true,
+      pressed: btn('window').getAttribute('aria-pressed'),
+    };
+    try {
+      if (before.mode) {
+        const meta = document.querySelector('meta[name="panel-token"]');
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(meta && meta.content ? { Authorization: 'Bearer ' + meta.content } : {}),
+          },
+          body: JSON.stringify({ launch: { mode: before.mode === 'window' ? 'window' : 'browser' } }),
+        });
+      }
+    } catch { /* 夹具恢复失败不影响断言 */ }
+    delete window.estrellaShell;
+    if (layer.dataset.open === 'true') { gear.click(); await sleep(260); }
+    return { before, initial, afterOpen, afterShow };
+  })()`);
+  ok(modeSwitch && modeSwitch.initial && modeSwitch.initial.shellShown && modeSwitch.initial.explicit === false,
+    `旧配置在桌面壳里显示为独立窗口（${JSON.stringify(modeSwitch?.initial)}）`);
+  ok(modeSwitch && modeSwitch.afterOpen.mode === 'browser' && modeSwitch.afterOpen.explicit === true
+    && modeSwitch.afterOpen.pressed === 'true' && modeSwitch.afterOpen.calls.includes('open'),
+  `点浏览器标签页 → 立即调 openInBrowser 并保存（${JSON.stringify(modeSwitch?.afterOpen)}）`);
+  ok(modeSwitch && modeSwitch.afterShow.mode === 'window' && modeSwitch.afterShow.explicit === true
+    && modeSwitch.afterShow.pressed === 'true' && modeSwitch.afterShow.calls.includes('show'),
+  `点独立窗口 → 立即调 showWindow 并保存（${JSON.stringify(modeSwitch?.afterShow)}）`);
+
   /* ── 更新入口显隐（2026-10-31）：两个按钮 + 齿轮蓝点必须同一拍 ────────
      判据只认 phase：up_to_date 全隐；available / downloading 全亮。
      用 S.state 注入夹具后派发 next:update-state，与生产刷新走同一条路。 */
@@ -2593,9 +2729,20 @@ try {
     const bg = document.getElementById('contourBg');
     const pick = document.getElementById('bgPick');
     const name = document.getElementById('setBgName');
+    const pvBox = document.getElementById('bgPreview');
+    const pv = document.getElementById('bgPreviewVideo');
+    const pvState = document.getElementById('bgPreviewState');
     const cb = window.ContourBG;
     const sb = window.ShaderBG;
-    if (!v || !poster || !bg || !cb || !sb) return { error: '等高线 DOM/API 缺失' };
+    if (!v || !poster || !bg || !cb || !sb || !pvBox || !pv || !pvState) {
+      return { error: '等高线 DOM/API 缺失' };
+    }
+    const preview = () => ({
+      hidden: pvBox.hidden, state: pvState.textContent || '',
+      rate: pv.playbackRate, paused: pv.paused,
+      src: pv.getAttribute('src') || '',
+      poster: pvBox.style.backgroundImage,
+    });
     const click = (sel) => { const el = document.querySelector(sel); if (el) el.click(); return !!el; };
     const css = getComputedStyle(bg);
     const out = {
@@ -2628,6 +2775,7 @@ try {
         controls: v.hasAttribute('controls'), autoplay: v.hasAttribute('autoplay'),
         src: v.getAttribute('src') || '',
         poster: poster.style.backgroundImage,
+        preview: preview(),
       },
     };
     click('[data-bgmode-opt="shader"]');
@@ -2637,6 +2785,7 @@ try {
       label: (name || {}).textContent || '',
       stored: (() => { try { return localStorage.getItem('qqbot-bg-mode') || ''; } catch { return ''; } })(),
       contourOff: cb.state,
+      preview: preview(),
     };
     click('[data-bgmode-opt="contour"]');
     await sleep(300);
@@ -2647,10 +2796,13 @@ try {
     };
     click('#bgSpeed [data-speed="0"]');
     await sleep(240);
-    out.speed0 = { shader: sb.speed, contour: cb.speed, state: cb.state, paused: v.paused };
+    out.speed0 = { shader: sb.speed, contour: cb.speed, state: cb.state, paused: v.paused, preview: preview() };
     click('#bgSpeed [data-speed="100"]');
     await sleep(280);
-    out.speed100 = { shader: sb.speed, contour: cb.speed, rate: v.playbackRate, state: cb.state, src: v.getAttribute('src') || '' };
+    out.speed100 = {
+      shader: sb.speed, contour: cb.speed, rate: v.playbackRate, state: cb.state,
+      src: v.getAttribute('src') || '', preview: preview(),
+    };
     out.quality = {
       saveData: cb.pickQuality({ saveData: true }),
       lowMem: cb.pickQuality({ deviceMemory: 2 }),
@@ -2660,17 +2812,26 @@ try {
     // 设置层打开时视频按设计暂停；关掉后再验播放倍率。
     gear.click();
     await sleep(700);
-    out.afterClose = { state: cb.state, rate: v.playbackRate, paused: v.paused, src: v.getAttribute('src') || '' };
+    out.afterClose = {
+      state: cb.state, rate: v.playbackRate, paused: v.paused,
+      src: v.getAttribute('src') || '', preview: preview(),
+    };
     gear.click();
     await sleep(420);
     click('[data-theme-opt="dark"]');
     for (let i = 0; i < 40 && root.dataset.theme !== 'dark'; i++) await sleep(50);
     await sleep(120);
-    out.dark = { theme: cb.theme, bgDark: root.classList.contains('bg-dark'), poster: poster.style.backgroundImage };
+    out.dark = {
+      theme: cb.theme, bgDark: root.classList.contains('bg-dark'),
+      poster: poster.style.backgroundImage, preview: preview(),
+    };
     click('[data-theme-opt="light"]');
     for (let i = 0; i < 40 && root.dataset.theme !== 'light'; i++) await sleep(50);
     await sleep(120);
-    out.light = { theme: cb.theme, bgDark: root.classList.contains('bg-dark'), poster: poster.style.backgroundImage };
+    out.light = {
+      theme: cb.theme, bgDark: root.classList.contains('bg-dark'),
+      poster: poster.style.backgroundImage, preview: preview(),
+    };
     click('#bgSpeed [data-speed="66"]');
     await sleep(220);
     try {
@@ -2694,21 +2855,37 @@ try {
       `视频属性安全（muted=${d.muted} · inline=${d.playsInline} · loop=${d.loop} · preload=${d.preload} · controls=${d.controls} · autoplay=${d.autoplay}）`);
     ok(/\?v=4/.test(d.poster) && (!d.src || /\?v=4/.test(d.src)),
       `媒体带统一缓存版本（src=${d.src || '（未加载）'} · poster=${String(d.poster).slice(0, 80)}）`);
+    ok(d.preview && d.preview.hidden === false
+      && /contour-light-lite-v2\.mp4\?v=4/.test(d.preview.src)
+      && d.preview.rate === 1
+      && /播放中|预览加载失败/.test(d.preview.state),
+      `背景速度预览已出现且用轻量片（${JSON.stringify(d.preview)}）`);
     ok(contourUi.shader.mode === 'shader' && contourUi.shader.active === true && contourUi.shader.pickerHidden === false
-      && contourUi.shader.stored === 'shader' && contourUi.shader.label !== '等高线',
-      `切流光：旧引擎恢复、色板出现、标签与持久化正确（active=${contourUi.shader.active} · hidden=${contourUi.shader.pickerHidden} · label=${contourUi.shader.label}）`);
+      && contourUi.shader.stored === 'shader' && contourUi.shader.label !== '等高线'
+      && contourUi.shader.preview && contourUi.shader.preview.paused === true
+      && /流光/.test(contourUi.shader.preview.state),
+      `切流光：旧引擎恢复、色板出现、标签与持久化正确（active=${contourUi.shader.active} · hidden=${contourUi.shader.pickerHidden} · label=${contourUi.shader.label} · preview=${contourUi.shader.preview?.state}）`);
     ok(contourUi.contourBack.mode === 'contour' && contourUi.contourBack.active === false
       && contourUi.contourBack.pickerHidden === true && contourUi.contourBack.label === '等高线',
       `切回等高线：旧引擎暂停、色板隐藏（active=${contourUi.contourBack.active} · hidden=${contourUi.contourBack.pickerHidden}）`);
     ok(contourUi.speed0.shader === 0 && contourUi.speed0.contour && contourUi.speed0.contour.mul === 0
-      && contourUi.speed0.state === 'poster' && contourUi.speed0.paused === true,
-      `速度无：视频暂停并退海报（shader=${contourUi.speed0.shader} · state=${contourUi.speed0.state} · paused=${contourUi.speed0.paused}）`);
+      && contourUi.speed0.state === 'poster' && contourUi.speed0.paused === true
+      && contourUi.speed0.preview && contourUi.speed0.preview.paused === true
+      && contourUi.speed0.preview.src === '' && /无/.test(contourUi.speed0.preview.state),
+      `速度无：视频暂停并退海报，预览也停（shader=${contourUi.speed0.shader} · state=${contourUi.speed0.state} · preview=${contourUi.speed0.preview?.state}）`);
     ok(contourUi.speed100.shader === 100 && contourUi.speed100.contour && contourUi.speed100.contour.mul === 2
-      && (!contourUi.afterClose.src || contourUi.afterClose.state === 'poster' || contourUi.afterClose.rate === 2),
-      `速度快：关闭设置后播放倍率 2（mul=${contourUi.speed100.contour?.mul} · state=${contourUi.afterClose?.state} · rate=${contourUi.afterClose?.rate}）`);
+      && contourUi.speed100.rate === 2
+      && contourUi.speed100.preview && contourUi.speed100.preview.rate === 2
+      && /contour-light-lite-v2\.mp4\?v=4/.test(contourUi.speed100.preview.src)
+      && contourUi.afterClose.rate === 2
+      && contourUi.afterClose.preview && contourUi.afterClose.preview.hidden === true
+      && contourUi.afterClose.preview.paused === true && contourUi.afterClose.preview.src === '',
+      `速度快：设置打开时主视频/预览都写入 2 倍率，关闭后预览释放（main=${contourUi.speed100.rate} · preview=${contourUi.speed100.preview?.rate} · afterClose=${contourUi.afterClose.rate}/${contourUi.afterClose.preview?.src}）`);
     ok(contourUi.dark.theme === 'dark' && contourUi.dark.bgDark === true && /contour-dark-v2\.jpg\?v=4/.test(contourUi.dark.poster)
-      && contourUi.light.theme === 'light' && contourUi.light.bgDark === false && /contour-light-v2\.jpg\?v=4/.test(contourUi.light.poster),
-      `主题换源与 bg-dark 正确（dark=${contourUi.dark.bgDark} · light=${contourUi.light.bgDark}）`);
+      && /contour-dark-v2\.jpg\?v=4/.test(contourUi.dark.preview?.poster)
+      && contourUi.light.theme === 'light' && contourUi.light.bgDark === false && /contour-light-v2\.jpg\?v=4/.test(contourUi.light.poster)
+      && /contour-light-v2\.jpg\?v=4/.test(contourUi.light.preview?.poster),
+      `主题换源与 bg-dark 正确（dark=${contourUi.dark.bgDark} · light=${contourUi.light.bgDark} · preview=${contourUi.light.preview?.poster}）`);
     ok(contourUi.quality && contourUi.quality.saveData === 'poster'
       && contourUi.quality.lowMem === 'lite' && contourUi.quality.lowCpu === 'lite'
       && contourUi.quality.normal === 'standard',
@@ -2720,20 +2897,37 @@ try {
     features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
   });
   await sleep(550);
-  const reducedContour = await evalJs(`(() => {
+  const reducedContour = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const gear = document.getElementById('setGear');
+    const layer = document.getElementById('settingsLayer');
+    const opened = !!(gear && layer && layer.dataset.open !== 'true');
+    if (opened) gear.click();
+    await sleep(480);
     const cb = window.ContourBG;
     const v = document.getElementById('contourVideo');
     const po = document.getElementById('contourPoster');
-    return cb && v ? {
+    const pvBox = document.getElementById('bgPreview');
+    const pv = document.getElementById('bgPreviewVideo');
+    const pvState = document.getElementById('bgPreviewState');
+    const out = cb && v ? {
       state: cb.state, rendition: cb.rendition, paused: v.paused,
       poster: po ? po.style.backgroundImage : '',
+      preview: pv ? {
+        hidden: !!(pvBox && pvBox.hidden), paused: pv.paused,
+        state: pvState ? pvState.textContent : '', src: pv.getAttribute('src') || '',
+      } : null,
     } : null;
+    if (opened && layer && layer.dataset.open === 'true') { gear.click(); await sleep(280); }
+    return out;
   })()`);
   await send('Emulation.setEmulatedMedia', { features: [] });
   await sleep(450);
   ok(reducedContour && reducedContour.state === 'poster' && reducedContour.rendition === 'poster'
-    && reducedContour.paused === true && /contour-light-v2\.jpg\?v=4/.test(reducedContour.poster),
-    `等高线 reduced-motion：退海报并暂停视频（state=${reducedContour?.state} · rendition=${reducedContour?.rendition} · paused=${reducedContour?.paused}）`);
+    && reducedContour.paused === true && /contour-light-v2\.jpg\?v=4/.test(reducedContour.poster)
+    && reducedContour.preview && reducedContour.preview.paused === true
+    && /减少动态效果|不会生效/.test(reducedContour.preview.state),
+    `等高线 reduced-motion：退海报并暂停视频，预览如实提示（state=${reducedContour?.state} · rendition=${reducedContour?.rendition} · preview=${reducedContour?.preview?.state}）`);
 
   /* ── 设置层：窄屏入口 ────────────────────────────────────────────────
      旧断言盯的是顶栏「文」按钮在 ≤770px 收起；现在字体/主题/背景全部进了
@@ -3461,6 +3655,54 @@ try {
     await sleep(450);
     const mem0 = await evalJs(`document.querySelector('[data-id="m.promptMax"]')?.value ?? ''`);
     ok(mem0 === '12', `记忆注入上限控件回显 12（实际 ${JSON.stringify(mem0)}）`);
+    /* 降噪与真实进度条（2026-11-01）：卡片头无横线、空态不是虚线、
+       预算/确认比例是页面算出来的条；再注入两条记录验筛选真的能减少列表。 */
+    const memUi = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const S = window.__next;
+      window.__nextPauseRefresh?.(true);
+      await sleep(400);
+      const page = document.getElementById('page');
+      const probe = document.createElement('div');
+      probe.className = 'empty';
+      page.appendChild(probe);
+      const emptyBorder = getComputedStyle(probe).borderTopStyle;
+      probe.remove();
+      const head = document.querySelector('#card-overview .card-h');
+      const keepR = S.state.memoryRecords;
+      const keepM = S.state.customMeta;
+      const before = {
+        stats: page.querySelectorAll('.mem-stat').length,
+        bars: page.querySelectorAll('.mem-bar').length,
+        emptyBorder,
+        headBorder: head ? getComputedStyle(head).borderBottomWidth : '',
+      };
+      S.state.memoryRecords = [
+        { id: 'r1', status: 'confirmed', text: '喜欢猫', kindShort: '偏好', samples: 4, chatKey: 'group:1' },
+        { id: 'r2', status: 'candidate', text: '每天七点起床', kindShort: '习惯', samples: 2, chatKey: 'group:1' },
+      ];
+      S.state.customMeta = { ...(keepM || {}), memoryReview: { statusOrder: ['candidate', 'confirmed'], statusLabels: { candidate: '待确认', confirmed: '已确认' } } };
+      S.extra.memFilter = 'all';
+      window.__nextRepaint();
+      const filters = page.querySelectorAll('[data-a="mem.filter"]').length;
+      const records = page.querySelectorAll('.mem-record').length;
+      page.querySelector('[data-a="mem.filter"][data-p="confirmed"]')?.click();
+      const afterFilter = page.querySelectorAll('.mem-record').length;
+      const recCard = document.getElementById('card-records');
+      const recTxt = recCard ? recCard.textContent.replace(/\s+/g, ' ').slice(0, 160) : 'no-card';
+      const stateLen = (S.state.memoryRecords || []).length;
+      const order = (S.state.customMeta?.memoryReview?.statusOrder || []).join(',');
+      S.state.memoryRecords = keepR;
+      S.state.customMeta = keepM;
+      S.extra.memFilter = 'all';
+      window.__nextRepaint();
+      window.__nextPauseRefresh?.(false);
+      return { ...before, filters, records, afterFilter, recTxt, stateLen, order };
+    })()`);
+    ok(memUi?.stats === 2 && memUi?.bars >= 2 && memUi?.emptyBorder !== 'dashed' && memUi?.headBorder === '0px',
+      `记忆页降噪：两个数字块 ${memUi?.stats} · 进度条 ${memUi?.bars} · 空态边框=${memUi?.emptyBorder} · 卡头下边=${memUi?.headBorder}`);
+    ok(memUi?.filters >= 3 && memUi?.records === 2 && memUi?.afterFilter === 1,
+      `记忆筛选：按钮 ${memUi?.filters} · 全部 ${memUi?.records} 条 → 已确认 ${memUi?.afterFilter} 条 · state=${memUi?.stateLen} · order=${memUi?.order} · ${memUi?.recTxt}`);
     const memSaved = await evalJs(`(async () => {
       const el = document.querySelector('[data-id="m.promptMax"]');
       if (!el) return { error: 'no-memory-max' };
@@ -3489,6 +3731,131 @@ try {
     }))()`);
     ok(skillBudget && skillBudget.max === '3' && skillBudget.chars === '2000',
       `技能预算控件回显 3 / 2000（实际 ${skillBudget?.max} / ${skillBudget?.chars}）`);
+    /* 知识包/角色卡降噪（2026-11-01）：真实预算条、技能卡、覆盖率条、8/4 栏宽。 */
+    const skillUi = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const S = window.__next;
+      window.__nextPauseRefresh?.(true);
+      await sleep(400);
+      const page = document.getElementById('page');
+      const keepSk = S.draft.custom.skills;
+      const keepPc = S.state.personaCards;
+      S.draft.custom.skills = [
+        { kind: 'pack', name: '做饭', enabled: true, triggers: ['做饭', '菜谱'], background: '家常菜、火候、替代食材。' },
+        { kind: 'persona', name: '小鱼', enabled: false, triggers: [], background: '' },
+      ];
+      S.state.personaCards = [{
+        name: '小鱼', cell: '金', cellTier: 'gold', coverage: 0.92, minScore: 0.6, enabled: true,
+        gaps: [{ id: 'x', label: '口头禅', score: 0.4, question: '它常说什么？', hint: 'catch' }],
+        dims: [{ label: '身份', score: 0.9, filledChars: 20, tier: 'green', cueHits: [] }],
+        advice: '再补一句口头禅。',
+      }];
+      window.__nextRepaint();
+      const sk = document.getElementById('card-sk');
+      const cg = document.getElementById('card-cg');
+      const bars = [...page.querySelectorAll('.mem-bar')];
+      const out = {
+        budget: !!page.querySelector('.skill-budget'),
+        barCount: bars.length,
+        barMax: Math.max(0, ...bars.map((b) => parseFloat(getComputedStyle(b.querySelector('i')).width) || 0)),
+        skills: page.querySelectorAll('.skill-card').length,
+        roles: page.querySelectorAll('.role-card').length,
+        addPack: !!page.querySelector('[data-a="skill.add.pack"]'),
+        skW: sk ? sk.getBoundingClientRect().width : 0,
+        cgW: cg ? cg.getBoundingClientRect().width : 0,
+      };
+      if (keepSk === undefined) delete S.draft.custom.skills; else S.draft.custom.skills = keepSk;
+      S.state.personaCards = keepPc;
+      window.__nextRepaint();
+      window.__nextPauseRefresh?.(false);
+      return out;
+    })()`);
+    ok(skillUi?.budget && skillUi?.barCount >= 2 && skillUi?.barMax > 0
+      && skillUi?.skills === 2 && skillUi?.roles === 1 && skillUi?.addPack,
+      `知识包页：预算条 ${skillUi?.barCount} 条（最宽 ${skillUi?.barMax}px）· 技能卡 ${skillUi?.skills} · 角色卡 ${skillUi?.roles} · 添加键=${skillUi?.addPack}`);
+    ok(skillUi?.skW > skillUi?.cgW,
+      `知识包/角色卡按 8/4 栏宽（sk=${Math.round(skillUi?.skW || 0)}px · cg=${Math.round(skillUi?.cgW || 0)}px）`);
+
+    /* ── 假 QQ 对话（2026-11-01）─────────────────────────────────────────
+       只验 DOM 与状态去重；真的“发一句 → 机器人回一句”由 check-fake-panel 起
+       真会话验证，panel-dom 不在这里再拉一个子进程。 */
+    await evalJs(`(() => {
+      window.__navAutoHide?.reveal?.();
+      const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => /发言/.test(x.title || x.textContent || ''));
+      if (g) g.click(); return !!g;
+    })()`);
+    await sleep(400);
+    await evalJs(`(() => {
+      window.__navAutoHide?.reveal?.();
+      const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /假 ?QQ/.test(x.title || x.textContent || ''));
+      if (s) s.click(); return !!s;
+    })()`);
+    await sleep(450);
+    const chatUi = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const S = window.__next;
+      if (!S || !window.__nextRepaint) return { err: '拿不到页面状态或重绘钩子' };
+      S.extra.fakeRunning = true;
+      S.extra.fakeMsgs = [
+        { id: 101, n: 1, role: 'user', text: '你好', at: Date.now() },
+        { id: 102, n: 2, role: 'bot', text: '在呢', at: Date.now(), channel: '群' },
+        { id: 103, n: 3, role: 'system', text: '已切回群聊', at: Date.now() },
+      ];
+      S.extra.fakeSeen = {};
+      window.__nextRepaint();
+      /* 同步读：1.5 秒假 QQ 轮询会把刚播的气泡 DOM 换掉，等 120ms 再读会得到 0。 */
+      const anim = [...document.querySelectorAll('#fakeChatLog .chat-bubble, #fakeChatLog .chat-pill')]
+        .reduce((n, el) => n + (el.getAnimations ? el.getAnimations().length : 0), 0);
+      const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      await sleep(120);
+      const log = document.getElementById('fakeChatLog');
+      const composer = document.getElementById('fakeComposer');
+      const before = window.__paintStats?.builds ?? 0;
+      if (composer) {
+        composer.value = 'abc';
+        composer.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      await sleep(80);
+      const after = window.__paintStats?.builds ?? 0;
+      const st = window.__fakeChat?.state?.() || {};
+      S.extra.fakeMsgs = [{ id: 201, n: 4, role: 'user', text: '等回复', at: Date.now() }];
+      S.extra.fakeSeen = {};
+      S.extra.fakeWaitAt = Date.now();
+      S.extra.fakeRunning = true;
+      window.__nextRepaint();
+      const typing = !!document.querySelector('#fakeTypingSlot .chat-typing');
+      return {
+        log: !!log, composer: !!composer,
+        send: !!document.querySelector('.chat-send'),
+        quick: document.querySelectorAll('.chat-quick .chat-chip').length,
+        raw: !!document.querySelector('.chat-raw'),
+        body: !!document.getElementById('fakeBody'),
+        old: !!document.querySelector('[data-id="fake.text"]'),
+        msgs: log ? log.querySelectorAll('.chat-msg').length : 0,
+        user: log?.querySelector('.chat-msg.user .chat-bubble')?.textContent || '',
+        bot: log?.querySelector('.chat-msg.bot .chat-bubble')?.textContent || '',
+        system: log?.querySelector('.chat-msg.system .chat-pill')?.textContent || '',
+        anim, reduced, typing, st, before, after,
+      };
+    })()`);
+    ok(chatUi && !chatUi.err && chatUi.log && chatUi.composer && chatUi.send
+      && chatUi.quick >= 4 && chatUi.raw && chatUi.body,
+      `假 QQ 对话 DOM：聊天区 / 输入栏 / 发送键 / 快捷命令 / 原始输出（${chatUi?.err || `log=${chatUi?.log} composer=${chatUi?.composer} send=${chatUi?.send} quick=${chatUi?.quick} raw=${chatUi?.raw} body=${chatUi?.body}`}）`);
+    ok(chatUi?.msgs === 3 && chatUi?.user === '你好' && chatUi?.bot === '在呢'
+      && chatUi?.system === '已切回群聊' && chatUi?.st?.lastRole === 'system',
+      `假 QQ 渲染 user / bot / system 三种消息（msgs=${chatUi?.msgs} user=${chatUi?.user} bot=${chatUi?.bot} system=${chatUi?.system} state=${JSON.stringify(chatUi?.st)}）`);
+    ok(chatUi?.old === false, `假 QQ 旧 fake.text 控件已消失（旧控件=${chatUi?.old}）`);
+    ok(chatUi?.before === chatUi?.after,
+      `假 QQ 输入不触发整页重绘（builds ${chatUi?.before} → ${chatUi?.after}）`);
+    ok(chatUi?.reduced || chatUi?.anim >= 3,
+      `假 QQ 新消息真的在播动画（anim=${chatUi?.anim} · reduced=${chatUi?.reduced}）`);
+    ok(chatUi?.typing === true,
+      `假 QQ 等回复时显示正在输入（typing=${chatUi?.typing}）`);
+    await evalJs(`(() => {
+      const S = window.__next;
+      if (S) { S.extra.fakeRunning = false; S.extra.fakeMsgs = []; S.extra.fakeSeen = {}; S.extra.fakeDraft = ''; }
+      return 1;
+    })()`);
   } catch (e) {
     ok(false, `插件技能工厂/记忆/技能页冒烟失败：${e && e.message ? e.message : e}`);
   }
@@ -3820,6 +4187,74 @@ try {
   ok(shellOffline && !shellOffline.demo, '壳内离线没有误显示「演示模式」');
   ok(/后端未连接/.test(shellOffline?.subline || ''), '顶栏副标题说明后端未连接');
   await send('Network.setBlockedURLs', { urls: [] });
+
+  /* ── 界面动画帧率上限 0–120（2026-11-01）────────────────────────────
+     默认 0 = 不限；设 30 后真实 rAF 采样必须落在 30 附近；
+     设置层打开期间 3 秒轮询不再整页重建（softPaint 早退）。 */
+  console.log('\n── 设置层：界面动画帧率上限 ──');
+  const fpsUi = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const gear = document.getElementById('setGear');
+    const layer = document.getElementById('settingsLayer');
+    const fr = window.UIFrameRate;
+    const range = document.getElementById('uiFpsRange');
+    const tag = document.getElementById('uiFpsTag');
+    const nowEl = document.getElementById('uiFpsNow');
+    const card = document.getElementById('card-appearance-perf');
+    if (!fr || !range || !tag || !nowEl || !card) return { error: '帧率控件或 UIFrameRate 缺失' };
+    const store = () => { try { return localStorage.getItem('qqbot-ui-fps'); } catch { return 'x'; } };
+    const initial = {
+      get: fr.get(), stored: store(), card: !!card,
+      min: range.getAttribute('min'), max: range.getAttribute('max'),
+      disabled: range.disabled,
+    };
+    if (layer.dataset.open !== 'true') gear.click();
+    await sleep(420);
+    const rail = document.querySelector('.set-rail-item[data-target="sec-appearance"]');
+    if (rail) { rail.click(); await sleep(520); }
+    range.value = '30';
+    range.dispatchEvent(new Event('change', { bubbles: true }));
+    await sleep(950);
+    const m30 = await fr.measure({ ms: 600 });
+    const at30 = {
+      get: fr.get(), stored: store(), range: range.value, tag: tag.textContent,
+      now: nowEl.textContent, measure: m30 && m30.fps,
+    };
+    fr.set(1); const low = fr.get();
+    fr.set(121); const high = fr.get();
+    fr.set(-5); const zero = fr.get();
+    fr.set(30);
+    const stats = window.__paintStats;
+    const b0 = stats ? stats.builds : null;
+    await sleep(3400);
+    const b1 = stats ? stats.builds : null;
+    fr.set(0);
+    const m0 = await fr.measure({ ms: 450 });
+    const end = {
+      get: fr.get(), stored: store(), range: range.value, tag: tag.textContent,
+      measure: m0 && m0.fps, cap: m0 && m0.cap,
+    };
+    if (layer.dataset.open === 'true') gear.click();
+    await sleep(300);
+    try { localStorage.removeItem('qqbot-ui-fps'); } catch { /* 隐私模式 */ }
+    return { initial, at30, low, high, zero, builds: { b0, b1 }, end };
+  })()`);
+  ok(fpsUi && !fpsUi.error && fpsUi.initial.get === 0 && (fpsUi.initial.stored === null || fpsUi.initial.stored === '0')
+    && fpsUi.initial.card && fpsUi.initial.min === '0' && fpsUi.initial.max === '120',
+  `流畅度卡默认不限且范围 0–120（${JSON.stringify(fpsUi?.initial)} · ${fpsUi?.error || 'ok'}）`);
+  ok(fpsUi && fpsUi.at30 && fpsUi.at30.get === 30 && fpsUi.at30.stored === '30'
+    && fpsUi.at30.range === '30' && /30 fps/.test(fpsUi.at30.tag)
+    && /约/.test(fpsUi.at30.now) && fpsUi.at30.measure >= 10 && fpsUi.at30.measure <= 45,
+  `设 30 后真实 rAF 采样约 30（${JSON.stringify(fpsUi?.at30)}）`);
+  ok(fpsUi && fpsUi.low === 30 && fpsUi.high === 120 && fpsUi.zero === 0,
+    `边界钳制：1→30 · 121→120 · -5→0（${JSON.stringify(fpsUi && { low: fpsUi.low, high: fpsUi.high, zero: fpsUi.zero })}）`);
+  ok(fpsUi && fpsUi.builds && fpsUi.builds.b0 !== null && fpsUi.builds.b1 === fpsUi.builds.b0,
+    `设置层打开时 3 秒轮询不整页重建（builds=${JSON.stringify(fpsUi?.builds)}）`);
+  ok(fpsUi && fpsUi.end && fpsUi.end.get === 0
+    && (fpsUi.end.stored === null || fpsUi.end.stored === '0')
+    && fpsUi.end.range === '0' && /不限/.test(fpsUi.end.tag)
+    && fpsUi.end.cap === 0 && fpsUi.end.measure > 0,
+  `恢复 0 后回到显示器刷新率（${JSON.stringify(fpsUi?.end)}）`);
 } catch (e) {
   fails.push(`守卫自己出错：${e && e.message ? e.message : e}`);
 } finally {
@@ -3838,5 +4273,5 @@ if (fails.length) {
   console.log(`── ${fails.length} 处问题 ──`);
   process.exit(1);
 }
-console.log('\n✓ 前端 DOM 守卫通过：首屏 + 检查表 + 逐页遍历（含零运行时错误 / 无白屏页）+ 工厂三页（三 frame；插件技能工厂内含插件/Skill 模式，二级导航驱动 / 导航浮层可点 / 切帧不重载）+ 插话冷却进度条 + 设置层外观/持久化/窄屏入口 + 二级随内容收缩 + 岛内维护域（7 域，28 页）');
+console.log('\n✓ 前端 DOM 守卫通过：首屏 + 检查表 + 逐页遍历（含零运行时错误 / 无白屏页）+ 工厂三页（三 frame；插件技能工厂内含插件/Skill 模式，二级导航驱动 / 导航浮层可点 / 切帧不重载）+ 插话冷却进度条 + 设置层外观/持久化/窄屏入口 + 二级随内容收缩 + 岛内维护域（7 域，26 页）');
 process.exit(0);

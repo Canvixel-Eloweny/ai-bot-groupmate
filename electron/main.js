@@ -65,6 +65,7 @@ let desktop = null;
 let isQuitting = false;
 let pendingShow = false;
 let windowReady = false;
+let START_PLAN = null;
 let saveTimer = null;
 let trayDegraded = false;
 let trayFailed = false;
@@ -727,6 +728,104 @@ function readClosePreference() {
   } catch { return 'tray'; }
 }
 
+/**
+ * 壳实际采用的启动形态（2026-11-01）。
+ *
+ * `modeExplicit` 是用户在设置里明确点过的标记；旧配置/首次安装写进去的
+ * browser 只是旧默认，不能把升级用户从桌面窗口切走。开发树默认同样按
+ * window，`QQBOT_SHELL_HONOR_LAUNCH_MODE=1` 才消费没有 explicit 标记的旧配置。
+ */
+function readLaunchPreference() {
+  const lm = desktop && desktop.launchMode;
+  const fallback = { mode: 'window', modeExplicit: false, openOnStart: true };
+  if (!lm) return fallback;
+  let launch;
+  try {
+    const text = fs.readFileSync(CONFIG_FILE, 'utf8').replace(/^\uFEFF/, '');
+    launch = lm.launchOfConfig(JSON.parse(text));
+  } catch {
+    launch = { ...fallback };
+  }
+  const forced = String(process.env.QQBOT_SHELL_START_MODE || '').trim();
+  if (forced === 'browser' || forced === 'window') {
+    return { ...launch, mode: forced, modeExplicit: true };
+  }
+  if (launch.modeExplicit === true) return launch;
+  if (process.env.QQBOT_SHELL_HONOR_LAUNCH_MODE === '1') return launch;
+  return { ...launch, mode: 'window' };
+}
+
+function currentStartPlan() {
+  if (START_PLAN) return START_PLAN;
+  const pref = readLaunchPreference();
+  const plan = desktop && desktop.shellState
+    ? desktop.shellState.decideShellStart({
+      mode: pref.mode,
+      openOnStart: pref.openOnStart,
+      wantHidden: HIDDEN,
+      trayUsable: trayUsableNow(),
+    })
+    : { action: 'show', reason: 'no-shell-state' };
+  START_PLAN = { ...plan, pref };
+  return START_PLAN;
+}
+
+function recordLaunchFallback(reason) {
+  const lm = desktop && desktop.launchMode;
+  if (!lm || typeof lm.recordLaunch !== 'function') return;
+  try {
+    lm.recordLaunch(path.join(USER_ROOT, 'panel', 'launch-log.jsonl'), {
+      t: new Date().toISOString(),
+      entry: 'win-shell',
+      mode: 'window',
+      kind: 'window',
+      used: 'electron',
+      opened: true,
+      reason,
+    });
+  } catch { /* 跟踪失败不影响窗口 */ }
+}
+
+/**
+ * 在系统默认浏览器打开控制台。
+ * - `hide`：成功且托盘可用时把桌面窗口收进托盘；
+ * - 失败时：启动期强制显示窗口（不留幽灵进程），IPC 期保持窗口并回错误。
+ */
+async function openInBrowserNow({ hide = true, reason = 'ipc' } = {}) {
+  refreshPanelUrl();
+  const verdict = desktop && desktop.urlPolicy
+    ? desktop.urlPolicy.classifyExternal(PANEL_URL)
+    : { ok: false, url: '' };
+  if (!verdict.ok) {
+    const error = '面板地址不可用';
+    log(`open external skipped: ${error} (${reason})`);
+    if (reason === 'startup' || hide) { pendingShow = true; showWindow(); }
+    if (reason === 'startup') recordLaunchFallback('panel-url-unavailable');
+    return { ok: false, hidden: false, error };
+  }
+  try {
+    if (process.env.QQBOT_SHELL_OPEN_EXTERNAL_DRYRUN === '1') {
+      const marker = String(process.env.QQBOT_SHELL_OPEN_EXTERNAL_LOG || '').trim();
+      if (marker) {
+        try { fs.appendFileSync(marker, `${new Date().toISOString()} ${verdict.url} ${reason}\n`); } catch { /* 测试标记写不进去不影响启动 */ }
+      }
+      log(`open-external dryrun ${verdict.url} (${reason})`);
+    } else {
+      await shell.openExternal(verdict.url);
+    }
+  } catch (e) {
+    const error = e && e.message ? e.message : String(e);
+    log(`open external failed: ${error} (${reason})`);
+    if (reason === 'startup' || hide) { pendingShow = true; showWindow(); }
+    if (reason === 'startup') recordLaunchFallback('open-external-failed');
+    return { ok: false, hidden: false, error };
+  }
+  const canHide = !!(win && !win.isDestroyed() && trayUsableNow());
+  if (hide && canHide) hideToTray();
+  else if (!canHide) trayHidden = false;
+  return { ok: true, hidden: !!(hide && canHide) };
+}
+
 /** Explorer 不在时托盘图标没有宿主；此时 getBounds 仍可能残留非零值。 */
 function explorerRunning() {
   if (process.platform !== 'win32') return true;
@@ -932,8 +1031,8 @@ function createWindow() {
   // 这不是“再点一次就好”的小毛病：第一次双击必须出窗口。4 秒兜底只在应显示时补。
   const showFallback = setTimeout(async () => {
     if (!win || win.isDestroyed() || isQuitting) return;
-    const decision = desktop.shellState.decideStartVisibility({ hidden: HIDDEN, trayUsable: trayUsableNow() });
-    if (!((decision === 'show' || pendingShow) && !win.isVisible())) return;
+    const { action } = currentStartPlan();
+    if (!((action === 'show' || pendingShow) && !win.isVisible())) return;
     log('fallback show (ready-to-show timeout)');
     /* 先让渲染进程产出一帧再 show：VM 首装/杀毒扫描时 ready-to-show 可能晚到十几秒，
        直接 show 会先露出 backgroundColor（表现为“空窗/白窗闪一下”）。
@@ -954,9 +1053,9 @@ function createWindow() {
     clearTimeout(showFallback);
     windowReady = true;
     if (saved && saved.maximized) win.maximize();
-    const decision = desktop.shellState.decideStartVisibility({ hidden: HIDDEN, trayUsable: trayUsableNow() });
-    if (decision === 'hidden') trayHidden = true;
-    if (decision === 'show' || pendingShow) {
+    const { action } = currentStartPlan();
+    if (action === 'hidden' || action === 'browser') trayHidden = true;
+    if (action === 'show' || pendingShow) {
       showWindow();
       // ready-to-show 里的 show() 在个别会话（由安装器拉起、窗口站刚切换）会晚一拍才映射；
       // 600ms 后再补一次，避免“第一次双击没窗口、再点一次才出来”。
@@ -1082,7 +1181,8 @@ function createTray() {
     tray = new Tray(icon.image);
     tray.setToolTip('Estrella Bot');
     tray.setContextMenu(Menu.buildFromTemplate([
-      { label: '打开控制台', click: showWindow },
+      { label: '在浏览器打开控制台', click: () => { void openInBrowserNow({ hide: true, reason: 'tray' }); } },
+      { label: '显示桌面窗口', click: showWindow },
       { label: '测试通知', click: () => { showNotification({ title: 'Estrella Bot', body: '通知通道工作正常' }); } },
       { type: 'separator' },
       { label: '退出', click: () => { void quitChain(); } },
@@ -1139,10 +1239,37 @@ function setupIpc() {
     if (!trustedIpc(event)) return false;
     return Boolean(win && !win.isDestroyed() && win.isVisible());
   });
+  ipcMain.handle('shell:open-in-browser', async (event) => {
+    if (!trustedIpc(event)) return { ok: false, error: '不信任的调用来源' };
+    return await openInBrowserNow({ hide: true, reason: 'ipc' });
+  });
+  ipcMain.handle('shell:show-window', (event) => {
+    if (!trustedIpc(event)) return { ok: false, error: '不信任的调用来源' };
+    showWindow();
+    return { ok: true };
+  });
+  ipcMain.handle('shell:hide-window', (event) => {
+    if (!trustedIpc(event)) return { ok: false, hidden: false, error: '不信任的调用来源' };
+    if (!trayUsableNow()) return { ok: false, hidden: false, error: '托盘不可用，窗口保持显示' };
+    hideToTray();
+    return { ok: true, hidden: true };
+  });
 }
 
 function main() {
-  app.on('second-instance', () => { pendingShow = true; showWindow(); });
+  app.on('second-instance', () => {
+    // 隐藏时二次启动 = 用户要把桌面窗口叫回来（浏览器模式也不例外）。
+    if (!win || win.isDestroyed() || !win.isVisible()) {
+      pendingShow = true;
+      showWindow();
+      return;
+    }
+    if (readLaunchPreference().mode === 'browser') {
+      void openInBrowserNow({ hide: true, reason: 'second-instance' });
+      return;
+    }
+    showWindow();
+  });
   app.on('before-quit', (event) => {
     if (isQuitting) return;
     event.preventDefault();
@@ -1184,6 +1311,7 @@ function main() {
       windowBounds: await import('../src/desktop/window-bounds.js'),
       shellState: await import('../src/desktop/shell-state.js'),
       panelControl: await import('../src/desktop/panel-control.js'),
+      launchMode: await import('../src/launch-mode.js'),
     };
     session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
       callback(permission === 'clipboard-sanitized-write');
@@ -1193,6 +1321,14 @@ function main() {
     if (process.platform !== 'darwin') Menu.setApplicationMenu(null);
     createWindow();
     createTray();
+    START_PLAN = currentStartPlan();
+    if (START_PLAN.action === 'browser') {
+      trayHidden = true;
+      try { if (win && !win.isDestroyed()) win.setSkipTaskbar(true); } catch { /* 老版本无此 API */ }
+      void openInBrowserNow({ hide: true, reason: 'startup' });
+    } else if (START_PLAN.action === 'hidden') {
+      trayHidden = true;
+    }
     startTrayHealthGuard();
     setupIpc();
     writeShellState();

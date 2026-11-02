@@ -44,6 +44,7 @@ const SUB_NAV = {
     { label: '显示模式', target: 'card-appearance-mode' },
     { label: '主题色', target: 'card-appearance-accent' },
     { label: '转场动画', target: 'card-appearance-motion' },
+    { label: '流畅度', target: 'card-appearance-perf' },
     { label: '背景', target: 'card-appearance-bg' },
     { label: '自定义背景', target: 'card-appearance-cbg' },
     { label: '字体', target: 'card-appearance-font' },
@@ -225,6 +226,69 @@ export function initSettings(deps) {
     setTimeout(() => withShader(cb), 50);
   }
 
+  /* 设置层里的等高线速度预览：只在「设置打开 + 外观页」时播，关闭/切页立即释放。 */
+  function syncContourPreview() {
+    const cb = window.ContourBG;
+    if (!cb || typeof cb.setPreview !== 'function') return;
+    cb.setPreview(isOpen && currentPageId === 'sec-appearance');
+  }
+
+  /* ── 流畅度：界面动画帧率上限（2026-11-01）────────────────────────── */
+  const fpsText = (v) => (Number(v) > 0 ? `${Math.round(Number(v))} fps` : '不限（跟随显示器）');
+  function paintUiFps() {
+    const range = $('uiFpsRange');
+    const tag = $('uiFpsTag');
+    const fr = window.UIFrameRate;
+    if (!range || !tag) return;
+    if (!fr) {
+      range.disabled = true;
+      tag.textContent = '不可用';
+      return;
+    }
+    const v = fr.get();
+    range.value = String(v);
+    tag.textContent = fpsText(v);
+  }
+  async function measureUiFps() {
+    const now = $('uiFpsNow');
+    const fr = window.UIFrameRate;
+    if (!now || !fr) return;
+    now.textContent = '测量中…';
+    try {
+      const r = await fr.measure({ ms: 650 });
+      now.textContent = !r || r.hidden ? '页面不可见' : `约 ${r.fps} 帧/秒`;
+    } catch {
+      now.textContent = '测量失败';
+    }
+  }
+  const fpsRange = $('uiFpsRange');
+  if (fpsRange) {
+    fpsRange.addEventListener('input', () => {
+      const raw = Number(fpsRange.value);
+      const shown = raw === 0 ? 0 : Math.max(30, Math.min(120, Math.round(raw)));
+      const tag = $('uiFpsTag');
+      if (tag) tag.textContent = fpsText(shown);
+    });
+    fpsRange.addEventListener('change', () => {
+      const fr = window.UIFrameRate;
+      if (!fr) return;
+      fr.set(Number(fpsRange.value));
+      paintUiFps();
+      void measureUiFps();
+    });
+  }
+  const fpsReset = $('uiFpsReset');
+  if (fpsReset) {
+    fpsReset.addEventListener('click', () => {
+      const fr = window.UIFrameRate;
+      if (!fr) return;
+      fr.set(0);
+      paintUiFps();
+      void measureUiFps();
+    });
+  }
+  document.addEventListener('ui:fps', paintUiFps);
+
   const bgSpeed = $('bgSpeed');
   if (bgSpeed) {
     bgSpeed.addEventListener('click', (ev) => {
@@ -283,12 +347,14 @@ export function initSettings(deps) {
   async function saveLaunch(patch, okMsg) {
     try {
       const r = await deps.post('/api/config', { launch: patch });
-      deps.toast((r && r.msg) || okMsg, 'ok');
+      if (okMsg !== null && okMsg !== undefined) deps.toast((r && r.msg) || okMsg, 'ok');
       await deps.refresh(true);
       paintLaunch();
+      return true;
     } catch (e) {
       deps.toast(`保存失败：${e.message}`, 'bad');
       paintLaunch();
+      return false;
     }
   }
 
@@ -301,7 +367,7 @@ export function initSettings(deps) {
     }
     const at = last.t ? new Date(last.t) : null;
     const time = at && !Number.isNaN(at.getTime()) ? at.toLocaleString('zh-CN', { hour12: false }) : '—';
-    const how = last.used || last.kind || last.mode || '—';
+    const how = last.howLabel || last.used || last.kind || last.mode || '—';
     const result = last.skipped
       ? '按设置未打开界面'
       : (last.opened === false ? `打开失败（${last.error || '原因未知'}）` : '已打开');
@@ -315,7 +381,11 @@ export function initSettings(deps) {
 
   function paintLaunch() {
     const l = launchOf();
-    setSeg('setModeSeg', 'data-mode-opt', l.mode === 'window' ? 'window' : 'browser');
+    const shell = window.estrellaShell && window.estrellaShell.isShell ? window.estrellaShell : null;
+    // 旧配置没有 modeExplicit 标记：Windows 壳实际按桌面窗口启动，
+    // 面板在桌面窗口里也显示「独立窗口」，不能让选中态和实际形态对不上。
+    const mode = shell && l.modeExplicit !== true ? 'window' : (l.mode === 'window' ? 'window' : 'browser');
+    setSeg('setModeSeg', 'data-mode-opt', mode);
     setSeg('setCloseSeg', 'data-close-opt', l.closeAction === 'quit' ? 'quit' : 'tray');
     setSwitch('setOpenOnStart', l.openOnStart !== false);
     setSwitch('setAutoProtocol', l.autoProtocol !== false);
@@ -342,11 +412,55 @@ export function initSettings(deps) {
 
   const modeSeg = $('setModeSeg');
   if (modeSeg) {
-    modeSeg.addEventListener('click', (ev) => {
+    modeSeg.addEventListener('click', async (ev) => {
       const btn = ev.target.closest('[data-mode-opt]');
       if (!btn) return;
-      if (btn.getAttribute('aria-pressed') === 'true') return;
-      saveLaunch({ mode: btn.dataset.modeOpt }, '已保存 —— 下次启动生效');
+      const want = btn.dataset.modeOpt === 'window' ? 'window' : 'browser';
+      const l = launchOf();
+      const shell = window.estrellaShell && window.estrellaShell.isShell ? window.estrellaShell : null;
+      // 不能因为按钮已经按下就早退：旧配置默认就是 browser，但桌面壳一直按窗口启动。
+      // 用户点它就是要"现在切过去"，所以仍要保存并执行。
+      const needsSave = want !== l.mode || (shell && l.modeExplicit !== true);
+      if (needsSave) {
+        const ok = await saveLaunch({ mode: want }, null);
+        if (!ok) return;
+      }
+      if (want === 'browser') {
+        if (shell && typeof shell.openInBrowser === 'function') {
+          try {
+            const r = await shell.openInBrowser();
+            if (r && r.ok) {
+              deps.toast(r.hidden
+                ? '已在浏览器打开，桌面窗口已收进托盘'
+                : '浏览器已打开；托盘不可用，桌面窗口保留', r.hidden ? 'ok' : 'warn');
+            } else {
+              deps.toast(`浏览器没有打开：${(r && r.error) || '原因未知'}`, 'bad');
+            }
+          } catch (e) {
+            deps.toast(`浏览器没有打开：${e.message}`, 'bad');
+          }
+        } else if (shell) {
+          try {
+            window.open('/', '_blank');
+            deps.toast('已请求在浏览器打开；若桌面窗口还在，请手动收起', 'ok');
+          } catch {
+            deps.toast('请手动用浏览器打开控制台地址', 'warn');
+          }
+        } else {
+          deps.toast('当前已经在浏览器标签页里；设置已保存，下次启动仍按此选择', 'ok');
+        }
+      } else if (shell && typeof shell.showWindow === 'function') {
+        try {
+          await shell.showWindow();
+          deps.toast('已切回桌面窗口；下次启动仍按此选择', 'ok');
+        } catch (e) {
+          deps.toast(`桌面窗口没有打开：${e.message}`, 'warn');
+        }
+      } else if (shell) {
+        deps.toast('设置已保存；请从托盘或再次双击桌面图标切回桌面窗口', 'warn');
+      } else {
+        deps.toast('设置已保存；双击桌面图标或托盘「显示桌面窗口」可立即打开桌面窗口', 'warn');
+      }
     });
   }
   const closeSeg = $('setCloseSeg');
@@ -931,6 +1045,7 @@ export function initSettings(deps) {
     introTimer = setTimeout(() => layer.classList.remove('is-intro'), 1300);
     paintAll();
     startRepoStars();
+    void measureUiFps();
     layer.dataset.open = 'true';
     layer.removeAttribute('aria-hidden');
     gear.classList.add('is-open');
@@ -946,6 +1061,7 @@ export function initSettings(deps) {
     spinGear(true);
     scroll.scrollTop = 0;
     setPage(currentPageId || 'sec-appearance', { animate: false });
+    syncContourPreview();
     requestAnimationFrame(paintFactoryPreview);
     Promise.resolve(deps.refresh(true)).then(() => {
       if (!isOpen) return;
@@ -977,9 +1093,12 @@ export function initSettings(deps) {
     setBackgroundInert(false);
     resumeCustomVideoForSettings();
     if (window.ContourBG) window.ContourBG.setSettingsOpen(false);
+    syncContourPreview();
     spinGear(false);
     if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus({ preventScroll: true });
     else gear.focus({ preventScroll: true });
+    // 设置打开期间轮询跳过整页重绘（批次 D），关闭时补一次，避免页面停在旧状态。
+    void deps.refresh(true);
   }
 
   layer.setAttribute('aria-hidden', 'true');
@@ -1303,6 +1422,7 @@ export function initSettings(deps) {
     if (opts.animate !== false) {
       railHpSettleT = setTimeout(() => syncRailHp(true), 380);
     }
+    syncContourPreview();
   }
 
   railItems.forEach((r) => {
@@ -2615,6 +2735,7 @@ export function initSettings(deps) {
     paintFont();
     paintChip();
     paintBackground();
+    paintUiFps();
     paintLaunch();
     paintAbout();
     paintUpdateAffordance();

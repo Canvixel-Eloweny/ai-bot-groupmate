@@ -271,7 +271,7 @@ async function stopPanel(pid) {
  * `QQBOT_DESKTOP_DIR` / `QQBOT_ELECTRON_EXE` 只作显式覆盖（dev/救急）。
  * 这里必须删掉 ELECTRON_RUN_AS_NODE：一旦继承，Electron 会以 Node 跑而不是开窗。
  */
-async function openShell({ installRoot, programRoot, userRoot, configFile, panelUrl, hidden = WANT_HIDDEN }) {
+async function openShell({ installRoot, programRoot, userRoot, configFile, panelUrl, hidden = WANT_HIDDEN, mode = 'window' }) {
   let desktopDir = path.join(programRoot, 'electron');
   let shellExe = '';
   try {
@@ -328,7 +328,7 @@ async function openShell({ installRoot, programRoot, userRoot, configFile, panel
     try {
       const lm = await import(pathToFileURL(path.join(programRoot, 'src', 'launch-mode.js')).href);
       await lm.recordLaunch(path.join(userRoot, 'panel', 'launch-log.jsonl'), {
-        entry: 'win-shell', kind: 'electron',
+        entry: 'win-shell', kind: 'electron', mode,
         opened: !hidden,
         ...(hidden ? { skipped: true, hidden: true } : {}),
         used: 'electron', pid: result.pid,
@@ -360,7 +360,16 @@ async function openWindow({ installRoot, programRoot, userRoot, configFile, pane
     : WANT_HIDDEN;
   if (hidden) logLine(`ℹ 启动后留在后台（${WANT_HIDDEN ? '--hidden' : 'launch.openOnStart=false'}）`);
 
-  const shell = await openShell({ installRoot, programRoot, userRoot, configFile, panelUrl, hidden });
+  /* 壳实际采用的形态：用户显式点过才认配置；旧配置里的 browser 只是旧默认，
+     桌面壳升级后仍按窗口走（与 electron/main.js 的 readLaunchPreference 同一条规则）。 */
+  const forcedMode = String(process.env.QQBOT_SHELL_START_MODE || '').trim();
+  const mode = forcedMode === 'browser' || forcedMode === 'window'
+    ? forcedMode
+    : (launch && launch.modeExplicit === true
+      ? launch.mode
+      : (process.env.QQBOT_SHELL_HONOR_LAUNCH_MODE === '1' && launch ? launch.mode : 'window'));
+
+  const shell = await openShell({ installRoot, programRoot, userRoot, configFile, panelUrl, hidden, mode });
   if (shell.ok) return { ok: true, result: shell.result };
   if (shell.reason !== 'no-shell' && shell.error) logLine(`⚠ ${shell.error}`);
   if (hidden) return { ok: true, skipped: true, reason: 'hidden-without-shell' };

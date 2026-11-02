@@ -99,16 +99,18 @@ async function main() {
     const r = ensureConfigJson();
     say(r.created ? '[ok] config.json created (allowed group list left empty)' : '- config.json already present, keeping user config');
     if (r.created) {
-      // 安装版默认**浏览器标签页**。曾经默认 window（Edge --app 独立窗口 + 专用 profile），
-      // 群友测试与 VM 复现（2026-10-18）证明那条路首跑必然先给用户一个**灰色空窗**：
-      // 全新 profile 的首跑 UI（Edge 的同步/登录卡）+ 空白页一起出现，launch-log 里
-      // opened=true 但屏幕上没有可用窗口，用户只能再双击一次图标。
-      // 标签页走用户自己的浏览器 profile，没有首跑 UI；window 模式保留为可选设置。
+      // 安装版默认**桌面窗口**（2026-11-01）：旧默认 browser 是 Edge --app 时代
+      // 为绕开灰色空窗写的；现在桌面壳自己开窗口，首跑不再有那个问题。
+      // `modeExplicit:false` 表示这不是用户点的选择，升级迁移时不会被误读成"要浏览器"。
       const cfgFile = path.join(userRoot, 'config.json');
       const cfg = readJsonFile(cfgFile);
-      cfg.launch = { ...(cfg.launch && typeof cfg.launch === 'object' ? cfg.launch : {}), mode: 'browser' };
+      cfg.launch = {
+        ...(cfg.launch && typeof cfg.launch === 'object' ? cfg.launch : {}),
+        mode: 'window',
+        modeExplicit: false,
+      };
       writeJsonAtomic(cfgFile, cfg);
-      say('[ok] installed default = browser tab (launch.mode=browser; a dedicated window stays selectable in settings)');
+      say('[ok] installed default = desktop window (launch.mode=window, modeExplicit=false)');
     }
   } catch (e) {
     sayErr(`[x] creating config.json failed: ${e.message}`);

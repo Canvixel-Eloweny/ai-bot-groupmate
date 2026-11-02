@@ -9,7 +9,8 @@
  *     之后、自定义背景之前；`html.bg-contour` 是唯一的显示开关。
  *  ② 不抢点击：wrapper `aria-hidden` + CSS `pointer-events:none`。
  *  ③ 省资源：`preload="none"`；只有真正要播时才设 `src`。reduced-motion /
- *     saveData / 无速度 / 设置层打开 / 自定义背景激活时一律暂停。
+ *     saveData / 无速度 / 设置层打开 / 自定义背景激活时主视频一律暂停；
+ *     设置层里的实时预览只在「外观页 + 等高线 + 速度>0 + 未减弱动效」时播 lite 片。
  *  ④ 低端机：deviceMemory<=4 或 hardwareConcurrency<=4 → 1280×720/20fps 轻量片；
  *     标准片解码失败先退轻量片，再失败退静态海报（海报带极慢 CSS 漂移）。
  *  ⑤ 主题：跟随 `html[data-theme]`；换主题先铺新海报再换源，避免白闪/黑闪。
@@ -106,6 +107,11 @@
   let retryArmed = false;
   let posterTheme = null;
   let state = 'off';
+  let previewEl = null;
+  let previewVideo = null;
+  let previewStateEl = null;
+  let previewOn = false;
+  let previewState = 'off';
 
   /* 解析阶段就把旧引擎停掉：此时 canvas 还没初始化，setActive 只置标志，
      旧引擎的 DOMContentLoaded init 会看到 active=false，不会画第一帧。 */
@@ -128,6 +134,111 @@
   const setState = (next) => {
     state = next;
     if (layer) layer.dataset.contourState = next;
+  };
+
+  const speedLabelOf = () => {
+    const list = speedList();
+    const hit = list.find((s) => s.v === speed.v);
+    return hit ? hit.label : `${speedMul}×`;
+  };
+
+  const previewPosterUrl = () => mediaUrl(posterName(theme));
+  const previewSrcUrl = () => mediaUrl(videoName(theme, 'lite'));
+
+  const setPreviewState = (text) => {
+    previewState = text;
+    if (previewStateEl) previewStateEl.textContent = text;
+  };
+
+  const pausePreview = () => {
+    if (!previewVideo) return;
+    try { previewVideo.pause(); } catch { /* ignore */ }
+  };
+
+  const clearPreviewSrc = () => {
+    if (!previewVideo) return;
+    pausePreview();
+    if (previewVideo.getAttribute('src')) {
+      try {
+        previewVideo.removeAttribute('src');
+        previewVideo.load();
+      } catch { /* ignore */ }
+    }
+  };
+
+  /* 设置层里的实时小预览：只吃 lite 片，失败也绝不回落到主视频的 fallback。 */
+  const applyPreview = () => {
+    if (!previewEl || !previewVideo) return;
+    const posterUrl = previewPosterUrl();
+    if (posterUrl) {
+      previewEl.style.backgroundImage = `url("${posterUrl}")`;
+      if (previewVideo.poster !== posterUrl) previewVideo.poster = posterUrl;
+    }
+    if (!previewOn) {
+      clearPreviewSrc();
+      previewEl.hidden = true;
+      setPreviewState('off');
+      return;
+    }
+    previewEl.hidden = false;
+    if (mode !== 'contour') {
+      clearPreviewSrc();
+      setPreviewState('流光模式：速度直接作用在主背景');
+      return;
+    }
+    if (reduced) {
+      clearPreviewSrc();
+      setPreviewState('系统已开启减少动态效果，速度不会生效');
+      return;
+    }
+    if (speedMul <= 0) {
+      clearPreviewSrc();
+      setPreviewState('已停用（速度=无）');
+      return;
+    }
+    if (hidden) {
+      clearPreviewSrc();
+      setPreviewState('页面不可见，预览已暂停');
+      return;
+    }
+    if (navigator.connection && navigator.connection.saveData) {
+      clearPreviewSrc();
+      setPreviewState('省流模式：预览不加载视频');
+      return;
+    }
+    const want = previewSrcUrl();
+    if (!want) {
+      clearPreviewSrc();
+      setPreviewState('预览地址不可用');
+      return;
+    }
+    if (previewVideo.getAttribute('src') !== want) {
+      try { previewVideo.pause(); } catch { /* ignore */ }
+      previewVideo.preload = 'auto';
+      previewVideo.setAttribute('src', want);
+      try { previewVideo.load(); } catch { /* ignore */ }
+    }
+    if (previewVideo.playbackRate !== speedMul) previewVideo.playbackRate = speedMul;
+    if (!previewVideo.paused) {
+      setPreviewState(`播放中 · ${speedLabelOf()}`);
+      return;
+    }
+    const p = previewVideo.play();
+    if (p && p.catch) {
+      p.catch((err) => {
+        if (!previewOn) return;
+        if (err && err.name === 'AbortError') return;
+        pausePreview();
+        setPreviewState('预览加载失败（主背景不受影响）');
+      });
+    } else {
+      setPreviewState(`播放中 · ${speedLabelOf()}`);
+    }
+  };
+
+  const setPreview = (on) => {
+    previewOn = !!on;
+    applyPreview();
   };
 
   const shouldPlay = () => mode === 'contour'
@@ -184,6 +295,9 @@
     video.preload = 'auto';
     video.src = url;
     try { video.load(); } catch { /* ignore */ }
+    if (speedMul > 0) {
+      try { video.playbackRate = speedMul; } catch { /* ignore */ }
+    }
     setState('loading');
     return true;
   };
@@ -218,6 +332,12 @@
       posterTheme = theme;
     }
 
+    /* 设置层打开时主视频会暂停，但倍率仍要先写进去 —— 关闭设置后第一帧就按新速度播，
+       不能等到下一次 apply 才补。0 不是合法的 playbackRate，跳过。 */
+    if (speedMul > 0 && video.playbackRate !== speedMul) {
+      try { video.playbackRate = speedMul; } catch { /* 个别浏览器不支持时保持 1x */ }
+    }
+
     if (!shouldPlay()) {
       pauseVideo();
       layer.classList.remove('is-playing');
@@ -228,6 +348,7 @@
       }
       const posterState = quality === 'poster' || failed || reduced || speedMul <= 0;
       setState(active ? (posterState ? 'poster' : 'idle') : 'off');
+      applyPreview();
       return;
     }
 
@@ -250,6 +371,7 @@
       setState('loading');
       playVideo();
     }
+    applyPreview();
   };
 
   const setMode = (next) => {
@@ -291,11 +413,32 @@
       window.ShaderBG.setActive(false);
     }
 
+    previewEl = document.getElementById('bgPreview');
+    previewVideo = document.getElementById('bgPreviewVideo');
+    previewStateEl = document.getElementById('bgPreviewState');
+
     video.muted = true;
     video.playsInline = true;
     video.loop = true;
     video.preload = 'none';
     if ('disablePictureInPicture' in video) video.disablePictureInPicture = true;
+
+    if (previewVideo) {
+      previewVideo.muted = true;
+      previewVideo.playsInline = true;
+      previewVideo.loop = true;
+      previewVideo.preload = 'none';
+      if ('disablePictureInPicture' in previewVideo) previewVideo.disablePictureInPicture = true;
+      previewVideo.addEventListener('playing', () => {
+        if (!previewOn) return;
+        setPreviewState(`播放中 · ${speedLabelOf()}`);
+      });
+      previewVideo.addEventListener('error', () => {
+        if (!previewOn || !previewVideo.getAttribute('src')) return;
+        pausePreview();
+        setPreviewState('预览加载失败（主背景不受影响）');
+      });
+    }
 
     video.addEventListener('playing', () => {
       if (!srcMatches()) return;
@@ -377,10 +520,14 @@
     get speed() { return speed; },
     get video() { return video; },
     get poster() { return poster; },
+    get preview() { return previewOn; },
+    get previewState() { return previewState; },
+    get previewVideo() { return previewVideo; },
     pickQuality,
     setMode,
     setSuppressed,
     setSettingsOpen,
+    setPreview,
     refresh: apply,
   };
 

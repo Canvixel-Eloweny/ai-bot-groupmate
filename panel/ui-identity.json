@@ -2,7 +2,7 @@
   "schema": 1,
   "kind": "ui-identity",
   "appId": "com.estrellabot.windows",
-  "signedAt": "2026-10-31T11:35:07.231Z",
+  "signedAt": "2026-11-01T16:52:26.626Z",
   "domains": [
     {
       "id": "run",
@@ -59,14 +59,6 @@
         {
           "id": "skills",
           "label": "知识包与角色卡"
-        },
-        {
-          "id": "people",
-          "label": "群友档案"
-        },
-        {
-          "id": "faces",
-          "label": "图库"
         }
       ]
     },

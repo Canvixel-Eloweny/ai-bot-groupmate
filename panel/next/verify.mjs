@@ -1214,6 +1214,43 @@ check('等高线与旧流光互斥：默认等高线、旧引擎暂停',
   !!backplate && backplate.contourMode === 'contour' && backplate.shaderActive === false,
   backplate ? `mode=${backplate.contourMode} · shaderActive=${backplate.shaderActive}` : '取不到');
 
+/* 背景速度实时预览（2026-11-01）：设置层里的 lite 片必须真的接着速度源，关闭即释放。 */
+const previewUi = await evalJs(`
+  return (async () => {
+    const cb = window.ContourBG;
+    const box = document.getElementById('bgPreview');
+    const v = document.getElementById('bgPreviewVideo');
+    const st = document.getElementById('bgPreviewState');
+    if (!cb || !box || !v || !st) return null;
+    const reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const saveData = !!(navigator.connection && navigator.connection.saveData);
+    cb.setPreview(true);
+    await new Promise((r) => setTimeout(r, 560));
+    const before = {
+      hidden: box.hidden, src: v.getAttribute('src') || '', rate: v.playbackRate,
+      mul: cb.speed.mul, state: st.textContent || '', paused: v.paused, reduced, saveData,
+    };
+    cb.setPreview(false);
+    await new Promise((r) => setTimeout(r, 220));
+    const after = { hidden: box.hidden, src: v.getAttribute('src') || '', paused: v.paused };
+    return { before, after };
+  })()
+`);
+const previewBeforeOk = !!previewUi && previewUi.before.hidden === false
+  && (previewUi.before.reduced
+    ? previewUi.before.paused === true && /减少动态效果|不会生效/.test(previewUi.before.state)
+    : previewUi.before.saveData
+      ? previewUi.before.paused === true && /省流模式/.test(previewUi.before.state)
+      : /contour-light-lite-v2\.mp4\?v=4/.test(previewUi.before.src)
+        && previewUi.before.rate === previewUi.before.mul
+        && /播放中|预览加载失败/.test(previewUi.before.state));
+check('背景速度预览：setPreview(true) 用 lite 片并接上倍率，关闭后释放 src',
+  previewBeforeOk
+    && previewUi.after.hidden === true && previewUi.after.src === '' && previewUi.after.paused === true,
+  previewUi
+    ? `before=${JSON.stringify(previewUi.before)} · after=${JSON.stringify(previewUi.after)}`
+    : '取不到 #bgPreview/#bgPreviewVideo/#bgPreviewState');
+
 /* 后面的 shader 断言需要旧引擎真的在跑：先切到流光，结束时再切回等高线。 */
 await evalJs(`if (window.ContourBG) window.ContourBG.setMode('shader'); return true;`);
 await sleep(350);
@@ -1505,6 +1542,11 @@ for (let s = 0; s < 6; s += 1) {
 /* ① 引擎挂上了吗 —— 判据是「把手在 + Sortable 存在 + 挂载数 ≤1」 */
 const rbProvider = await evalJs(`return (window.__next && window.__next.state && window.__next.state.config && window.__next.state.config.provider) || '';`);
 const rbCloud = rbProvider === 'zhipu' || rbProvider === 'qwen';
+/* 线路板只在 zhipu/qwen 下渲染；非云线路时后面的拖拽/键盘探针**根本不该跑**
+   （探针会因为没有 [data-rb] 返回 {err}，而 `.before.join` 会当场把自检打崩）。 */
+const checkRb = (name, cond, detail) => (rbCloud
+  ? check(name, cond, detail)
+  : skip(name, `provider=${rbProvider}：线路板不渲染`));
 const rbMount = rbCloud ? await evalJs(`
   const root=document.querySelector('[data-rb]');
   if(!root) return {err:'这一页没有线路板（provider 不是 zhipu）'};
@@ -1541,7 +1583,7 @@ check('线路容器是定位元素（offsetTop 的参照物必须是它，否则
      `/api/config`，那是**用户真的模型降级链**。自检不许改用户配置
      （本文件此前的写断言特意挑了零副作用的 `/api/logs/clear`，同一条纪律）。
      所以这里临时替换 `fetch`，只放过 `/api/config` 之外的请求，测完原样装回去。 */
-const rbDrag = await evalJs(`
+const rbDrag = rbCloud ? await evalJs(`
   /* ⚠️ \`evalJs\` 包的是**非 async** 箭头函数（\`(() => { … })()\`），
      所以这里不能直接写 \`await\` —— 会当场语法报错。
      既有写法是 \`return (async () => …)()\`：交一个 Promise 出去，
@@ -1617,30 +1659,30 @@ const rbDrag = await evalJs(`
   window.fetch=realFetch;
   return res;
   })();
-`);
-check('拖拽真的换了顺序（DOM 顺序变了，且不是"拖回原位"）',
+`) : null;
+checkRb('拖拽真的换了顺序（DOM 顺序变了，且不是"拖回原位"）',
   !!rbDrag && rbDrag.before.join('|') !== rbDrag.after.join('|'),
   `前=${(rbDrag?.before||[]).join('→')} 后=${(rbDrag?.after||[]).join('→')}`);
-check('让位过程有真实位移（**除拖动项之外**的项也动了 > 2px）',
+checkRb('让位过程有真实位移（**除拖动项之外**的项也动了 > 2px）',
   !!rbDrag && rbDrag.peakOther > 2,
   `让位峰值=${(rbDrag?.peakOther || 0).toFixed(2)}px · 全体最大（含拖动项，只作参考）=${(rbDrag?.peak || 0).toFixed(2)}px`);
-check('拖动中那一项被"抬起来"（投影标记 data-drag 由引擎打，且此刻确实在）',
+checkRb('拖动中那一项被"抬起来"（投影标记 data-drag 由引擎打，且此刻确实在）',
   !!rbDrag && rbDrag.draggingSeen && rbDrag.liftedSeen,
   `data-dragging 出现过=${rbDrag?.draggingSeen} · 抬起项出现过=${rbDrag?.liftedSeen}`);
-check('拖完不留拖动态（data-dragging / data-drag 都已摘掉）',
+checkRb('拖完不留拖动态（data-dragging / data-drag 都已摘掉）',
   !!rbDrag && !rbDrag.dragging && !rbDrag.lifted,
   `data-dragging=${rbDrag?.dragging} 抬起项=${rbDrag?.lifted}`);
-check('换位有播报给读屏（不是只动画面不出声）',
+checkRb('换位有播报给读屏（不是只动画面不出声）',
   !!rbDrag && /第\s*\d+\s*位/.test(rbDrag.announce), `播报="${rbDrag?.announce}"`);
-check('落位动画跑完后引擎不忙了（busy() 归零 —— 否则 softPaint 的守卫会永久挡掉重绘）',
+checkRb('落位动画跑完后引擎不忙了（busy() 归零 —— 否则 softPaint 的守卫会永久挡掉重绘）',
   !!rbDrag && rbDrag.busyAfter === false && rbDrag.countAfter <= 1,
   `busy=${rbDrag?.busyAfter} 挂载数=${rbDrag?.countAfter}`);
-check('自检没有真改用户配置（写路径被隔离，且确实拦到了这次提交）',
+checkRb('自检没有真改用户配置（写路径被隔离，且确实拦到了这次提交）',
   !!rbDrag && rbDrag.blocked >= 1,
   `拦下 ${rbDrag?.blocked} 次 POST /api/config`);
 
 /* ③ 键盘重排 + 焦点跟随 + 撤销（可访问路径，不依赖指针） */
-const kb = await evalJs(`
+const kb = rbCloud ? await evalJs(`
   const root=document.querySelector('[data-rb]');
   const items=()=>[...root.querySelectorAll('.srt-item')];
   const before=items().map(e=>e.getAttribute('data-srt-id'));
@@ -1676,13 +1718,13 @@ const kb = await evalJs(`
   await new Promise(r=>setTimeout(r,400));
   window.fetch=realFetch;
   return {before,mid,focused,stillOnHandle,live1,blocked,errs};
-`);
-check('键盘能重排（↑↓ 在把手上），且焦点跟着走（否则连按两次就不知道自己在哪）',
+`) : null;
+checkRb('键盘能重排（↑↓ 在把手上），且焦点跟着走（否则连按两次就不知道自己在哪）',
   !!kb && kb.focused && kb.before.join('|') !== kb.mid.join('|') && kb.stillOnHandle,
   `${(kb?.before||[]).join('→')} ⇒ ${(kb?.mid||[]).join('→')} · 把手拿到焦点=${kb?.focused} · 焦点跟随=${kb?.stillOnHandle}`);
-check('排序交互里没有未捕获异常（监听器里抛的不会传给 dispatchEvent，只能这样抓）',
+checkRb('排序交互里没有未捕获异常（监听器里抛的不会传给 dispatchEvent，只能这样抓）',
   !!kb && (kb.errs || []).length === 0, (kb?.errs || []).join(' | ') || '无');
-check('键盘重排也播报（读屏用户看不到位移）',
+checkRb('键盘重排也播报（读屏用户看不到位移）',
   !!kb && /第\s*\d+\s*位/.test(kb.live1), `播报="${kb?.live1}"`);
 /* 等写入链路跑完（POST → refresh → 重绘）再查撤销条。 */
 await sleep(900);
@@ -1691,7 +1733,7 @@ const undoNow = await evalJs(`
   return { undo:!!btn, text:(btn||{}).textContent||'',
            hint:(document.querySelector('.btn-row .hint')||{}).textContent||'' };
 `);
-check('改完顺序出现「撤销上一次改顺序」（撤销点存在，且已写进自检隔离区）',
+checkRb('改完顺序出现「撤销上一次改顺序」（撤销点存在，且已写进自检隔离区）',
   !!kb && undoNow?.undo === true && kb.blocked >= 1,
   `撤销按钮=${undoNow?.undo} · 拦下 ${kb?.blocked} 次写 · 说明="${(undoNow?.hint || '').trim()}"`);
 
@@ -2111,19 +2153,30 @@ newPages.emotionChart = await evalJs(`
 `);
 check('分段渲染的总览图在 3 秒内真的落位（不是永远空槽）',
   newPages.emotionChart?.ok === true, JSON.stringify(newPages.emotionChart));
-// 群友档案（记忆与知识 · 第 3 页）：目录为空时应当给"还没被用到过"的人话，而不是报错
-await goto(2, 2);
-newPages.people = await evalJs(`return {
-  title: (document.querySelector('#page h1')||{}).textContent || '',
-  text: (document.getElementById('page').textContent||'').slice(0,200),
-}`);
-// 用量与花费（模型 · 第 3 页）：额度情报并到这一页，应当有条目
+// 用量与花费（模型 · 第 3 页）：额度情报并到这一页，应当有条目。
+// ⚠️ 真实 `data/api-deals.json` 取决于用户装没装额度插件；这里注入 1 条夹具，
+//    验的是“有数据时渲染得出来”，不再把“没装插件”当产品坏。
 await goto(4, 2);
-newPages.deals = await evalJs(`return {
-  title: (document.querySelector('#page h1')||{}).textContent || '',
-  rows: document.querySelectorAll('#page .row').length,
-  tag: (document.querySelector('#page .tag.accent')||{}).textContent || '',
-}`);
+newPages.deals = await evalJs(`
+  const S = window.__next, repaint = window.__nextRepaint;
+  if (!S || !repaint) return { err: '拿不到页面状态或重绘钩子' };
+  window.__nextPauseRefresh?.(true);
+  const keep = S.state.apiDeals;
+  S.state.apiDeals = {
+    ok: true, count: 1, lastRefresh: Date.now(),
+    items: [{ free: true, source: '测试', title: '夹具额度', url: '' }],
+  };
+  repaint();
+  const out = {
+    title: (document.querySelector('#page h1')||{}).textContent || '',
+    rows: document.querySelectorAll('#card-deals .row').length,
+    tag: (document.querySelector('#card-deals .tag.accent')||{}).textContent || '',
+  };
+  S.state.apiDeals = keep;
+  repaint();
+  window.__nextPauseRefresh?.(false);
+  return out;
+`);
 // 定时消息 → 节假日表：那一格**必须可编辑**了（此前是 disabled）
 await goto(1, 2);
 newPages.holidays = await evalJs(`
@@ -2134,8 +2187,6 @@ newPages.holidays = await evalJs(`
 check('人设总览四层卡都在（心情未接入时给诚实空态，而不是骨架报错）',
   newPages.emotion?.cards?.length === 4 && !newPages.emotion?.skeleton,
   `${newPages.emotion?.title} 卡=${(newPages.emotion?.cards || []).length} :: ${(newPages.emotion?.cards || []).join(' | ').slice(0, 160)}`);
-check('群友档案页有说明或列表（不报错）', /群友档案/.test(newPages.people?.title || '') && (newPages.people?.text || '').length > 10,
-  (newPages.people?.text || '').replace(/\s+/g, ' ').slice(0, 60));
 check('免费额度情报页渲染出条目', (newPages.deals?.rows || 0) > 0, `${newPages.deals?.title} · ${newPages.deals?.tag} · ${newPages.deals?.rows} 行`);
 check('节假日表可以编辑了（添加按钮与日期框都不再禁用）',
   newPages.holidays?.hasBtn === true && newPages.holidays?.btnDisabled === false
@@ -2143,7 +2194,7 @@ check('节假日表可以编辑了（添加按钮与日期框都不再禁用）'
   JSON.stringify(newPages.holidays));
 
 /* ── ⑧'' 长列表封顶（2026-10-04）───────────────────────────────────────────
-   背景：结构化记忆 / 群友档案 / 历史存量 / 额度情报 这类列表会**随数据一直长**，
+   背景：结构化记忆 / 历史存量 / 额度情报 这类列表会**随数据一直长**，
    卡片能长到几千像素；而倾斜挂在 `section.card` 上（`markTiltables`）——
    卡片越高，"同样 1°"的上下边缘位移越大，观感就是「鼠标放上去倾斜很大」。
    ⇒ 修的是**长度**（`capRows`），`tilt.js` 一行没动。

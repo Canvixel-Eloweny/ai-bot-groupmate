@@ -89,6 +89,9 @@ export function normalizeLaunch(raw) {
     typeof r.mode === 'string' && r.mode !== 'window' && r.mode !== 'browser' ? r.mode : null;
   return {
     mode,
+    // 用户在设置里**明确点过**打开方式才置 true。旧配置默认写的是 browser，
+    // 但 Windows 一直按桌面窗口启动；升级后不能把这类旧默认自动当成"用户要浏览器"。
+    modeExplicit: r.modeExplicit === true,
     openOnStart: r.openOnStart !== false,
     closeAction: r.closeAction === 'quit' ? 'quit' : 'tray',
     autoProtocol: r.autoProtocol !== false,
@@ -172,6 +175,29 @@ export function launchOfConfig(cfg, { defaultMode } = {}) {
   const out = normalizeLaunch(raw);
   if (!hasExplicitMode && (defaultMode === 'window' || defaultMode === 'browser')) out.mode = defaultMode;
   return out;
+}
+
+/**
+ * 「上次启动」卡片上的形态文案（2026-11-01）。
+ *
+ * 只在这里判一次：面板的设置层与维护页都读同一条结论，避免「同一份日志
+ * 两个页面写成两种形态」。旧记录没有 mode 时按 kind 兜底，不假装知道更多。
+ */
+export function launchRecordLabel(record) {
+  const r = record && typeof record === 'object' ? record : null;
+  if (!r) return '';
+  if (r.skipped) return '按设置未打开界面';
+  if (r.opened === false) return `打开失败（${r.error || '原因未知'}）`;
+  const kind = r.kind === 'window' || r.kind === 'electron' || r.kind === 'browser' ? r.kind : '';
+  if (r.mode === 'browser') {
+    return kind === 'electron' ? '浏览器标签页 · 桌面壳' : '浏览器标签页';
+  }
+  if (r.mode === 'window' || kind === 'window') {
+    return `独立窗口${r.used ? ` · ${r.used}` : ''}`;
+  }
+  if (kind === 'browser') return '浏览器标签页';
+  if (kind === 'electron') return '桌面窗口';
+  return String(r.used || r.kind || r.mode || '—');
 }
 
 /**

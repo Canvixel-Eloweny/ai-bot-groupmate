@@ -152,4 +152,59 @@ const C11 = {
   expect: 'BLOCKED',
 };
 
-export default [C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11];
+const C12 = {
+  id: 'C12',
+  note: '预览控制器整体改名/断开 —— §163④ 必须变红（设置里调速度看不到变化）',
+  anchor: /applyPreview/g,
+  count: 4,
+  file: CBG,
+  apply: (s) => s.replaceAll('applyPreview', 'drawPreview'),
+  layer: 'check-wb',
+  expect: 'BLOCKED',
+};
+
+const C13 = {
+  id: 'C13',
+  note: '关闭预览时不释放 src —— §163④ 必须变红（解码器一直占着）',
+  anchor: /previewVideo\.removeAttribute\('src'\)/,
+  count: 1,
+  file: CBG,
+  apply: (s) => s.replace("previewVideo.removeAttribute('src')", 'void 0'),
+  layer: 'check-wb',
+  expect: 'BLOCKED',
+};
+
+const C14 = {
+  id: 'C14',
+  note: 'reduced-motion 下预览不再如实提示 —— §163④ 必须变红（速度看起来可用其实无效）',
+  anchor: /系统已开启减少动态效果，速度不会生效/,
+  count: 1,
+  file: CBG,
+  apply: (s) => s.replace('系统已开启减少动态效果，速度不会生效', '预览已暂停'),
+  layer: 'check-wb',
+  expect: 'BLOCKED',
+};
+
+const C15 = {
+  id: 'C15',
+  note: '主视频倍率不再写在 shouldPlay 早退之前 —— §163④ 必须变红（设置打开时调速度不生效）',
+  anchor: /if \(speedMul > 0 && video\.playbackRate !== speedMul\)/,
+  count: 1,
+  file: CBG,
+  apply: (s) => s.replace('if (speedMul > 0 && video.playbackRate !== speedMul)', 'if (video.playbackRate !== speedMul)'),
+  layer: 'check-wb',
+  expect: 'BLOCKED',
+};
+
+const C16 = {
+  id: 'C16',
+  note: '预览改用 standard 大片 —— §163④ 必须变红（设置一打开就下载 23MB）',
+  anchor: /videoName\(theme, 'lite'\)/,
+  count: 1,
+  file: CBG,
+  apply: (s) => s.replace("videoName(theme, 'lite')", "videoName(theme, 'standard')"),
+  layer: 'check-wb',
+  expect: 'BLOCKED',
+};
+
+export default [C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13, C14, C15, C16];

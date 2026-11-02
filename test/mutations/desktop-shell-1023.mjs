@@ -30,7 +30,7 @@ export default [
     file: MAIN,
     anchor: /app\.on\('second-instance'/,
     count: 1,
-    apply: (s) => s.replace("app.on('second-instance', () => { pendingShow = true; showWindow(); });\n", ''),
+    apply: (s) => s.replace(/app\.on\('second-instance', \(\) => \{[\s\S]*?\n  \}\);\n/, ''),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

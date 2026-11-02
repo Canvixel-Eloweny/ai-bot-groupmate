@@ -137,7 +137,7 @@ export default [
     note: '隐藏态标记被改名 —— §148① 必须变红（最小化会被守护误当成隐藏并拉回）',
     file: MAIN,
     anchor: /trayHidden/g,
-    count: 7,
+    count: 10,
     apply: (s) => s.replaceAll('trayHidden', 'trayHiddenBroken'),
     layer: 'check-wb',
     expect: 'BLOCKED',

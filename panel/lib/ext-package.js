@@ -9,7 +9,7 @@
  *    用户输入不会拼进可执行语句。
  */
 import {
-  isSafeRelPath, isValidPluginId, normalizeManifest, stripBom,
+  isSafeRelPath, isValidPluginId, normalizeManifest, normalizeTagList, stripBom,
 } from '../../src/plugin-manifest.js';
 import { makeZip } from './zip.js';
 
@@ -102,6 +102,7 @@ export function buildScaffoldFiles(meta = {}) {
       entry: 'index.js',
       description,
       category,
+      tags: normalizeTagList(meta.tags),
       settings: {},
       prompt: {
         sections: [{
@@ -124,6 +125,7 @@ export function buildScaffoldFiles(meta = {}) {
       entry: 'index.js',
       description,
       category,
+      tags: normalizeTagList(meta.tags),
       settings: {},
     };
     const result = `「${name}」已创建。请把 index.js 里 execute 的逻辑换成你要做的事。`;

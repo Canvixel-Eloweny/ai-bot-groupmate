@@ -509,6 +509,22 @@ try {
           ],
         }, good);
         if (badFolder.status !== 400) problems.push(`文件夹打包的 ../ 路径应 400，实得 ${badFolder.status}`);
+
+        // 2026-11-01：提示词是只读 POST（与 package 同类），无 token 也应 200。
+        const promptNo = await postJson(`${base}/api/extensions/prompt`, {
+          meta: { kind: 'plugin', id: 'qa-prompt', name: '提示词测试', tags: ['工具'] },
+        }, '');
+        if (promptNo.status !== 200) problems.push(`提示词无 token 应 200，实得 ${promptNo.status}`);
+        try {
+          const pj = JSON.parse(promptNo.body);
+          if (pj.ok !== true || !/plugin\.json/.test(pj.prompt || '')
+            || !/registerTool/.test(pj.prompt || '') || !/提示词测试/.test(pj.prompt || '')
+            || !Array.isArray(pj.tags) || pj.tags[0] !== '工具') {
+            problems.push(`提示词出参不完整：${promptNo.body.slice(0, 200)}`);
+          }
+        } catch { problems.push('提示词出参不是合法 JSON'); }
+        const promptBad = await postJson(`${base}/api/extensions/prompt`, { meta: { kind: 'plugin' } }, good);
+        if (promptBad.status !== 400) problems.push(`提示词缺 name 应 400，实得 ${promptBad.status}`);
       }
     } finally {
       try {

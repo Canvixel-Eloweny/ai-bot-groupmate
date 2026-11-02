@@ -276,8 +276,8 @@ export function makeConfigRoute(deps) {
 
     // ── 桌面端「启动方式」（launch · 2026-10-16）──
     // 它决定启动器（Windows 快捷方式 / Mac 图标 / CLI）把控制台开成
-    // 浏览器标签页还是独立窗口。**保存成功 ≠ 立刻生效**：启动器只在启动时读一次
-    // （面板上的提示语已经写明"下次启动生效"，schema.js 的 savedMsg）。
+    // 浏览器标签页还是独立窗口。保存成功后，桌面壳会在下一次启动时按新值执行；
+    // 打开方式这一项还会由设置层立刻调用壳的 IPC 完成当前切换。
     // 校验失败按本文件的一贯取向**拒绝整次保存并说清原因**，不做静默纠正 ——
     // 静默纠正会让用户以为"我明明点了独立窗口"。
     if (body.launch !== undefined) {
@@ -308,6 +308,9 @@ export function makeConfigRoute(deps) {
         return sendJson(res, { ok: false, error: r.error, reason: 'bad-launch' }, 400);
       }
       cfg.launch = { ...(cfg.launch && typeof cfg.launch === 'object' ? cfg.launch : {}), ...r.value };
+      // 只有用户**明确动过**打开方式时才把它固定下来；旧版本/首次安装写进去的
+      // browser 只是默认值，桌面壳升级后仍按桌面窗口启动（见 electron/main.js）。
+      if (Object.prototype.hasOwnProperty.call(r.value, 'mode')) cfg.launch.modeExplicit = true;
     }
 
     // ── 自定义工作台那一整块 ──

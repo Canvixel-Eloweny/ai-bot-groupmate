@@ -11,6 +11,9 @@
 <meta name="panel-token" content="__QQBOT_PANEL_TOKEN__" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Estrella Bot Console</title>
+<!-- 界面动画帧率上限：必须早于任何动画脚本，才能包住 boot-splash / Motion / 背景等 rAF。
+     默认 0 = 不限，对现有行为零影响；0–120 的设置存 localStorage。 -->
+<script src="./frame-rate.js"></script>
 <!-- 首屏同步启动层：必须在样式表之前执行，先把本地偏好写到 <html>；
      CSP 只允许同源脚本（script-src 'self'），所以不能写成内联。 -->
 <script src="./splash.js"></script>
@@ -331,6 +334,24 @@
             </div>
           </div>
 
+          <div class="set-card" id="card-appearance-perf">
+            <div class="set-cardhead">
+              <div><h4>流畅度</h4><p>限制脚本驱动的界面动画帧率；0 = 不限</p></div>
+              <span class="spacer"></span><span class="set-tag" id="uiFpsTag">不限（跟随显示器）</span>
+            </div>
+            <div class="set-cardbody">
+              <div class="set-row set-row-inline">
+                <div class="txt"><b>帧率上限</b><span>只影响脚本动画：滚动、弹簧、光标、HUD、开屏。CSS / 毛玻璃 / 系统合成动画仍按显示器刷新率。</span></div>
+                <div class="set-fps">
+                  <input type="range" id="uiFpsRange" min="0" max="120" step="1" value="0" aria-label="界面动画帧率上限">
+                  <button class="btn btn-sm" id="uiFpsReset" type="button">跟随显示器</button>
+                </div>
+              </div>
+              <div class="set-fps-read"><span>当前实测</span><b id="uiFpsNow">—</b></div>
+              <p class="set-hint">0 = 不限；1–29 统一按 30 处理；高于显示器刷新率时以显示器为准。等高线背景本身是 24fps 视频，不受此上限控制。</p>
+            </div>
+          </div>
+
           <div class="set-card" id="card-appearance-bg">
             <div class="set-cardhead">
               <div><h4>背景</h4><p>等高线地形图，或八套流动色团；也可以换成下面的自定义图片 / 视频</p></div>
@@ -350,7 +371,11 @@
                 <div class="txt"><b>背景速度</b><span>「无」会真正停掉背景重绘/视频播放，不是把速度调到最小</span></div>
                 <div class="set-speed" id="bgSpeed" role="group" aria-label="背景速度"></div>
               </div>
-              <p class="set-hint">背景只改变环境光，不改变卡片与文字的对比度。</p>
+              <div class="set-bgpreview" id="bgPreview" hidden aria-hidden="true">
+                <video id="bgPreviewVideo" muted preload="none" playsinline loop disablepictureinpicture></video>
+                <span class="set-bgpreview-state" id="bgPreviewState">—</span>
+              </div>
+              <p class="set-hint">预览用轻量片；主背景在设置打开时暂停，倍率已写入，关闭后无缝生效。背景只改变环境光，不改变卡片与文字的对比度。</p>
             </div>
           </div>
 
@@ -428,7 +453,7 @@
         <!-- 启动 -->
         <section class="set-section" id="sec-startup" hidden>
           <div class="set-sechead">
-            <div><h3>启动</h3><p>控制台与协议端的启动方式；改完下次启动生效</p></div>
+            <div><h3>启动</h3><p>控制台与协议端的启动方式；打开方式可立即切换，其余下次启动生效</p></div>
           </div>
 
           <div class="set-card" id="card-startup-splash">
@@ -469,7 +494,7 @@
                 <button type="button" data-mode-opt="browser" aria-pressed="true">浏览器标签页</button>
                 <button type="button" data-mode-opt="window" aria-pressed="false">独立窗口 · 无地址栏</button>
               </div>
-              <p class="set-hint">注意：内测版先不要点「独立窗口 · 无地址栏」，还有部分 BUG（首跑可能出一个灰色空窗，要再双击一次）。系统里没有 Edge / Chrome 时会自动回落到浏览器标签页。</p>
+              <p class="set-hint">选择「浏览器标签页」会立即用系统默认浏览器打开控制台，并把桌面窗口收进托盘；托盘图标或再次启动可切回窗口。下次启动仍按这里的选择。没有可用的独立窗口浏览器时会自动回落到浏览器标签页。</p>
             </div>
           </div>
 

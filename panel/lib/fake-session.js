@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { PROGRAM_ROOT, NODE, CONFIG_FILE, DATA_DIR } from './paths.js';
+import { classifyFakeLine, cleanFakeLine } from './fake-line.js';
 
 /** 脚本路径。**唯一住处** —— 面板别的地方不许拼这个路径。 */
 export const FAKE_SCRIPT = path.join(PROGRAM_ROOT, 'scripts', 'fake-qq.mjs');
@@ -36,16 +37,39 @@ const st = {
   opts: null,
   seq: 0,
   lines: [],
+  messages: [],
+  msgId: 0,
+  lastMsg: null,
+  lastRole: '',
   exited: null,
 };
 
 function push(raw) {
   // 脚本输出带 ANSI 色（Windows 下 readline 也会夹 \r），终端里无所谓，<pre> 里就是垃圾。
-  const text = String(raw).replace(/\u001b\[[0-9;]*m/g, '').replace(/\r+$/, '');
+  const text = cleanFakeLine(raw);
   if (!text.trim()) return;
   st.seq += 1;
   st.lines.push({ n: st.seq, text });
   if (st.lines.length > MAX_LINES) st.lines.splice(0, st.lines.length - MAX_LINES);
+
+  const cls = classifyFakeLine(text);
+  /* 机器人回复里带换行时，console.log 会把它拆成多行：只有第一行有前缀，
+     后续行没有前缀（loose）。把它们拼回上一条机器人消息，别让一段话变成多条系统消息。 */
+  if (cls.role === 'meta') {
+    if (cls.loose && st.lastRole === 'bot' && st.lastMsg) {
+      st.lastMsg.text += `\n${cls.text}`;
+      st.lastMsg.n = st.seq;
+    }
+    return;
+  }
+  if ((cls.role === 'bot' || cls.role === 'user') && !cls.text) return;
+  const msg = { id: ++st.msgId, n: st.seq, role: cls.role, text: cls.text, at: Date.now() };
+  if (cls.channel) msg.channel = cls.channel;
+  if (cls.tone) msg.tone = cls.tone;
+  st.messages.push(msg);
+  if (st.messages.length > MAX_LINES) st.messages.splice(0, st.messages.length - MAX_LINES);
+  st.lastRole = cls.role;
+  st.lastMsg = msg;
 }
 
 /** 按行切：子进程的输出不保证一行一次 `data`，半个行拼起来再推。 */
@@ -70,6 +94,9 @@ export function fakeSnapshot(since = 0) {
     opts: st.opts,
     seq: st.seq,
     lines: st.lines.filter((l) => l.n > after),
+    /* `n` 是这条消息**最后一次更新**时的行号：多行机器人回复会在后续行到达时
+       改写 n，所以 since 游标仍能把它带回前端，前端按稳定 id 更新原气泡。 */
+    messages: st.messages.filter((m) => m.n > after),
     exited: st.exited,
     script: 'scripts/fake-qq.mjs',
   };
@@ -93,7 +120,11 @@ export function fakeStart(opts = {}, env = {}) {
   }
   const args = [FAKE_SCRIPT, ...(offline ? ['--offline'] : []), ...(sandbox ? ['--sandbox'] : [])];
   st.lines = [];
+  st.messages = [];
   st.seq = 0;
+  st.msgId = 0;
+  st.lastMsg = null;
+  st.lastRole = '';
   st.exited = null;
   st.opts = { offline, sandbox };
   st.startedAt = Date.now();

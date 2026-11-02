@@ -541,6 +541,9 @@ function busyTyping() {
 const SORTABLE_ON = true;
 
 function softPaint() {
+  /* 设置层打开时页面被 inert 且模糊；3 秒轮询不必把整页重建一遍。
+     设置层自己有 refresh 入口，关闭时会补一次（settings.js close）。 */
+  if (document.documentElement.classList.contains('settings-open')) return;
   /* ⚠️ 三个守卫的顺序**不能换**，也不能只留其中一个：
        ① 用户正在输入 / 有未保存改动 —— 否则光标被吞（原有纪律）
        ② 排序列表在忙（拖动中或让位动画未收敛）—— `innerHTML` 重建会把
@@ -882,6 +885,15 @@ const ACTIONS = {
     } catch (e) { toast(`检索失败：${e.message}`, 'bad'); }
   },
   'mem.search.clear': () => { S.extra.memSearch = null; paintPage(false); },
+  'mem.focus': (p) => {
+    const el = $id(p === 'memQ' ? 'memQ' : 'memNew');
+    if (!el) return;
+    try {
+      el.scrollIntoView({ block: 'center', behavior: (window.Motion && window.Motion.reducedMotion && window.Motion.reducedMotion()) ? 'auto' : 'smooth' });
+    } catch { /* 旧浏览器 */ }
+    el.focus();
+  },
+  'mem.filter': (p) => { S.extra.memFilter = String(p || 'all'); paintPage(false); },
   /* 长列表封顶的展开 / 收起（见 `capRows`）。**只改 `S.extra.open` 再重画**：
      那是"这一屏怎么看"，不是数据 —— 所以不写 config、不落盘、刷新即折叠。 */
   'list.more': (p) => { if (!S.extra.open) S.extra.open = {}; S.extra.open[p] = true; paintPage(false); },
@@ -966,24 +978,58 @@ const ACTIONS = {
     try {
       const r = await post('/api/fake-qq/start', { offline: o.offline, sandbox: o.sandbox });
       if (!r?.ok) return toast(r?.msg || '起不来', 'bad');
-      S.extra.fakeSince = 0; S.extra.fakeLines = [];
+      S.extra.fakeSince = 0;
+      S.extra.fakeLines = [];
+      S.extra.fakeMsgs = [];
+      S.extra.fakeSeen = {};
+      S.extra.fakeWaitAt = 0;
+      S.extra.fakeDraft = '';
       toastResult(r, '已启动');
       await fakePoll();
+      setTimeout(() => $id('fakeComposer')?.focus(), 60);
     } catch (e) { toast(`启动失败：${e.message}`, 'bad'); }
     finally { busy(false); }
   },
-  'fake.stop': async () => { try { const r = await post('/api/fake-qq/stop'); toastResult(r, '已停止'); } catch (e) { toast(`停止失败：${e.message}`, 'bad'); } },
+  'fake.stop': async () => {
+    try {
+      const r = await post('/api/fake-qq/stop');
+      S.extra.fakeWaitAt = 0;
+      toastResult(r, '已停止');
+      paintFake();
+    } catch (e) { toast(`停止失败：${e.message}`, 'bad'); }
+  },
   'fake.send': async () => {
-    const text = String(S.volatile['fake.text'] ?? '').trim();
+    const el = $id('fakeComposer');
+    const text = String(el?.value ?? S.extra.fakeDraft ?? '').trim();
     if (!text) return toast('先写一句要发的话', 'warn');
     await fakeSay(text, true);
+    $id('fakeComposer')?.focus();
   },
   'fake.cmd': async (p) => { await fakeSay(`/${p}`); },
-  'fake.clear': () => { S.extra.fakeLines = []; paintFake(); },
+  'fake.clear': () => {
+    S.extra.fakeLines = [];
+    S.extra.fakeMsgs = [];
+    S.extra.fakeSeen = {};
+    S.extra.fakeWaitAt = 0;
+    S.extra.fakeDraft = '';
+    const el = $id('fakeComposer');
+    if (el) { el.value = ''; el.style.height = 'auto'; }
+    paintFake();
+  },
   'fake.opt': (p) => { const o = fakeOpts(); o[p] = !o[p]; paintPage(false); },
   'config.undo': async () => { if (!(await confirmToast('撤销上一次保存？配置会整份退回那一版。', { okLabel: '撤销' }))) return; busy(true, '撤销中…'); try { const r = await post('/api/config/undo', { steps: 1 }); toastResult(r, '已撤销'); await refresh(true); } catch (e) { toast(`撤销失败：${e.message}`, 'bad'); } finally { busy(false); } },
-  'try.run': async () => { const text = String(S.volatile['try.text'] || '').trim(); if (!text) return toast('先写一句要它回的话', 'warn'); busy(true, '跑完整链路…'); try { S.extra.tryOut = await post('/api/try', { text }); paintPage(false); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
-  'skill.add.pack': () => addSkill('pack'), 'skill.add.persona': () => addSkill('persona'),
+  'try.run': async () => {
+    const text = String(S.volatile['try.text'] || '').trim();
+    if (!text) return toast('先写一句要它回的话', 'warn');
+    busy(true, '跑完整链路…');
+    try {
+      S.extra.tryAsked = text;
+      S.extra.tryOut = await post('/api/try', { text });
+      paintPage(false);
+    } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); }
+  },
+  'skill.add.pack': () => addSkill('pack'),
+  'skill.add.persona': () => addSkill('persona'),
   'skill.apply': (i) => applyPersonaCard(Number(i)),
   'skill.snap': (i) => snapPersonaCard(Number(i)),
   'cg.do': (p) => fillCardDim(p),
@@ -4664,92 +4710,152 @@ const RENDER = {
     return `<div class="grid2">${Object.entries(meta).map(([k, o]) => fieldInput(
       { id: `sc.${k}`, t: 'text', label: o.label, hint: o.hint, ph: o.ph, bind: `scenes.${k}` }, 'text')).join('')}</div>`;
   },
-  skills: (x) => {
+  skills: () => {
     const arr = draftArr('skills');
-    if (!arr.length) return '<div class="empty">还没有技能。知识包＝某方面的本事；角色卡＝成套的人格。</div>';
-    return `<div class="rows">${arr.map((sk, i) => `
-      <div class="row">
-        <div class="row-h">
-          <span class="tag ${sk.kind === 'persona' ? 'accent' : 'info'}">${sk.kind === 'persona' ? '角色卡' : '知识包'}</span>
-          <input type="text" style="flex:1;min-width:100px;" value="${esc(sk.name)}" data-a="skill.set" data-p="${i}|name" />
-          <label class="sw flat"><input type="checkbox" ${sk.enabled !== false ? 'checked' : ''} data-a="skill.set" data-p="${i}|enabled"><span class="track"></span><span class="txt">启用</span></label>
-          ${sk.kind === 'persona' ? `<button class="btn btn-xs" data-a="skill.snap" data-p="${i}" title="把当前的人格 / 增强 / 场景重新拍进这张卡（按群生效靠这份快照）">存当前人格</button> <button class="btn btn-xs" data-a="skill.apply" data-p="${i}" title="把这张卡的人格快照写进人格设定">套用到人格设定</button>` : ''}
-          <button class="btn btn-xs btn-danger" data-a="skill.del" data-p="${i}">删</button>
-        </div>
-        <div class="f-inline">
-          <span class="hint" style="flex:none;">触发词</span>
-          <input type="text" class="grow" value="${esc((sk.triggers || []).join(', '))}" placeholder="命中才拿出来用，留空＝总是可用" data-a="skill.set" data-p="${i}|triggers" />
-          <span class="hint" style="flex:none;">范围</span>
-          <select style="width:auto;" data-a="skill.set" data-p="${i}|scopeType">
-            ${['global', 'group', 'user'].map((v) => `<option value="${v}" ${(sk.scope?.type || 'global') === v ? 'selected' : ''}>${{ global: '全局', group: '指定群', user: '指定人' }[v]}</option>`).join('')}
-          </select>
-          ${sk.scope?.type && sk.scope.type !== 'global' ? `<input type="text" style="width:130px;" value="${esc(sk.scope.id || '')}" placeholder="${sk.scope.type === 'group' ? '群号' : 'QQ 号'}" data-a="skill.set" data-p="${i}|scopeId" />` : ''}
-        </div>
+    const maxN = Math.max(1, Number(valueOf({ id: 'skill.promptMax', bind: 'skillPrompt.max', t: 'number' })) || 3);
+    const maxChars = Math.max(200, Number(valueOf({ id: 'skill.promptChars', bind: 'skillPrompt.chars', t: 'number' })) || 2000);
+    const enabled = arr.filter((sk) => sk.enabled !== false);
+    const usedChars = enabled.reduce((n, sk) => n + String(sk.background || '').length, 0);
+    const pct = (n, d) => (d > 0 ? Math.max(0, Math.min(100, Math.round((n / d) * 100))) : 0);
+    const budget = `<div class="skill-budget">
+      <div class="mem-bar-head"><span>本轮注入字数</span><b>${usedChars} / ${maxChars}</b></div>
+      <div class="mem-bar ${usedChars > maxChars ? 'warn' : ''}" role="progressbar" aria-label="知识包注入字数" aria-valuenow="${pct(usedChars, maxChars)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct(usedChars, maxChars)}%"></i></div>
+      <div class="mem-bar-head"><span>同时注入条数</span><b>${enabled.length} / ${maxN}</b></div>
+      <div class="mem-bar ${enabled.length > maxN ? 'warn' : ''}" role="progressbar" aria-label="知识包注入条数" aria-valuenow="${pct(enabled.length, maxN)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct(enabled.length, maxN)}%"></i></div>
+    </div>`;
+    const toolbar = `<div class="skill-toolbar">
+      <button class="btn btn-sm btn-primary" data-a="skill.add.pack">加知识包</button>
+      <button class="btn btn-sm" data-a="skill.add.persona">加角色卡</button>
+      <span class="mem-sub">${arr.length ? `共 ${arr.length} 条 · 启用 ${enabled.length} 条` : ''}</span>
+    </div>`;
+    if (!arr.length) {
+      return `<div class="mem-stack">${budget}${toolbar}
+        <div class="mem-empty"><b>还没有知识包或角色卡</b><span>知识包＝某方面的本事；角色卡＝成套的人格。</span></div>
+      </div>`;
+    }
+    const cards = arr.map((sk, i) => `<article class="skill-card">
+      <div class="skill-card-h">
+        <span class="tag ${sk.kind === 'persona' ? 'accent' : 'info'}">${sk.kind === 'persona' ? '角色卡' : '知识包'}</span>
+        <input class="skill-name" type="text" value="${esc(sk.name || '')}" data-a="skill.set" data-p="${i}|name" aria-label="第 ${i + 1} 条名称" />
+        <label class="sw flat skill-switch" title="${sk.enabled !== false ? '停用' : '启用'}">
+          <input type="checkbox" ${sk.enabled !== false ? 'checked' : ''} data-a="skill.set" data-p="${i}|enabled" aria-label="启用第 ${i + 1} 条">
+          <span class="track"></span>
+        </label>
+      </div>
+      <div class="skill-meta">
+        <span class="mem-sub">触发词</span>
+        <input type="text" class="skill-triggers" value="${esc((sk.triggers || []).join(', '))}" placeholder="留空＝总是可用" data-a="skill.set" data-p="${i}|triggers" aria-label="触发词" />
+        <select data-a="skill.set" data-p="${i}|scopeType" aria-label="生效范围">
+          ${['global', 'group', 'user'].map((v) => `<option value="${v}" ${(sk.scope?.type || 'global') === v ? 'selected' : ''}>${{ global: '全局', group: '指定群', user: '指定人' }[v]}</option>`).join('')}
+        </select>
+        ${sk.scope?.type && sk.scope.type !== 'global' ? `<input type="text" class="skill-scope" value="${esc(sk.scope.id || '')}" placeholder="${sk.scope.type === 'group' ? '群号' : 'QQ 号'}" data-a="skill.set" data-p="${i}|scopeId" aria-label="范围对应号码" />` : ''}
+      </div>
+      ${(sk.triggers || []).length ? `<div class="chips">${(sk.triggers || []).map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</div>` : ''}
+      <details class="skill-bg"><summary>背景知识 / 它是谁</summary>
         <textarea rows="2" placeholder="背景知识 / 它是谁" data-a="skill.set" data-p="${i}|background">${esc(sk.background || '')}</textarea>
-      </div>`).join('')}</div>`;
+      </details>
+      <div class="skill-actions">
+        ${sk.kind === 'persona' ? `<button class="btn btn-xs" data-a="skill.snap" data-p="${i}" title="把当前的人格 / 增强 / 场景重新拍进这张卡">存当前人格</button><button class="btn btn-xs" data-a="skill.apply" data-p="${i}" title="把这张卡的人格快照写进人格设定">套用到人格</button>` : ''}
+        <button class="btn btn-xs btn-danger" data-a="skill.del" data-p="${i}">删</button>
+      </div>
+    </article>`).join('');
+    return `<div class="mem-stack">${budget}${toolbar}<div class="skill-grid">${cards}</div></div>`;
   },
   /* 角色卡分级（十维）：数据全由后端算好（`state.personaCards`，判据在 src/persona-grade.js）。
      ⚠️ 面板不算分、不写门槛 —— 抄一份门槛表的后果是"界面上的金和真正判定的金不是一个数"。 */
   cardGrade: (x) => {
     const cards = j(S.state || DEMO, ['personaCards'], []) || [];
-    if (!cards.length) {
-      return '<div class="empty">还没有角色卡。去「知识包与角色卡」新建一张，'
-        + '填好人格设定后点那张卡的「存当前人格」，回来这里看分数。</div>';
-    }
     const dot = (tier) => `<span class="cgdot t-${esc(tier)}"></span>`;
-    return `<div class="rows">${cards.map((g, i) => `
-      <div class="row">
-        <div class="row-h">
-          ${dot(g.cellTier)}
-          <b class="grow">${esc(g.name)}${g.enabled === false ? ' <span class="tag plain">未启用</span>' : ''}</b>
-          <span class="tag ${g.cellTier === 'gold' ? 'accent' : 'plain'}">${esc(g.cell)}</span>
-          <span class="hint">覆盖 ${Math.round(g.coverage * 100)}% · 最低 ${Math.round(g.minScore * 100)}% · 缺 ${g.gaps.length} 维</span>
-          ${g.gaps.length ? `<button class="btn btn-xs" data-a="cg.adopt" data-p="${i}" title="把这张卡里已有的文字交给模型，按十维归到标准字段（先预览再写，只填空字段）">AI 认领</button>` : ''}
-        </div>
-        <div class="hint">${esc(g.advice)}</div>
+    if (!cards.length) {
+      return `<div class="mem-empty"><b>还没有角色卡</b><span>新建一张，填好人格设定后点「存当前人格」，回来这里看分数。</span>
+        <button class="btn btn-sm btn-primary" data-a="skill.add.persona">新建角色卡</button></div>`;
+    }
+    const pct = (v) => Math.max(0, Math.min(100, Math.round(Number(v || 0) * 100)));
+    return `<div class="role-grid">${cards.map((g, i) => `<article class="role-card">
+      <div class="role-head">
+        ${dot(g.cellTier)}<b>${esc(g.name)}</b>
+        ${g.enabled === false ? '<span class="tag plain">未启用</span>' : ''}
+        <span class="tag ${g.cellTier === 'gold' ? 'accent' : 'plain'}">${esc(g.cell || '')}</span>
+      </div>
+      <div class="mem-sub">覆盖 ${pct(g.coverage)}% · 最低 ${pct(g.minScore)}% · 缺 ${g.gaps.length} 维</div>
+      <div class="mem-bar ${g.cellTier === 'gold' ? '' : 'ok'}" role="progressbar" aria-label="${esc(g.name)} 十维覆盖率" aria-valuenow="${pct(g.coverage)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct(g.coverage)}%"></i></div>
+      <div class="role-actions">
+        ${g.gaps.length ? `<button class="btn btn-xs" data-a="cg.adopt" data-p="${i}" title="把这张卡里已有的文字交给模型，按十维归到标准字段（先预览再写，只填空字段）">AI 认领</button>` : '<span class="mem-sub">十维都够材料了</span>'}
+      </div>
+      <details class="skill-bg"><summary>十维明细${g.gaps.length ? ` · 缺 ${g.gaps.length} 维` : ''}</summary>
         <div class="cg-dims">${g.dims.map((d) => `<div class="cg-dim">
           ${dot(d.tier)}<b>${esc(d.label)}</b>
-          <span class="hint">${Math.round(d.score * 100)}% · ${d.filledChars} 字${d.cueHits.length ? ` · 命中「${esc(d.cueHits.slice(0, 3).join('、'))}」` : ''}</span>
+          <span class="mem-sub">${Math.round(d.score * 100)}% · ${d.filledChars} 字${d.cueHits.length ? ` · 命中「${esc(d.cueHits.slice(0, 3).join('、'))}」` : ''}</span>
         </div>`).join('')}</div>
-        ${g.gaps.length ? `<details class="det"><summary>缺 ${g.gaps.length} 维 —— 抄问题，把答案写下来就补进去了</summary>
-          ${g.gaps.map((gp) => `<div class="f">
-            <div class="f-lb"><b>${esc(gp.label)}</b> <span class="hint">${Math.round(gp.score * 100)}%</span></div>
-            <div class="hint">${esc(gp.question)}</div>
-            <div class="f-inline">
-              <input class="grow" type="text" placeholder="一句话就行（会写进字段 ${esc(gp.hint)}）" data-a="cg.fill" data-p="${i}|${esc(gp.id)}">
-              <button class="btn btn-xs" data-a="cg.do" data-p="${i}|${esc(gp.id)}">写进这张卡</button>
-            </div>
-          </div>`).join('')}</details>` : '<div class="hint">十维都够材料了。</div>'}
-      </div>`).join('')}</div>`;
+        ${g.gaps.length ? g.gaps.map((gp) => `<div class="role-gap">
+          <div class="f-lb"><b>${esc(gp.label)}</b><span class="mem-sub">${Math.round(gp.score * 100)}%</span></div>
+          <div class="mem-sub">${esc(gp.question)}</div>
+          <div class="role-gap-add">
+            <input type="text" placeholder="一句话就行（会写进 ${esc(gp.hint)}）" data-a="cg.fill" data-p="${i}|${esc(gp.id)}">
+            <button class="btn btn-xs" data-a="cg.do" data-p="${i}|${esc(gp.id)}">写进这张卡</button>
+          </div>
+        </div>`).join('') : ''}
+      </details>
+      <div class="mem-sub">${esc(g.advice)}</div>
+    </article>`).join('')}</div>`;
   },
-  memOverview: (x) => {
+  memOverview: () => {
     const s = S.state || DEMO;
-    const manual = (j(s, ['custom', 'memory', 'manual'], []) || []).filter((m) => m.on !== false);
-    const recs = (s.memoryRecords || []).filter((r) => r.status === 'confirmed');
-    return `<div class="grid2">
-      <div class="f"><div class="f-lb"><b>手动记忆（生效中 ${manual.length} 条）</b></div>
-        <div class="chip-list">${manual.length ? capChips(manual, (m) => `<span class="chip">${esc(m.text)}</span>`) : '<span class="hint">没有</span>'}</div></div>
-      <div class="f"><div class="f-lb"><b>结构化记忆（已确认 ${recs.length} 条）</b></div>
-        <div class="chip-list">${recs.length ? capChips(recs, (r) => `<span class="chip">${esc(r.text)}</span>`) : '<span class="hint">没有</span>'}</div></div>
+    const manualAll = j(s, ['custom', 'memory', 'manual'], []) || [];
+    const manual = manualAll.filter((m) => m.on !== false);
+    const all = s.memoryRecords || [];
+    const recs = all.filter((r) => r.status === 'confirmed');
+    const cap = Math.max(1, Number(j(s, ['custom', 'memory', 'promptMax'], 12)) || 12);
+    const pct = (n, d) => (d > 0 ? Math.max(0, Math.min(100, Math.round((n / d) * 100))) : 0);
+    return `<div class="mem-stats">
+      <div class="mem-stat">
+        <div class="mem-stat-top"><b>手动记忆</b><span class="tag ok">生效中 ${manual.length} 条</span></div>
+        <div class="mem-n">${manual.length}</div>
+        <div class="mem-bar" role="progressbar" aria-label="手动记忆本轮注入额度" aria-valuenow="${manual.length}" aria-valuemin="0" aria-valuemax="${cap}">
+          <i style="width:${pct(manual.length, cap)}%"></i>
+        </div>
+        <div class="mem-sub">本轮会带 ${manual.length} / 上限 ${cap} 条</div>
+        <button class="btn btn-ghost btn-sm" data-a="mem.focus" data-p="memNew">写一条</button>
+      </div>
+      <div class="mem-stat">
+        <div class="mem-stat-top"><b>结构化记忆</b><span class="tag ok">已确认 ${recs.length} 条</span></div>
+        <div class="mem-n">${recs.length}</div>
+        <div class="mem-bar ok" role="progressbar" aria-label="结构化记忆确认比例" aria-valuenow="${pct(recs.length, all.length)}" aria-valuemin="0" aria-valuemax="100">
+          <i style="width:${pct(recs.length, all.length)}%"></i>
+        </div>
+        <div class="mem-sub">已确认 ${recs.length} / 共 ${all.length} 条 · 只带确认过的进提示词</div>
+        <button class="btn btn-ghost btn-sm" data-a="mem.focus" data-p="memQ">去确认</button>
+      </div>
     </div>`;
   },
   memList: (x) => {
     const arr = draftArr(x.path);
+    const cap = Math.max(1, Number(valueOf({ id: 'm.promptMax', bind: 'memory.promptMax', t: 'number' })) || 12);
+    const active = arr.filter((m) => m.on !== false).length;
+    const pct = Math.max(0, Math.min(100, Math.round((active / cap) * 100)));
     /* ⚠️ 条目里传的是**原数组下标**：`data-p` 靠它定位"改哪一条 / 删哪一条"
        （见 `capRows` 的第三条警告）—— 用切片下标会静默改错行。 */
     const rows = arr.length
-      ? capRows(arr, 'mem.manual', (m, i) => `<div class="row flat f-inline">
-        <label class="sw flat"><input type="checkbox" ${m.on !== false ? 'checked' : ''} data-a="memlist.set" data-p="${i}|on"><span class="track"></span><span class="txt">启用</span></label>
-        <input type="text" class="grow" value="${esc(m.text)}" data-a="memlist.set" data-p="${i}|text" />
-        <button class="btn btn-xs btn-danger" data-a="memlist.del" data-p="${i}">删</button>
+      ? capRows(arr, 'mem.manual', (m, i) => `<div class="mem-tile">
+        <label class="sw flat mem-switch" title="${m.on !== false ? '停用这条' : '启用这条'}">
+          <input type="checkbox" ${m.on !== false ? 'checked' : ''} data-a="memlist.set" data-p="${i}|on" aria-label="启用第 ${i + 1} 条手动记忆">
+          <span class="track"></span>
+        </label>
+        <input type="text" class="mem-input" value="${esc(m.text)}" data-a="memlist.set" data-p="${i}|text" aria-label="第 ${i + 1} 条手动记忆" />
+        <button class="btn btn-xs btn-danger mem-del" data-a="memlist.del" data-p="${i}" aria-label="删掉第 ${i + 1} 条">×</button>
       </div>`)
-      : '<div class="rows"><div class="empty">还没有。下面的输入框加一条。</div></div>';
-    return `<div class="f">${x.note ? `<div class="hint">${x.note}</div>` : ''}
+      : '<div class="mem-empty"><b>还没有手动记忆</b><span>写一条，它每轮都会带着。</span></div>';
+    return `<div class="mem-stack">
+      <div class="mem-budget">
+        <div class="mem-bar-head"><span>本轮注入</span><b>${active} / ${cap} 条</b></div>
+        <div class="mem-bar"><i style="width:${pct}%"></i></div>
+      </div>
       ${rows}
-      <div class="f-inline">
-        <input type="text" class="grow" id="memNew" placeholder="例如：不要跟群里的张三说话 / 聊到加班就别接话" />
-        <button class="btn btn-ghost" data-a="memlist.add">添加</button>
-      </div></div>`;
+      <div class="mem-add">
+        <input type="text" id="memNew" placeholder="例如：不要跟群里的张三说话" />
+        <button class="btn btn-primary btn-sm" data-a="memlist.add">添加</button>
+      </div>
+    </div>`;
   },
   memRecords: (x) => {
     const s = S.state || DEMO, rs = s.memoryRecords || [];
@@ -4761,45 +4867,62 @@ const RENDER = {
     // → `recallForPrompt`）。所以这里显示的行，与模型看到的行**逐字相同** ——
     // "面板能查到、它却不记得"这种解释不清的现象从根上不会出现。
     const search = S.extra.memSearch;
-    const searchBox = `<div class="f-inline">
-      <input type="text" class="grow" id="memQ" placeholder="搜记忆：它回答「你还记得吗」用的是同一套检索" value="${esc(search ? search.q : '')}" />
-      <button class="btn btn-ghost" data-a="mem.search">搜</button>
-      ${search ? '<button class="btn btn-xs" data-a="mem.search.clear">清</button>' : ''}
+    const searchBox = `<div class="mem-search">
+      <input type="text" id="memQ" placeholder="搜记忆：它回答「你还记得吗」用的是同一套检索" value="${esc(search ? search.q : '')}" />
+      <button class="btn btn-sm" data-a="mem.search">搜</button>
+      ${search ? '<button class="btn btn-xs btn-ghost" data-a="mem.search.clear">清</button>' : ''}
     </div>`;
     const searchBlock = search
       ? (search.lines.length
-        ? `<div class="hint">捞出 ${search.lines.length} 条（这就是模型看到的样子）：</div>
-           <div class="rows">${search.lines.map((l) => `<div class="row flat">${esc(String(l).replace(/^-\s*/, ''))}</div>`).join('')}</div>`
-        : '<div class="empty">没捞到相关内容。</div>')
+        ? `<div class="mem-search-out"><div class="mem-sub">捞出 ${search.lines.length} 条 · 模型看到的就是这些</div>
+           <div class="mem-list">${search.lines.map((l) => `<div class="mem-tile mem-tile-plain">${esc(String(l).replace(/^-\s*/, ''))}</div>`).join('')}</div></div>`
+        : '<div class="mem-empty">没捞到相关内容。</div>')
       : '';
-    if (!rs.length) {
-      return `<div class="f">${searchBox}${searchBlock}
-        <div class="empty">还没有结构化记忆。机器人观察够几次之后，这里会自己长出来。</div></div>`;
-    }
     const cnt = {};
     for (const r of rs) cnt[r.status] = (cnt[r.status] || 0) + 1;
-    return `<div class="f">
+    const filter = ['all', ...orders].includes(S.extra.memFilter) ? S.extra.memFilter : 'all';
+    const shown = filter === 'all' ? rs : rs.filter((r) => r.status === filter);
+    const fbtn = (key, label, n) => `<button class="mem-filter ${filter === key ? 'on' : ''}" data-a="mem.filter" data-p="${key}" aria-pressed="${filter === key}">${esc(label)} <b>${n}</b></button>`;
+    if (!rs.length) {
+      return `<div class="mem-stack">${searchBox}${searchBlock}
+        <div class="mem-empty"><b>还没有结构化记忆</b><span>机器人观察够几次之后，这里会自己长出来。</span></div></div>`;
+    }
+    return `<div class="mem-stack">
       ${searchBox}
       ${searchBlock}
-      <div class="chip-list">${orders.map((k) => `<span class="chip">${esc(labels[k] || k)}：${cnt[k] || 0}</span>`).join('')}</div>
-      ${capRows(rs, 'mem.records', (r) => `<div class="row">
-        <div class="row-h"><span class="tag ${r.status === 'confirmed' ? 'ok' : r.status === 'rejected' ? 'bad' : 'warn'}">${esc(labels[r.status] || r.status)}</span>
-          <span class="tag plain">${esc(r.kindShort || r.kind || '')}</span>
-          ${r.subjectName ? `<span class="tag plain">关于 ${esc(r.subjectName)}</span>` : ''}
-          <span class="spacer"></span><span class="hint">观察到 ${esc(String(r.samples ?? '?'))} 次</span></div>
-        <div>${esc(r.text)}</div>
-        ${r.detail ? `<div class="hint">依据${r.inferred ? '（含推测，别当实锤）' : ''}：${esc(r.detail)}</div>` : ''}
-        <div class="row-h">
-          ${['confirmed', 'rejected', 'archived'].map((k) => `<button class="btn btn-xs" data-a="mem.review" data-p="${esc(r.id)}|${k}">${esc(labels[k] || k)}</button>`).join('')}
-          <span class="spacer"></span><span class="hint mono">${esc(r.chatKey || '')}</span>
+      <div class="mem-filters">
+        ${fbtn('all', '全部', rs.length)}
+        ${orders.map((k) => fbtn(k, labels[k] || k, cnt[k] || 0)).join('')}
+      </div>
+      ${shown.length ? capRows(shown, 'mem.records', (r) => `<article class="mem-record" data-status="${esc(r.status)}">
+        <div class="mem-record-h">
+          <span class="mem-dot ${r.status === 'confirmed' ? 'ok' : r.status === 'rejected' ? 'bad' : 'warn'}"></span>
+          <b class="mem-record-text">${esc(r.text)}</b>
+          <span class="tag ${r.status === 'confirmed' ? 'ok' : r.status === 'rejected' ? 'bad' : 'warn'}">${esc(labels[r.status] || r.status)}</span>
+          <span class="mem-sub">${esc(String(r.samples ?? '?'))} 次</span>
         </div>
-      </div>`)}</div>`;
+        <div class="mem-record-meta">
+          ${r.kindShort || r.kind ? `<span class="tag plain">${esc(r.kindShort || r.kind)}</span>` : ''}
+          ${r.subjectName ? `<span class="tag plain">关于 ${esc(r.subjectName)}</span>` : ''}
+          <span class="spacer"></span>
+          <span class="mem-sub mono">${esc(r.chatKey || '')}</span>
+        </div>
+        ${r.detail ? `<details class="mem-basis"><summary>依据${r.inferred ? '（含推测）' : ''}</summary><div>${esc(r.detail)}</div></details>` : ''}
+        <div class="mem-actions">
+          ${[['confirmed', '确认'], ['rejected', '否决'], ['archived', '收起']].map(([k, l]) => `<button class="btn btn-xs ${r.status === k ? 'btn-primary' : ''}" data-a="mem.review" data-p="${esc(r.id)}|${k}">${l}</button>`).join('')}
+        </div>
+      </article>`)
+        : `<div class="mem-empty"><b>这个状态没有记忆</b><span>切换上面的筛选看看。</span></div>`}
+    </div>`;
   },
-  autoMemList: (x) => {
+  autoMemList: () => {
     const s = S.state || DEMO, rs = s.autoMemory || [];
-    if (!rs.length) return '<div class="empty">这份历史存量是空的。</div>';
-    return capRows(rs, 'mem.auto', (m) => `<div class="row flat f-inline"><span class="grow">${esc(m.text)}</span>
-      <span class="hint">${esc(m.from || '')}</span><button class="btn btn-xs btn-danger" data-a="mem.auto.del" data-p="${esc(m.id)}">删</button></div>`);
+    if (!rs.length) return '<div class="mem-empty"><b>这份历史存量是空的</b><span>早期记录只用于回看，不再新增。</span></div>';
+    return capRows(rs, 'mem.auto', (m) => `<div class="mem-tile mem-tile-plain">
+      <span class="grow">${esc(m.text)}</span>
+      <span class="mem-sub">${esc(m.from || '')}</span>
+      <button class="btn btn-xs btn-danger" data-a="mem.auto.del" data-p="${esc(m.id)}">删</button>
+    </div>`);
   },
   schedList: (x) => {
     const arr = draftArr(x.path);
@@ -4872,52 +4995,9 @@ const RENDER = {
       <div class="hint">改完点底部「保存并生效」。越界键会被拒绝并说出来 —— 不会静默丢弃。</div>
     </div>`;
   },
-  people: (x) => {
-    const p = (S.state || DEMO).people;
-    if (!p) return '<div class="empty">这一版的面板还没下发群友档案（需要重启面板加载新代码）。</div>';
-    if (!p.ok) {
-      return `<div class="f">
-        <div class="hint">${esc(p.reason || '读不到档案')}</div>
-        <div class="hint">档案由插件 <b>群友印象</b> 写在 <code>data/memory/people/&lt;QQ&gt;.json</code>：在「插件 → 插件」里勾上它并重启机器人，它聊过之后这里就会长出条目。</div>
-        <div class="hint">相关能力：<code>群友印象</code>（记印象与好感度）· <code>自我印象</code>（把自己总结成低权重背景板）·
-          <code>记忆管理</code>（列 / 搜 / 合并归档）· <code>百科查询</code>（外部百科，不进本地梗库）。</div>
-      </div>`;
-    }
-    if (!p.count) {
-      return `<div class="f"><div class="empty">还没有任何人的档案 —— 那个技能还没被用到过。</div>
-        <div class="hint">它会在聊过之后自己记（模型决定记什么），不需要你手填。</div></div>`;
-    }
-    const fav = (v) => (typeof v === 'number'
-      ? `<span class="tag ${v >= 70 ? 'ok' : v <= 30 ? 'bad' : 'plain'}">好感 ${v}</span>` : '');
-    return `<div class="f">
-      <div class="f-inline"><span class="tag accent">共 ${p.count} 人</span>
-        ${p.broken ? `<span class="tag warn" title="这些文件读不出 JSON —— 只跳过它们自己，不让整张列表变空">${p.broken} 个文件坏</span>` : ''}
-        <span class="spacer"></span><span class="hint">按最近更新排序</span></div>
-      ${capRows(p.items, 'mem.people', (it) => `
-        <div class="row">
-          <div class="row-h">
-            <span class="mono">${esc(it.userId)}</span>
-            ${it.nickname ? `<span class="nm">${esc(it.nickname)}</span>` : ''}
-            ${fav(it.favor)}
-            <span class="tag plain">印象 ${it.impressionCount}</span>
-            <span class="spacer"></span>
-            <span class="hint">${it.updatedAt ? new Date(it.updatedAt).toLocaleString() : ''}</span>
-          </div>
-          ${it.attitude ? `<div class="hint">态度：${esc(it.attitude)}</div>` : ''}
-          ${it.impressions.length ? `<div><div class="chip-list">${it.impressions.map((m) => `<span class="chip">${esc(m.content)}</span>`).join('')}</div>
-            <div class="hint">只带最近 3 条 —— 全文检索是那个技能自己的工具（记忆管理）的事。</div></div>`
-            : '<span class="hint">还没有文字印象，只有一个好感度。</span>'}
-        </div>`)}
-    </div>`;
-  },
-
-  /** 自定义图库：**只报张数**（那个包的条目字段名我们没样本可核，不猜 —— 见 bot-data.js ③）。 */
-  gallery: (x) => {
-    const g = (S.state || DEMO).gallery;
-    if (!g) return '';
-    if (!g.ok) return `<div class="hint">图库：${esc(g.reason || '读不到')}（那个技能没被用到过时是正常的）</div>`;
-    return `<div class="metric"><div class="n">${g.count}</div><div class="l">图库里可发送的图</div></div>`;
-  },
+  /* 2026-11-01 · G7：群友档案 / 图库两页随「默认未内置插件」下线。
+     数据读盘口（/api/state.people / gallery）保留在 panel/lib/bot-data.js ——
+     删页面不动 API 契约；以后要做插件自己的设置页再接回来。 */
 
   /** 免费额度情报：**真数据**（旧控制台里这一页是骨架）。 */
   apiDeals: (x) => {
@@ -5057,32 +5137,59 @@ const RENDER = {
       <pre class="term-body mono" id="termBody"></pre>
     </div>`;
   },
-  /* ── 假 QQ 会话（2026-10-21 · Win-v0.1.2 移植）────────────────────────── */
+  /* ── 假 QQ 会话（2026-10-21 · Win-v0.1.2 移植；2026-11-01 对话化）──────
+     终端回显改成聊天气泡：分类在 `panel/lib/fake-line.js`，这里只负责画。
+     `#fakeBody` 仍保留原始输出（折叠区）—— 出问题时不用去翻别处。 */
   fakeView: () => {
     const on = !!S.extra.fakeRunning;
     const opts = fakeOpts();
-    const opt = (k, label, hint) => `<label class="sw flat" title="${esc(hint)}">
+    const conflict = !!j(S.state, ['bridge', 'running']) && !opts.sandbox && !on;
+    const opt = (k, label, hint) => `<label class="chat-opt" title="${esc(hint)}">
         <input type="checkbox" data-a="fake.opt" data-p="${k}" ${opts[k] ? 'checked' : ''} ${on ? 'disabled' : ''}>
-        <span class="track"></span><span class="txt">${esc(label)}</span></label>`;
-    const cmd = (label, p, hint = '') => `<button class="btn btn-ghost btn-sm" data-a="fake.cmd" data-p="${p}" ${on ? '' : 'disabled'} title="${esc(hint)}">${esc(label)}</button>`;
-    return `<div class="f">
-      <div class="f-inline">
-        <span id="fakeBadge" class="tag ${on ? 'ok' : 'plain'}">${on ? `会话在跑${S.extra.fakePid ? ` · pid ${S.extra.fakePid}` : ''}` : '没在跑'}</span>
-        <span class="spacer"></span>
-        <button class="btn btn-primary btn-sm" data-a="fake.start" ${on ? 'disabled' : ''}>启动会话</button>
-        <button class="btn btn-danger btn-sm" data-a="fake.stop" ${on ? '' : 'disabled'}>停止会话</button>
+        <span class="chat-opt-box"></span><span>${esc(label)}</span></label>`;
+    const cmd = (label, p, hint = '') => `<button class="chat-chip" data-a="fake.cmd" data-p="${p}" ${on ? '' : 'disabled'} title="${esc(hint)}">${esc(label)}</button>`;
+    const msgs = fakeMsgs();
+    return `<div class="chat" data-chat>
+      <div class="chat-top">
+        <div class="chat-id">
+          <span class="chat-dot ${on ? 'on' : ''}" id="fakeBadge" role="img" aria-label="${on ? '会话在跑' : '会话没在跑'}"></span>
+          <b>${on ? '会话在跑' : '会话没在跑'}</b>
+          <span class="chat-sub">${on ? (S.extra.fakePid ? `pid ${esc(String(S.extra.fakePid))}` : '真程序') : '启动后直接打字'}</span>
+        </div>
+        <div class="chat-actions">
+          <button class="btn btn-ghost btn-sm" data-a="fake.clear" ${msgs.length || fakeLines().length ? '' : 'disabled'}>清屏</button>
+          <button class="btn btn-primary btn-sm" data-a="fake.start" ${on ? 'disabled' : ''}>启动会话</button>
+          <button class="btn btn-danger btn-sm" data-a="fake.stop" ${on ? '' : 'disabled'}>停止会话</button>
+        </div>
       </div>
-      <div class="f-inline" style="gap:14px;flex-wrap:wrap;">
+      <div class="chat-opts">
         ${opt('offline', '离线假模型', '不调真模型：固定回话、不花钱、断网可用')}
-        ${opt('sandbox', '沙箱数据', '换成空的临时 data（不碰真实 data，真机器人可以在跑）')}
+        ${opt('sandbox', '沙箱数据', '换成空的临时 data，不碰真实 data')}
+        ${conflict ? '<span class="chat-warn">真机器人在跑：先停它，或勾「沙箱数据」。</span>' : ''}
+        <span class="chat-sub chat-opts-note">斜杠命令仍可用：/at · /private · /group · /log</span>
       </div>
-      <div class="f-inline" style="gap:6px;flex-wrap:wrap;">
-        ${cmd('切私聊', 'private', '下一句走私聊（管理员路径）')}
-        ${cmd('切回群', 'group')}
-        ${cmd('开关 @', 'at', '关掉 = 没被点名的群消息，用来看巡逻 / 插话逻辑')}
-        ${cmd('看程序日志', 'log', '相当于 /log：打最后 20 行程序日志')}
+      <div class="chat-log" id="fakeChatLog" role="log" aria-live="polite">
+        ${msgs.length ? msgs.map(chatMsgHtml).join('') : `<div class="chat-empty"><b>${on ? '会话已启动' : '还没有对话'}</b><span>${on ? '在下面打一句话，就是一条群消息。' : '点「启动会话」，然后在下面打字。'}</span></div>`}
+        <div class="chat-typing-slot" id="fakeTypingSlot"></div>
       </div>
-      <pre class="term-body mono" id="fakeBody"></pre>
+      <div class="chat-compose ${on ? '' : 'is-off'}">
+        <span class="chat-dot ${on ? 'on' : ''}"></span>
+        <textarea id="fakeComposer" rows="1" placeholder="${on ? '发一条群消息…' : '先启动会话'}" ${on ? '' : 'disabled'} aria-label="输入群消息"></textarea>
+        <button class="chat-send" data-a="fake.send" ${on ? '' : 'disabled'} aria-label="发送">↑</button>
+      </div>
+      <div class="chat-foot">
+        <div class="chat-quick">
+          ${cmd('开关 @', 'at', '关掉 = 没被点名的群消息')}
+          ${cmd('切私聊', 'private')}
+          ${cmd('切回群', 'group')}
+          ${cmd('看日志', 'log', '相当于 /log：打最后 20 行程序日志')}
+        </div>
+        <span class="chat-sub">Enter 发送 · Shift+Enter 换行</span>
+      </div>
+      <details class="chat-raw">
+        <summary>原始输出 · ${fakeLines().length} 行</summary>
+        <pre id="fakeBody" class="mono"></pre>
+      </details>
     </div>`;
   },
   /* 巡逻与热度的现状（只读）。数据来自机器人每 30 秒写的
@@ -5142,10 +5249,15 @@ const RENDER = {
   tryOut: () => {
     const t = S.extra.tryOut;
     if (!t) return '';
-    return `<div class="f">
-      <div class="f-inline"><span class="tag ${t.error ? 'bad' : 'ok'}">${t.error ? '出错' : `成功 · ${t.ms || 0} ms`}</span></div>
-      ${t.error ? `<div class="hint bad">${esc(t.error)}</div>` : ''}
-      <div><b>最终分段：</b>${(t.chunks || []).map((c) => `<span class="chip">${esc(c)}</span>`).join('') || '<span class="hint">没有分段</span>'}</div>
+    const asked = S.extra.tryAsked || '';
+    const chunks = Array.isArray(t.chunks) ? t.chunks : [];
+    const reply = chunks.join('\n') || t.raw || '';
+    return `<div class="chat-mini">
+      ${asked ? `<div class="chat-msg user"><div class="chat-bubble">${esc(asked)}</div></div>` : ''}
+      ${t.error
+        ? `<div class="chat-msg error"><div class="chat-pill">${esc(t.error)}</div></div>`
+        : `<div class="chat-msg bot"><div class="chat-bubble">${esc(reply || '（没有分段）')}</div></div>`}
+      <div class="chat-sub">${t.error ? '这次没有成功' : `成功 · ${t.ms || 0} ms${chunks.length > 1 ? ` · 分 ${chunks.length} 段` : ''}`}</div>
       ${t.raw ? `<details class="det"><summary>模型原始输出</summary><pre class="mono" style="white-space:pre-wrap;font-size:11px;max-height:220px;overflow:auto;">${esc(t.raw)}</pre></details>` : ''}
       ${t.prompt ? `<details class="det"><summary>发给模型的完整提示词（${(t.prompt || '').length} 字符）</summary><pre class="mono" style="white-space:pre-wrap;font-size:11px;max-height:280px;overflow:auto;">${esc(t.prompt)}</pre></details>` : ''}
     </div>`;
@@ -5616,10 +5728,13 @@ function psnLineRender() {
   dot.setAttribute('cx', PSN_LINE_SPRING.x); dot.setAttribute('cy', PSN_LINE_SPRING.y);
   return true;
 }
-function psnLineTick() {
+function psnLineTick(now) {
   const st = PSN_LINE_SPRING;
   st.raf = 0;
-  const k = 340, d = 30, m = 0.85, dt = 1 / 60;
+  const t = Number.isFinite(now) ? now : performance.now();
+  const dt = st.last ? Math.min(0.05, Math.max(1 / 240, (t - st.last) / 1000)) : 1 / 60;
+  st.last = t;
+  const k = 340, d = 30, m = 0.85;
   const fx = -k * (st.x - st.tx) - d * st.vx;
   const fy = -k * (st.y - st.ty) - d * st.vy;
   st.vx += (fx / m) * dt; st.vy += (fy / m) * dt;
@@ -5636,14 +5751,15 @@ function psnLineSet(x, y) {
   st.tx = x; st.ty = y;
   if (psnLineReduced()) {
     if (st.raf) cancelAnimationFrame(st.raf);
-    st.raf = 0; st.x = x; st.y = y; st.vx = 0; st.vy = 0; psnLineRender(); return;
+    st.raf = 0; st.last = 0; st.x = x; st.y = y; st.vx = 0; st.vy = 0; psnLineRender(); return;
   }
-  if (!st.raf) st.raf = requestAnimationFrame(psnLineTick);
+  if (!st.raf) { st.last = 0; st.raf = requestAnimationFrame(psnLineTick); }
 }
 function psnLineHide() {
   const st = PSN_LINE_SPRING;
   if (st.raf) cancelAnimationFrame(st.raf);
   st.raf = 0;
+  st.last = 0;
   const cross = document.querySelector('.psn .line-cross');
   if (cross) cross.classList.remove('is-on');
   for (const p of document.querySelectorAll('.psn .line-point.is-active')) p.classList.remove('is-active');
@@ -6609,7 +6725,10 @@ function psnSpringAxis(id, target) {
     const fill = row ? row.querySelector('.axis-fill') : null;
     const knob = row ? row.querySelector('.axis-knob') : null;
     const shown = parseFloat(fill?.style.width || 'NaN');
-    st = { value: Number.isFinite(shown) ? shown : to, velocity: 0, target: to, raf: 0, fill, knob };
+    st = {
+      value: Number.isFinite(shown) ? shown : to, velocity: 0, target: to,
+      raf: 0, last: 0, fill, knob,
+    };
     psnAxisSprings.set(id, st);
   }
   st.target = to;
@@ -6619,8 +6738,11 @@ function psnSpringAxis(id, target) {
     if (st.fill) st.fill.style.width = `${v}%`;
     if (st.knob) st.knob.style.left = `${v}%`;
   };
-  const step = () => {
-    const k = 340, d = 18, m = 0.85, dt = 1 / 60;
+  const step = (now) => {
+    const t = Number.isFinite(now) ? now : performance.now();
+    const dt = st.last ? Math.min(0.05, Math.max(1 / 240, (t - st.last) / 1000)) : 1 / 60;
+    st.last = t;
+    const k = 340, d = 18, m = 0.85;
     const force = -k * (st.value - st.target) - d * st.velocity;
     st.velocity += (force / m) * dt;
     st.value += st.velocity * dt;
@@ -6628,10 +6750,12 @@ function psnSpringAxis(id, target) {
     if (Math.abs(st.value - st.target) < 0.15 && Math.abs(st.velocity) < 0.15) {
       paint(st.target);
       st.raf = 0;
+      st.last = 0;
       return;
     }
     st.raf = requestAnimationFrame(step);
   };
+  st.last = 0;
   st.raf = requestAnimationFrame(step);
 }
 
@@ -7346,25 +7470,100 @@ function fakeOpts() {
   return S.extra.fakeOpt;
 }
 function fakeLines() { return Array.isArray(S.extra.fakeLines) ? S.extra.fakeLines : (S.extra.fakeLines = []); }
+function fakeMsgs() { return Array.isArray(S.extra.fakeMsgs) ? S.extra.fakeMsgs : (S.extra.fakeMsgs = []); }
+function fakeSeen() {
+  if (!S.extra.fakeSeen || typeof S.extra.fakeSeen !== 'object') S.extra.fakeSeen = {};
+  return S.extra.fakeSeen;
+}
+function chatMsgHtml(m) {
+  const text = esc(m.text || '');
+  const mid = esc(String(m.id ?? ''));
+  if (m.role === 'user') return `<div class="chat-msg user" data-mid="${mid}"><div class="chat-bubble">${text}</div></div>`;
+  if (m.role === 'bot') return `<div class="chat-msg bot" data-mid="${mid}" title="${esc(m.channel || '机器人')}"><div class="chat-bubble">${text}</div></div>`;
+  if (m.role === 'error') return `<div class="chat-msg error" data-mid="${mid}"><div class="chat-pill">${text}</div></div>`;
+  return `<div class="chat-msg system" data-mid="${mid}"><div class="chat-pill">${text}</div></div>`;
+}
+function reducedChatMotion() {
+  return !!(window.Motion && window.Motion.reducedMotion && window.Motion.reducedMotion());
+}
+function animateChatBubble(el) {
+  if (!el || reducedChatMotion()) return;
+  try {
+    el.animate([
+      { opacity: 0, transform: 'translateY(8px) scale(.88)' },
+      { opacity: 1, transform: 'translateY(0) scale(1.02)', offset: .68 },
+      { opacity: 1, transform: 'translateY(0) scale(1)' },
+    ], { duration: 420, easing: 'cubic-bezier(.2,.9,.25,1.08)', fill: 'both' });
+  } catch { /* 不支持 WAAPI 就只显示 */ }
+}
+function paintFakeChat(forceScroll = false) {
+  const log = $id('fakeChatLog');
+  if (!log) return;
+  const msgs = fakeMsgs();
+  const seen = fakeSeen();
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 96;
+  const oldTop = log.scrollTop;
+  const sig = msgs.map((m) => `${m.id}\u0000${m.n}\u0000${m.role}\u0000${m.text}`).join('\u0001')
+    + `\u0002${S.extra.fakeRunning ? 1 : 0}`;
+  /* 轮询每 1.5 秒来一次；消息没变就不重建 DOM —— 否则会把滚动位置和
+     “正在输入”三点的动画周期一起重置，读起来像一直在闪。 */
+  if (log.dataset.sig !== sig) {
+    const empty = `<div class="chat-empty"><b>${S.extra.fakeRunning ? '会话已启动' : '还没有对话'}</b><span>${S.extra.fakeRunning ? '在下面打一句话，就是一条群消息。' : '点「启动会话」，然后在下面打字。'}</span></div>`;
+    log.innerHTML = (msgs.length ? msgs.map(chatMsgHtml).join('') : empty) + '<div class="chat-typing-slot" id="fakeTypingSlot"></div>';
+    log.dataset.sig = sig;
+    for (const el of log.querySelectorAll('.chat-msg')) {
+      const id = el.dataset.mid;
+      if (!id || seen[id]) continue;
+      seen[id] = 1;
+      animateChatBubble(el.querySelector('.chat-bubble, .chat-pill'));
+    }
+  }
+  paintFakeTyping(log);
+  if (forceScroll || atBottom) log.scrollTop = log.scrollHeight;
+  else log.scrollTop = oldTop;
+}
+function paintFakeTyping(log) {
+  const slot = log.querySelector('#fakeTypingSlot') || $id('fakeTypingSlot');
+  if (!slot) return;
+  const wait = Number(S.extra.fakeWaitAt) || 0;
+  const lastBot = fakeMsgs().filter((m) => m.role === 'bot').slice(-1)[0];
+  const waiting = !!S.extra.fakeRunning && wait > 0 && Date.now() - wait < 90000
+    && (!lastBot || Number(lastBot.at || 0) < wait);
+  const want = waiting ? '1' : '0';
+  if (slot.dataset.on === want) return;
+  slot.dataset.on = want;
+  slot.innerHTML = waiting ? '<div class="chat-msg bot"><div class="chat-bubble chat-typing"><i></i><i></i><i></i></div></div>' : '';
+}
 function paintFake() {
   const box = $id('fakeBody');
-  if (!box) return;
   const lines = fakeLines();
-  box.textContent = lines.length ? lines.join('\n') : '（还没启动 —— 点「启动会话」）';
-  box.scrollTop = box.scrollHeight;
-  const badge = $id('fakeBadge');
-  if (badge) {
-    const on = !!S.extra.fakeRunning;
-    badge.textContent = on ? `会话在跑${S.extra.fakePid ? ` · pid ${S.extra.fakePid}` : ''}` : '没在跑';
-    badge.className = `tag ${on ? 'ok' : 'plain'}`;
+  if (box) {
+    box.textContent = lines.length ? lines.join('\n') : '（还没启动 —— 点「启动会话」）';
+    box.scrollTop = box.scrollHeight;
   }
+  const badge = $id('fakeBadge');
+  if (badge) badge.className = `chat-dot ${S.extra.fakeRunning ? 'on' : ''}`;
+  const sum = document.querySelector('.chat-raw summary');
+  if (sum) sum.textContent = `原始输出 · ${lines.length} 行`;
+  paintFakeChat();
 }
 async function fakeSay(text, clearInput = false) {
   if (!S.extra.fakeRunning) return toast('会话没在跑 —— 先点「启动会话」', 'warn');
   try {
     const r = await post('/api/fake-qq/send', { text });
     if (!r?.ok) return toast(r?.msg || '没发出去', 'bad');
-    if (clearInput) { S.volatile['fake.text'] = ''; const el = $id('fake.text'); if (el) el.value = ''; }
+    if (clearInput) {
+      S.extra.fakeDraft = '';
+      const el = $id('fakeComposer');
+      if (el) {
+        el.value = '';
+        el.style.height = 'auto';
+        const send = el.parentElement?.querySelector('.chat-send');
+        if (send) send.disabled = true;
+      }
+    }
+    S.extra.fakeWaitAt = Date.now();
+    paintFakeChat(true);
     await fakePoll();
   } catch (e) { toast(`发送失败：${e.message}`, 'bad'); }
 }
@@ -7378,14 +7577,42 @@ async function fakePoll() {
     const lines = fakeLines();
     for (const l of r.lines || []) lines.push(l.text);
     if (lines.length > 400) lines.splice(0, lines.length - 400);
+    const msgs = fakeMsgs();
+    let gotBot = false;
+    for (const m of r.messages || []) {
+      const i = msgs.findIndex((x) => x.id === m.id);
+      if (i >= 0) msgs[i] = { ...msgs[i], ...m };
+      else msgs.push(m);
+      if (m.role === 'bot' || m.role === 'error') gotBot = true;
+    }
+    if (msgs.length > 400) msgs.splice(0, msgs.length - 400);
+    if (gotBot) S.extra.fakeWaitAt = 0;
     if (r.seq) S.extra.fakeSince = r.seq;
-    // 跑/停切换时整页重画一次（按钮的 disabled 在渲染里定），平时只动回显框。
+    // 跑/停切换时整页重画一次（按钮的 disabled 在渲染里定），平时只动聊天区。
     if (changedRun) paintPage(false); else paintFake();
   } catch { /* 面板没响应就安静等下一轮 */ }
 }
 let fakeTimer = null;
+function mountFakeComposer() {
+  const el = $id('fakeComposer');
+  if (!el) return;
+  el.value = S.extra.fakeDraft || '';
+  const sync = () => {
+    S.extra.fakeDraft = el.value;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight || 26, 132)}px`;
+    const send = el.parentElement?.querySelector('.chat-send');
+    if (send) send.disabled = !S.extra.fakeRunning || !el.value.trim();
+  };
+  el.oninput = sync;
+  el.onkeydown = (ev) => {
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ACTIONS['fake.send'](); }
+  };
+  sync();
+}
 function mountFake() {
   paintFake();
+  mountFakeComposer();
   if (!fakeTimer) {
     fakeTimer = setInterval(() => {
       if (!$id('fakeBody')) { clearInterval(fakeTimer); fakeTimer = null; return; }
@@ -7394,6 +7621,16 @@ function mountFake() {
   }
   fakePoll();
 }
+/* 真浏览器门禁用：只读聊天状态（不提供写入口）。 */
+window.__fakeChat = {
+  state: () => ({
+    messages: fakeMsgs().length,
+    lastRole: fakeMsgs().slice(-1)[0]?.role || '',
+    seen: Object.keys(fakeSeen()).length,
+    typing: !!document.querySelector('#fakeTypingSlot .chat-typing'),
+    running: !!S.extra.fakeRunning,
+  }),
+};
 
 function onPageShown(su) {
   const ids = new Set((su.cards || []).flatMap((c) => (c.ctrls || []).map((x) => x.t)));
@@ -8578,9 +8815,11 @@ window.addEventListener('resize', () => {
   const missingRender = [...seen].filter((t) => !RENDER[t]);
   const missingList = [...seen].filter((t) => !CTRL_KINDS.includes(t));
   /* 2026-10-25：`ticks`（回复长短档位条）与 `scenes`（9 种场景）随「回复设置」页
-     暂时离开六页 IA，但实现保留、等那一页重做时直接接上。运行期与静态契约
-     （check-wb §69）用**同一份**豁免名单，否则一边放行一边报警。 */
-  const RESERVED_UNUSED = new Set(['ticks', 'scenes']);
+     暂时离开六页 IA，但实现保留、等那一页重做时直接接上。
+     2026-11-01：`pluginSettings` 原由「图库」页使用；该页按 G7 下线后暂无页面引用。
+     它是扩展设置的四类控件渲染器，插件/技能管理页重做时还要接回来 —— 不是死代码。
+     运行期与静态契约（check-wb §69）用**同一份**豁免名单，否则一边放行一边报警。 */
+  const RESERVED_UNUSED = new Set(['ticks', 'scenes', 'pluginSettings']);
   const unusedList = CTRL_KINDS.filter((t) => !seen.has(t) && !RESERVED_UNUSED.has(t));
   if (missingRender.length) console.error('[schema] 这些控件类型没有渲染器：', missingRender);
   if (missingList.length) console.error('[schema] 这些类型没登记进 CTRL_KINDS：', missingList);
@@ -8758,6 +8997,7 @@ window.addEventListener('resize', () => {
    ⚠️ 2026-10-27 定稿：并入 app.js（不新开资产文件）—— 面板进程的 NEXT_ASSETS
       在启动时读入内存，新文件要重启面板才可取；并进已有资产后刷新即生效。 */
 const factoryWipe = (() => {
+  /* 这是弹簧表的离线采样率，不是渲染限帧；界面帧率上限在 frame-rate.js。 */
   const FPS = 60;
   const LEAD_FROM = -8;
   const REVEAL_TO = 108.5;

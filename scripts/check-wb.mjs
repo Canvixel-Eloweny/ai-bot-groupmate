@@ -92,7 +92,7 @@ console.log = (first, ...rest) => {
  *       提交门 `pre-commit.sh` 正是因此才把 `node_modules` **软链**进闸门用的临时 worktree。
  *       记在这里是为了下次有人量到 17 时**别以为闸门坏了**。
  */
-const MIN_CONTRACTS = 152;
+const MIN_CONTRACTS = 156;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -2246,7 +2246,9 @@ const LIB_SRC_ALLOW = [
       'panel/lib/update-routes.js': 1,
       'panel/lib/update-offline.js': 2,
       'panel/lib/update.js': 2,
-      // 假 QQ 会话壳（2026-10-21）：只依赖 L0 的 paths.js + node 内置 ⇒ L1。
+      // 假 QQ 的 stdout 分类（2026-11-01）：零 import 的纯函数叶子 ⇒ L0。
+      'panel/lib/fake-line.js': 0,
+      // 假 QQ 会话壳（2026-10-21）：只依赖 L0 的 paths.js / fake-line.js + node 内置 ⇒ L1。
       'panel/lib/fake-session.js': 1,
     };
     // lib → `src/` 的边：**同样要登记**（B11c 起）。
@@ -12219,8 +12221,10 @@ const LIB_SRC_ALLOW = [
     /* 2026-10-25：`ticks`（回复长短档位条）与 `scenes`（9 种场景）当前没有页面引用 ——
        维护者已决定「回复设置」页移出六页 IA、之后单独重做。它们的实现与变异锚点
        保留，等那一页回来直接接上；**不是**"忘了删的死代码"。
-       ⚠️ 只许这两个；新增任何名字都要先回答"它现在被谁用/为什么不能用"。 */
-    const RESERVED_UNUSED = new Set(['ticks', 'scenes']);
+       2026-11-01：`pluginSettings` 原由「图库」页使用；该页按 G7 下线后暂无页面引用。
+       它是扩展设置的四类控件渲染器，插件/技能管理页重做时还要接回来。
+       ⚠️ 新增任何名字都要先回答"它现在被谁用/为什么不能用"。 */
+    const RESERVED_UNUSED = new Set(['ticks', 'scenes', 'pluginSettings']);
     const noRender = declared.filter((t) => !renderKeys.includes(t));
     const deadRender = renderKeys.filter((t) => !declared.includes(t) && !RESERVED_UNUSED.has(t));
     const noKind = declared.filter((t) => !ctrlKinds.includes(t));
@@ -15040,11 +15044,15 @@ const LIB_SRC_ALLOW = [
 // 背景：控制台有两种呈现形态（浏览器标签页 / 独立窗口），由 `config.json` 的
 // `launch` 段决定。它跨启动入口与**面板两个方向**（写路由校验 / 状态下发）。
 //
-// ⚠️ **2026-10-17 回退（维护者点名）**：Windows 侧（便携包 `tools/lib/console.mjs`
-// 与开发树 `scripts/win-launcher.mjs`）已退回"spawn 起面板 + 开系统浏览器"，
-// **不再消费本判据**；本节因此只剩 macOS 一个启动入口。但 `src/launch-mode.js`
-// 与包内 `app/src/launch-mode.js` **仍须在场**：面板 `/api/panel/window` 的窗口几何
-// 判据（`normalizeWinState` / `windowStatePath`）住在它里面，删了面板会当场 import 失败。
+// ⚠️ **2026-10-17 回退（维护者点名）**：Windows 便携包（`tools/lib/console.mjs`）
+// 与开发树（`scripts/win-launcher.mjs`）仍退回"spawn 起面板 + 开系统浏览器"，
+// **不消费本判据**；macOS 走 launcher。
+// **2026-11-01 追加**：Windows **安装版 Electron 壳**开始消费 `launch.mode` +
+// `modeExplicit`（显式选择才生效，旧默认 browser 按桌面窗口迁移）；本节因此
+// 多了 main/preload/settings/state-collector 的接线判据。
+// `src/launch-mode.js` 与包内 `app/src/launch-mode.js` **仍须在场**：面板
+// `/api/panel/window` 的窗口几何判据（`normalizeWinState` / `windowStatePath`）
+// 住在它里面，删了面板会当场 import 失败。
 //
 // 这类"同一件事多个入口"的默认结局是：某一处又长出一份自己的分支 ——
 // 没有编译期检查挡得住，症状只在某个平台上、以"改了不生效"的形式出现。
@@ -15102,9 +15110,11 @@ const LIB_SRC_ALLOW = [
     || !/data-set="openOnStart"/.test(setHtml)) {
     problems.push('设置层的「启动」少了控件（打开方式或 openOnStart 有一格没接）—— 用户只能手改 config.json');
   }
-  // P11（维护者点名）：「独立窗口」还在内测 —— 提示必须留在选项旁边。
-  // 首跑灰窗是已知缺陷（见 bootstrap.mjs 的 launch.mode 注释），提示被删就会被当成"装坏了"。
-  if (!/内测版先不要点/.test(setHtml)) problems.push('设置层的「独立窗口」少了内测提示（维护者点名要加）');
+  // 2026-11-01：打开方式改成可立即切换，旧「内测版先不要点」提示已不成立。
+  // 新提示必须说清两件事：浏览器模式会把窗口收进托盘；下次启动仍按选择。
+  if (!/收进托盘/.test(setHtml) || !/下次启动仍按/.test(setHtml)) {
+    problems.push('设置层的打开方式提示缺「收进托盘」或「下次启动仍按」—— 用户会以为点了没生效');
+  }
   // P11：Windows 原生形态下那格就是协议端本身 —— 没装时必须能说"未安装"，不能一片绿。
   if (!/'napcat', 'present'/.test(sch) || !/'napcat', 'dir'/.test(sch)) {
     problems.push('schema.js 的运行状态不再读 napcat.present/dir —— 协议端没装时那格又会显示成正常');
@@ -15165,12 +15175,44 @@ const LIB_SRC_ALLOW = [
     problems.push('openPanelFromConfig 没有在开窗前调用 closeStaleConsole —— 旧实例还在时会走委派开窗，几何标志被吞');
   }
 
+  // ⑧ 打开方式真正可用（2026-11-01）：桌面壳消费 launch.mode；旧配置靠 modeExplicit 迁移；
+  //    设置层立即调 IPC；启动记录文案单一来源。断的是**接线**，不是某个具体文案。
+  const main104 = rd104('electron/main.js');
+  const setJs104 = rd104('panel/next/settings.js');
+  const shellState104 = rd104('src/desktop/shell-state.js');
+  const cfgRoute104 = rd104('panel/lib/config-route.js');
+  if (!/modeExplicit/.test(lm) || !/export function launchRecordLabel\(/.test(lm)) {
+    problems.push('launch-mode.js 缺 modeExplicit 或 launchRecordLabel —— 旧配置迁移与「上次启动」文案会分家');
+  }
+  if (!/export function decideShellStart\(/.test(shellState104)) {
+    problems.push('shell-state.js 缺 decideShellStart —— 壳没有纯判据决定 window/hidden/browser');
+  }
+  if (!/readLaunchPreference\(/.test(main104) || !/decideShellStart\(/.test(main104)
+    || !/openInBrowserNow\(/.test(main104) || !/shell\.openExternal\(/.test(main104)
+    || !/readLaunchPreference\(\)\.mode === 'browser'/.test(main104)) {
+    problems.push('electron/main.js 没有消费 launch.mode（读配置 / 判据 / openExternal / 二次启动分支缺一）');
+  }
+  if (!/openInBrowser/.test(setJs104) || !/showWindow/.test(setJs104) || !/modeExplicit !== true/.test(setJs104)) {
+    problems.push('settings.js 没有接立即切换（openInBrowser/showWindow/modeExplicit 选中态缺一）');
+  }
+  if (!/launchRecordLabel/.test(sc) || !/howLabel/.test(sch)) {
+    problems.push('state-collector/schema 没有用 launchRecordLabel/howLabel —— 「上次启动」会继续把浏览器写成独立窗口');
+  }
+  if (!/modeExplicit/.test(cfgRoute104)) {
+    problems.push('config-route.js 没有在保存 mode 时写 modeExplicit —— 旧默认永远被当成用户选择');
+  }
+  const pure104 = rd104('test/check-desktop.mjs');
+  if (!/decideShellStart/.test(pure104) || !/launchRecordLabel/.test(pure104)) {
+    problems.push('check-desktop.mjs 没有覆盖 decideShellStart / launchRecordLabel');
+  }
+
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
-    console.log('✓ 桌面端启动方式（2026-10-16 · 2026-10-17 回退后只剩 macOS 入口）：唯一判据 src/launch-mode.js（值域 + 导出面 + 入口名表）· '
-      + 'mac launcher.sh 经 scripts/launch-mode.mjs 接线到它（Windows 便携包与开发树已退回 spawn+开浏览器，不再消费判据）· '
+    console.log('✓ 桌面端启动方式（2026-10-16 · 2026-11-01 追加 Windows 壳消费 mode）：唯一判据 src/launch-mode.js（值域 + modeExplicit + 导出面 + 入口名表）· '
+      + 'mac launcher.sh 经 scripts/launch-mode.mjs 接线到它 · '
+      + 'Windows 安装版 Electron 壳读 launch.mode 并立即切浏览器/窗口 · 旧配置 modeExplicit 迁移 · '
       + '面板写校验 + 状态归一化同源 · 页面两格控件在位 · '
-      + '启动跟踪读写闭环（入口带 entry · state 读同一日志 · 卡片显示「上次启动」）· '
+      + '启动跟踪读写闭环（入口带 entry + mode · state 读同一日志 · 卡片显示「上次启动」）· '
       + '窗口记忆闭环（页面按 __win 上报 → 面板落盘 → 启动器 --window-position 还原；专用 profile + 开窗前关旧实例破"委派吞几何"）');
   }
 }
@@ -15953,10 +15995,12 @@ let gDistBad = bad;
   const boot = read('../packaging/windows/tools/bootstrap.mjs');
   const repair = read('../packaging/windows/tools/lib/repair.mjs');
   if (!boot.includes("'--napcat-mode'")) problems.push('bootstrap.mjs 没有 --napcat-mode 分派（四条路塌回一条）');
-  // P7：安装版默认 launch.mode 必须是 browser —— window（Edge --app + 专用 profile）
-  // 首跑给用户一个灰色空窗（群友测试 + VM 复现，见 INSTALLER-SPEC §22）。
-  if (!/mode: 'browser'/.test(boot)) problems.push('bootstrap 首装默认不是 launch.mode=browser（独立窗口首跑会出灰色空窗）');
-  if (/mode: 'window'/.test(boot)) problems.push('bootstrap 又把首装默认写回 launch.mode=window（灰色空窗会回来）');
+  // 2026-11-01：安装版默认改为桌面窗口（Electron 壳自己开窗，不再有 Edge --app 的灰色空窗）。
+  // `modeExplicit:false` 表示这不是用户点的选择，升级迁移时不会被误读成"要浏览器"。
+  if (!/mode: 'window'/.test(boot) || !/modeExplicit: false/.test(boot)) {
+    problems.push('bootstrap 首装默认不是桌面窗口（mode:window + modeExplicit:false）—— 老用户升级会被意外切走');
+  }
+  if (/mode: 'browser'/.test(boot)) problems.push('bootstrap 又把首装默认写回浏览器 —— 桌面窗口默认被破坏');
   const localBranch = boot.indexOf("mode === 'zip' || mode === 'folder'");
   const netBranch = boot.indexOf('ensureNapcat({ update: false })');
   if (localBranch < 0 || netBranch < 0) problems.push('bootstrap.mjs 认不出 zip/folder 与 auto 两条分支');
@@ -18904,14 +18948,15 @@ let gSetBad = bad;
   let pkg = { scripts: {} };
   try { pkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')); } catch { /* 下面会报 */ }
 
-  // ① 暴露面：恰好七个动作，只有 invoke；没有通用 invoke / 事件监听。
+  // ① 暴露面：恰好十个动作，只有 invoke；没有通用 invoke / 事件监听。
   const channels = [...preload.matchAll(/ipcRenderer\.invoke\('([^']+)'[^)]*\)/g)].map((m) => m[1]);
   const wantChannels = [
     'shell:notify', 'shell:retry', 'shell:quit', 'shell:visible',
     'shell:restart-panel', 'shell:quit-console', 'shell:panel-state',
+    'shell:open-in-browser', 'shell:show-window', 'shell:hide-window',
   ];
   if (channels.length !== wantChannels.length || wantChannels.some((c, i) => channels[i] !== c)) {
-    p.push(`§156①：preload 通道不是恰好这七个（实得 ${JSON.stringify(channels)}）`);
+    p.push(`§156①：preload 通道不是恰好这十个（实得 ${JSON.stringify(channels)}）`);
   }
   if (!/contextBridge\.exposeInMainWorld\('estrellaShell'/.test(preload)) {
     p.push('§156①：preload 没有只暴露 estrellaShell');
@@ -18921,10 +18966,14 @@ let gSetBad = bad;
   }
   const handlers = [...main.matchAll(/ipcMain\.handle\('([^']+)'/g)].map((m) => m[1]);
   if (handlers.length !== wantChannels.length || wantChannels.some((c) => !handlers.includes(c))) {
-    p.push(`§156①：main 的 ipcMain.handle 不是恰好这七个（实得 ${JSON.stringify(handlers)}）`);
+    p.push(`§156①：main 的 ipcMain.handle 不是恰好这十个（实得 ${JSON.stringify(handlers)}）`);
   }
-  if ((main.match(/if \(!trustedIpc\(event\)\)/g) || []).length < 7) {
-    p.push('§156①：还有 IPC handler 没做来源校验（任意页面都能调重启/退出）');
+  if ((main.match(/if \(!trustedIpc\(event\)\)/g) || []).length < 10) {
+    p.push('§156①：还有 IPC handler 没做来源校验（任意页面都能调重启/退出/切窗口）');
+  }
+  if (!/async function openInBrowserNow\(/.test(main) || !/shell\.openExternal/.test(main)
+    || !/shell:open-in-browser/.test(main) || !/shell:show-window/.test(main) || !/shell:hide-window/.test(main)) {
+    p.push('§156①：main 缺窗口呈现动作（打开浏览器/显示/收起）—— 设置层点了没反应');
   }
   for (const fn of ['isTrustedRendererUrl', 'buildPanelSpawnSpec', 'panelCmdlineBelongsToProgram', 'parseRestartResponse', 'decideRestartMode', 'healthMatches']) {
     if (!new RegExp(`export function ${fn}\\(`).test(control)) p.push(`§156①：panel-control.js 缺 ${fn}()`);
@@ -19036,7 +19085,7 @@ let gSetBad = bad;
   subHit('IPC收敛');
 
   if (p.length) { bad++; for (const x of p) console.log(`✗ ${x}`); }
-  else console.log('✓ IPC 收敛（§156）：恰好七个动作 · 重启半死直拉/健康走 HTTP · 退出控制台不动机器人 · 壳内离线横幅 · 浏览器 HTTP 不退化 · 纯判据+真机 E2E');
+  else console.log('✓ IPC 收敛（§156）：恰好十个动作（含窗口呈现）· 重启半死直拉/健康走 HTTP · 退出控制台不动机器人 · 壳内离线横幅 · 浏览器 HTTP 不退化 · 纯判据+真机 E2E');
 }
 
 // 157) 桌面启动静默（openOnStart 对 Electron 壳生效 · 2026-10-24）。
@@ -19056,8 +19105,8 @@ let gSetBad = bad;
   }
   const shellFn = fnSlice(launcher, 'async function openShell(', 200);
   const winFn = fnSlice(launcher, 'async function openWindow(', 200);
-  if (!launcher.includes('async function openShell({ installRoot, programRoot, userRoot, configFile, panelUrl, hidden = WANT_HIDDEN })')) {
-    p.push('§157②：openShell 没有接收 hidden（只能看 CLI --hidden，配置永远进不来）');
+  if (!launcher.includes("async function openShell({ installRoot, programRoot, userRoot, configFile, panelUrl, hidden = WANT_HIDDEN, mode = 'window' })")) {
+    p.push('§157②：openShell 没有接收 hidden/mode（只能看 CLI --hidden，配置永远进不来）');
   }
   if (!/hidden \? \{ QQBOT_START_HIDDEN: '1' \}/.test(shellFn) || !/if \(hidden\) args\.push\('--hidden'\)/.test(shellFn)) {
     p.push('§157②：openShell 没有把 hidden 传成 QQBOT_START_HIDDEN / --hidden');
@@ -19069,8 +19118,11 @@ let gSetBad = bad;
     || !/shouldStartHidden\(\{ wantHidden: WANT_HIDDEN, openOnStart:/.test(winFn)) {
     p.push('§157③：openWindow 没有先读 launch.openOnStart 再决定是否隐藏');
   }
-  if (!/openShell\(\{ installRoot, programRoot, userRoot, configFile, panelUrl, hidden \}\)/.test(winFn)) {
-    p.push('§157③：openWindow 没有把 hidden 交给 openShell（配置仍会被绕过）');
+  if (!/openShell\(\{ installRoot, programRoot, userRoot, configFile, panelUrl, hidden, mode \}\)/.test(winFn)) {
+    p.push('§157③：openWindow 没有把 hidden/mode 交给 openShell（配置仍会被绕过）');
+  }
+  if (!/kind: 'electron', mode/.test(shellFn)) {
+    p.push('§157③：openShell 的启动跟踪没带 mode ——「上次启动」会把浏览器模式写成独立窗口');
   }
   if (!/if \(hidden\) return \{ ok: true, skipped: true, reason: 'hidden-without-shell' \}/.test(winFn)
     || /if \(WANT_HIDDEN\) return \{ ok: true, skipped: true, reason: 'hidden-without-shell' \}/.test(winFn)) {
@@ -19757,6 +19809,33 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
   }
   if (!/#settingsPanel \.bgpick\[hidden\]/.test(setCss) || !/#setBgMode\[data-bgmode="shader"\]/.test(setCss)) {
     p.push('§163④：settings.css 缺隐藏色板或模式滑块位移规则 —— 两态会看起来都选中/都不选中');
+  }
+  // 速度实时预览（2026-11-01）：设置层里的 lite 片与关闭释放。
+  if (!/id="bgPreview"/.test(html) || !/id="bgPreviewState"/.test(html)
+    || !/id="bgPreviewVideo"[^>]*muted[^>]*preload="none"[^>]*playsinline[^>]*loop/.test(html)) {
+    p.push('§163④：设置层缺背景速度预览 DOM / 安全属性');
+  }
+  if (!/setPreview/.test(cbg) || !/applyPreview/.test(cbg)
+    || !/previewVideo\.playbackRate/.test(cbg) || !/removeAttribute\('src'\)/.test(cbg)
+    || !/videoName\(theme, 'lite'\)/.test(cbg)) {
+    p.push('§163④：contour-bg.js 缺预览控制器（setPreview/applyPreview/倍率/释放/lite 片）');
+  }
+  if (!/系统已开启减少动态效果，速度不会生效/.test(cbg)) {
+    p.push('§163④：预览在 reduced-motion 下没有如实说「速度不会生效」—— 会假装可用');
+  }
+  const rateAt = cbg.indexOf('if (speedMul > 0 && video.playbackRate !== speedMul)');
+  const pauseAt = cbg.indexOf('if (!shouldPlay())');
+  if (rateAt < 0 || pauseAt < 0 || rateAt > pauseAt) {
+    p.push('§163④：主视频倍率没有写在 shouldPlay 早退之前 —— 设置打开时调速度不生效');
+  }
+  if (!/syncContourPreview/.test(setJs) || (setJs.match(/syncContourPreview\(\)/g) || []).length < 3) {
+    p.push('§163④：settings.js 没有在打开/关闭/切页三处同步预览 —— 预览会一直播或永不播');
+  }
+  if (!/\.set-bgpreview/.test(setCss) || !/\.set-bgpreview\[hidden\]/.test(setCss)) {
+    p.push('§163④：settings.css 缺预览容器/隐藏规则');
+  }
+  if (!/背景速度预览/.test(dom) || !/setPreview/.test(verify)) {
+    p.push('§163④：panel-dom / verify 没有覆盖速度预览');
   }
   subHit('等高线背景');
 
@@ -20490,7 +20569,7 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
   if (bad === gSplashBad) console.log('✓ 开屏 / 光效 / 接口收尾（合并 §168 + §169 + §170）：光标 · 接口 · 首屏缓存');
 
   // ══ §171 · 界面身份签名与锚点（2026-10-29 新增）══════════════════════════
-  //  用户要求：允许改代码、加功能、加插件；不允许把 7 域 / 28 页的骨架整体换掉。
+  //  用户要求：允许改代码、加功能、加插件；不允许把 7 域 / 26 页的骨架整体换掉。
   //  这里只认签名清单里的核心锚点；多出来的域/页/选择器/渲染入口一律放行。
   {
     const p171 = [];
@@ -20527,7 +20606,7 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
       }
       const domains = Array.isArray(manifest.domains) ? manifest.domains : [];
       const pages = domains.reduce((n, d) => n + (Array.isArray(d.pages) ? d.pages.length : 0), 0);
-      if (domains.length !== 7 || pages !== 28) p171.push(`§171②：核心域/页数量不对（域 ${domains.length} / 页 ${pages}，应 7 / 28）`);
+      if (domains.length !== 7 || pages !== 26) p171.push(`§171②：核心域/页数量不对（域 ${domains.length} / 页 ${pages}，应 7 / 26）`);
       if (!Array.isArray(manifest.selectors) || manifest.selectors.length !== 9) p171.push('§171②：核心外壳选择器应 9 条');
       if (!Array.isArray(manifest.renderers) || manifest.renderers.length !== 4) p171.push('§171②：渲染入口应 4 条');
     }
@@ -20643,7 +20722,7 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
     subHit('界面身份');
 
     if (p171.length) { bad++; for (const x of p171) console.log('✗ ' + x); }
-    else console.log('✓ 界面身份（§171）：签名/公钥指纹 · 7 域 28 页顺序 · 外壳 · 渲染入口 · 运行时接线 · 加项放行');
+    else console.log('✓ 界面身份（§171）：签名/公钥指纹 · 7 域 26 页顺序 · 外壳 · 渲染入口 · 运行时接线 · 加项放行');
   }
 
   // ══ §172 · 开屏标题入场与背景接管（2026-10-30 新增）══════════════════════
@@ -20895,6 +20974,308 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
     else console.log('✓ 常规页安全内缩（§175）：三处同尺 · .page/.foot 消费 · ≤900 不覆盖 · 全幅页保留 · 齿轮几何同步 · 真渲染绑定');
   }
 
+  // ══ §176 · 界面动画帧率上限 0–120（2026-11-01）══════════════════════════
+  //
+  // 用户反馈"像被锁帧"，要求 0–120 可调。这里有三个静默失效点：
+  // ① 调度器没在所有动画脚本之前加载 → 部分 rAF 绕过包装器；
+  // ② 0 档没有原生快路径 → 默认设置反而给所有一次性 rAF 加了一帧延迟；
+  // ③ 设置层打开时 3 秒轮询仍整页重建 → 调滑块时页面一直抖。
+  {
+    const p176 = [];
+    const html176 = read('../panel/next/index.html');
+    const fr176 = read('../panel/next/frame-rate.js');
+    const np176 = read('../panel/lib/next-page.js');
+    const set176 = read('../panel/next/settings.js');
+    const app176 = stripComments(read('../panel/next/app.js'), 'js');
+    const frame176 = read('../panel/next/factory-frame.js');
+    const dom176 = read('../test/panel-dom.mjs');
+
+    if (!/'frame-rate\.js': 'text\/javascript; charset=utf-8'/.test(np176)) {
+      p176.push('§176①：frame-rate.js 没有登记进 NEXT_ASSETS —— 浏览器会 404');
+    }
+    const atFps176 = html176.indexOf('frame-rate.js');
+    const atSplash176 = html176.indexOf('splash.js');
+    const atBoot176 = html176.indexOf('boot-splash.js');
+    const atMotion176 = html176.indexOf('motion.js');
+    const atApp176 = html176.indexOf('app.js');
+    if (!(atFps176 >= 0 && atFps176 < atSplash176 && atFps176 < atBoot176
+      && atFps176 < atMotion176 && atFps176 < atApp176)) {
+      p176.push('§176①：frame-rate.js 没排在 splash/boot/motion/app 之前 —— 部分动画抓不到上限');
+    }
+    for (const [needle, why] of [
+      ['nativeRAF', '原生 rAF'],
+      ['nativeCAF', '原生 cancel'],
+      ['fps === 0', '0 档原生快路径'],
+      ['ID_BASE = 0x40000000', '包装 id 命名空间'],
+      ['new Map()', '回调队列'],
+      ['reportError', '单条异常上报'],
+      ['ui:fps', '变更事件'],
+      ["KEY = 'qqbot-ui-fps'", '持久化键'],
+      ['MIN = 30', '下限'],
+      ['MAX = 120', '上限'],
+      ['measure', '实测采样'],
+    ]) {
+      if (!fr176.includes(needle)) p176.push(`§176②：frame-rate.js 缺 ${why}（${needle}）`);
+    }
+    subHit('界面帧率');
+
+    if (!/id="uiFpsRange"/.test(html176) || !/id="card-appearance-perf"/.test(html176)
+      || !/min="0" max="120"/.test(html176)) {
+      p176.push('§176③：外观页缺流畅度卡或 0–120 滑块');
+    }
+    if (!/paintUiFps/.test(set176) || !/UIFrameRate/.test(set176)
+      || !/measure\(\{ ms: 650 \}\)/.test(set176)) {
+      p176.push('§176③：settings.js 没有接 UIFrameRate 的读写/实测');
+    }
+    const soft176 = (app176.match(/function softPaint\(\)\s*\{[\s\S]*?\n\}/) || [''])[0];
+    if (!/settings-open/.test(soft176)) {
+      p176.push('§176③：softPaint 没有 settings-open 早退 —— 设置打开时仍整页重建');
+    }
+    const line176 = (app176.match(/function psnLineTick\([\s\S]*?\n\}/) || [''])[0];
+    const axis176 = (app176.match(/const step = \(now\) => \{[\s\S]*?\n  \};/) || [''])[0];
+    if (/dt = 1 \/ 60/.test(line176) || /dt = 1 \/ 60/.test(axis176)) {
+      p176.push('§176③：人设弹簧仍用固定 1/60 步长 —— 高刷屏会跑快');
+    }
+    if (!/frame-rate\.js/.test(frame176) || !/installFrameRate\(frame\);/.test(frame176)) {
+      p176.push('§176③：factory-frame.js 没有把上限注入工厂 iframe');
+    }
+    if (!/界面动画帧率上限/.test(dom176) || !/uiFpsRange/.test(dom176)) {
+      p176.push('§176③：panel-dom 没有覆盖帧率控件/实测');
+    }
+    subHit('界面帧率');
+
+    if (p176.length) { bad++; for (const x of p176) console.log('✗ ' + x); }
+    else {
+      console.log('✓ 界面动画帧率上限（§176）：frame-rate 先加载 · 0 快路径/id 隔离/队列/异常上报 · 0–120 设置卡 · softPaint 早退 · 真实 dt · 工厂帧注入');
+    }
+  }
+
+  // ══ §177 · 插件创建提示词与 tags（2026-11-01）══════════════════════════
+  //
+  // 用户要求：创造弹窗把「安装」改为「复制提示词」—— 复制出去的内容必须同时含
+  // ① 用户填写的基本信息（类型/id/名称/分类/说明/工具信息/Skill 提示词/标签）
+  // ② 宿主真实接口规范（清单字段、setup/registerTool/execute、钩子点、体积上限）。
+  // 只抄一半的症状是"外部 AI 写得很像，但装不上或跑不起来"，而且不报错。
+  {
+    const p177 = [];
+    const prompt177 = stripComments(read('../src/extension-create-prompt.js'), 'js');
+    const pf177 = read('../panel/next/plugin-factory.html');
+    const srv177 = stripComments(read('../panel/server.js'), 'js');
+    const pm177 = stripComments(read('../src/plugin-manifest.js'), 'js');
+    const ext177 = stripComments(read('../panel/lib/extensions.js'), 'js');
+    const skills177 = readDoc('docs/SKILLS.md');
+    const api177 = readDoc('docs/API_CONTRACT.md');
+    const smoke177 = read('../test/smoke.js');
+    const boot177 = read('../test/panel-boot.mjs');
+    const dom177 = read('../test/panel-dom.mjs');
+
+    if (!/export function buildCreatePrompt\(/.test(prompt177)
+      || !/PLUGIN_API_VERSION/.test(prompt177) || !/HOOK_POINTS/.test(prompt177)
+      || !/normalizeTagList/.test(prompt177)) {
+      p177.push('§177①：extension-create-prompt.js 缺导出/常量同源（apiVersion、钩子点、标签归一化）');
+    }
+    for (const needle of [
+      'plugin.json', 'skill.json', 'setup(api)', 'registerTool', 'execute(ctx, args)',
+      'prompt.sections', 'export {}', '不要使用 npm 依赖', 'apiVersion',
+    ]) {
+      if (!prompt177.includes(needle)) p177.push(`§177①：提示词模板缺 ${needle} —— 外部 AI 会产出不兼容的包`);
+    }
+    subHit('插件提示词');
+
+    if (!/export function normalizeTagList\(/.test(pm177) || !/normalizeTagList\(raw\.tags\)/.test(pm177)) {
+      p177.push('§177②：plugin-manifest.js 缺 normalizeTagList 或 manifest.tags');
+    }
+    if (!/normalizeTagList/.test(ext177) || !/tags: normalizeTagList\(p\.manifest\?\.tags\)/.test(ext177)) {
+      p177.push('§177②：extensions.js 没有把 tags 投影给页面 —— 标签永远显示不出来');
+    }
+    subHit('插件提示词');
+
+    if (!/id="crTags"/.test(pf177) || !/data-create="copy"/.test(pf177)
+      || /data-create="install"/.test(pf177) || !/复制提示词/.test(pf177)
+      || !/\/api\/extensions\/prompt/.test(pf177)
+      || !/execCommand\('copy'\)/.test(pf177) || !/navigator\.clipboard/.test(pf177)) {
+      p177.push('§177③：创造弹窗缺「复制提示词」（标签 / copy 按钮 / prompt 路由 / 剪贴板兜底 / install 未移除）');
+    }
+    if (!/it\.tags/.test(pf177)) p177.push('§177③：列表/管理页没有显示清单 tags');
+    subHit('插件提示词');
+
+    if (!/buildCreatePrompt/.test(srv177)
+      || !/path: '\/api\/extensions\/prompt', method: 'POST'/.test(srv177)
+      || !/'\/api\/extensions\/prompt'/.test(srv177)) {
+      p177.push('§177④：/api/extensions/prompt 没有登记/接线/进只读 POST 分类');
+    }
+    if (!/T452/.test(smoke177) || !/buildCreatePrompt/.test(smoke177)) {
+      p177.push('§177④：smoke 没有覆盖提示词与 tags');
+    }
+    if (!/api\/extensions\/prompt/.test(boot177) || !/promptNo/.test(boot177)) {
+      p177.push('§177④：panel-boot 没有覆盖只读提示词路由');
+    }
+    if (!/data-create="copy"|copyCreatePrompt/.test(dom177)) {
+      p177.push('§177④：panel-dom 没有覆盖复制提示词');
+    }
+    if (skills177 !== null && (!/tags/.test(skills177) || !/复制提示词/.test(skills177))) {
+      p177.push('§177⑤：docs/SKILLS.md 缺 tags 或外部 AI 复制流程');
+    }
+    if (api177 !== null && (!/\/api\/extensions\/prompt/.test(api177) || !/## 50\./.test(api177))) {
+      p177.push('§177⑤：API_CONTRACT 缺 /api/extensions/prompt 的总表或 §50');
+    }
+    subHit('插件提示词');
+
+    if (p177.length) { bad++; for (const x of p177) console.log('✗ ' + x); }
+    else {
+      console.log('✓ 插件创建提示词（§177）：表单信息 + 接口规范同源 · 复制按钮替换安装 · tags 归一化/投影/展示 · 只读 prompt 路由 · smoke/panel-boot/panel-dom/docs 绑定');
+    }
+  }
+
+  // ══ §178 · 假 QQ 对话界面（2026-11-01）══════════════════════════════════
+  //
+  // 终端回显 → 聊天气泡。三件事必须同时成立，否则会退化成"看起来像聊天，
+  // 但用户说的话不在里面 / 帮助文本混进对话 / 每 3 秒重播动画"：
+  //   ① 后端把 stdout 分成 user/bot/system/error/meta，并给稳定 id；
+  //   ② 前端只画 user/bot/system/error，原始输出仍保留在折叠区；
+  //   ③ 新消息才播动画，旧消息在整页重建后不重播。
+  {
+    const p178 = [];
+    const line178 = stripComments(read('../panel/lib/fake-line.js'), 'js');
+    const sess178 = stripComments(read('../panel/lib/fake-session.js'), 'js');
+    const schema178 = stripComments(read('../panel/next/schema.js'), 'js');
+    const app178 = stripComments(read('../panel/next/app.js'), 'js');
+    const css178 = stripComments(read('../panel/next/style.css'), 'css');
+    const fakeTest178 = read('../test/check-fake-panel.mjs');
+    const smoke178 = read('../test/smoke.js');
+    const dom178 = read('../test/panel-dom.mjs');
+
+    if (!/export function classifyFakeLine/.test(line178)
+      || !/export function cleanFakeLine/.test(line178)
+      || !/role: 'user'/.test(line178) || !/role: 'bot'/.test(line178)
+      || !/loose: true/.test(line178)) {
+      p178.push('§178①：fake-line.js 缺分类导出或 user/bot/续行标记 —— 聊天不知道谁说的');
+    }
+    if (!/import \{ classifyFakeLine, cleanFakeLine \}/.test(sess178)
+      || !/messages: st\.messages\.filter/.test(sess178)
+      || !/st\.lastMsg\.n = st\.seq/.test(sess178)
+      || !/msgId/.test(sess178)) {
+      p178.push('§178①：fake-session.js 没有稳定消息 id / messages 快照 / 多行机器人回复续接');
+    }
+    subHit('假QQ对话');
+
+    if (!/id="fakeChatLog"/.test(app178) || !/id="fakeComposer"/.test(app178)
+      || !/chat-bubble/.test(app178) || !/chat-typing/.test(app178)
+      || !/data-a="fake\.send"/.test(app178)) {
+      p178.push('§178②：聊天区/输入栏/气泡/发送键没有落进 fakeView');
+    }
+    if (/id: 'fake\.text'/.test(schema178) || /S\.volatile\['fake\.text'\]/.test(app178)) {
+      p178.push('§178②：旧的 fake.text 控件还在 —— 输入会继续走整页重绘');
+    }
+    if (!/function paintFakeChat/.test(app178) || !/function animateChatBubble/.test(app178)
+      || !/fakeSeen\(\)/.test(app178) || !/if \(!id \|\| seen\[id\]\) continue;/.test(app178)
+      || !/function reducedChatMotion/.test(app178) || !/reducedChatMotion\(\)/.test(app178)) {
+      p178.push('§178②：缺少聊天重绘/新消息动画/已见去重/减弱动效判断');
+    }
+    if (!/const oldTop = log\.scrollTop;/.test(app178)
+      || !/log\.dataset\.sig = sig;/.test(app178)
+      || !/slot\.dataset\.on = want;/.test(app178)) {
+      p178.push('§178②：轮询重建会重置滚动位置或“正在输入”三点 —— 缺 oldTop/sig/dataset.on');
+    }
+    if (!/function mountFakeComposer/.test(app178) || !/S\.extra\.fakeDraft/.test(app178)
+      || !/ev\.key === 'Enter'/.test(app178) || !/ev\.shiftKey/.test(app178)) {
+      p178.push('§178②：输入栏没有草稿保留或 Enter 发送 / Shift+Enter 换行');
+    }
+    if (!/S\.extra\.fakeSince = 0;[\s\S]{0,200}S\.extra\.fakeMsgs = \[\]/.test(app178)
+      || !/S\.extra\.fakeSeen = \{\}/.test(app178) || !/S\.extra\.fakeWaitAt = 0/.test(app178)) {
+      p178.push('§178②：启动/停止/清屏没有重置消息与"正在输入"状态');
+    }
+    subHit('假QQ对话');
+
+    if (!/\.chat-log\s*\{/.test(css178) || !/\.chat-bubble\s*\{/.test(css178)
+      || !/\.chat-compose\s*\{/.test(css178) || !/\.chat-send\s*\{/.test(css178)
+      || !/@keyframes chatTyping/.test(css178)
+      || !/prefers-reduced-motion[\s\S]{0,300}chat-typing/.test(css178)) {
+      p178.push('§178③：聊天样式缺气泡/输入栏/发送键/正在输入/减弱动效');
+    }
+    if (!/T453/.test(smoke178) || !/m\.role === 'user'/.test(fakeTest178)
+      || !/m\.role === 'bot'/.test(fakeTest178) || !/__fakeChat/.test(dom178)
+      || !/chatUi\?\.anim/.test(dom178) || !/chatUi\?\.typing/.test(dom178)) {
+      p178.push('§178④：smoke / check-fake-panel / panel-dom 没有覆盖消息分类、动画或正在输入');
+    }
+    subHit('假QQ对话');
+
+    if (p178.length) { bad++; for (const x of p178) console.log('✗ ' + x); }
+    else console.log('✓ 假 QQ 对话（§178）：stdout 分类 · 稳定消息 id · 气泡/输入栏 · 新消息才播动画 · 减弱动效 · 测试绑定');
+  }
+
+  // ══ §179 · 记忆 / 知识包降噪（2026-11-01）══════════════════════════════
+  //
+  // 用户给的三条症状：横线/虚线太多、解释太多、可视化控件太少。
+  // 这一节把「页面真的长成什么样」钉在源码与面板 DOM 两层上：
+  //   ① schema 里旧的整段说明必须消失，卡片按 8/4/6 栏排，不再强行拉满；
+  //   ② 页面必须有真实计算的预算条/覆盖率条、筛选与空态按钮；
+  //   ③ 记忆域的卡头横线与虚线空态只在这两页被去掉，别的页面不动。
+  {
+    const p179 = [];
+    const schema179 = stripComments(read('../panel/next/schema.js'), 'js');
+    const app179 = stripComments(read('../panel/next/app.js'), 'js');
+    const css179 = stripComments(read('../panel/next/style.css'), 'css');
+    const dom179 = read('../test/panel-dom.mjs');
+
+    if (!/id: 'overview', title: '现在记得什么'[\s\S]{0,260}t: 'memOverview'/.test(schema179)
+      || !/id: 'manual', title: '手动记忆'[\s\S]{0,520}t: 'memList'/.test(schema179)
+      || !/id: 'sk', title: '知识包', span: 8/.test(schema179)
+      || !/id: 'cg', title: '角色卡', span: 4/.test(schema179)) {
+      p179.push('§179①：记忆/知识包页的结构没落到 8/6/4 栏与对应渲染器');
+    }
+    if (/让它长期记住一些事|知识包＝某方面的本事，命中触发词才拿出来用/.test(schema179)) {
+      p179.push('§179①：旧的整段说明还在 —— 用户点名的“解释太多”没处理');
+    }
+    subHit('记忆降噪');
+
+    for (const needle of ['mem-stats', 'mem-bar', 'mem-empty', 'mem-filter', 'mem.focus']) {
+      if (!app179.includes(needle)) p179.push(`§179②：记忆页缺 ${needle}（数字块/进度条/空态/筛选/跳转按钮）`);
+    }
+    for (const needle of ['skill-budget', 'skill-toolbar', 'skill-grid', 'role-grid']) {
+      if (!app179.includes(needle)) p179.push(`§179②：知识包页缺 ${needle}（预算条/工具栏/技能卡/角色卡）`);
+    }
+    if (!/const labels = meta\.statusLabels \|\| \{\};/.test(app179)) {
+      p179.push('§179②：memRecords 不再读后端下发的状态中文名（旧 §15 会同时红）');
+    }
+    if (!/data-a="mem\.filter"/.test(app179) || !/'mem\.filter':/.test(app179)) {
+      p179.push('§179②：结构化记忆的筛选按钮没有渲染器或没有动作处理');
+    }
+    subHit('记忆降噪');
+
+    if (!/#page\[data-domain="know"\] \.card-h \{ border-bottom: 0; \}/.test(css179)) {
+      p179.push('§179③：记忆域卡头横线没有被去掉（只在 know 域生效）');
+    }
+    if (!/#page\[data-domain="know"\] \.empty \{ border: 0;/.test(css179)) {
+      p179.push('§179③：记忆域空态没有改成无边框浅底');
+    }
+    if (!/\.mem-empty \{/.test(css179) || !/\.mem-bar \{/.test(css179) || !/\.skill-budget/.test(css179)) {
+      p179.push('§179③：缺少 mem-empty / mem-bar / skill-budget 样式');
+    }
+    if (!/记忆页降噪/.test(dom179) || !/记忆筛选/.test(dom179)
+      || !/知识包页/.test(dom179) || !/8\/4/.test(dom179)) {
+      p179.push('§179④：panel-dom 没有覆盖降噪/筛选/预算条/8-4 栏宽');
+    }
+    subHit('记忆降噪');
+
+    /* 2026-11-01 · G7（维护者点名）：图库 / 群友档案两页下线。
+       页面入口、短标签、渲染器与 CTRL_KINDS 四处都要同步；
+       后端 /api/state.people/gallery 读盘口保留，不动 API 契约。 */
+    if (/id: 'people'/.test(schema179) || /id: 'faces'/.test(schema179)
+      || /'people'|'gallery'/.test(schema179)) {
+      p179.push('§179⑤：图库/群友档案的页面或控件类型仍在 schema 里');
+    }
+    if (!/subs: \{ memory: '自我', skills: '知识包' \}/.test(schema179)) {
+      p179.push('§179⑤：记忆域短标签没有同步到两页');
+    }
+    if (/^  people: \(/m.test(app179) || /^  gallery: \(/m.test(app179)) {
+      p179.push('§179⑤：图库/群友档案的页面渲染器仍在 app.js');
+    }
+
+    if (p179.length) { bad++; for (const x of p179) console.log('✗ ' + x); }
+    else console.log('✓ 记忆/知识包降噪（§179）：8/6/4 栏 · 预算与覆盖率条 · 筛选/空态按钮 · 卡头无横线 · 面板 DOM 绑定');
+  }
+
   // ① 契约块数下限。`ran + 1` 里那个 +1 就是**本段自己**（本段也走 console.log、也被计入），
   //    于是这里比的是"算上本段一共多少段"，与 `process.on('exit')` 的口径完全一致。
   //    ⚠️ 放在 §148 之后：桌面壳三段与其它契约块一样必须先计入，再比下限。
@@ -20902,7 +21283,7 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
     problems.push(`只跑了 ${ran + 1} 段契约（下限 ${MIN_CONTRACTS}）—— 有人删了断言，或某一段被提前 return 掉了`);
   }
 
-const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8], ['扩展卸载', 5], ['安装中文路径', 5], ['常规页安全内缩', 10]];
+const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8], ['扩展卸载', 5], ['安装中文路径', 5], ['常规页安全内缩', 10], ['假QQ对话', 3], ['记忆降噪', 3]];
   for (const [bucket, min] of HEAVY_SUB_MIN) {
     const c = subCountOf(bucket);
     if (c < min) {

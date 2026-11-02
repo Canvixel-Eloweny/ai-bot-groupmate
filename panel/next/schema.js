@@ -286,24 +286,15 @@ export const GROUPS = [
            只是把 QQ 那一层换成本地假的。会话逻辑不在这页里：斜杠命令由脚本解释，
            面板只转发 stdin 行。 */
         id: 'fake', label: '假 QQ', title: '调试台（假 QQ / 终端 / 试一句）',
-        desc: '真程序 + 假 QQ 传输层：<b>真模型</b>（或勾离线假模型）、真人设、真记忆落盘。定时消息、夜间产出这些"没有界面"的能力，在这一页打一句话就能验；终端与「试一句」也收在这页。',
+        desc: '真程序 + 假 QQ 传输层：<b>真模型</b>（或勾离线假模型）、真人设、真记忆落盘。打字就是一条群消息。',
         cards: [
           {
-            id: 'fake', title: '会话（打字 = 发消息）', span: 12,
-            desc: '真实的程序在后台跑，回显就是它真的输出。斜杠命令：<code>/at</code> 开关 @、<code>/private</code> 切私聊、<code>/group</code> 切回群、<code>/as QQ 名字</code> 换身份、<code>/log</code> 看程序日志、<code>/quit</code> 退出。',
-            ctrls: [
-              { t: 'fakeView' },
-              { t: 'text', id: 'fake.text', label: '你要说的话', ph: '直接打字就是一条群消息（默认带 @，机器人一定回）', wide: true, volatile: true },
-              { t: 'buttons', label: '', items: [
-                act('发送', 'fake.send', 'btn-primary'),
-                act('清屏', 'fake.clear'),
-              ] },
-              { t: 'note', kind: 'warn', text: '⚠️ 真机器人正在跑时<b>不许</b>用真数据起第二个程序（会抢同一份 <code>data\\</code>，把记忆写乱）—— 先停机器人，或勾「沙箱数据」（换成空的一份临时 data）。' },
-            ],
+            id: 'fake', title: '会话', span: 12,
+            ctrls: [{ t: 'fakeView' }],
           },
           {
-            id: 'try', title: '试一句', span: 12,
-            desc: '走真配置、真人格、真模型，只是不碰 QQ。云端会花几分钱，本机免费但慢十几秒。',
+            id: 'try', title: '试一句', span: 6,
+            desc: '走真配置、真人格、真模型，只是不碰 QQ。',
             ctrls: [
               { t: 'text', id: 'try.text', label: '要它回什么', ph: '例如：小鱼在不，随便聊两句呗', wide: true, volatile: true },
               { t: 'buttons', label: '', items: [act('试一句', 'try.run', 'btn-primary')] },
@@ -311,8 +302,8 @@ export const GROUPS = [
             ],
           },
           {
-            id: 'term', title: '实时日志', span: 12,
-            desc: '上面三个灯依次是：机器人在不在跑 / 协议端（NapCat）在不在 / 控制台自己。日志是服务端**推**过来的（不是定时刷的），新的一行出来就到。',
+            id: 'term', title: '实时日志', span: 6,
+            desc: '三个灯：机器人 / 协议端 / 控制台。日志由服务端实时推。',
             ctrls: [
               { t: 'termView' },
               {
@@ -575,44 +566,30 @@ export const GROUPS = [
     subs: [
       {
         id: 'memory', label: '自我记忆', title: '自我记忆与导入导出',
-        desc: '让它长期记住一些事。手动记忆永远生效；自动记录要打开开关。',
+        desc: '手动记忆永远生效；自动记录要打开开关。',
         draft: true,
         cards: [
           {
-            id: 'overview', title: '它现在记得什么', span: 12,
-            desc: '这一栏列出的，是<b>这一轮真的会进提示词</b>的记忆 —— 手动记忆里开着开关的，加上结构化记忆里「已确认」的。',
+            id: 'overview', title: '现在记得什么', span: 12,
             ctrls: [{ t: 'memOverview' }],
           },
           {
-            id: 'manual', title: '手动管理', span: 6,
+            id: 'manual', title: '手动记忆', span: 6,
             ctrls: [
               { t: 'switch', id: 'm.auto', label: '开启自动记录', bind: 'memory.auto',
                 hint: '机器人自己判断哪些话值得长期记住。' },
               { t: 'number', id: 'm.promptMax', label: '每轮最多注入几条', bind: 'memory.promptMax',
                 bounds: 'memoryPromptMax', min: 1, step: 1,
-                hint: '默认 12。只封顶“进提示词”的条数，记忆本身不会丢；改完点底部的「保存并生效」。' },
-              { t: 'memList', label: '手动记忆', path: 'memory.manual',
-                note: '只能你自己加。每一条都会保存；每轮最多带上面设定的条数进提示词 —— 与自动记录的开关无关。改完点底部的「保存并生效」。' },
+                hint: '只封顶进提示词的条数，记忆本身不会丢。' },
+              { t: 'memList', label: '手动记忆', path: 'memory.manual' },
             ],
           },
           {
             id: 'records', title: '结构化记忆', span: 6,
-            desc: '机器人自己从群里提炼、且带来源的记忆。每条要被独立观察到几次才会进提示词。点下面的按钮<b>立即生效</b>。',
             ctrls: [{ t: 'memRecords' }],
           },
           {
-            id: 'auto', title: '自动记录 · 历史存量', span: 12,
-            desc: '早期（第 5 轮之前）攒下来的记录，现在<b>只读、不再新增</b>。留着是为了让你看得见历史；新的记忆都进上面的「结构化记忆」。',
-            ctrls: [
-              { t: 'autoMemList' },
-              { t: 'buttons', label: '', items: [
-                act('清空这份历史存量', 'mem.auto.clear', 'btn-danger', '手动记忆与结构化记忆不受影响'),
-              ] },
-            ],
-          },
-          {
-            id: 'exp', title: '下载', span: 6,
-            desc: 'Key / Token <b>任何时候都会被清空</b> —— 不提供"连 Key 都不脱敏"的导出。下面这个开关只决定群号与 QQ 号要不要一起藏起来。',
+            id: 'exp', title: '导出', span: 6,
             ctrls: [
               { t: 'seg', id: 'ex.fmt', label: '格式', volatile: true,
                 options: [{ v: 'json', l: 'JSON' }, { v: 'txt', l: 'TXT' }, { v: 'zip', l: 'ZIP' }], read: () => 'json' },
@@ -628,57 +605,37 @@ export const GROUPS = [
           },
           {
             id: 'imp', title: '导入', span: 6,
-            desc: '导入的是<b>工作台这一块</b>（人格、技能、回复、触发、场景、记忆、安全），不会动模型和 Key。<b>导入前先给你看变更清单</b>。',
-            ctrls: [
-              { t: 'importFile' },
-              { t: 'note', text: '确认清单由 <code>POST /api/custom/preview</code> 算：字段级差异 + 技能/记忆/定时的增删改 + 「同一件事记两遍」的冲突提醒 + <b>本次不会碰的字段</b>（让你敢点确认）。' },
-            ],
+            ctrls: [{ t: 'importFile' }],
           },
-        ],
-      },
-      {
-        id: 'skills', label: '知识包与角色卡', title: '知识包与角色卡（含十维分级）',
-        desc: '<b>知识包</b>＝某方面的本事，命中触发词才拿出来用；<b>角色卡</b>＝成套的人格，存多张，点「套用到人格设定」就换一套人。',
-        draft: true,
-        cards: [
           {
-            id: 'sk', title: '技能清单', span: 12,
+            id: 'auto', title: '历史存量', span: 12, fold: true,
             ctrls: [
-              { t: 'number', id: 'skill.promptMax', label: '每轮最多注入几条', bind: 'skillPrompt.max',
-                bounds: 'skillPromptMax', min: 1, step: 1,
-                hint: '默认 3。只影响“同时注入”的条数，技能本身不会丢。' },
-              { t: 'number', id: 'skill.promptChars', label: '每轮注入总字数上限', bind: 'skillPrompt.chars',
-                bounds: 'skillPromptChars', min: 200, step: 100,
-                hint: '默认 2000。所有命中技能的背景文字加起来不超过这个数；只影响提示词，不影响保存。' },
-              { t: 'skills' },
+              { t: 'autoMemList' },
               { t: 'buttons', label: '', items: [
-                act('加知识包', 'skill.add.pack'),
-                act('加角色卡', 'skill.add.persona'),
+                act('清空这份历史存量', 'mem.auto.clear', 'btn-danger', '手动记忆与结构化记忆不受影响'),
               ] },
             ],
           },
-          { id: 'cg', title: '卡库', span: 12, ctrls: [{ t: 'cardGrade' }] },
         ],
       },
       {
-        id: 'people', label: '群友档案', title: '群友档案（旧「知识库」页的真身）',
-        desc: '插件 <code>群友印象</code>（people-memory）按 QQ 号跨群记的长期印象与好感度。<b>这一页现在读的是真数据</b> —— 面板直接读 <code>data/memory/people/*.json</code>，一档一文件。',
-        cards: [{
-          id: 'ppl', title: '印象与好感度', span: 12,
-          ctrls: [{ t: 'people' }],
-        }],
-      },
-      {
-        /* 2026-10-17：这一页原叫「表情与图库」，左边那张是 QQ 收藏表情。
-           收藏表情随「发 QQ 表情」能力一起下线（它本来就是同一套决策链的二级分支），
-           于是这一页只剩图库 —— 名字跟着改，免得点进来找不到表情。
-           ⚠️ 子页 id 保留 `faces`：没有深链路由依赖它，但改 id 会让"我从哪一页来的"
-              这类排查对不上旧截图；label 才是给人看的。 */
-        id: 'faces', label: '图库', title: '图库',
-        desc: '可发送的图片库（需自行安装 <code>自定义图库</code> 插件；默认未安装）。',
+        id: 'skills', label: '知识包与角色卡', title: '知识包与角色卡',
+        desc: '知识包＝某方面的本事；角色卡＝成套的人格。命中才注入。',
         draft: true,
         cards: [
-          { id: 'img', title: '自定义图库', span: 12, ctrls: [{ t: 'gallery' }, { t: 'pluginSettings', extId: 'image-lib' }] },
+          {
+            id: 'sk', title: '知识包', span: 8,
+            ctrls: [
+              { t: 'number', id: 'skill.promptMax', label: '每轮最多注入几条', bind: 'skillPrompt.max',
+                bounds: 'skillPromptMax', min: 1, step: 1,
+                hint: '只影响同时注入的条数。' },
+              { t: 'number', id: 'skill.promptChars', label: '每轮注入总字数上限', bind: 'skillPrompt.chars',
+                bounds: 'skillPromptChars', min: 200, step: 100,
+                hint: '只影响提示词，不影响保存。' },
+              { t: 'skills' },
+            ],
+          },
+          { id: 'cg', title: '角色卡', span: 4, ctrls: [{ t: 'cardGrade' }] },
         ],
       },
     ],
@@ -1043,11 +1000,11 @@ export const GROUPS = [
                 const l = j(s, ['config', 'launch', 'last'], null);
                 if (!l) return [kv('上次启动', () => '还没有记录 —— 下次启动后这里会出现')];
                 const ts = String(l.t || '').replace('T', ' ').slice(0, 16) || '—';
-                const how = l.skipped
+                const how = l.howLabel || (l.skipped
                   ? '按设置未打开界面'
                   : (l.opened === false
                     ? `打开失败（${l.error || '原因未知'}）`
-                    : (l.kind === 'window' ? `独立窗口 · ${l.used || '浏览器'}` : '浏览器标签页'));
+                    : (l.kind === 'window' ? `独立窗口 · ${l.used || '浏览器'}` : '浏览器标签页')));
                 const why = l.reason === 'no-window-browser'
                   ? '（没找到 Edge / Chrome，已回落）'
                   : (l.reason ? `（${l.reason}）` : '');
@@ -1059,7 +1016,7 @@ export const GROUPS = [
                     : []),
                 ];
               } },
-              { t: 'note', text: '打开方式、开机自启、启动时自动拉起协议端与<b>关闭窗口行为</b>都在左下角 <b>设置 → 启动</b>。这些设置存进 <code>config.json</code> 的 <code>launch</code> 段，由启动器 / 桌面壳在启动时读取 —— 它们<b>不影响</b>当前这个已经开着的页面。每次启动的实际形态仍记在 <code>panel/launch-log.jsonl</code>，上面那行就是最近一条。' },
+              { t: 'note', text: '打开方式、开机自启、启动时自动拉起协议端与<b>关闭窗口行为</b>都在左下角 <b>设置 → 启动</b>。打开方式可以立即切换；其余启动项存进 <code>config.json</code> 的 <code>launch</code> 段，由启动器 / 桌面壳在下次启动时读取。每次启动的实际形态仍记在 <code>panel/launch-log.jsonl</code>，上面那行就是最近一条。' },
             ],
           },
         ],
@@ -1255,7 +1212,7 @@ const NAV_SHORT = {
   },
   know: {
     group: '记忆',
-    subs: { memory: '自我', skills: '知识包', people: '群友', faces: '图库' },
+    subs: { memory: '自我', skills: '知识包' },
   },
   sys: {
     group: '维护',
@@ -1491,7 +1448,7 @@ export const CTRL_KINDS = [
         `S.reg` 走统一写口，保存/丢弃/草稿计数与普通控件完全一样。 */
   'psnOverview', 'psnProfile', 'psnMbti', 'psnEnhance', 'psnMood', 'psnPrompt',
   'schedList', 'holidays', 'pluginSettings',
-  'people', 'unread', 'gallery', 'apiDeals',
+  'unread', 'apiDeals',
   'sesList', 'sesDetail', 'chatList', 'chatDetail', 'traceList', 'logList', 'auditList',
   /* `termView`：网页内置终端（2026-10-11）—— 取代那个关不掉的前台 cmd 窗口。
      它不是一个"控件"，而是一个**自己管连接的面板**：日志由服务端经 SSE 推过来

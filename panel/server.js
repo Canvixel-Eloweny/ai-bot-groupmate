@@ -112,6 +112,7 @@ import {
   createBackgroundStore, sniffBackground, sanitizeBackgroundName, BG_LIMITS,
 } from './lib/backgrounds.js';
 import { packExtension, PACK_REQUEST_MAX } from './lib/ext-package.js';
+import { buildCreatePrompt } from '../src/extension-create-prompt.js';
 import { createGithubStar } from './lib/github-star.js';
 // 会话 / 存档的聚合判据（P1 分区重构）。**纯函数在 lib 里**，这里只做读盘 + 传参 ——
 // 判据不落在路由里，"列表怎么算"才能被断言直接喂（本项目对判据的一贯要求）。
@@ -267,6 +268,8 @@ const READ_ONLY_POST = new Set([
   '/api/memory/search',
   // 0.1.5：扩展包打包只构建 ZIP 字节、不落盘 ⇒ 与 /api/try 同类。
   '/api/extensions/package',
+  // 2026-11-01：创建提示词只拼字符串，不落盘。
+  '/api/extensions/prompt',
 ]);
 
 /** 写路由：🔴 写配置 / 进程控制 ／ 🟡 破坏性写 */
@@ -4308,6 +4311,28 @@ async function apiExtensionsPackage(req, res, url) {
   }
 }
 
+async function apiExtensionsPrompt(req, res, url) {
+  const got = await readBodyBuffer(req, { maxBytes: 64 * 1024 });
+  if (!got.ok) {
+    return sendJson(res, {
+      ok: false,
+      error: got.error === 'too-large' ? '提示词请求太大' : '上传中断',
+    }, got.error === 'too-large' ? 413 : 400);
+  }
+  let body;
+  try {
+    body = JSON.parse(got.buf.toString('utf8') || '{}');
+  } catch {
+    return sendJson(res, { ok: false, error: '请求不是合法 JSON' }, 400);
+  }
+  const meta = body && typeof body === 'object' && body.meta && typeof body.meta === 'object'
+    ? body.meta
+    : {};
+  const r = buildCreatePrompt(meta);
+  if (!r.ok) return sendJson(res, r, 400);
+  return sendJson(res, r);
+}
+
 const apiUpdateState = makeUpdateRoute({ updater: UPDATE, action: 'state' });
 const apiUpdateCheck = makeUpdateRoute({ updater: UPDATE, action: 'check' });
 const apiUpdateDownload = makeUpdateRoute({ updater: UPDATE, action: 'download' });
@@ -4398,6 +4423,7 @@ const API_ROUTES = [
   { path: '/api/backgrounds/active', method: 'POST', handler: apiBackgroundsActive },
   { path: '/api/backgrounds/delete', method: 'POST', handler: apiBackgroundsDelete },
   { path: '/api/extensions/package', method: 'POST', handler: apiExtensionsPackage },
+  { path: '/api/extensions/prompt', method: 'POST', handler: apiExtensionsPrompt },
 ];
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${ACTUAL_PORT || PORT}`);

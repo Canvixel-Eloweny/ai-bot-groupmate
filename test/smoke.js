@@ -10189,16 +10189,16 @@ async function main() {
       );
 
       // T376 真实文件上的两条不变量（本轮缺陷的**原形**，别只靠构造样本）：
-      //   ① `panel/next/schema.js` 剥后必须仍有那两张卡的类型声明 + 那条通配路径完整；
+      //   ① `panel/next/schema.js` 剥后必须仍有当前真实存在的两个控件声明。
+      //      2026-11-01：原来的 `people` 卡随 G7 下线，改用 `importFile` + `fakeView`；
+      //      不再保留已删除页的通配路径针，否则门禁会替一个不存在的对象站岗。
       //   ② 全仓每个被跟踪的 js/mjs —— **剥注释之后仍然能被真解析器解析**。
       //      这条不变量是抓出本轮缺陷的那把尺：它一红就说明"剥注释吃掉了真实代码"，
       //      而且不依赖任何具体文件的知识。用 `vm.SourceTextModule`（只解析不执行）——
       //      与 `scripts/mutate.mjs` ⑥ 同一手法；本进程直接 `require('vm')` 会缺
       //      `--experimental-vm-modules`，所以走**一个**子进程把 180 个文件一次验完。
       const sch376 = stripComments(readNextAsset('schema.js').raw, 'js');
-      const WILD376 = 'data/memory/people/' + '*' + '.json';
-      const schOk376 = sch376.includes(WILD376)
-        && sch376.includes("t: 'people'") && sch376.includes("t: 'importFile'");
+      const schOk376 = sch376.includes("t: 'importFile'") && sch376.includes("t: 'fakeView'");
       const tracked376 = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT })
         .toString().split('\0').filter((f) => /\.(js|mjs)$/.test(f));
       const probe376 = `
@@ -10226,7 +10226,7 @@ const fs = require('node:fs');
         bad376 = ['探针自身失败：' + e.message];
       }
       check(
-        'T376 真实文件不变量（第 8 轮）：`schema.js` 剥后仍有 `t: \'people\'` / `t: \'importFile\'` 与那条通配路径 · 全仓每个被跟踪的 js/mjs **剥注释后仍可解析**（剥注释只许删注释）',
+        'T376 真实文件不变量（第 8 轮）：`schema.js` 剥后仍有 `t: \'importFile\'` / `t: \'fakeView\'` · 全仓每个被跟踪的 js/mjs **剥注释后仍可解析**（剥注释只许删注释）',
         tracked376.length >= 150 && schOk376 && bad376.length === 0,
         `schema 针=${schOk376} · 文件数=${tracked376.length}（下限 150）· 剥后解析失败 ${bad376.length} 个${bad376.length ? '：' + bad376.slice(0, 3).join(' | ') : ''}`
       );
@@ -10832,6 +10832,16 @@ const fs = require('node:fs');
       const d385b = LM.normalizeLaunch({});
       ck385(d385b.closeAction === 'tray' && d385b.autoProtocol === true,
         '关闭/协议端自启的缺省值不是 tray/true（老配置零感知被破坏）');
+      ck385(d385.modeExplicit === false && d385b.modeExplicit === false,
+        '缺省 modeExplicit 不是 false —— 旧配置会被误读成"用户明确选了浏览器"');
+      ck385(LM.normalizeLaunch({ mode: 'browser', modeExplicit: true }).modeExplicit === true,
+        '显式 modeExplicit=true 被丢掉 —— 桌面壳永远切不到浏览器');
+      ck385(LM.launchRecordLabel({ mode: 'browser', kind: 'electron', opened: true }) === '浏览器标签页 · 桌面壳',
+        'browser + electron 的启动记录文案不对（会被误显示成独立窗口）');
+      ck385(LM.launchRecordLabel({ kind: 'electron', opened: true }) === '桌面窗口',
+        '旧 electron 记录没有回落到桌面窗口');
+      ck385(LM.launchRecordLabel({ mode: 'browser', kind: 'window', opened: true }) === '浏览器标签页',
+        'browser 模式仍被 kind=window 覆盖成独立窗口');
 
       // ③ 决策：mac + window + 装了 Edge → open -na "Microsoft Edge" --args --app=…
       const p1 = LM.planOpen({
@@ -10894,7 +10904,7 @@ const fs = require('node:fs');
 
       check(
         'T385 ★ 桌面端形态（2026-10-16）：启动方式判据的纯函数 —— 读侧回落（坏值/坏形状 ⇒ browser）+ '
-          + '写侧值域 + 决策（mac/win × Edge/无浏览器回落链，win 侧控制台无关）+ '
+          + '写侧值域 + modeExplicit 迁移标记 + 启动记录文案 + 决策（mac/win × Edge/无浏览器回落链，win 侧控制台无关）+ '
           + '配置不可读时 fail-open、openOnStart=false 静默',
         bad385.length === 0,
         bad385.length ? bad385.join(' | ') : '七组全过'
@@ -12724,6 +12734,47 @@ const fs = require('node:fs');
       );
     }
 
+    // T452 创建提示词 + 标签：模板必须带真实接口规范，标签归一化不能被绕开。
+    {
+      const { normalizeTagList, normalizeManifest } = await import('../src/plugin-manifest.js');
+      const { HOOK_POINTS } = await import('../src/hook-bus.js');
+      const { buildCreatePrompt } = await import('../src/extension-create-prompt.js');
+      const tags = normalizeTagList([' #工具 ', '工具', 'QA', '', 42, 'x'.repeat(30)]);
+      const tagged = normalizeManifest({
+        id: 'tag-test', name: 'Tag', version: '1.0.0', apiVersion: 1, entry: 'index.js',
+        tags: ['工具', 'QA', '工具'],
+      }, { fallbackId: 'tag-test', kind: 'plugin' });
+      const badTags = normalizeManifest({
+        id: 'bad-tags', name: 'Bad', version: '1.0.0', apiVersion: 1, entry: 'index.js', tags: 'nope',
+      }, { fallbackId: 'bad-tags', kind: 'plugin' });
+      const p1 = buildCreatePrompt({
+        kind: 'plugin', id: 'tag-test', name: '标签测试', category: '工具',
+        description: '说明', toolName: 'tag_tool', toolDescription: '工具说明',
+        tags: ['工具', 'QA'],
+      });
+      const p2 = buildCreatePrompt({ kind: 'skill', name: '技能测试', prompt: '用户问天气时用' });
+      const p3 = buildCreatePrompt({ kind: 'plugin', name: '空标签测试' });
+      const hooksOk = HOOK_POINTS.every((p) => p1.prompt.includes(p));
+      check(
+        'T452 创建提示词：表单信息 + plugin.json/setup/registerTool/execute/钩子点 + Skill 形状 + tags 归一化',
+        tags.length === 3 && tags[0] === '工具' && tags[1] === 'QA' && tags[2].length === 20
+          && tagged.manifest.tags.join('|') === '工具|QA'
+          && badTags.problems.some((w) => w.code === 'bad-tags')
+          && p1.ok && p1.prompt.includes('plugin.json') && p1.prompt.includes('apiVersion：1')
+          && p1.prompt.includes('setup(api)') && p1.prompt.includes('registerTool')
+          && p1.prompt.includes('execute(ctx, args)') && p1.prompt.includes('__')
+          && p1.prompt.includes('不要使用 npm 依赖')
+          && p1.prompt.includes('标签测试') && p1.prompt.includes('tag_tool') && p1.prompt.includes('工具')
+          && hooksOk
+          && p2.ok && p2.prompt.includes('skill.json') && p2.prompt.includes('prompt.sections')
+          && p2.prompt.includes('export {}')
+          && p3.ok && p3.prompt.includes('3–6 个'),
+        `tags=${JSON.stringify(tags)} manifestTags=${JSON.stringify(tagged.manifest.tags)} `
+          + `badTags=${badTags.problems.map((w) => w.code).join('/')} plugin=${p1.ok}/${p1.prompt?.length} `
+          + `skill=${p2.ok}/${p2.prompt?.length} emptyTags=${p3.ok}/${p3.prompt?.includes('3–6 个')} hooks=${hooksOk}`
+      );
+    }
+
     // T451 星标：夹具读一次、失败回 502，不在 200 里伪装成功。
     {
       const { createGithubStar } = await import('../panel/lib/github-star.js');
@@ -12747,6 +12798,31 @@ const fs = require('node:fs');
         else process.env.QQBOT_GITHUB_STAR_FIXTURE = old;
         fs.rmSync(dir, { recursive: true, force: true });
       }
+    }
+
+    // T453 假 QQ 消息分类：聊天只看 user/bot，帮助与日志不混进气泡。
+    {
+      const { classifyFakeLine } = await import('../panel/lib/fake-line.js');
+      const user = classifyFakeLine('  ↑ 你说：在吗');
+      const bot = classifyFakeLine('  机器人（群）▸ 在的');
+      const priv = classifyFakeLine('  机器人（私聊）▸ 收到');
+      const sys = classifyFakeLine('  切到私聊');
+      const err = classifyFakeLine('  ✗ 发送失败：x');
+      const help = classifyFakeLine('  /private       切到私聊（管理员路径）');
+      const log = classifyFakeLine('  │ [15:00] ready');
+      const cont = classifyFakeLine('第二段');
+      check(
+        'T453 假 QQ 消息分类：user/bot/私聊/系统/错误/帮助/日志/续行',
+        user.role === 'user' && user.text === '在吗'
+          && bot.role === 'bot' && bot.text === '在的' && bot.channel === '群'
+          && priv.role === 'bot' && priv.channel === '私聊'
+          && sys.role === 'system' && sys.text.includes('切到私聊')
+          && err.role === 'error' && err.text.includes('发送失败')
+          && help.role === 'meta' && log.role === 'meta'
+          && cont.role === 'meta' && cont.loose === true,
+        `user=${user.role}/${user.text} bot=${bot.role}/${bot.channel} priv=${priv.channel} `
+          + `sys=${sys.role} err=${err.role} help=${help.role} log=${log.role} cont=${cont.role}/${cont.loose}`
+      );
     }
   }
 

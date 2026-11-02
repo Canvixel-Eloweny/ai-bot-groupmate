@@ -156,6 +156,29 @@ function strList(v, max, problems, field) {
 }
 
 /**
+ * 扩展包标签：可选、只用于展示，不参与运行期判据。
+ * trim / 去前导 # / 去空 / 大小写不敏感去重 / 截断 8×20。
+ */
+export function normalizeTagList(v, { max = 8, maxLen = 20 } = {}) {
+  const raw = Array.isArray(v) ? v : [];
+  const out = [];
+  const seen = new Set();
+  for (const it of raw) {
+    if (typeof it !== 'string') continue;
+    let s = it.trim();
+    if (s.startsWith('#')) s = s.slice(1).trim();
+    if (!s) continue;
+    s = s.slice(0, maxLen);
+    const key = s.toLocaleLowerCase('zh-CN');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
  * 扩展包声明的**提示词指引**（清单里的 `prompt.sections`）。
  *
  * ⚠️ 这一段此前**整个被丢掉**（2026-10-15 修 · 对应「小鱼看不到图片」那类 /
@@ -290,6 +313,10 @@ export function normalizeManifest(raw, { fallbackId = '', kind = null } = {}) {
   if (!Object.keys(settings).length && raw.settings) {
     problems.push({ code: 'bad-settings', text: 'settings 不是对象，已忽略' });
   }
+  const tags = normalizeTagList(raw.tags);
+  if (raw.tags !== undefined && !Array.isArray(raw.tags)) {
+    problems.push({ code: 'bad-tags', text: 'tags 不是数组，已忽略' });
+  }
   /** 设置项**键名**（给面板/运行态快照用）：声明式 schema 的键 ∪ 默认值的键，去重 */
   const settingsKeys = [...new Set([...schemaKeys, ...Object.keys(settings)])];
 
@@ -313,6 +340,8 @@ export function normalizeManifest(raw, { fallbackId = '', kind = null } = {}) {
     kind,
     category: typeof raw.category === 'string' ? raw.category.trim() : '',
     description: typeof raw.description === 'string' ? raw.description.trim() : '',
+    /** 展示用标签（可选，不参与加载/权限判据）。 */
+    tags,
     author: typeof raw.author === 'string' ? raw.author.trim() : '',
     /** 清单里声明"默认就启用"。本轮**不采信**它 —— 启用只认 config 白名单（见 plugin-host.js）。 */
     enabledByDefault: raw.enabledByDefault === true,

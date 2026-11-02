@@ -20,7 +20,10 @@ import {
   MIN_WIDTH, MIN_HEIGHT, DEFAULT_WIDTH, DEFAULT_HEIGHT, defaultBounds, clampBounds,
   normalizeWindowState, reflowForDisplays,
 } from '../src/desktop/window-bounds.js';
-import { trayUsable, decideCloseAction, decideStartVisibility } from '../src/desktop/shell-state.js';
+import {
+  trayUsable, decideCloseAction, decideStartVisibility, decideShellStart,
+} from '../src/desktop/shell-state.js';
+import { launchRecordLabel } from '../src/launch-mode.js';
 import { desktopDirFor, shellPaths } from '../src/desktop/shell-path.js';
 import { shellEvent, panelExit, tailLines, parseJsonl } from '../src/desktop/crash-record.js';
 import { maskIdentifiers, scanResidualSecrets, redactLines } from '../src/redact-identifiers.js';
@@ -151,6 +154,27 @@ ck('隐藏启动只在托盘可用时生效', () => {
   assert.equal(decideStartVisibility({ hidden: true, trayUsable: true }), 'hidden');
   assert.equal(decideStartVisibility({ hidden: true, trayUsable: false }), 'show');
   assert.equal(decideStartVisibility({ hidden: false, trayUsable: true }), 'show');
+});
+
+ck('启动形态三选一：browser 只在托盘可用时成立', () => {
+  assert.equal(decideShellStart({ mode: 'browser', trayUsable: true }).action, 'browser');
+  assert.equal(decideShellStart({ mode: 'browser', trayUsable: false }).action, 'show');
+  assert.equal(decideShellStart({ mode: 'window', trayUsable: true }).action, 'show');
+  assert.equal(decideShellStart({ mode: 'window', trayUsable: false }).action, 'show');
+  assert.equal(decideShellStart({ mode: 'browser', openOnStart: false, trayUsable: true }).action, 'hidden');
+  assert.equal(decideShellStart({ mode: 'browser', openOnStart: false, trayUsable: false }).action, 'show');
+  assert.equal(decideShellStart({ mode: 'window', wantHidden: true, trayUsable: true }).action, 'hidden');
+});
+
+ck('启动记录文案：browser/electron 不得显示成独立窗口', () => {
+  assert.equal(launchRecordLabel({ skipped: true }), '按设置未打开界面');
+  assert.equal(launchRecordLabel({ opened: false, error: 'x' }), '打开失败（x）');
+  assert.equal(launchRecordLabel({ mode: 'browser', kind: 'electron', opened: true }), '浏览器标签页 · 桌面壳');
+  assert.equal(launchRecordLabel({ mode: 'browser', kind: 'browser', opened: true }), '浏览器标签页');
+  assert.equal(launchRecordLabel({ mode: 'window', kind: 'electron', opened: true }), '独立窗口');
+  assert.equal(launchRecordLabel({ kind: 'window', used: 'Microsoft Edge', opened: true }), '独立窗口 · Microsoft Edge');
+  assert.equal(launchRecordLabel({ kind: 'electron', opened: true }), '桌面窗口');
+  assert.equal(launchRecordLabel(null), '');
 });
 
 console.log('── 开机自启三态 ──');
@@ -344,7 +368,7 @@ ck('健康身份：pid/appId/version 必须同时对上', () => {
   assert.equal(healthMatches({ body, appId: '', version: '' }), true);
 });
 
-ck('preload 暴露面恰好是白名单七个动作，没有通用 invoke / 监听', () => {
+ck('preload 暴露面恰好是白名单十个动作，没有通用 invoke / 监听', () => {
   const code = fs.readFileSync(path.join(ROOT, 'electron', 'preload.js'), 'utf8');
   let exposed = null;
   const context = {
@@ -369,12 +393,14 @@ ck('preload 暴露面恰好是白名单七个动作，没有通用 invoke / 监�
   assert.equal(exposed.key, 'estrellaShell');
   assert.deepEqual(Object.keys(exposed.value), [
     'isShell', 'platform', 'notify', 'retry', 'quit', 'isWindowVisible', 'restartPanel', 'quitConsole', 'panelState',
+    'openInBrowser', 'showWindow', 'hideWindow',
   ]);
   assert.equal(exposed.value.isShell, true);
   const channels = [...code.matchAll(/ipcRenderer\.invoke\('([^']+)'[^)]*\)/g)].map((m) => m[1]);
   assert.deepEqual(channels, [
     IPC_CHANNELS.notify, IPC_CHANNELS.retry, IPC_CHANNELS.quit, IPC_CHANNELS.visible,
     IPC_CHANNELS.restartPanel, IPC_CHANNELS.quitConsole, IPC_CHANNELS.panelState,
+    IPC_CHANNELS.openInBrowser, IPC_CHANNELS.showWindow, IPC_CHANNELS.hideWindow,
   ]);
   assert.equal(/ipcRenderer\.(?:on|send|sendSync)\(/.test(code), false);
   assert.equal(/\binvoke:\s*\(/.test(code), false);

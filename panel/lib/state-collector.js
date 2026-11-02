@@ -19,7 +19,9 @@ import { classifyOneBotReply, selfReportTrustOf } from '../../src/backend/normal
 // 桌面端「启动方式」（2026-10-16）：唯一判据住 `src/launch-mode.js` ——
 // 面板这里只下发**结论**（与启动器执行的那一个值逐字一致），不许自己再判一遍；
 // 启动跟踪（launch-log）的读口也在这里，卡片上的「上次启动」就是它。
-import { LAUNCH_ENTRY_LABELS, launchLogPath, launchOfConfig, readLaunchLog } from '../../src/launch-mode.js';
+import {
+  LAUNCH_ENTRY_LABELS, launchLogPath, launchOfConfig, launchRecordLabel, readLaunchLog,
+} from '../../src/launch-mode.js';
 import { readAutostartState } from '../../src/desktop/autostart.js';
 // 「这家的免费额度长什么样」（额度类型 / 能不能查实时余额 / 该去哪个页面看）。
 // 唯一实现住 src/free-quota.js —— 面板**不要**自己再写一份文案：
@@ -651,7 +653,11 @@ export function makeStateCollector(deps) {
           last: (() => {
             const e = readLaunchLog(launchLogPath(CONFIG_FILE, PANEL_STATE_DIR), { limit: 1 })[0] || null;
             if (!e) return null;
-            return { ...e, entryLabel: LAUNCH_ENTRY_LABELS[e.entry] || e.entry || '未知入口' };
+            return {
+              ...e,
+              entryLabel: LAUNCH_ENTRY_LABELS[e.entry] || e.entry || '未知入口',
+              howLabel: launchRecordLabel(e),
+            };
           })(),
         },
       },

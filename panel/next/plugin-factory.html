@@ -456,18 +456,20 @@
         <label>显示名称<input id="crName" maxlength="40" placeholder="你好插件"></label>
       </div>
       <label>说明<input id="crDesc" maxlength="200" placeholder="这个插件做什么"></label>
+      <label>标签（可空，逗号分隔）<input id="crTags" maxlength="120" placeholder="工具, 查询"></label>
       <div class="row2" data-for="plugin">
         <label>工具名<input id="crTool" maxlength="40" placeholder="hello_tool"></label>
         <label>工具说明<input id="crToolDesc" maxlength="200" placeholder="模型看到的工具说明"></label>
       </div>
       <label data-for="skill">提示词内容<textarea id="crPrompt" maxlength="2000" placeholder="模型在什么场景下参考这个 Skill"></textarea></label>
-      <p class="imp-hint">模板创建不会调用模型；生成的是标准清单 + 示例代码。装完默认不启用，启用前可以先看预览。</p>
+      <p class="imp-hint">「生成预览」只在本机查看模板；「复制提示词」会把上面填写的信息和宿主接口规范合成一段提示词，复制给外部 AI。AI 生成文件后，回「导入插件」导入即可。</p>
       <div class="imp-btns">
-        <button class="btn btn-primary" type="button" data-create="preview">生成预览</button>
-        <button class="btn" type="button" data-create="install" disabled>安装</button>
+        <button class="btn" type="button" data-create="preview">生成预览</button>
+        <button class="btn btn-primary" type="button" data-create="copy">复制提示词</button>
       </div>
       <p class="imp-note" id="crNote" hidden></p>
       <pre class="imp-preview" id="crPreview" hidden></pre>
+      <p class="imp-hint" id="crCopyState" hidden></p>
     </div>
   </div>
 </div>
@@ -693,6 +695,9 @@
     const out = [];
     out.push(`<span class="tag">${kindOf(it) === 'plugin' ? '插件' : 'Skill'}</span>`);
     out.push(`<span class="tag">${esc(data.catLabel(catOf(it)))}</span>`);
+    for (const tag of (Array.isArray(it.tags) ? it.tags : [])) {
+      out.push(`<span class="tag">${esc(tag)}</span>`);
+    }
     if (it.action === 'over') out.push('<span class="tag warn">超上限·未加载</span>');
     if (rt) out.push(`<span class="tag ${rt.state === 'failed' ? 'bad' : 'ok'}">${esc(rt.state || 'loaded')}</span>`);
     if (rt) {
@@ -1274,17 +1279,21 @@
     }
   }
 
-  /* ── 创造（模板创建，不调用模型）──────────────────────────────────── */
+  /* ── 创造（本机预览 + 复制提示词给外部 AI）────────────────────────── */
   const createScrim = $('createScrim');
   const crNote = $('crNote');
   const crPreview = $('crPreview');
-  const crInstall = createScrim ? createScrim.querySelector('[data-create="install"]') : null;
-  let createState = null;
+  const crCopyState = $('crCopyState');
 
   function setCrNote(text) {
     if (!crNote) return;
     crNote.hidden = !text;
     crNote.textContent = text || '';
+  }
+  function setCrCopyState(text) {
+    if (!crCopyState) return;
+    crCopyState.hidden = !text;
+    crCopyState.textContent = text || '';
   }
   function setCreateKind(kind) {
     if (!createScrim) return;
@@ -1295,10 +1304,9 @@
   }
   function openCreate() {
     if (!createScrim) return;
-    createState = null;
-    if (crInstall) crInstall.disabled = true;
     if (crPreview) { crPreview.hidden = true; crPreview.textContent = ''; }
     setCrNote('');
+    setCrCopyState('');
     const sel = $('crKind');
     if (sel) sel.value = state.kind;
     setCreateKind(state.kind);
@@ -1320,6 +1328,7 @@
       toolName: val('crTool'),
       toolDescription: val('crToolDesc'),
       prompt: val('crPrompt'),
+      tags: (val('crTags') || '').split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean),
     };
   }
   async function previewCreate() {
@@ -1331,26 +1340,67 @@
     }
     if (!meta.name) { setCrNote('先填显示名称。'); return; }
     setCrNote('正在生成…');
-    if (crInstall) crInstall.disabled = true;
+    setCrCopyState('');
     try {
       const r = await postJson('/api/extensions/package', { mode: 'create', meta });
       if (!r || !r.ok || !r.zipBase64) throw new Error((r && r.error) || '生成失败');
-      createState = { kind: r.kind, zipBase64: r.zipBase64, name: meta.id + '.zip' };
       if (crPreview) {
         crPreview.hidden = false;
         crPreview.textContent = (r.files || [])
           .map((f) => `// ${f.path}\n${f.text || ''}`)
           .join('\n\n');
       }
-      if (crInstall) crInstall.disabled = false;
       setCrNote('');
     } catch (e) {
       setCrNote('生成失败：' + e.message);
     }
   }
-  function installCreate() {
-    if (!createState) { setCrNote('先点「生成预览」。'); return; }
-    handoffBlob(base64ToBlob(createState.zipBase64), createState.name, createState.kind, false, '');
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch { /* 落到下面的 execCommand */ }
+    try {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.left = '-9999px';
+      area.style.top = '0';
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand('copy');
+      area.remove();
+      return ok;
+    } catch { return false; }
+  }
+  async function copyCreatePrompt() {
+    if (!createScrim) return;
+    const meta = createMeta();
+    if (!meta.name) { setCrNote('先填显示名称，再复制提示词。'); return; }
+    if (meta.id && !/^[A-Za-z0-9_-]{1,40}$/.test(meta.id)) {
+      setCrNote('id 只能用字母、数字、下划线、连字符（1–40 字）。');
+      return;
+    }
+    setCrNote('正在生成提示词…');
+    setCrCopyState('');
+    try {
+      const r = await postJson('/api/extensions/prompt', { meta });
+      if (!r || !r.ok || !r.prompt) throw new Error((r && r.error) || '生成失败');
+      if (crPreview) {
+        crPreview.hidden = false;
+        crPreview.textContent = r.prompt;
+      }
+      const copied = await copyText(r.prompt);
+      setCrCopyState(copied
+        ? '已复制。把提示词发给你的外部 AI；生成的文件收进一个顶层文件夹后，回「导入插件」导入。'
+        : '复制失败：请手动选中下面的提示词复制，再发给外部 AI。');
+      setCrNote('');
+    } catch (e) {
+      setCrNote('生成提示词失败：' + e.message);
+    }
   }
   if (createScrim) {
     createScrim.addEventListener('click', (ev) => {
@@ -1361,19 +1411,17 @@
       const b = ev.target.closest('[data-create]');
       if (!b) return;
       if (b.dataset.create === 'preview') void previewCreate();
-      if (b.dataset.create === 'install') installCreate();
+      if (b.dataset.create === 'copy') void copyCreatePrompt();
     });
     const kindSel = $('crKind');
     if (kindSel) {
       kindSel.addEventListener('change', () => {
         setCreateKind(kindSel.value);
-        createState = null;
-        if (crInstall) crInstall.disabled = true;
+        setCrCopyState('');
       });
     }
     createScrim.addEventListener('input', () => {
-      createState = null;
-      if (crInstall) crInstall.disabled = true;
+      setCrCopyState('');
     });
   }
 

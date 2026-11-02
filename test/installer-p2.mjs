@@ -280,8 +280,10 @@ ck('bootstrap：安装根内用新 runtime 生成 config.json 与 setup marker',
     assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
     assert.equal(fs.existsSync(path.join(ud, 'config.json')), true);
     assert.equal(fs.existsSync(path.join(ud, 'setup-state.json')), true);
-    // P7：默认改 browser —— window（Edge --app + 专用 profile）首跑必出灰色空窗，见 §22
-    assert.equal(JSON.parse(fs.readFileSync(path.join(ud, 'config.json'), 'utf8')).launch.mode, 'browser');
+    // 2026-11-01：默认改为桌面窗口；modeExplicit=false 表示不是用户点的选择。
+    const launch = JSON.parse(fs.readFileSync(path.join(ud, 'config.json'), 'utf8')).launch;
+    assert.equal(launch.mode, 'window');
+    assert.equal(launch.modeExplicit, false);
   } finally {
     fs.rmSync(t, { recursive: true, force: true });
   }

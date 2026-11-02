@@ -19,6 +19,9 @@ export const IPC_CHANNELS = Object.freeze({
   visible: 'shell:visible',
   restartPanel: 'shell:restart-panel',
   panelState: 'shell:panel-state',
+  openInBrowser: 'shell:open-in-browser',
+  showWindow: 'shell:show-window',
+  hideWindow: 'shell:hide-window',
 });
 
 function normalizeOrigin(raw) {

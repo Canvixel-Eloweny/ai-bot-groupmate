@@ -352,6 +352,8 @@ export const BACKEND_SOURCES = [
   // 假 QQ 虚拟入口的会话管理（2026-10-21）。改了它必须重启面板才生效。
   // 它起的子进程（scripts/fake-qq.mjs）**不进表** —— 那是按需拉起的脚本，
   // 不是面板的加载期依赖。
+  // 2026-11-01：stdout 分类拆成零依赖叶子 fake-line.js，先于会话壳登记。
+  'panel/lib/fake-line.js',
   'panel/lib/fake-session.js',
 ];
 

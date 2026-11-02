@@ -49,8 +49,9 @@ ok('起会话前问过真机器人在不在跑', /apiFakeStart[\s\S]{0,400}bridg
 const schema = read('panel/next/schema.js');
 const appjs = read('panel/next/app.js');
 ok('页面存在（假 QQ）', /id: 'fake', label: '假 QQ'/.test(schema));
-ok('页面用它自己的渲染器', /id: 'fake', title: '会话（打字 = 发消息）'[\s\S]{0,800}t: 'fakeView'/.test(schema));
-ok('输入框是 volatile（整页重画不抹字）', /id: 'fake\.text'[\s\S]{0,120}volatile: true/.test(schema));
+ok('页面用它自己的渲染器', /id: 'fake', title: '会话'[\s\S]{0,300}t: 'fakeView'/.test(schema));
+ok('对话输入栏在渲染器里（不是旧的 fake.text 控件）',
+  /id="fakeComposer"/.test(appjs) && !/id: 'fake\.text'/.test(schema));
 for (const a of ['fake.start', 'fake.stop', 'fake.send', 'fake.cmd', 'fake.clear', 'fake.opt']) {
   ok(`动作 ${a} 在 ACTIONS 里`, new RegExp(`'${a.replace('.', '\\.')}':`).test(appjs));
 }
@@ -59,6 +60,7 @@ ok('页面显示时挂轮询', /ids\.has\('fakeView'\)\) mountFake\(\)/.test(app
 ok('轮询打的是只读状态路由', /\/api\/fake-qq\/state\?since=/.test(appjs));
 ok('说话打的是 send 路由', /\/api\/fake-qq\/send/.test(appjs));
 ok('真机器人在跑时前端先拦一道（提示沙箱）', /fake\.start'[\s\S]{0,400}sandbox/.test(appjs));
+ok('空状态快照带 messages 数组', Array.isArray(idle.messages));
 
 // ── ③ 拒绝路径 ───────────────────────────────────────────────────────────
 ok('没在跑时不许发', fakeSend('在吗').ok === false);
@@ -79,9 +81,15 @@ try {
   ok('一句话写得进去', sent.ok === true);
   await waitFor(() => texts().includes('离线假回话'), 30000, '机器人回一句「离线假回话」');
   ok('会话层回显了机器人的回复', /机器人（群）▸ .*离线假回话/.test(texts()));
+  const msgs = fakeSnapshot(0).messages;
+  ok('用户消息被分类为 user', msgs.some((m) => m.role === 'user' && m.text === '在吗'));
+  ok('机器人回复被分类为 bot',
+    msgs.some((m) => m.role === 'bot' && m.text.includes('离线假回话') && m.channel === '群'));
+  ok('启动帮助没有混进聊天气泡',
+    !msgs.some((m) => /会话层已启动|直接打字|^\/at/.test(m.text || '')));
   const sec = fakeSnapshot(0).seq;
   const delta = fakeSnapshot(sec);
-  ok('since 游标只回新行', delta.lines.length === 0 && delta.seq === sec);
+  ok('since 游标只回新行/新消息', delta.lines.length === 0 && delta.messages.length === 0 && delta.seq === sec);
 } finally {
   fakeStop();
   try { await waitFor(() => !fakeSnapshot(0).running, 8000, '会话进程退出'); } catch { /* 下一句会报出来 */ }

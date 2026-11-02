@@ -74,6 +74,9 @@ export const NEXT_ASSETS = {
      `<html>` 上再让样式表生效。必须登记 —— 否则 §58① 的双向比对会把它判成
      "永远取不到的孤儿文件"。 */
   'splash.js': 'text/javascript; charset=utf-8',
+  /* `frame-rate.js`（2026-11-01）：界面动画帧率上限调度器。必须比所有动画脚本先加载
+     （index.html 里排在 splash.js 之前），否则部分 rAF 循环抓不到包装器。 */
+  'frame-rate.js': 'text/javascript; charset=utf-8',
   'boot-splash.css': 'text/css; charset=utf-8',
   'boot-splash.js': 'text/javascript; charset=utf-8',
 

@@ -37,6 +37,29 @@ let enterTimer = 0;
 let enterCount = 0;
 const panes = new Map();
 
+/** 把同一套界面帧率上限注入同源工厂 iframe；失败时工厂照常运行。 */
+function installFrameRate(frame) {
+  try {
+    const w = frame && frame.contentWindow;
+    if (!w) return;
+    const parent = window.UIFrameRate;
+    if (w.UIFrameRate) {
+      if (parent) w.UIFrameRate.set(parent.get());
+      return;
+    }
+    const doc = w.document;
+    if (!doc || !doc.head) return;
+    const script = doc.createElement('script');
+    script.src = './frame-rate.js';
+    script.onload = () => {
+      try {
+        if (w.UIFrameRate && window.UIFrameRate) w.UIFrameRate.set(window.UIFrameRate.get());
+      } catch { /* 注入后同步失败不影响工厂 */ }
+    };
+    doc.head.appendChild(script);
+  } catch { /* 跨域/文档未就绪：工厂照常运行 */ }
+}
+
 function paneOf(key) {
   let p = panes.get(key);
   if (p) return p;
@@ -58,6 +81,7 @@ function paneOf(key) {
     /* 光标跟随桥：同源帧把指针坐标/悬停位交给父层，工厂文件保持零改动。
        放在探针检查之前 —— 即使探针缺失，桥仍可工作。 */
     try { window.CursorFollow?.attachFrame?.(frame); } catch { /* 桥不参与加载判定 */ }
+    installFrameRate(frame);
     p.loadCount += 1;
     let doc = null;
     try { doc = frame.contentDocument; } catch { /* 跨域就保持未 ready */ }

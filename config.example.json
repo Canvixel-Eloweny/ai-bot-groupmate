@@ -268,6 +268,7 @@
   },
   "launch": {
     "mode": "browser",
+    "modeExplicit": false,
     "openOnStart": true,
     "closeAction": "tray",
     "autoProtocol": true
