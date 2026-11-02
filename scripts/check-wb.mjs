@@ -913,6 +913,28 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
         + ` · lock.packages[""].version=${lockM8.packages?.['']?.version}（M-08c，跑 \`npm install\` 对齐）`);
     }
 
+    // M-08e · **对外写死的版本号必须与 package.json 同源**（2026-11-02 · 0.1.7 发布后补）。
+    //     徽章与安装版说明页的版本都是手写字面量 ⇒ 升版本时没有任何东西提醒，
+    //     线上 README 会长期停在旧版本（用户截图：「这个你没同步」）。任一处对不上就红。
+    const verClaimsM8e = [
+      ['README.md', rdM1, /badge\/release-v([0-9]+\.[0-9]+\.[0-9]+)-e05d44/],
+      ['docs/README.zh-CN.md', fs.readFileSync(new URL('../docs/README.zh-CN.md', import.meta.url), 'utf8'),
+        /badge\/release-v([0-9]+\.[0-9]+\.[0-9]+)-e05d44/],
+      ['packaging/windows/launcher/README-installed.html',
+        fs.readFileSync(new URL('../packaging/windows/launcher/README-installed.html', import.meta.url), 'utf8'),
+        /Estrella Bot ([0-9]+\.[0-9]+\.[0-9]+) ·/],
+    ];
+    for (const [relM8e, txtM8e, reM8e] of verClaimsM8e) {
+      const mM8e = reM8e.exec(txtM8e);
+      if (!mM8e) {
+        bad++; n++;
+        console.log(`✗ ${relM8e} 里抽不出发版版本号 —— 判据落在真空里，别让它静默跳过（M-08e）`);
+      } else if (mM8e[1] !== pkgM8.version) {
+        bad++; n++;
+        console.log(`✗ ${relM8e} 写着 ${mM8e[1]}，package.json 是 ${pkgM8.version}（M-08e，升版本时三处一起改）`);
+      }
+    }
+
     // M-08b · 提交身份不许冒名（2026-10-07 · 用户裁决「贡献者只该是真正有贡献的人」）
     //
     // GitHub 判贡献者**只看提交的 author 邮箱**，完全不看代码。所以身份配错的后果有两类，
@@ -1108,7 +1130,7 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
     }
 
     if (bad === badH5x) {
-      console.log('✓ 仓库内容治理（第 10 轮 H-05/H-06/H-07/M-01/M-03/M-08）：18 个敏感形态全被 git 忽略（含 .env.example，与 publish-audit 同口径） · 治理文件无占位死链且上报入口与仓库地址无关 · README 引全 6 份治理文件 · 包名两侧同源 · 容器三端口绑回环且反向禁裸映射 · 镜像行是本地 tag · 子判据 12 条');
+      console.log('✓ 仓库内容治理（第 10 轮 H-05/H-06/H-07/M-01/M-03/M-08）：18 个敏感形态全被 git 忽略（含 .env.example，与 publish-audit 同口径） · 治理文件无占位死链且上报入口与仓库地址无关 · README 引全 6 份治理文件 · 包名两侧同源 · 对外版本声明同源 · 容器三端口绑回环且反向禁裸映射 · 镜像行是本地 tag · 子判据 15 条');
     }
   }
 

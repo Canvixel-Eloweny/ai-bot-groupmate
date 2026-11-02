@@ -3,6 +3,24 @@
 本项目在 `main` 上持续迭代，每个对外可见的版本打一个 tag。以下按**批次**记录对外可见的变化。
 内部批次台账（含未交付项与裁决记录）是**内部件，不随公开仓库发布**。
 
+## 0.1.7 — 2026-11-02
+
+**Chat view, quieter memory pages, cleaner navigation.** The console's raw terminal echo is now a
+chat view: your messages on the right, the bot on the left, `Enter` to send and `Shift+Enter` for
+a new line, a draft that survives polling, a "typing" state, and the entry animation only for
+newly arrived messages. The original output stays available collapsed. The memory and
+knowledge-pack pages drop their long card explainers and dashed empty states in favour of stat
+blocks, budget/coverage bars and filters. The gallery and group-member profile pages were removed
+(they only worked with optional plugins), leaving the console at 7 domains and 26 pages.
+
+**Settings and motion.** A new "UI animation frame-rate cap" (0–120, 0 = follow the display)
+limits script-driven animation only; CSS and system-composited motion are untouched. The contour
+background gains a speed multiplier with a live preview that keeps writing while the settings
+sheet is open. Plugin creation now copies a prompt (the form values plus the host interface spec)
+instead of installing locally, with optional AI-suggested tags; the local template preview is
+unchanged. On the desktop shell, "open in browser" now really opens the default browser and hides
+the window to the tray. Fix: the circuit-board self-check now skips correctly on non-cloud lines.
+
 ## 0.1.6 — 2026-10-30
 
 **New official app icon and installer upgrade polish.** The console header, Windows
