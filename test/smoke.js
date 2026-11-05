@@ -88,7 +88,7 @@ import {
   NUM_FIELDS, numField, numDefault, numBounds, numOr, uiNumbers, uiBounds,
 } from '../src/field-schema.js';
 import { sendDelayFor, PACE_DEFAULTS } from '../src/pace.js';
-import { scanEgress, maskSecrets, setRuntimeSecrets, RUNTIME_SECRET_MIN_LEN, RUNTIME_SECRET_KIND } from '../src/egress.js';
+import { scanEgress, maskSecrets, maskEgress, setRuntimeSecrets, RUNTIME_SECRET_MIN_LEN, RUNTIME_SECRET_KIND } from '../src/egress.js';
 import { planProactiveSend, plannedProactiveChunks, PROACTIVE_BUDGET_REASON } from '../src/proactive.js';
 // D12b：插话时机（活跃期 / 冷场）的判据与四个默认值 —— 与生产读**同一份**，
 // 测试里另抄一份经验值，等于把"默认值漂移"这道要防的坑亲手搬回来。
@@ -139,7 +139,13 @@ import { readBodyBuffer } from '../panel/lib/http-io.js';
 // 升级总进度（第 43 轮 B14 · PROG-BAR）。**从生产模块 import**，不在测试里另写一份判据。
 import { loadConfig, resolveSecret, plaintextFallbackNotice, normalizeSplitToken } from '../src/config.js';
 // Q11：入睡前那句晚安的判据、目标挑选与文案默认值（只认生产模块那一份）
-import { readSleep, goodnightOf, goodnightTargetOf, GOODNIGHT_DEFAULT } from '../src/sleep.js';
+import { readSleep, goodnightOf, goodnightTargetOf, GOODNIGHT_DEFAULT, wakeRouteMetaOf, WAKE_WORDS_DEFAULT, WAKE_BURST, EMERGENCY_QUIET_MS } from '../src/sleep.js';
+// 好友申请 / 群邀请（B1.1 · 2026-11-04）。判据全在这个零依赖叶子里，反例逐格喂得进去。
+import {
+  normalizeRequestOf, upsertRequest, resolveRequestOf, pendingRequestsOf,
+  requestNoticeTextOf, parseResolveArg, FRIEND_REQ_STATUS, FRIEND_REQ_MAX, FRIEND_REQ_TTL_MS,
+  FRIEND_REQ_KINDS,
+} from '../src/friend-requests.js';
 // 第 8 轮（开源前审查）：剥注释器本身的行为要能被断言（字符串感知 + 收口守卫）。
 // ⚠️ T76 的取源也用它 —— 而从**生产脚本** import，不在测试里另抄一份剥注释逻辑。
 import { stripComments } from '../scripts/lib/scan-utils.mjs';
@@ -203,8 +209,9 @@ import {
 // ⚠️ `loadExtensions` 与 `buildApi` 都要 import：前者走归一化（真路径），
 //    后者单独 import 时会**绕过归一化** —— 两种用法都要有测试覆盖（T168 就是补这一格的）。
 // 钩子总线 / ctx 裁剪 / 发送闸（第 46 轮 B12e-2）。同上：判据只从生产模块来。
-import { createHookBus, HOOK_POINTS, HOOK_TIMEOUT_MS, HOOK_TIMEOUT_LIMIT } from '../src/hook-bus.js';
-import { buildApi, activateCtxOf, splitPermissions, settingsOf, PERMISSION_NAMES } from '../src/plugin-api.js';
+import { createHookBus, HOOK_POINTS, HOOK_POINT_ALIASES, HOOK_TIMEOUT_MS, HOOK_TIMEOUT_LIMIT } from '../src/hook-bus.js';
+import { buildApi, activateCtxOf, splitPermissions, settingsOf, PERMISSION_NAMES, KNOWN_UNSUPPORTED_PERMISSIONS } from '../src/plugin-api.js';
+import { createExtStorage } from '../src/ext-storage.js';
 // 扩展包的受策略约束 fetch（第 55 轮）。判据与形状适配都在生产模块里，测试直接喂反例。
 import { createExtFetch } from '../src/ext-fetch.js';
 // 扩展包能力边界 + 原子写临时文件清扫（第 48 轮 B12e-4 · EX-SCOPE / EX-TEMPSWEEP）。
@@ -1408,6 +1415,158 @@ async function main() {
       );
     }
 
+    // T455 界面裁剪名单（2026-11-03）：必须过白名单投影，且三张表一起归一化。
+    //   `readCustom` 是**投影**不是透传 —— 漏列 `panelHidden` 的话，
+    //   用户在面板上点掉一张卡，下一次保存就把它悄悄抹回来（holidays 那个坑的同族）。
+    //   只发一张表也一样：改了 domains 会把 subs / cards 丢掉。
+    {
+      const c0 = readCustom({});
+      const cHid = readCustom({
+        custom: { panelHidden: { domains: ['run', 'run', ' ', 123], subs: ['overview'], cards: ['pnl'] } },
+      });
+      const cBad = readCustom({ custom: { panelHidden: '不是对象' } });
+      const cOver = readCustom({ custom: { panelHidden: { domains: Array.from({ length: 80 }, (_, i) => `d${i}`) } } });
+      check(
+        'T455 界面裁剪名单：三张表都进投影 · 去重去空 · 数字转字符串 · 坏形状回落空表 · 条数封顶',
+        Array.isArray(c0.panelHidden?.domains) && c0.panelHidden.domains.length === 0
+          && cHid.panelHidden.domains.join() === 'run,123'
+          && cHid.panelHidden.subs.join() === 'overview'
+          && cHid.panelHidden.cards.join() === 'pnl'
+          && cBad.panelHidden.domains.length === 0 && cBad.panelHidden.subs.length === 0
+          && cOver.panelHidden.domains.length === 60,
+        `空=${JSON.stringify(c0.panelHidden)} 去重=${cHid.panelHidden.domains.join()} 坏形状=${JSON.stringify(cBad.panelHidden)} 封顶=${cOver.panelHidden.domains.length}`
+      );
+    }
+
+    // T456 叫醒暗号的对外形状（2026-11-04 · BUG-12 方案②）。
+    //   这一条要证的不是"有没有这段文案"，而是**数字与词表只有一份**：
+    //   页面显示的那三个数和那几个词，必须由 `src/sleep.js` 的常量与归一化算出来。
+    //   判据本体改了（10 秒 → 15 秒、默认词表换词），这里的期望会跟着常量走 ——
+    //   所以它绿着而页面显示旧数字的唯一可能，是面板自己抄了一份，而那由 §50㉒ 反向拦。
+    {
+      const m = wakeRouteMetaOf(readCustom({ custom: { sleep: {} } }).sleep);
+      const mUser = wakeRouteMetaOf(readCustom({
+        custom: { sleep: { wakeWords: ['起床上班了', ' 起床上班了 ', '', '喊我一下'] } },
+      }).sleep);
+      check(
+        'T456 叫醒参数只有一份：由常量换算 · 词表取归一化后那份（去重去空，不重复回落）',
+        m.words.join(',') === WAKE_WORDS_DEFAULT.join(',')
+          && m.burstWindowSec === WAKE_BURST.windowMs / 1000
+          && m.burstCount === WAKE_BURST.count
+          && m.emergencyQuietMin === EMERGENCY_QUIET_MS / 60000
+          && mUser.words.join(',') === '起床上班了,喊我一下',
+        `默认=${m.words.join()} 窗口=${m.burstWindowSec}s×${m.burstCount}条 临时醒=${m.emergencyQuietMin}min 用户改过=${mUser.words.join()}`
+      );
+      // 反例：什么都不传（后端那一格缺失时）—— 不许抛、不许凭空造一份词表，
+      // 面板据此走"没拿到"那一支并把话说清楚（猜出来的数字比空白更坏）。
+      const mEmpty = wakeRouteMetaOf();
+      const mJunk = wakeRouteMetaOf({ wakeWords: '不是数组' });
+      check(
+        'T456b 缺参 / 坏形状：不抛 · 词表回落成空（由页面如实说"没拿到"，不猜）',
+        Array.isArray(mEmpty.words) && mEmpty.words.length === 0
+          && mJunk.words.length === 0
+          && mEmpty.burstCount === WAKE_BURST.count && mEmpty.burstWindowSec > 0,
+        `空=${JSON.stringify(mEmpty)} 坏形状=${JSON.stringify(mJunk)}`
+      );
+    }
+
+    // T457 好友申请 / 群邀请的判据（B1.1 · 2026-11-04）。
+    //   缺陷本体是"报文被静默丢掉"，所以这里逐格喂**会被丢掉的那些形状**：
+    //   没有 flag 的申请（办不成，收了只会骗人点第二遍）、认不出的 request_type、
+    //   同一 flag 反复推（QQ 的常态 —— 每次都通知就是半夜被自己的机器人刷屏）。
+    {
+      const r1 = normalizeRequestOf(
+        { post_type: 'request', request_type: 'friend', flag: 'F-1', user_id: 4499, comment: '我是小王', time: 1700000000 },
+        { now: 1700000099000 },
+      );
+      const noFlag = normalizeRequestOf({ post_type: 'request', request_type: 'friend', user_id: 4499 }, { now: 1 });
+      const unknown = normalizeRequestOf({ post_type: 'request', request_type: 'anything', flag: 'F-2' }, { now: 1 });
+      const grp = normalizeRequestOf({ post_type: 'request', request_type: 'GROUP', flag: 'G-1', user_id: 5, group_id: 100000 }, { now: 2 });
+      check(
+        'T457 申请归一化：好友 / 群两种都认（大小写不敏感）· 没有 flag 不收 · 认不出的种类不收',
+        r1 && r1.kind === 'friend' && r1.flag === 'F-1' && r1.userId === '4499' && r1.at === 1700000000000
+          && r1.status === 'pending' && noFlag === null && unknown === null
+          && grp && grp.kind === 'group' && grp.groupId === '100000',
+        `好友=${JSON.stringify(r1)} 无flag=${noFlag} 怪种类=${unknown} 群=${JSON.stringify(grp)}`
+      );
+      const u0 = upsertRequest([], r1, { now: 1700000099000 });
+      const u1 = upsertRequest(u0.list, r1, { now: 1700000100000 });
+      const uOver = upsertRequest(
+        Array.from({ length: FRIEND_REQ_MAX }, (_, i) => ({ flag: `old${i}`, kind: 'friend', userId: `${i}`, at: 1700000000000 - i * 1000, status: 'pending' })),
+        { ...r1, flag: 'NEW-1' }, { now: 1700000099000 },
+      );
+      const uTtl = upsertRequest(
+        [{ flag: 'ancient', kind: 'friend', userId: '1', at: 1700000000000, status: 'pending' }],
+        { ...r1, flag: 'F-9' }, { now: 1700000000000 + FRIEND_REQ_TTL_MS + 1 },
+      );
+      check(
+        'T457b 收下：新增一条 · 同 flag 再来不算新增（不再重复通知）· 超上限丢最旧的 · 过期条目先清',
+        u0.added && u0.list.length === 1
+          && u1.added === false && u1.duplicate === true && u1.list.length === 1
+          && uOver.added && uOver.list.length === FRIEND_REQ_MAX && uOver.dropped === 1
+          && uOver.list[uOver.list.length - 1].flag === 'NEW-1' && !uOver.list.some((x) => x.flag === 'old0'),
+        `新增=${u0.added} 重复=${u1.duplicate} 封顶后=${uOver.list.length}(丢${uOver.dropped}) 最新在末尾=${uOver.list.at(-1)?.flag}`
+      );
+      check(
+        'T457c 过期条目在写入时被清掉（文件不无限长，也不显示早已被 QQ 收走的申请）',
+        uTtl.list.length === 1 && uTtl.list[0].flag === 'F-9',
+        `清完剩=${JSON.stringify(uTtl.list.map((x) => x.flag))}`
+      );
+      const r2 = resolveRequestOf(u0.list, 'F-1', { status: 'approved', msg: '已同意', at: 1700000200000 });
+      const rBad = resolveRequestOf(u0.list, 'F-1', { status: 'auto-approved', msg: 'x', at: 1 });
+      const rMiss = resolveRequestOf(u0.list, 'NOPE', { status: 'denied', msg: '', at: 1 });
+      check(
+        'T457d 处理回执：改状态并留原文 · 状态不在闭集合就整条不动（写进没人认识的形状=页面只能铺实现名）· 找不到时 found=false（不许"没找到也回成功"）',
+        r2.found && r2.list[0].status === 'approved' && r2.list[0].result === '已同意' && r2.list[0].handledAt === 1700000200000
+          && pendingRequestsOf(r2.list).length === 0
+          && rBad.found === false && rBad.list[0].status === 'pending'
+          && rMiss.found === false && /没有|清掉/.test(rMiss.reason),
+        `改完=${JSON.stringify(r2.list[0])} 坏状态=${rBad.found}/${JSON.stringify(rBad.list[0])} 找不到=${rMiss.found}「${rMiss.reason}」`
+      );
+      check(
+        'T457e 两个闭集合：状态含 failed 单独一档（协议端不受理必须留痕，不能被折叠成"这条消失了"）· 申请种类只有好友与群邀请（收下来路不明的种类=自己造语义）',
+        FRIEND_REQ_STATUS.join(',') === 'pending,approved,denied,failed'
+          && FRIEND_REQ_KINDS.join(',') === 'friend,group',
+        `状态=${FRIEND_REQ_STATUS.join('/')} 种类=${FRIEND_REQ_KINDS.join('/')}`
+      );
+    }
+
+    // T458 `friend.resolve` 的参数判据（B1.1）。
+    //   加好友是**撤不回来**的动作，所以这一格的判据故意比"能用"更严：
+    //   approve 只认 `true` / `false` 两个字面量 —— 任何非空都算同意的话，
+    //   一条写歪的命令（`1` / `yes` / 空串）就会真的把人加进来。
+    {
+      const good = parseResolveArg('F-1|true');
+      const deny = parseResolveArg('F-1|false');
+      const emptyArg = parseResolveArg('');
+      const noSep = parseResolveArg('F-1');
+      const injected = parseResolveArg('a|b|true');
+      const yesIsNotTrue = parseResolveArg('F-1|yes');
+      check(
+        'T458 命令参数：只认 true / false 两个字面量 · 缺分隔符与空参数都拒 · flag 含分隔符拒（防拼接）',
+        good.ok && good.flag === 'F-1' && good.approve === true
+          && deny.ok && deny.approve === false
+          && !emptyArg.ok && !noSep.ok && !injected.ok && !yesIsNotTrue.ok,
+        `同意=${JSON.stringify(good)} 拒绝=${JSON.stringify(deny)} 空=${emptyArg.reason} 无分隔=${noSep.reason} 拼过=${injected.reason} 「yes」=${yesIsNotTrue.reason}`
+      );
+    }
+
+    // T459 通知主人那一句（B1.1）。测的是**内容**：只说"有人在申请"而不说下一步在哪，
+    //   等于把一条缺陷报告换成另一条。申请人原文照搬，不替他归纳（不凭空画像）。
+    {
+      const t1 = requestNoticeTextOf(
+        { kind: 'friend', userId: '4499', comment: '我是小王呀' }, { pending: 1 },
+      );
+      const t2 = requestNoticeTextOf({ kind: 'group', userId: '77', groupId: '100000', comment: '' }, { pending: 3 });
+      check(
+        'T459 通知文案：说清是加好友还是群邀请 · 带上号与原文留言 · 说清"由你在控制台点、我不会自己答应" · 多条时数出来',
+        /申请加她好友/.test(t1) && t1.includes('4499') && t1.includes('我是小王呀')
+          && /由你在控制台里点/.test(t1) && /我不会自己答应/.test(t1) && !/第 \d+ 条/.test(t1)
+          && /邀请她加群/.test(t2) && t2.includes('100000') && /第 3 条/.test(t2),
+        `单条=「${t1}」\n多条=「${t2}」`
+      );
+    }
+
     // T74 防刷屏段数取自声明，且语义是**压紧（min）而不是覆盖**。
     //     只断言"开了之后变成 N 段"是不够的：把声明值当上限硬覆盖，
     //     在 maxChunks 比它更小的时候会把上限**放宽**。
@@ -1543,16 +1702,33 @@ async function main() {
     );
     const dExpired = bBrain.decide(bSession, bEvt, bareImg, { now: NOW0 + 300001, roll: 0 });
     const dWithText = bBrain.decide(bSession, bEvt, imgWithText, { now: NOW0, roll: 0 });
+    // 2026-11-04：纯图闸门只拦**群里非主人**。主人刚说过话再发纯图要能穿透；
+    // 私聊在 decide 的更早处就 return ok('private')，本来就不该被这道闸碰到。
+    const bOwnerCfg = {
+      ...bCfg,
+      owner: { qq: ['20002'] },
+      allow: { ...bCfg.allow, private: ['20002'] },
+    };
+    const bOwnerBrain = new Brain(bOwnerCfg, bStore);
+    const dOwner = bOwnerBrain.decide(bSession, bEvt, bareImg, { now: NOW0, roll: 0 });
+    const dPrivate = bOwnerBrain.decide(
+      bSession,
+      { ...bEvt, message_type: 'private', group_id: undefined },
+      bareImg,
+      { now: NOW0, roll: 0 }
+    );
     check(
-      'T23 纯图/纯表情闸门：刚说过话不接、被 @ 必穿透、宽限期过了放行、带字的图不受影响',
+      'T23 纯图/纯表情闸门：刚说过话不接、被 @ 必穿透、宽限期过了放行、带字的图不受影响、主人与私聊豁免',
       dQuiet.respond === false &&
         dQuiet.reason.includes('纯图') &&
         dFace.respond === false &&
         dAt.respond === true &&
         dAt.reason === '被 @ 了' &&
         dExpired.respond === true &&
-        dWithText.respond === true,
-      `纯图=${dQuiet.reason}｜纯表情=${dFace.reason}｜被@=${dAt.reason}｜过期后=${dExpired.reason}｜带字=${dWithText.reason}`
+        dWithText.respond === true &&
+        dOwner.respond === true &&
+        dPrivate.respond === true,
+      `纯图=${dQuiet.reason}｜纯表情=${dFace.reason}｜被@=${dAt.reason}｜过期后=${dExpired.reason}｜带字=${dWithText.reason}｜主人=${dOwner.reason}｜私聊=${dPrivate.reason}`
     );
 
     // T24/T25 出口闸门与日志脱敏：**同一份特征表**。
@@ -1570,6 +1746,22 @@ async function main() {
       ['我们班的群号是 100000001', null],
     ];
     const egressWrong = egressCases.filter(([text, want]) => scanEgress(text) !== want);
+    // ★ 同一条表再验一遍**打码这一半**（2026-11-03）：每条命中的都必须
+    //   ① 打干净（`trusted`）② 报名字 ③ 原文里那截匹配内容不再出现。
+    //   为什么必须逐条钉：某条规则的 `to` 如果自己还留着锚点（本轮实测踩过一条 ——
+    //   Windows 路径写成 `$1***` 后，`C:\Users\***` 仍被同一条规则判为命中），
+    //   表现不是泄露，而是**悄悄退回"整条不发"**：打码等于没打，而 T24 只测检测，全绿。
+    const maskBad = egressCases.filter(([text, want]) => {
+      if (!want) return false;
+      const m = maskEgress(text);
+      return !m.trusted || !m.rules.length || scanEgress(m.text) !== null;
+    }).map(([t]) => t);
+    check(
+      'T24b ★ 出口打码逐条自证：命中的都打得干净、报得出名字（`to` 留锚点会静默退回整条不发）',
+      maskBad.length === 0,
+      maskBad.map((t) => `「${t.slice(0, 16)}」→ ${JSON.stringify(maskEgress(t))}`).join('；')
+        || `${egressCases.filter(([, w]) => w).length} 条命中全部 trusted 且复扫为 null`,
+    );
     check(
       'T24 出口闸门认得凭据与本机路径，且不误杀正常群聊文本',
       egressWrong.length === 0,
@@ -1759,14 +1951,54 @@ async function main() {
     const okReply = eBrain.parseReply('正常的一句话 || 第二段');
     const blockedReply = eBrain.parseReply('它把 Key 写进了 /Users/someone/secret.json');
     check(
-      'T26 出口闸门命中 → 整条拦截且 silent，原因回传（不静默丢弃）',
+      'T26 出口闸门命中 → 就地打码后照发（抹掉命中片段，整条不再消失）',
       okReply.chunks.length === 2 &&
         !okReply.blocked &&
-        blockedReply.silent === true &&
-        blockedReply.chunks.length === 0 &&
-        blockedReply.blocked === '本机绝对路径',
-      `正常=2 段/未拦；命中→silent=${blockedReply.silent} chunks=${blockedReply.chunks.length} blocked=${blockedReply.blocked}`
+        blockedReply.silent === false &&
+        !blockedReply.blocked &&
+        blockedReply.masked === '本机绝对路径' &&
+        blockedReply.chunks.length === 1
+        && !blockedReply.chunks[0].includes('someone')
+        && !blockedReply.chunks[0].includes('secret.json')
+        && blockedReply.chunks[0].includes('它把 Key 写进了'),
+      `正常=2 段/未拦；命中→silent=${blockedReply.silent} masked=${blockedReply.blocked ? '' : blockedReply.masked} `
+        + `blocked=${JSON.stringify(blockedReply.blocked)} 发出=${JSON.stringify(blockedReply.chunks)}`
     );
+
+    // T26b ★ 退路必须**真的还通**：打码打不干净时仍旧整条不发（fail-closed 没被削弱）。
+    //   构造法：把"打码之后才会出现的那串"本身装进运行时凭据集 ——
+    //   `password: hunter2xxx` 打完码是 `password: ***`，而它恰好含已装入的 12 字符值
+    //   `assword: ***` ⇒ 自证再扫一遍仍命中 ⇒ `trusted:false` ⇒ 调用方退回"不发"。
+    //   没有这一条，"加了打码就把退路写成永远走不到的死代码"是查不出来的。
+    {
+      const probe = 'assword: ***';
+      if (probe.length >= RUNTIME_SECRET_MIN_LEN) {
+        setRuntimeSecrets([probe]);
+        const untrusted = eBrain.parseReply('它说 password: hunter2xxx 了');
+        const maskSamples = [
+          'sk-abcdefghijklmnopqrstuvwx', 'Bearer abcdefghijklmnopqrstu', 'eyJabcdefgh.ijklmnopqr.stuvwx',
+          'api_key = abcdef123456', '我把东西放在 /Users/someone/a.txt 了', 'C:\\Users\\bob\\secret.txt',
+          'cat .ssh/id_rsa', '今天天气不错，密码这事儿别聊了',
+        ];
+        const maskedSelfClean = maskSamples.every((t) => {
+          const m = maskEgress(t);
+          return !m.trusted || scanEgress(m.text) === null;
+        });
+        const allMasked = maskSamples.every((t) => maskEgress(t).trusted && maskEgress(t).rules.length > 0
+          || t === '今天天气不错，密码这事儿别聊了');
+        check(
+          'T26b ★ 打不干净时退回整条不发（自证那条退路可达，不是死代码）· 且凡 trusted 的结果复扫必为 null、每条命中都有规则名',
+          untrusted.silent === true && untrusted.chunks.length === 0
+            && Boolean(untrusted.blocked)
+            && maskedSelfClean && allMasked,
+          `不可信→silent=${untrusted.silent} chunks=${untrusted.chunks.length} blocked=${untrusted.blocked} · `
+            + `自证不变量=${maskedSelfClean} · 逐条都有规则名=${allMasked}`
+        );
+        setRuntimeSecrets([]);
+      } else {
+        check('T26b 探针长度不足 RUNTIME_SECRET_MIN_LEN —— 这条用例没跑（显式标出，不当通过）', false, `probe=${probe.length}`);
+      }
+    }
 
     // T27 主动出站必须走**主链路同一套**配额判据，且被拦下时带着原因（好写日志）。
     // 抽成纯函数就是为了这条：否则只能等到某个时刻真机观察，而那不叫断言。
@@ -1814,16 +2046,20 @@ async function main() {
         + `internal=${JSON.stringify(leakReal.internal)}；混着真话→${JSON.stringify(leakMixed.chunks)}`
     );
 
-    // T368 回归：新闸门**不许碰既有行为**（凭据照旧整条不发 / [SILENT] 照旧 / 正常话一字不动）。
+    // T368 回归：新闸门**不许碰既有行为**（正常话一字不动 / [SILENT] 照旧 / 凭据那类仍被处理）。
+    //   ⚠️ 2026-11-03：第三项从"整条不发"改成"打码后照发且抹干净"——这是**刻意的行为变更**
+    //   （维护者批准），不是回归；`blocked` 只在打不干净时才非空，见 T26b。
     const plainReply = eBrain.parseReply('正常的一句话');
+    const egReply = eBrain.parseReply('它把 Key 写进了 /Users/someone/secret.json');
     check(
-      'T368 内部标记闸门不碰既有行为：正常话一字不动且不记复读 · [SILENT] 照旧 · 凭据照旧整条不发',
+      'T368 内部标记闸门不碰既有行为：正常话一字不动且不记复读 · [SILENT] 照旧 · 凭据被就地抹掉后照发（不再整条消失）',
       plainReply.chunks.join('') === '正常的一句话' && plainReply.internal.length === 0
         && eBrain.parseReply('[SILENT]').silent === true
-        && eBrain.parseReply('它把 Key 写进了 /Users/someone/secret.json').blocked === '本机绝对路径',
+        && egReply.masked === '本机绝对路径' && !egReply.blocked
+        && !egReply.chunks.join('').includes('someone'),
       `正常=${JSON.stringify(plainReply.chunks)} internal=${JSON.stringify(plainReply.internal)} · `
         + `SILENT=${eBrain.parseReply('[SILENT]').silent} · `
-        + `凭据=${eBrain.parseReply('它把 Key 写进了 /Users/someone/secret.json').blocked}`
+        + `凭据→masked=${egReply.masked} blocked=${JSON.stringify(egReply.blocked)}`
     );
 
     // T369 **旧文案**（改文案之前写进历史的四句）同样拦得住 —— 会话历史是**持久化的**
@@ -1872,19 +2108,21 @@ async function main() {
     );
 
     // T372 **第二个出口**：主动链（定时文案是用户填的，但"模型生成的主动话题"同样是模型输出）
-    //   口径与主链路逐字一致：剥掉标记、其余照发；凭据那一类照旧**整条不发**——
-    //   ⚠️ 主动链的"整条不发"是**调用方抛错**实现的（`sayToGroup` 见 blocked 就抛），
-    //   所以这里只钉"blocked 被回传且 chunk 一个字都没被改"，**不钉 chunks 是否清空**
-    //   （那是主链路 `parseReply` 的口径，两者刻意不同：它没有"剩下的半句"可言）。
+    //   口径与主链路逐字一致：剥掉标记、其余照发；凭据/路径那一类**就地打码后照发**
+    //   （2026-11-03 起，与 `parseReply` 同一套 `maskEgress`）。
+    //   ⚠️ 两条链"拦下"的实现方式**刻意不同**：主链路清空 chunks，主动链交回 `blocked`
+    //   由调用方抛错。所以这里钉的是"打干净 + 规则名回传"，不是 chunks 是否被清空。
     const proClean = plannedProactiveChunks('（系统标记：本轮没有接话）|| 正经话');
     const proBlocked = plannedProactiveChunks('它把 Key 写进了 /Users/someone/secret.json');
     check(
-      'T372 主动链同一条口径：剥掉内部标记 · 其余照发 · 凭据照旧整条不发（blocked 仍回传给调用方）',
+      'T372 主动链同一条口径：剥掉内部标记 · 其余照发 · 凭据被就地抹掉后照发（blocked 为空、masked 报名字）',
       proClean.chunks.join('|') === '正经话' && proClean.internal.length === 1 && !proClean.blocked
-        && proBlocked.blocked === '本机绝对路径'
-        && proBlocked.chunks.join('').includes('secret.json'),
+        && proBlocked.blocked === null && proBlocked.masked === '本机绝对路径'
+        && !proBlocked.chunks.join('').includes('someone')
+        && !proBlocked.chunks.join('').includes('secret.json'),
       `剥完=${JSON.stringify(proClean.chunks)} internal=${JSON.stringify(proClean.internal)} · `
-        + `凭据→blocked=${proBlocked.blocked}（内容未被改动=${proBlocked.chunks.join('').includes('secret.json')}）`
+        + `凭据→blocked=${JSON.stringify(proBlocked.blocked)} masked=${proBlocked.masked} `
+        + `发出=${JSON.stringify(proBlocked.chunks)}`
     );
 
     // T373 断根那一半：提示词里必须**说明**批注不是它该说的话。
@@ -5256,6 +5494,89 @@ async function main() {
       );
     }
 
+    // T454 扩展宿主三项补齐（2026-11-03 · 群友报告 BUG-13 / MIG-02/03/07）：
+    //   ① 旧钩子名 `incoming-message` / `message` 收下来（社区包按那套写，
+    //      以前被当"未知钩子点"拒掉 ⇒ 包永远是死的，表现只是"装了没反应"）；
+    //      但**必须同时告警**说清它不代答 —— 否则"名字收了、语义没接"是另一种静默失效。
+    //   ② 载荷同时给生态那套字段名（userId/chatId/selfId/now）与切好的 command/args；
+    //   ③ `storage` 从"挂在权限表里但没实现"变成真有实现（按包隔离、坏键拒绝、超量拒绝）。
+    {
+      const msgs = [];
+      const bus2 = createHookBus({ log: { warn: (m) => msgs.push(String(m)) } });
+      const okAlias = bus2.on('incoming-message', () => 1, { owner: 'pkg-a' });
+      const okAlias2 = bus2.on('message', () => 1, { owner: 'pkg-b' });
+      const stillUnknown = bus2.on('totally-made-up', () => 1, { owner: 'pkg-c' });
+      check(
+        'T454① 旧钩子名被接到 after-incoming-message 且明确告警"不代答"；真未知的名字仍旧拒绝',
+        okAlias === true && okAlias2 === true && stillUnknown === false
+          && bus2.size('after-incoming-message') === 2
+          && msgs.some((m) => /incoming-message/.test(m) && /不代答|不会被消费/.test(m))
+          && msgs.some((m) => /totally-made-up/.test(m))
+          && Object.keys(HOOK_POINT_ALIASES).every((k) => HOOK_POINTS.includes(HOOK_POINT_ALIASES[k])),
+        `受理=${okAlias}/${okAlias2} 未知被拒=${stillUnknown === false} 告警=${JSON.stringify(msgs)}`
+      );
+
+      const pl = incomingMessagePayload({
+        chatKey: 'group:123', scene: 'group',
+        evt: { user_id: 4499, message_id: 901 },
+        parsed: { text: '/roll 1d20 拜托了', mentionedSelf: false },
+        sender: '阿岚', now: 1700000000000, selfId: 10000,
+      });
+      check(
+        'T454② 载荷带上生态那套字段名（userId/chatId/selfId/now）与切好的 command/args，旧字段一个不少',
+        pl.userId === '4499' && pl.senderId === '4499' && pl.chatId === '123'
+          && pl.selfId === '10000' && pl.now === 1700000000000 && pl.timestamp === 1700000000000
+          && pl.command === 'roll' && pl.args === '1d20 拜托了'
+          && pl.text === '/roll 1d20 拜托了' && pl.chatKey === 'group:123',
+        `userId=${pl.userId} chatId=${pl.chatId} selfId=${pl.selfId} now=${pl.now} command=${pl.command} args=${JSON.stringify(pl.args)}`
+      );
+      const plPlain = incomingMessagePayload({ chatKey: 'private:7', parsed: { text: '在吗' } });
+      check('T454②b 不带斜杠命令时 command/args 是空串（不是 undefined，包不必判存在性）',
+        plPlain.command === '' && plPlain.args === '' && plPlain.chatId === '7',
+        `command=${JSON.stringify(plPlain.command)} args=${JSON.stringify(plPlain.args)}`);
+
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ext-store-'));
+      const store = createExtStorage({ dir, log: {} });
+      const apiS = buildApi({
+        manifest: { id: 'pkg-a', kind: 'plugin', permissions: ['storage'] },
+        log: {}, storage: store, dataDir: path.join(dir, 'd'),
+      });
+      const apiNo = buildApi({ manifest: { id: 'pkg-b', kind: 'plugin', permissions: [] }, log: {}, storage: store });
+      apiS.storage.set('hits', 3);
+      apiS.storage.set('nested.key', 'v');
+      let deniedThrow = '';
+      try { apiNo.storage.set('x', 1); } catch (e) { deniedThrow = String(e.message); }
+      let badKey = '';
+      const badSet = apiS.storage.set('../../etc/passwd', 1);
+      const bigSet = apiS.storage.set('big', 'x'.repeat(300 * 1024));
+      check(
+        'T454③ storage 按包隔离地真的能存取；未声明权限 → 一句人话拒绝（不是 undefined 崩）；坏键与超量都拒绝',
+        apiS.storage.get('hits') === 3 && apiS.storage.get('nested.key') === 'v'
+          && apiS.storage.keys().includes('hits')
+          && apiS.storage.get('x') === undefined
+          && fs.existsSync(path.join(dir, 'pkg-a.json'))
+          && !fs.existsSync(path.join(dir, 'pkg-b.json'))
+          && /没有声明 storage/.test(deniedThrow)
+          && badSet.ok === false && /键名不合法/.test(badSet.reason)
+          && bigSet.ok === false && /存储已满/.test(bigSet.reason)
+          && apiS.dataDir === path.join(dir, 'd') && !('dataDir' in apiNo),
+        `取回=${apiS.storage.get('hits')} 文件在=${fs.existsSync(path.join(dir, 'pkg-a.json'))} `
+        + `未声明的错=${JSON.stringify(deniedThrow.slice(0, 40))} 坏键=${JSON.stringify(badSet.reason?.slice(0, 24))} `
+        + `超量=${JSON.stringify(bigSet.reason?.slice(0, 24))}`
+      );
+      const spU = splitPermissions(['web_fetch', 'cross_send', 'local_service', '打错了的权限']);
+      check(
+        'T454④ "名字对但宿主不提供"与"拼错了"分开报（混成一句会把作者带去查错方向）',
+        spU.known.join() === 'web_fetch'
+          && spU.unsupported.join() === 'cross_send,local_service'
+          && spU.unknown.join() === '打错了的权限'
+          && KNOWN_UNSUPPORTED_PERMISSIONS.includes('cross_send')
+          && !PERMISSION_NAMES.includes('cross_send'),
+        `known=${JSON.stringify(spU.known)} 不提供=${JSON.stringify(spU.unsupported)} 拼错=${JSON.stringify(spU.unknown)}`
+      );
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+
     // T117 EX-CAPCTX：ctx 按声明裁剪 + plugin 型也能注册工具（第 47 轮 B12e-3 对齐生态）
     {
       const api = buildApi({
@@ -5893,9 +6214,12 @@ async function main() {
       const key = plannedProactiveChunks('这是密钥 sk-1234567890abcdef1234567890abcdef 别外传', {});
       const pth = plannedProactiveChunks('看我的 /Users/someone/.ssh/id_rsa 文件', {});
       check(
-        'T134b ★ 含凭据 / 本机绝对路径的主动文案必须被拦（blocked 非空）—— 这是"主动路径绕过出口闸门"那个 P0 缺口的行为侧证据',
-        Boolean(key.blocked) && Boolean(pth.blocked),
-        `凭据=${JSON.stringify(key.blocked)} 路径=${JSON.stringify(pth.blocked)}`
+        'T134b ★ 含凭据 / 本机路径的主动文案必须被处理（打干净后照发，或打不干净时 blocked 非空）—— 这是"主动路径绕过出口闸门"那个 P0 缺口的行为侧证据',
+        (Boolean(key.blocked) || (key.masked.includes('sk 密钥') && !key.chunks.join('').includes('sk-1234567890abcdef')))
+          && (Boolean(pth.blocked) || (!pth.chunks.join('').includes('someone')
+            && !pth.chunks.join('').includes('id_rsa'))),
+        `凭据→blocked=${JSON.stringify(key.blocked)} masked=${key.masked} 发出=${JSON.stringify(key.chunks)} · `
+        + `路径→blocked=${JSON.stringify(pth.blocked)} masked=${pth.masked} 发出=${JSON.stringify(pth.chunks)}`
       );
     }
 
@@ -7184,6 +7508,68 @@ async function main() {
                 && wrote.done.ok === false,
               `文件=${JSON.stringify(wrote)} ｜ 机器人 pid=${child.pid} ｜ 机器人原话=${wrote?.done?.msg || ''}`
             );
+            // T460 / T461 ★ 真进程端到端：好友申请不再被吞，且主人点一下就真的发给协议端
+            //   （B1.1 · 2026-11-04）。这两条是**这一批唯一的接线证明**：
+            //   缺陷本体是 `index.js` 的 notice 监听第一句 `post_type !== 'notice'` 就 return，
+            //   把 `request` 报文整条吞掉 —— 纯函数全过、四层全绿、界面上一个字都没有。
+            //   所以必须推**真报文**给**真进程**，再断言它自己落盘 / 自己执行。
+            {
+              const frPath = path.join(ddir, 'friend-requests.json');
+              const readList = () => {
+                try {
+                  const j = JSON.parse(fs.readFileSync(frPath, 'utf8'));
+                  return Array.isArray(j.requests) ? j.requests : null;
+                } catch { return null; }   // 原子写换 inode 那一瞬可能读到半个 JSON
+              };
+              const FLAG = 'smoke-req-1';
+              const reqEvt = {
+                post_type: 'request', request_type: 'friend', flag: FLAG,
+                user_id: 4499, comment: '我是小王呀', time: Math.floor(Date.now() / 1000),
+              };
+              ob.pushEvent(reqEvt);
+              const landed = await waitFor(() => {
+                const l = readList();
+                return !!l && l.some((x) => x.flag === FLAG);
+              }, { timeout: 8000 });
+              const disk = readList() || [];
+              const rec = disk.find((x) => x.flag === FLAG) || {};
+              check(
+                'T460 ★ 真进程端到端：post_type=request 被机器人自己收下并落盘（原来那一句 return 把它整条吞了）· 状态是"等主人拍板"',
+                landed && disk.length === 1 && rec.status === 'pending'
+                  && rec.userId === '4499' && rec.comment === '我是小王呀' && rec.kind === 'friend',
+                `盘上=${JSON.stringify(disk)}`
+              );
+              // 同一条再来一遍：QQ 反复推是常态，新增 = 半夜被自己的机器人刷屏。
+              ob.pushEvent(reqEvt);
+              await waitFor(() => false, { timeout: 900 }); // 有意等一轮：断言的是"没有发生"
+              check(
+                'T460b 同一个 flag 反复推过来不再新增（去重住在叶子里，也在真进程里成立）',
+                (readList() || []).length === 1,
+                `再来一遍后条数=${(readList() || []).length}`
+              );
+
+              // T461 ★ 主人在面板上点「同意」：写一条带 arg 的命令 → 真进程取走 →
+              //   真的调用 set_friend_add_request（**参数要看**：写死 approve:true 是最坏的失败方向）
+              //   → 把结果写回那份文件（否则刷新一次又变回待处理，等于骗人点第二遍）。
+              const nApi = ob.calls.filter((c) => c.action === 'set_friend_add_request').length;
+              const probe = { id: 'smoke-friend-1', cmd: 'friend.resolve', arg: `${FLAG}|true`, at: Date.now(), done: null };
+              fs.writeFileSync(ctlfile, JSON.stringify(probe));
+              const done = await waitFor(() => {
+                try { return !!JSON.parse(fs.readFileSync(ctlfile, 'utf8')).done; } catch { return false; }
+              }, { timeout: 12000 });
+              let wrote = null;
+              try { wrote = JSON.parse(fs.readFileSync(ctlfile, 'utf8')); } catch { /* 下面报失败 */ }
+              const api = ob.calls.slice(nApi).find((c) => c.action === 'set_friend_add_request');
+              const after = (readList() || []).find((x) => x.flag === FLAG) || {};
+              check(
+                'T461 ★ 带参数的命令端到端：真进程取走 friend.resolve → 用**那条申请的 flag** 调 set_friend_add_request（approve=true）→ 列表里那条改成已同意',
+                done && wrote?.id === 'smoke-friend-1' && wrote?.done?.ok === true
+                  && !!api && String(api.params?.flag) === FLAG && api.params?.approve === true
+                  && after.status === 'approved' && after.result === '已同意' && after.handledAt > 0,
+                `回执=${JSON.stringify(wrote?.done)} ｜ 协议端入参=${JSON.stringify(api?.params || null)} ｜ 盘上那条=${JSON.stringify(after)}`
+              );
+              fs.rmSync(frPath, { force: true });
+            }
             fs.rmSync(ctlfile, { force: true });
           }
         }
@@ -9455,6 +9841,9 @@ async function main() {
       const fwdNodes = [
         { sender: { nickname: '小王' }, message: [{ type: 'text', data: { text: '今晚吃什么' } }] },
         { sender: { nickname: '小李' }, message: [{ type: 'text', data: { text: '随便，你定' } }] },
+        // 2026-11-03：第三个节点**只带一张图**。旧实现 renderNode 只取 `.text`，
+        // 这张图在采集阶段就被丢掉 ⇒ 模型只看到一串「[图片]」。① 钉它的 imagesCount。
+        { sender: { nickname: '小张' }, message: [{ type: 'image', data: { url: 'https://img.example.invalid/fwd-345.png' } }] },
       ];
       const rowsT = () => fs.readFileSync(tfile, 'utf8').trim().split('\n').filter(Boolean)
         .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
@@ -9493,12 +9882,14 @@ async function main() {
         const reply1 = rows1.find((r) => r.kind === 'reply');
         const calls1 = ob.forwardCalls.slice(callsBefore);
         ok1 = replied && !!reply1
-          && Number(reply1.forward?.nodes) === 2 && String(reply1.forward?.via) === 'message_id'
+          && Number(reply1.forward?.nodes) === 3 && String(reply1.forward?.via) === 'message_id'
           && Number(reply1.forward?.chars) > 0 && reply1.forward?.error === ''
           && String(reply1.prompt || '').includes('小王: 今晚吃什么')
+          && Number(reply1.vision?.imagesCount) >= 1
           && calls1.length === 1 && Number(calls1[0].message_id) === mid345;
         d1 = `回复=${replied} via=${reply1?.forward?.via} nodes=${reply1?.forward?.nodes} chars=${reply1?.forward?.chars}`
           + ` 提示词含转发正文=${String(reply1?.prompt || '').includes('小王: 今晚吃什么')}`
+          + ` · 节点里的图进了识图列表 imagesCount=${reply1?.vision?.imagesCount}（应 ≥1）`
           + ` · 调用 ${calls1.length} 次（首参 message_id=${calls1[0]?.message_id} 应=${mid345}）`;
 
         // ── ② 反向：展开内容**不许**进触发判据 ────────────────────────────
@@ -9524,7 +9915,8 @@ async function main() {
       }
       check(
         'T345 ★ 真入口（D23-2）：转发内容进提示词（参数走 message_id，一次性调用）· '
-          + '**展开内容绝不进触发判据**（转发里带关键词也不许把它叫出来，且"没回"不是因为没展开）',
+          + '**展开内容绝不进触发判据**（转发里带关键词也不许把它叫出来，且"没回"不是因为没展开）· '
+          + '节点里的图片进识图列表（2026-11-03：以前只取 .text，转发的图整段丢掉）',
         ok1 && ok2, `${d1} ｜ ${d2}`
       );
       await sleep(1200);
@@ -12085,7 +12477,10 @@ const fs = require('node:fs');
     // 这些用例都直接喂**生产模块**（不另写一份判据）；T430/T431 会真的起宿主、
     // 真的 import 临时插件目录，验的是"上限/空载/钩子未挂"在运行期的形状。
 
-    // T422 入站载荷：10 个字段、media 是张数、self 恒 false、messageId 空串兜底。
+    // T422 入站载荷：字段集合、media 是张数、self 恒 false、messageId 空串兜底。
+    //   2026-11-03：补上生态那套字段名（userId/chatId/selfId/now）与切好的 command/args
+    //   —— 旧包按 `ctx.userId` / `ctx.command` 写，读不到就静默不干活（群友报告 MIG-03）。
+    //   老字段一个没删、顺序没动，所以按本宿主形状写的包不受影响。
     {
       const inc = incomingMessagePayload({
         chatKey: 'group:1', scene: 'group',
@@ -12093,13 +12488,16 @@ const fs = require('node:fs');
         parsed: { text: 'hi', mentionedSelf: true, images: ['a', '', 'b'] },
         sender: '小明', now: 1700000000000,
       });
-      const want = ['chatKey', 'scene', 'senderId', 'senderName', 'text', 'messageId', 'mentionedSelf', 'media', 'timestamp', 'self'];
+      const want = ['chatKey', 'scene', 'senderId', 'userId', 'chatId', 'selfId', 'senderName',
+        'text', 'command', 'args', 'messageId', 'mentionedSelf', 'media', 'timestamp', 'now', 'self'];
       check(
-        'T422 入站载荷：10 个字段 · media 是张数（2）· self=false · messageId 空串兜底 · senderId 是字符串',
+        'T422 入站载荷：16 个字段（含生态别名 userId/chatId/selfId/now 与 command/args）· media 是张数（2）· self=false · messageId 空串兜底 · senderId 是字符串',
         Object.keys(inc).join(',') === want.join(',')
           && inc.media === 2 && inc.self === false && inc.messageId === ''
-          && inc.senderId === '12345' && inc.senderName === '小明' && inc.timestamp === 1700000000000,
-        `keys=${Object.keys(inc).join(',')} media=${inc.media} self=${inc.self} id=${JSON.stringify(inc.senderId)}`
+          && inc.senderId === '12345' && inc.userId === '12345' && inc.chatId === '1'
+          && inc.now === inc.timestamp && inc.command === '' && inc.args === ''
+          && inc.senderName === '小明' && inc.timestamp === 1700000000000,
+        `keys=${Object.keys(inc).join(',')} media=${inc.media} self=${inc.self} id=${JSON.stringify(inc.senderId)} command=${JSON.stringify(inc.command)}`
       );
     }
 

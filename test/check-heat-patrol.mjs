@@ -209,6 +209,40 @@ const NIGHT = new Date(2026, 9, 18, 1, 0, 0).getTime();
   ok('巡逻那句不汇报"我在翻记录"', /别汇报你在翻记录/.test(read('src/reply-text.js')));
 }
 
+// ── ③b 巡逻空转三件套（2026-11-03 · 群友报告 PAT-01）───────────────────────
+// 三个"各自看起来都合理"的局部选择叠起来才是事故，单测任何一条都抓不到：
+//   ① `decide()` 把 requireAtInGroup / 主动发言总闸排在 patrol 分支**之前**
+//      ⇒ 合成的巡逻事件必被拒（这一条上面 ③ 已经钉住）；
+//   ②  `lastPatrolAt` 只在**真的回了**之后才写 ⇒ 被拒的那一批永远不动
+//      ⇒ 每 30 秒把同一批积压重新排一次（日志刷屏 + 队列被无效事件占满）；
+//   ③  巡逻摘要写回 `ambient` ⇒ 下一轮把"自己上一轮排出来的摘要"当成群友新说的话（自喂）。
+// ②③ 都不报错，所以这里用纯函数把"不修会怎样"直接跑出来钉住，而不是只钉源码形状。
+{
+  const t = patrolTuningOf({});
+  const backlog = Array.from({ length: 6 }, (_, i) => ({
+    id: String(i), at: DAY - 700_000 + i * 1000, userId: '9', speaker: '甲', text: `第${i}条`,
+  }));
+  const chat = (lastPatrolAt) => ({
+    key: 'group:1', scene: 'group', id: '1', recent: backlog,
+    lastMsgAt: DAY - 800_000, lastPatrolAt,
+  });
+  const pickedOf = (lastPatrolAt, offsetMs) => patrolPlanOf({
+    chats: [chat(lastPatrolAt)], now: DAY + offsetMs, tuning: t, heatOf: () => 0.8,
+  }).picked.length;
+  // 不记账那一支：三个 tick 全部重排同一批 —— 这就是事故现场，不是臆想。
+  ok('不记账 ⇒ 每 30 秒重排同一批（连续三 tick 都选出 = 刷屏与占队列的形状）',
+    [0, 30_000, 60_000].map((ms) => pickedOf(0, ms)).join(',') === '1,1,1');
+  ok('被拒也记 lastPatrolAt ⇒ 下一 tick 安静下来', pickedOf(DAY, 30_000) === 0);
+
+  const idx = read('src/index.js');
+  ok('tick 与 decide() 同源互斥（必须 @ / 主动发言关 ⇒ 直接不排）',
+    /if \(cfg\.trigger\?\.requireAtInGroup \|\| cfg\.custom\?\.allowProactive === false\) return 0;/.test(idx));
+  ok('被拒的巡逻也推进 lastPatrolAt',
+    /if \(evt\.isPatrol && decision\.kind !== 'patrol' && session\) \{/.test(idx));
+  ok('巡逻摘要不写回背景段（自喂那条腿）',
+    /scene === 'group' && !evt\.isPoke && !evt\.isPatrol/.test(idx));
+}
+
 // ── ④ 配置与落盘/面板接线 ────────────────────────────────────────────────
 {
   const c = readCustom({ custom: { trigger: { patrol: { minUnread: 9, chance: 0.3, enabled: false, maxLines: 12, maxChars: 900 } } } });

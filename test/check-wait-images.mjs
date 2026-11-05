@@ -9,8 +9,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  WAIT_DEFAULTS, waitTuningOf, humanDelayMs,
+  WAIT_DEFAULTS, waitTuningOf, humanDelayMs, mergeImageLists,
 } from '../src/waiting.js';
+import { flattenMessage } from '../src/onebot.js';
 import {
   classifyImageArg, imageMimeOf, imageFileOf, looksLikeImagePath, IMAGE_MAX_BYTES, VIEW_IMAGE_PROMPT,
 } from '../src/images.js';
@@ -26,7 +27,9 @@ function ok(name, cond) {
 const read = (rel) => fs.readFileSync(path.join(APP, rel), 'utf8');
 
 // ── ① 归一化 ─────────────────────────────────────────────────────────────
-ok('看图提示词只描述、不替模型编内容', VIEW_IMAGE_PROMPT.includes('描述') && VIEW_IMAGE_PROMPT.length > 10);
+ok('看图提示词先判类型再逐项核对，且要求看不清别猜',
+  VIEW_IMAGE_PROMPT.includes('先判断') && VIEW_IMAGE_PROMPT.includes('文字')
+  && VIEW_IMAGE_PROMPT.includes('看不清') && VIEW_IMAGE_PROMPT.length > 30);
 const d = waitTuningOf({});
 ok('缺省 = 默认值（开、400–2500、每字 15、合并 1.2s、垫话 6s）',
   d.enabled === true && d.minMs === 400 && d.maxMs === 2500 && d.perCharMs === 15
@@ -93,6 +96,32 @@ ok('点名（@/引用）不等、也不被合并掉（mentionsSelf → 立刻入
   /function mentionsSelf\(evt\)/.test(idx) && /if \(mentionsSelf\(evt\)\) \{/.test(idx));
 ok('合并掉的几条进背景段（mergedLines → rememberAmbient）',
   /mergedLines/.test(idx) && /rememberAmbient\(session, ln\.sender/.test(idx));
+
+// ── ⑤b 图文合并保留媒体（2026-11-05 · 外部评估 P2）────────────────────────
+const imgMsg = (url) => [{ type: 'image', data: { url } }];
+const m1 = flattenMessage(imgMsg('https://a/1.png'), 1).images;
+const m2 = flattenMessage(imgMsg('https://a/2.png'), 1).images;
+ok('合并图片：按事件顺序拼接（旧图在前、当前图在后）',
+  JSON.stringify(mergeImageLists([m1, m2], 3)) === JSON.stringify(['https://a/1.png', 'https://a/2.png']));
+ok('合并图片：去重且封顶 3 张',
+  JSON.stringify(mergeImageLists([
+    ['https://a/1.png', 'https://a/2.png'],
+    ['https://a/1.png', 'https://a/3.png', 'https://a/4.png'],
+  ], 3)) === JSON.stringify(['https://a/1.png', 'https://a/2.png', 'https://a/3.png']));
+ok('合并图片：空 / 坏项被忽略，不抛错',
+  mergeImageLists([[], null, [42, '', 'https://a/1.png']], 3).length === 1);
+
+ok('合并缓存保留前序事件结构（而不只是文字）',
+  /const events = prev \? \[\.\.\.\(prev\.events \|\| \[\]\), prev\.evt\] : \[\];/.test(idx)
+  && /evt\.mergedEvents = events;/.test(idx)
+  && /mergePending\.set\(key, \{ timer, evt, lines, events,/.test(idx));
+ok('点名冲刷时前序事件一起带出去（图片不丢）',
+  /prev\.evt\.mergedEvents = prev\.events \|\| \[\];/.test(idx));
+ok('前序图片按每次事件展开后与当前轮合并（转发走同一路）',
+  /for \(const old of evt\.mergedEvents\)/.test(idx)
+  && /expandForwardText\(old\)/.test(idx)
+  && /flattenMessage\(old\.message, selfId, \{ probe: false, forwardText: fwd\.text \}\)/.test(idx)
+  && /mergeImageLists\(\[priorImages, parsed\.images\], 3\)/.test(idx));
 ok('停顿时长只用 humanDelayMs 算', /humanDelayMs\(/.test(idx) && idx.match(/humanDelayMs\(/g).length === 1);
 ok('停顿在 markThinking 之前、判定之后', idx.indexOf('humanDelayMs(') < idx.indexOf('markThinking(true, { scene, id: String(id)'));
 ok('垫话走同一个出口 deliverFromBot', /deliverFromBot\(scene, id, waitTuning\.holdText\)/.test(idx));

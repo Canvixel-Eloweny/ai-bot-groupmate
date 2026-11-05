@@ -34,9 +34,11 @@ import { isNightly, nightlyTargetOf, nightlyMessages, transcriptOf, NIGHTLY_MAX_
 // 日流水：当天群聊的机械素材（一行一条，不过模型），夜间产出优先读它。
 import { appendDayLog, dayLogTextRecent } from './day-log.js';
 // 聊天等待：停顿 / 连发合并 / 慢任务垫话。判据全在 waiting.js。
-import { humanDelayMs, waitTuningOf } from './waiting.js';
+import { humanDelayMs, waitTuningOf, mergeImageLists } from './waiting.js';
+import { createGuardedSender } from './send-permission.js';
 // 图片两件套：判据（地址归类/MIME/上限）在 images.js；网络与文件读取只在这里。
 import { classifyImageArg, imageMimeOf, imageFileOf, IMAGE_MAX_BYTES, VIEW_IMAGE_PROMPT, VISION_MIN_MAX_TOKENS } from './images.js';
+import { prepareVisionImages, VISION_FETCH_HEADERS } from './vision.js';
 import { safeFetch } from './safe-fetch.js';
 // B33：内部标记（历史里那四句系统批注）的**唯一出处**在这儿 —— 本文件的
 // `remember(...)` 只取 `INTERNAL_MARKS` 写入；剥离在 `brain.js` / `proactive.js`
@@ -56,7 +58,7 @@ import { observeAndStore, flushProfiles } from './style-profile.js';
    挡的是历史存档 / 模型惯性里残留的 `[face:14]`。 */
 // 用量账本：记录（一直有）+ **判档**（D8 新增，见文件内 `usageGateOf`）。
 // 判据（纯函数）住在 src/usage.js，这里只做**一处接线**与一次入参传递。
-import { recordUsage, usageGateOf, USAGE_SOURCES } from './usage.js';
+import { recordUsage, usageGateOf, usageLimitsOf, USAGE_SOURCES } from './usage.js';
 import { recordSentRound } from './sent-stats.js';
 // D31-1 · 睡眠（判据全在 `sleep.js`，零依赖叶子、`now` 入参）：计划 → 状态 → 迁移留痕。
 // D31-2 加了第二条叫醒路：判据（连发窗口 / 叫醒词 / 身份 / 收尾）也全在那个叶子里，
@@ -154,6 +156,11 @@ import { scopedOnebot, scopedSender } from './ext-scope.js';
 // 这里只做**唯一接线点**：拍一拍走主链路、禁言与「/安静」只改会话上的两个到期时间戳。
 // D31-3 的补看合成事件（`catchUpEventOf`）与拍一拍同一族、同一理由，所以住在一起。
 import { normalizeNotice, pokeEventOf, catchUpEventOf, parseQuietCommand, quietUntilOf } from './notice.js';
+// 好友申请 / 群邀请（B1.1）。判据全部住在这个零依赖叶子里，这里只做 IO 与接线。
+import {
+  normalizeRequestOf, upsertRequest, resolveRequestOf, pendingRequestsOf,
+  requestNoticeTextOf, parseResolveArg, FRIEND_REQ_STATUS, FRIEND_REQ_FILE_NAME,
+} from './friend-requests.js';
 // D11b·④：跨轮工作记忆的**收口**判据（TTL / 淡忘 / 封顶都在那个零依赖叶子里，这里只接线）
 import { nextTurns } from './working-memory.js';
 // D17 · 提醒三件套（报告 E9）。判据全在两个零依赖叶子里（`reminder.js` 管到期与重试窗、
@@ -245,6 +252,12 @@ const REMINDER_FILE = process.env.QQBOT_REMINDER_FILE
 // `test/sandbox.sh --exclude '/data/'`、`QQBOT_DATA_DIR` —— 见 `src/config.js`）。
 // ⚠️ 别再写一份 env 覆盖：目录级那一件已经够了，多一个环境变量就多一处漂移面。
 const SLEEP_FILE = path.join(DATA_DIR, 'sleep-state.json');
+/**
+ * 待处理的好友申请 / 群邀请（B1.1 · 2026-11-04）。同一条目录级三件套（`/data/` 已
+ * 被 git 忽略、沙箱排除、`QQBOT_DATA_DIR` 能指走），所以这里**不**再开 env 覆盖。
+ * 只有机器人进程写（与 `sleep-state.json` 同一条纪律）；面板读它，不写它。
+ */
+const FRIEND_REQ_FILE = path.join(DATA_DIR, FRIEND_REQ_FILE_NAME);
 /** 读盘状态（**只有"上一次迁移"这一点信息**；此刻睡没睡一律由计划重算）。 */
 let sleepState = normalizeSleepState(null);
 /** 面板要读的快照。照 `extSnapshot` 先例：`writeEffective` 在模块级，看不到 cfg 与 store。 */
@@ -586,11 +599,15 @@ async function main() {
   // 挂在这里而不是主回复循环：主动出站、工具发图、插件 sender 也都走 sendMsg。
   {
     const sendMsgRaw = bot.sendMsg.bind(bot);
-    bot.sendMsg = async (scene, id, segments) => {
-      const result = await sendMsgRaw(scene, id, segments);
-      recordSentRound({ n: 1, chatKey: `${scene}:${id}` });
-      return result;
-    };
+    // **所有**发送路径的最后一跳都经过这里（主回复 / 垫话 / 主动 / 工具发图 /
+    // 跨群 send_to / 主人通知）。许可复核放在 `createGuardedSender` 里，比在每个
+    // 调用点各写一遍更难漏；判定与 `brain.gateReason` 同源，`ownerBypass` 只有
+    // sayToOwner 显式传。2026-11-05 · 外部评估 P2。
+    bot.sendMsg = createGuardedSender({
+      send: sendMsgRaw,
+      gateReason: (e) => brain.gateReason(e),
+      recordSent: recordSentRound,
+    });
   }
   // ⚠️ 驱动只包 `call` 与后端表，不接管连接/心跳 —— 那两件事仍归 OneBotClient，
   // 面板读到的 healthSnapshot 也仍来自同一个客户端（不产生第二个真相源）。
@@ -712,12 +729,17 @@ async function main() {
     }
   }
 
-  /** 把「一张图」的三种参数（url / path / base64）解析成字节。失败给一句人话。 */
-  async function imageBytesOf(arg) {
+  /** 把「一张图」的三种参数（url / path / base64）解析成字节。失败给一句人话。
+   *  `maxBytes` 默认沿用 `view_image` 的 8MB 上限；主链路内联时要的是"能不能塞进一次请求"，
+   *  所以传一个更小的值 —— 让 safeFetch 在超限时**中断**，而不是先拉完 8MB 再判。
+   *  `timeoutMs` 由识图准备层按 12s / 20s 两档传入；`view_image` 不传，沿用网络默认值。 */
+  async function imageBytesOf(arg, { maxBytes = IMAGE_MAX_BYTES, timeoutMs } = {}) {
     const src = classifyImageArg(arg);
     if (!src.ok) return { ok: false, reason: src.reason };
     if (src.kind === 'url') {
-      const r = await safeFetch(src.value, { policy: { maxBytes: IMAGE_MAX_BYTES } });
+      const policy = { maxBytes };
+      if (Number.isFinite(timeoutMs) && timeoutMs > 0) policy.timeoutMs = timeoutMs;
+      const r = await safeFetch(src.value, { policy, headers: VISION_FETCH_HEADERS });
       if (!r.ok) return { ok: false, reason: `下载失败（${r.reason}${r.detail ? `：${r.detail}` : ''}）` };
       return { ok: true, bytes: r.body };
     }
@@ -727,8 +749,8 @@ async function main() {
       try {
         const st = fs.statSync(src.value);
         if (!st.isFile()) return { ok: false, reason: '那个路径不是文件' };
-        if (st.size > IMAGE_MAX_BYTES) {
-          return { ok: false, reason: `文件太大（上限 ${Math.round(IMAGE_MAX_BYTES / 1024 / 1024)}MB）` };
+        if (st.size > maxBytes) {
+          return { ok: false, reason: `文件太大（上限 ${Math.round(maxBytes / 1024 / 1024)}MB）` };
         }
         return { ok: true, bytes: fs.readFileSync(src.value) };
       } catch (e) {
@@ -737,6 +759,15 @@ async function main() {
     }
     return { ok: true, bytes: Buffer.from(src.value, 'base64') };
   }
+
+  /**
+   * 发模型前把入站图片统一内联成 data URL（2026-11-03；2026-11-04 加固）。
+   *
+   * 判据与取字节都搬进了 `src/vision.js`：3 张上限、sha256 去重、UA/Referer、
+   * 失败重试一次、失败回退原 URL 都在那一层；这里只保留“开关 + 模型能力”这道闸。
+   * QQ 的图片地址带签名、会过期，模型服务端多半取不到 —— 所以能内联就内联，
+   * 内联不了的仍把原 URL 交下去，让 `llm.js` 既有的剥离重试兜底。
+   */
 
   /** 从一条消息里取图片段给的地址（`get_msg` 的 data.url / data.file）。只读，不下载。 */
   async function imageUrlFromMessage(messageId) {
@@ -1238,6 +1269,9 @@ async function main() {
       if (prev) {
         mergePending.delete(key);
         clearTimeout(prev.timer);
+        // 被点名时把之前那批**连同图片**一起冲出去：`mergedEvents` 交给
+        // handleMessage 合并，`mergedLines` 仍只管背景文字。
+        prev.evt.mergedEvents = prev.events || [];
         void enqueueFor(prev.evt);
       }
       return enqueueFor(evt);
@@ -1246,14 +1280,18 @@ async function main() {
     const text = String(evt.raw_message || triggerTextOf(evt) || '').trim();
     const sender = evt.sender?.card || evt.sender?.nickname || `用户${evt.user_id ?? ''}`;
     const lines = prev ? [...prev.lines, { sender: prev.sender, userId: prev.userId, text: prev.text }] : [];
+    // 前序事件也留着：被合并掉的那几条如果是图，模型当初一张都看不到
+    // （2026-11-05 · 外部评估 P2）。只保留事件结构，不把它们当成新的未读/记忆。
+    const events = prev ? [...(prev.events || []), prev.evt] : [];
     if (prev) clearTimeout(prev.timer);
     evt.mergedLines = lines;
+    evt.mergedEvents = events;
     const timer = setTimeout(() => {
       mergePending.delete(key);
       void enqueueFor(evt);
     }, tuning.mergeMs);
     if (typeof timer.unref === 'function') timer.unref();
-    mergePending.set(key, { timer, evt, lines, sender, userId: evt.user_id, text });
+    mergePending.set(key, { timer, evt, lines, events, sender, userId: evt.user_id, text });
   }
 
   /**
@@ -1304,6 +1342,67 @@ async function main() {
   bot.on('offline', (e) => {
     log.warn(`账号已掉线：${e?.reason || '协议端报告离线'} —— 保持连接，等它自己重登或扫码`);
     journal('notice', `账号掉线：${e?.reason || '协议端报告离线'}（不重连、不重启协议端）`);
+  });
+
+  /* ── 好友申请 / 群邀请（B1.1 · 2026-11-04 · 群友报告）─────────────────────
+   *
+   * 缺陷本体：`onebot.js` 把所有非 message 报文都 `emit('notice')`，而下面那个 notice
+   * 监听第一句是 `if (evt?.post_type !== 'notice') return;` ⇒ 申请类报文**在这里被丢掉**，
+   * 四层回归全绿，界面上一个字的痕迹都没有。表现就是"有人加她、她被邀请进群，
+   * 像什么都没发生过"。
+   *
+   * 裁决口径（维护者 2026-11-03 选定）：**收下 + 落盘 + 通知主人**，
+   * 通过 / 拒绝由主人在面板点，走控制通道回来执行。
+   *   · 不自动通过：加好友是永久性动作，误判撤不回来；
+   *   · 不做自然语言审批："同意"两个字在群里也可能是随便说的。
+   */
+  function readFriendRequests() {
+    try {
+      if (!fs.existsSync(FRIEND_REQ_FILE)) return [];
+      const raw = JSON.parse(fs.readFileSync(FRIEND_REQ_FILE, 'utf8'));
+      return Array.isArray(raw?.requests) ? raw.requests : [];
+    } catch {
+      // 半个 JSON（写盘被打断）与"没有它"同等对待：不猜（与 `parseControlRecord` 同一条纪律）。
+      return [];
+    }
+  }
+  function saveFriendRequests(list) {
+    try {
+      writeJsonAtomic(FRIEND_REQ_FILE, { requests: list, updatedAt: Date.now() }, { mode: 0o600 });
+      return true;
+    } catch (e) {
+      log.warn(`好友申请没能落盘（这一条仍会通知主人，但重启后列表会缺它）：${e.message}`);
+      return false;
+    }
+  }
+
+  bot.on('request', async (evt) => {
+    const rec = normalizeRequestOf(evt, { now: Date.now() });
+    if (!rec) {
+      // 认不出的种类也留一行 —— "静默丢弃"正是这条缺陷报告的形状。
+      log.debug(`request 未处理（request_type=${String(evt?.request_type || '空')}）`);
+      journal('request', `收到一条没认出的申请（request_type=${String(evt?.request_type || '空')}），没有收下`);
+      return;
+    }
+    const now = Date.now();
+    const r = upsertRequest(readFriendRequests(), rec, { now });
+    if (r.duplicate) {
+      // 同一个 flag 反复推过来是 QQ 的常态：不再新增，也不再通知（否则主人半夜被刷屏）。
+      log.debug(`重复的申请（flag 已见过），没有再通知主人`);
+      return;
+    }
+    const saved = saveFriendRequests(r.list);
+    journal('request', `${rec.kind === 'group' ? '群邀请' : '好友申请'}：来自 ${rec.userId || '（没有号）'}`
+      + `${rec.comment ? ` 「${rec.comment}」` : ''}（${saved ? '已收下，等主人在控制台点' : '没落盘，只通知了这一次'}）`
+      + (r.dropped ? ` · 列表超上限，丢了最旧的 ${r.dropped} 条` : ''));
+    const text = requestNoticeTextOf(rec, { pending: pendingRequestsOf(r.list).length });
+    try {
+      await sayToOwner(text);
+    } catch (e) {
+      // 通知发不出去**不等于申请丢了**：它已经在盘上、面板那一格看得到。如实说，不谎报。
+      log.warn(`通知主人失败（申请仍然列在控制台「好友申请」那一格）：${e.message}`);
+      journal('request', `通知主人失败：${e.message}`);
+    }
   });
 
   bot.on('notice', async (evt) => {
@@ -1392,22 +1491,30 @@ async function main() {
    *    成功与失败都要留痕（`forward` 那一格进 trace），否则"它说看不见"无从复盘。
    *
    * @param {object} evt OneBot 消息事件
-   * @returns {Promise<{text:string, stat:object|null}>} `stat` 为 null = 这条消息没有转发段
+   * @returns {Promise<{text:string, images:string[], stat:object|null}>}
+   *   `stat` 为 null = 这条消息没有转发段；`images` = 节点里的图片（与文本同一份来源）
    */
   async function expandForwardText(evt) {
     const segs = forwardSegmentsOf(evt.message);
-    if (!segs.length) return { text: '', stat: null };
+    if (!segs.length) return { text: '', images: [], stat: null };
     // 关掉这个开关 → 与 D23-2 之前的行为**逐字相同**（仍是占位符），但仍然留痕 ——
     // 否则"为什么它看不见转发"会变成一条查不出来的谜（用户自己关了）。
     if (!cfg.custom.forwardExpand.enabled) {
-      return { text: '', stat: { off: true, segs: segs.length, nodes: 0, chars: 0, ms: 0, error: '' } };
+      return { text: '', images: [], stat: { off: true, segs: segs.length, nodes: 0, chars: 0, ms: 0, error: '' } };
     }
 
-    const renderNode = (node) => flattenMessage(
-      nodeSegmentsOf(node),
-      bot.selfId ?? String(evt.self_id ?? ''),
-      { probe: false },
-    ).text;
+    const forwardImages = [];
+    const renderNode = (node) => {
+      const flat = flattenMessage(
+        nodeSegmentsOf(node),
+        bot.selfId ?? String(evt.self_id ?? ''),
+        { probe: false },
+      );
+      // 节点里的图片以前**整段丢掉**：这里只取 `.text`，图片在 flattenMessage 里
+      // 收好了却没人接 ⇒ 模型只看到一串「[图片]」。转发的截图/表情包因此全瞎。
+      for (const u of flat.images || []) forwardImages.push(u);
+      return flat.text;
+    };
     const t0 = Date.now();
     const stat = { off: false, segs: segs.length, nodes: 0, chars: 0, ms: 0, via: '', error: '' };
 
@@ -1432,8 +1539,8 @@ async function main() {
         stat.chars = text.length;
         stat.ms = Date.now() - t0;
         stat.error = '';
-        log.info(`[${evt.message_id}] 合并转发展开：${nodes.length} 条 / ${text.length} 字符（走 ${at.via}，${stat.ms}ms）`);
-        return { text, stat };
+        log.info(`[${evt.message_id}] 合并转发展开：${nodes.length} 条 / ${text.length} 字符 / ${forwardImages.length} 张图（走 ${at.via}，${stat.ms}ms）`);
+        return { text, images: forwardImages.slice(0, 3), stat };
       } catch (err) {
         stat.error = err.message;
       }
@@ -1441,7 +1548,7 @@ async function main() {
 
     stat.ms = Date.now() - t0;
     log.warn(`合并转发展开失败（保留占位符）：${stat.error || '未知原因'}（seg=${segs.length}）`);
-    return { text: '', stat };
+    return { text: '', images: [], stat };
   }
 
   /** 命中工作台配的触发词＝点了它的名（峰谷闸的"被叫到"之一）。与 brain 同口径：子串、不区分大小写。 */
@@ -1464,6 +1571,10 @@ async function main() {
     const forward = await expandForwardText(evt);
     const forwardStat = forward.stat;
     const parsed = flattenMessage(evt.message, selfId, { forwardText: forward.text });
+    // 转发节点里的图片并进这一轮的识图列表（去重，总量仍受 3 张约束）。
+    if (forward.images && forward.images.length) {
+      parsed.images = [...new Set([...(parsed.images || []), ...forward.images])].slice(0, 3);
+    }
 
     // ── 2026-10-22 · 引用消息的正文与图片 ────────────────────────────────────
     // `parsed.replyTo` 只是"被引用消息的 id"，正文在另一条消息里。旧实现从不取它：
@@ -1476,16 +1587,37 @@ async function main() {
         const qd = (q && q.data) ? q.data : q;
         const qMsg = qd && (qd.message ?? (qd.data && qd.data.message));
         if (qMsg) {
-          const qp = flattenMessage(qMsg, selfId, { probe: false });
+          // 引用的是**一条聊天记录**时，qp.text 只剩「[合并转发]」占位 —— 用同一个展开器再展一层。
+          // 没有转发段时它直接早退，不会多发一次协议端调用。
+          const qf = await expandForwardText({ message: qMsg, message_id: parsed.replyTo, self_id: evt.self_id });
+          const qp = flattenMessage(qMsg, selfId, { probe: false, forwardText: qf.text });
           const who = (qd.sender && (qd.sender.card || qd.sender.nickname)) || '';
           const quoted = String(qp.text || '').slice(0, 500);
           if (quoted) parsed.text = `[引用${who ? ` ${who}` : ''}：${quoted}] ${parsed.text}`;
-          if (Array.isArray(qp.images) && qp.images.length) {
+          const qImages = [...(qp.images || []), ...(qf.images || [])];
+          if (qImages.length) {
             const mine = Array.isArray(parsed.images) ? parsed.images : [];
-            parsed.images = [...qp.images, ...mine].slice(0, 3);
+            parsed.images = [...new Set([...qImages, ...mine])].slice(0, 3);
           }
         }
       } catch { /* 引用取不到不影响正常回复 */ }
+    }
+
+    // ── 连发合并里的前序图片（2026-11-05 · 外部评估 P2）────────────────────
+    // 合并缓存以前只留文字：同一个人先发图、1.2 秒内再发一句话，图就被合并掉了，
+    // 模型只看到 `[图片]` 占位符。这里把前序事件按时间顺序展开（转发走同一个
+    // expandForwardText），再与当前轮图片去重合并；不把它们当成新的未读/记忆。
+    if (Array.isArray(evt.mergedEvents) && evt.mergedEvents.length) {
+      const priorImages = [];
+      for (const old of evt.mergedEvents) {
+        if (!old || typeof old !== 'object' || !Array.isArray(old.message)) continue;
+        const fwd = await expandForwardText(old);
+        const p = flattenMessage(old.message, selfId, { probe: false, forwardText: fwd.text });
+        priorImages.push(...(p.images || []), ...(fwd.images || []));
+      }
+      if (priorImages.length) {
+        parsed.images = mergeImageLists([priorImages, parsed.images], 3);
+      }
     }
 
     const scene = evt.message_type === 'group' ? 'group' : 'private';
@@ -1506,6 +1638,21 @@ async function main() {
     if (!allowed && scene === 'private') {
       log.info(`[私聊] 忽略 ${evt.user_id}：不在「同意私聊的 QQ 号」里${cfg.custom?.allowFriendsPrivate === false ? '（好友接待已关）' : '，也不在好友表里'}`);
     }
+    // ── 入站图片内联（2026-11-03）────────────────────────────────────────────
+    // 放在黑白名单**之后**：被挡下的发送者不必白下载一次图。
+    // 判据与 brain.buildMessages 里那道 `canSee` 同源（同一个 supportsVision + 同一个开关），
+    // 纯文本模型不该为了内联去拉一次字节 —— 图本来就会被剥成 `[图片]`。
+    if (allowed && Array.isArray(parsed.images) && parsed.images.length
+      && supportsVision(cfg.llm?.model, cfg.llm?.provider, cfg.llm?.declaredFeatures)
+      && cfg.llm?.features?.vision) {
+      const preparedVision = await prepareVisionImages({ list: parsed.images, imageBytesOf, log });
+      parsed.images = preparedVision.images;
+      parsed.visionDropped = preparedVision.dropped;
+      if (preparedVision.dropped.length) {
+        log.warn(`入站图片有 ${preparedVision.dropped.length} 张未内联（原样交给模型）：`
+          + preparedVision.dropped.map((d) => `${d.host || '无host'}:${d.reason}`).join('、'));
+      }
+    }
     const session = allowed ? store.get(scene, id) : null;
     // 角色卡切换时清掉该会话里旧卡说过的话（全局指纹管不到按群的卡）。
     const activeCard = allowed ? brain.syncCard(session, evt) : null;
@@ -1520,7 +1667,13 @@ async function main() {
     // ⚠️ `!evt.isPoke`：拍一拍合成的那条**不进背景段**（D9b）。
     //    背景段的用途是"让模型知道刚才群里谁在说什么"；一次拍一拍不是"话"，
     //    记进去等于往上下文里塞一句自己没见过的动作，更容易诱发复读。
-    if (allowed && scene === 'group' && !evt.isPoke) {
+    // ⚠️ `!evt.isPatrol`（2026-11-03 · 群友报告 PAT-01）：巡逻摘要同样**不是话**。
+    //    漏掉这一条的形状很坏：巡逻把"上一轮自己排出来的摘要"当成群友新说的一句话
+    //    记回背景段，下一轮巡逻又把这条摘要排进去 ⇒ **自喂**（同一批内容每 30 秒滚一次，
+    //    提示词里出现一句"她没见过的话"）。其余六个消费点（日流水 / 热度 / lastMsgAt /
+    //    等待与插话 / brain 的 named 与关键词旁路）早就统一排除巡逻了，只有背景这一处漏网
+    //    —— 所以它是漏网，不是设计。
+    if (allowed && scene === 'group' && !evt.isPoke && !evt.isPatrol) {
       // 连发合并：被合并掉的几条先按原顺序进背景段，再记当前这条 ——
       // 模型看到的顺序与真人看到的顺序一致，最后一条仍是"正在被回的那条"。
       for (const ln of Array.isArray(evt.mergedLines) ? evt.mergedLines : []) {
@@ -1578,7 +1731,7 @@ async function main() {
     // ⚠️ 拍到 / 未放行的不发：前者不是"话"，后者连会话都没建（`session` 为 null）。
     if (allowed && !evt.isPoke) {
       await hookBus.emit('after-incoming-message', incomingMessagePayload({
-        chatKey: session.key, scene, evt, parsed, sender, now: Date.now(),
+        chatKey: session.key, scene, evt, parsed, sender, now: Date.now(), selfId,
       }));
     }
 
@@ -1698,6 +1851,16 @@ async function main() {
     if (!decision.respond) {
       // 巡逻轮「看过但没出声」：群级反馈热降一档（@ / 私聊不走这条）。
       if (evt.isPatrol && session) noteFeedbackTurn(session.key, false);
+      // ── 被拦下的巡逻也要记"这批话看过了"（2026-11-03 · 群友报告 PAT-01）──────
+      // 原来这一笔**只在真的回了之后**才写（见下面 `decision.kind === 'patrol'` 那一支）。
+      // 于是有一类配置会死循环：`trigger.requireAtInGroup=true` 或主动发言已关时，
+      // `decide()` 在走到 patrol 分支**之前**就把这一轮拒了 ⇒ 永远不回 ⇒ 永远不记账
+      // ⇒ 同一批积压每 30 秒重排一次入队：日志刷屏、队列被无效事件占满，
+      // 真消息排在后面。拒因是配置而不是运气，所以"下一轮还是一样"是必然，不是偶发。
+      if (evt.isPatrol && decision.kind !== 'patrol' && session) {
+        heatState.patrol[session.key] = Date.now();
+        saveHeatState(true);
+      }
       // B10a · O-SKIP：以前只有 log.debug（默认级别 info，**根本不输出**），
       // 于是"它为什么不理我"没有任何地方可查。现在落盘 + 打 info 级日志。
       writeSkip({
@@ -1808,7 +1971,7 @@ async function main() {
     // 三档语义见 src/usage.js 头部。这里只做两件事：把档位**传下去**，并按档位
     // 决定提示词怎么组。**判据不在这一层**（本项目对"是不是写对了"的判据一律
     // 放在可被断言的纯函数里，接线点只负责把值送对地方）。
-    const usageGate = usageGateOf({ chatKey: session.key });
+    const usageGate = usageGateOf({ chatKey: session.key, limits: usageLimitsOf(cfg.custom) });
     if (usageGate.level !== 'ok') {
       // 必须留痕：没有这条日志的话，"它今天怎么突然不爱理背景消息了"
       // 会被归因到人格或模型上，而真因是一张账。
@@ -1889,6 +2052,7 @@ async function main() {
     markThinking(true, { scene, id: String(id), sender, reason: decision.reason, traceId });
     let reply = '';
     let chatErr = null;
+    let turnUsage = null;
     let runToolResults = [];
     const t0 = Date.now();
     // ── 聊天等待 · 慢任务垫一句 ────────────────────────────────────────────
@@ -1909,9 +2073,8 @@ async function main() {
     const signal = sessionCtl.begin(session.key, evt);
     try {
       reply = await gate(async () => {
-        llm.lastUsage = null; // 清掉上一次的，避免请求失败时记错账
         // D18：跨会话发言的留痕按**轮**归零（工具往里累加，见 `toolSendTo`）。
-        // 与 `llm.lastUsage = null` 同一位置、同一理由：不清的话上一轮的痕迹会跟着漏下来，
+        // 与 `turnUsage` 归零同一位置、同一理由：不清的话上一轮的痕迹会跟着漏下来，
         // 而 trace 里那格是"这一轮做了什么"的答案。
         crossStat = null;
         // 工具回合（B12e-1）：注册表为空时**就是一次普通请求**，请求体逐字节不变。
@@ -1927,7 +2090,9 @@ async function main() {
           // llm 据此放弃重发 —— 免得白打一枪还留一条"已收缩"的不实告警）。
           shrink: shrinkHistory,
         });
-        llm.lastUsage = run.usage;
+        // 用量随**这一轮**的返回值走，不再写 `llm.lastUsage` 这个共享可变字段：
+        // 并发（throttle.globalConcurrency ≥ 2）时两轮会互相覆盖，账本就串了。
+        turnUsage = run.usage;
         runToolResults = run.toolResults || [];
         return run.text;
       });
@@ -1952,11 +2117,11 @@ async function main() {
     const ms = Date.now() - t0;
     // D8：带上会话键。**必须判空再展开** —— `{ ...null }` 是个真值对象，
     // 直接展开会把"这次根本没有可记的用量"变成一条全 0 的假账。
-    if (llm.lastUsage) recordUsage({ ...llm.lastUsage, chat: session.key, source: USAGE_SOURCES.agent });
+    if (turnUsage) recordUsage({ ...turnUsage, chat: session.key, source: USAGE_SOURCES.agent });
 
     // 记链路。失败的那条也记 —— 「模型没回话」时最需要看到的就是它收到了什么。
     // 先只填共同字段，等 parseReply 出来再补上「最终会发哪几段」，最后统一落盘。
-    const usedModel = llm.lastUsage?.model || '';
+    const usedModel = turnUsage?.model || '';
     const rec = {
       t: Date.now(),
       // 贯穿全程的把手（B10a · O-TRACE）：面板上这一条与 bridge.log 里那几行靠它对上
@@ -1975,8 +2140,8 @@ async function main() {
       prompt: promptText(messages),
       messageCount: messages.length,
       ms,
-      usage: llm.lastUsage
-        ? { prompt: llm.lastUsage.prompt, completion: llm.lastUsage.completion, reasoning: llm.lastUsage.reasoning }
+      usage: turnUsage
+        ? { prompt: turnUsage.prompt, completion: turnUsage.completion, reasoning: turnUsage.reasoning }
         : null,
       raw: String(reply ?? ''),
       silent: false,
@@ -2004,6 +2169,9 @@ async function main() {
         // QQ 图片地址常带签名 / 临时 token，原样写进 local-trace.jsonl 等于泄凭据。
         // 有它就能判"这条到底带了几张、是不是同一张"，又拿不到可访问的地址。
         images: imageRefsOf(parsed.images),
+        // 2026-11-04：哪几张没内联成功、为什么。只记 host/reason/bytes ——
+        // 原 URL 带签名，落进 trace 等于泄凭据（与上面 `images` 同一条纪律）。
+        dropped: Array.isArray(parsed.visionDropped) ? parsed.visionDropped : [],
         // Q26b 裁决②：**这一枪实际用的模型是不是瞎的**。
         // `supports` 看的是**配置的**主模型，而真机上常常降到链上的下一个 ——
         // 降级链首位 `glm-4.5-air` 实测看不见图，于是"识图开着"与"它看到了图"
@@ -2076,7 +2244,7 @@ async function main() {
       return;
     }
 
-    const { silent, chunks, blocked, internal } = brain.parseReply(reply);
+    const { silent, chunks, blocked, masked, internal } = brain.parseReply(reply);
 
     /* 表情附加（ATI-4 习惯闸 + D14 收藏表情）已于 2026-10-17 **整体删除**。
        这一段原本做三件事：按冷却 + 概率决定要不要带一个表情、在内置 15 张与 QQ 收藏之间二次选择、
@@ -2101,6 +2269,10 @@ async function main() {
     rec.chunks = outChunks;
     // 出口闸门拦下的原因如实落盘：拦了却不留痕，用户只能看到"它突然不理我"。
     rec.blocked = blocked || '';
+    // 就地打码后照发的，命中的**规则名**（2026-11-03 · 维护者批准）。
+    // 只记规则名，绝不记匹配到的原文 —— "为了记日志把凭据抄进日志"是反向的事故。
+    rec.masked = masked || '';
+    if (masked) log.warn(`出口闸门就地打码（${masked}）→ 抹掉后照发 ${session.key}`);
     // B33：模型复读了内部标记时命中的词干（已从要发的内容里剥掉）。
     // 落盘的理由与 `blocked` 完全同一条：拦了不留痕，下一次只能靠人去群里偶然看到
     // ——而这一条的**表现是"它突然沉默"**，比"它不理我"更难归因。
@@ -2125,7 +2297,8 @@ async function main() {
     writeTrace(rec);
 
     // ── 出口闸门（B8 · S-EGRESS）──
-    // 命中凭据 / 本机路径 → **整条不发**（不是丢一段）。
+    // 走到这里只剩一种情况：**打码打不干净**（规则表被改坏、或某条替换文本自己留着锚点）。
+    // 这时才退回"整条不发"—— fail-closed 的那条退路必须留着，不能因为加了打码就变成放行。
     // 这里**必须打日志**：静默拦掉是本项目最怕的失败模式。
     if (blocked) {
       log.warn(`出口闸门拦截（${blocked}）→ 这条不发 ${session.key}`);
@@ -2187,12 +2360,14 @@ async function main() {
     const lateBlocked = [];
     for (let i = 0; i < outChunks.length; i += 1) {
       // ── 发送时刻复核（第 56 轮 F1-2 · E22）──
-      // 「判定通过」到「真的发出去」之间隔着模型生成（秒级）与逐条节奏（每条 1s 起），
-      // 而面板支持热改白名单 —— 在那段窗口里把群移出白名单，旧回复会照发。
-      // 所以**在真正调用 sendMsg 之前**再核一次：许可现值 + 会话还是不是当初那一个。
+      // 「判定通过」到「真的发出去」之间隔着模型生成（秒级）、逐条节奏（每条 1s 起）
+      // 以及**扩展 hook**（`sendGuard.check` 会 await 外来代码）。面板支持热改白名单 ——
+      // 在这些窗口里把群移出白名单，旧回复会照发。
       // 判据本身在 `src/brain.js` 的 `lateSendReason()`（纯函数，与 `isAllowed` 同源）。
-      // ⚠️ 位置刻意在 `sendGuard.check()` **之后**、`bot.sendMsg()` **之前**：
-      //    前者管扩展包的否决权，后者才是真正把字发出去的那一刻。
+      //
+      // 两道：① 进 hook 前的快路径（明知已撤权就别白跑钩子）；
+      //       ② hook 返回后的**最终同步复核**（2026-11-05：旧实现只做了①，
+      //          钩子里撤权仍会发出；最终复核必须紧贴 bot.sendMsg，中间不能再有 await）。
       const late = lateSendReason(brain.gateReason(evt), store.sessions.get(session.key) === session);
       if (late) {
         // 拦下**必须留痕**（B6「静默失效见光」）：否则表现是"它话说到一半停了"，
@@ -2207,6 +2382,14 @@ async function main() {
         guardBlocked.push({ text: outChunks[i], owner: verdict.vetoed.owner, reason: verdict.vetoed.reason });
         log.warn(`发送闸拦下第 ${i + 1} 条（${verdict.vetoed.owner}）：${verdict.vetoed.reason}`);
         continue;
+      }
+      // ② 最终复核：钩子可能 await 过扩展代码，期间白名单/会话都可能变。
+      //    这一步与下面的 bot.sendMsg 之间**只允许同步代码**（别再插 await）。
+      const lateFinal = lateSendReason(brain.gateReason(evt), store.sessions.get(session.key) === session);
+      if (lateFinal) {
+        lateBlocked.push({ text: outChunks[i], reason: lateFinal });
+        log.warn(`[${traceId}] 发送前最终复核拦下第 ${i + 1}/${outChunks.length} 条：${lateFinal}`);
+        break;
       }
       // 表情段已于 2026-10-17 删除 —— 这里只剩文字段。
       // `stripFaceMarks` 是**防漏**：历史存档与模型惯性还会写 `[face:14]`，
@@ -2387,24 +2570,27 @@ async function main() {
    * `sayToGroup` / `sayToOwner` 都只是薄包装 —— 两条发送路径各写一遍的话，
    * 出口闸门迟早只在一侧生效。
    */
-  async function deliverFromBot(scene, chatId, text) {
+  async function deliverFromBot(scene, chatId, text, { ownerBypass = false } = {}) {
     // 分句 + 出口闸门判定在 src/proactive.js 的 plannedProactiveChunks（纯函数，
     // smoke T134 钉行为）。这里是它**唯一的接线点**（check-wb 契约钉住接线不被摘掉）：
     // 命中凭据/本机路径就**整条不发** —— 与 brain.parseReply 的口径一致：
     // 丢一段留一段，剩下的半句照样把上下文泄了。
     // 抛错而不是返回 0：让调用方现成的 catch 把原因记进日志，
     // 也避免调用方把"被拦下"误当成"已发出"去记账（markReplied）。
-    const { chunks, blocked, internal: profInternal } = plannedProactiveChunks(text, { maxChunks: cfg.reply.maxChunks });
+    const { chunks, blocked, masked: profMasked, internal: profInternal } = plannedProactiveChunks(text, { maxChunks: cfg.reply.maxChunks });
     if (blocked) {
       throw new Error(`出口闸门拦截（${blocked}）→ 主动/定时消息整条不发`);
     }
+    // 主动链以前是这条路上最难查的失败：命中就"一声不吭"，原因只在抛错那句里，群里零痕迹。
+    // 现在命中会打码照发，但**照样要留一行** —— 用户发现"它今天说话带一串星号"时得能查到为什么。
+    if (profMasked) log.warn(`出口闸门就地打码（${profMasked}）→ 抹掉后照发（主动/定时消息）`);
     // B33：同一条留痕纪律 —— 剥了标记必须说出来，否则表现是"它今天话变短了"，
     // 而日志里什么都不剩（主动链没有 trace 记录，日志是唯一现场）。
     if (profInternal.length) {
       log.warn(`主动链复读了内部标记（${profInternal.join('/')}）→ 已剥掉，其余照发 ${scene}:${chatId}`);
     }
     for (let i = 0; i < chunks.length; i += 1) {
-      await bot.sendMsg(scene, String(chatId), [textSegment(chunks[i])]);
+      await bot.sendMsg(scene, String(chatId), [textSegment(chunks[i])], { ownerBypass });
       // 主动路径与主链路共用同一处节奏计算（src/pace.js）——
       // 两处各写一遍的话，迟早出现"主动消息还是那个整齐的固定延迟"。
       if (i < chunks.length - 1) await sleep(sendDelayFor(chunks[i], cfg.reply));
@@ -2420,7 +2606,8 @@ async function main() {
   async function sayToOwner(text) {
     const id = String(ownerIds()[0] || '').trim();
     if (!id) throw new Error('没配 owner.qq，夜间产出没有收件人');
-    return deliverFromBot('private', id, text);
+    // 显式豁免：这是运营者通知，不是群聊回复；不豁免时主人被移出私聊白名单会把夜间产出也吞掉。
+    return deliverFromBot('private', id, text, { ownerBypass: true });
   }
 
   // ── D18 · 跨会话发言：两个宿主工具的实现（**唯一执行处**）──────────────────
@@ -2614,7 +2801,7 @@ async function main() {
       groups,
       sessionOf: sessionOfGroup,
       throttle: (session) => brain.throttleReason(session),
-      budgetLevel: usageGateOf().level,
+      budgetLevel: usageGateOf({ limits: usageLimitsOf(cfg.custom) }).level,
     });
 
   let proactiveTickRunning = false;
@@ -2908,6 +3095,15 @@ async function main() {
     }
     writePatrolSnapshot(nowMs);
     if (!tuning.enabled || !chats.length) return 0;
+    // ── 与 `decide()` 同源的互斥（2026-11-03 · 群友报告 PAT-01）──────────────
+    // 这两种配置下巡逻**注定被拒**，而且拒因是配置不是运气：
+    //   · `trigger.requireAtInGroup` —— 合成的巡逻事件永远不会 @ 自己；
+    //   · `custom.allowProactive === false` —— 主动发言总闸在 patrol 分支之前。
+    // 判据本体在 `brain.decide()`（那两支都排在 patrol 分支之前，且注释写明是刻意的：
+    // 「用户配了群里必须 @ 才理，巡逻开口等于绕过他的设定」）。这里不重判语义，
+    // 只按同一份配置早退 —— 否则每 30 秒都要走完「入队 → 判定 → writeSkip → 日志」
+    // 四道开销，再被拒一次：日志刷屏、队列被无效事件占满、真消息排在后面。
+    if (cfg.trigger?.requireAtInGroup || cfg.custom?.allowProactive === false) return 0;
     // 峰谷闸：高峰里连"自己找话"都不做，巡逻同理。
     if (peakQuietForProactive(nowMs, readPeak(cfg.custom?.peak))) return 0;
 
@@ -3215,6 +3411,10 @@ async function main() {
         // 叫醒路通不通（这两行专为"配了但没生效"这类**看不见的失败**留的）
         owners: ownerIds().length,
         privateWake: privateWakeReachable(),
+        // 机器人**这一侧此刻在用的**词表（2026-11-04 · BUG-12 方案②）。
+        // 为什么下发这个而不是让面板读配置那格：配置改了要等热重载才生效 ——
+        // 输入框说的是"我想让它这样"，这里是"它现在真的这样"（与 `effective.model` 同一条理由）。
+        wakeWords: sc.wakeWords,
         updatedAt: now,
       };
     } catch (e) {
@@ -3395,11 +3595,50 @@ async function main() {
    * 走到兜底那句说明判据层放行了集合外的命令 —— 那是判据坏了，不是命令合法，所以如实说。
    */
   let shutdownStarted = false;
-  function runControlCommand(cmd) {
+  /**
+   * 同意 / 拒绝一条好友申请或群邀请（B1.1，`friend.resolve` 的执行体）。
+   *
+   * 三条不静默：定位不到要说、协议端不受理要把 `failed` 写回那一条（面板上显示成失败，
+   * 而不是"这条消失了"）、成功要把状态改掉（否则刷新一次又变回待处理，等于骗人点第二遍）。
+   * ⚠️ 两种申请走**不同**的接口：群邀请是 `set_group_add_request`，拿好友那个去调
+   *    协议端会报"flag 无效" —— 而那句话会被读成"申请过期了"，把 bug 伪装成正常。
+   */
+  async function resolveFriendRequest(arg) {
+    const p = parseResolveArg(arg);
+    if (!p.ok) return { ok: false, msg: `这条命令没法执行：${p.reason}` };
+    const list = readFriendRequests();
+    const hit = list.find((x) => String(x?.flag || '') === p.flag);
+    if (!hit) {
+      return { ok: false, msg: `列表里没有那条申请（可能已被清掉）—— ${p.approve ? '没有同意任何人' : '没有拒绝任何人'}` };
+    }
+    if (hit.status !== 'pending') {
+      const done = FRIEND_REQ_STATUS.indexOf(hit.status) >= 0 ? hit.status : hit.status;
+      return { ok: true, msg: `那条早就处理过了（${done}${hit.result ? `：${hit.result}` : ''}），没有再动` };
+    }
+    const api = hit.kind === 'group' ? 'set_group_add_request' : 'set_friend_add_request';
+    const at = Date.now();
+    try {
+      await bot.call(api, { flag: hit.flag, approve: p.approve }, 10000);
+    } catch (e) {
+      const r = resolveRequestOf(list, p.flag, { status: 'failed', msg: `${api} 没受理：${e.message}`, at });
+      saveFriendRequests(r.list);
+      journal('request', `${p.approve ? '同意' : '拒绝'}失败（${api}）：${e.message}`);
+      return { ok: false, msg: `协议端没受理（${e.message}）—— 那条仍留在列表里，标成失败` };
+    }
+    const r = resolveRequestOf(list, p.flag, {
+      status: p.approve ? 'approved' : 'denied', msg: p.approve ? '已同意' : '已拒绝', at,
+    });
+    saveFriendRequests(r.list);
+    journal('request', `${p.approve ? '已同意' : '已拒绝'}一条${hit.kind === 'group' ? '群邀请' : '好友申请'}（来自 ${hit.userId || '（没有号）'}）`);
+    return { ok: true, msg: p.approve ? '已同意' : '已拒绝' };
+  }
+
+  function runControlCommand(cmd, arg = '') {
     if (cmd === 'abort') return abortAllInFlight();
     if (cmd === 'retry') return replayLastFailure();
     if (cmd === 'sleep') return manualSleepNow();
     if (cmd === 'wake') return manualWakeNow();
+    if (cmd === 'friend.resolve') return resolveFriendRequest(arg);
     if (cmd === 'shutdown') {
       // 先回执、再退出：`runControlStep` 要把 done 写回文件，面板才看得到"它收到了"。
       if (shutdownStarted) return { ok: true, msg: '已经在退出（重复命令已忽略）' };

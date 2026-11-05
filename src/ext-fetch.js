@@ -52,7 +52,7 @@ import { browseDecision, BROWSE_LOCK_DEFAULTS } from './browse-lock.js';
  *   ⚠️ 与 `safe-fetch` 是**互补的两道闸**，不是替代关系 —— 见 `browse-lock.js` 文件头。
  * @returns {(url:string, opts?:object) => Promise<Response>}
  */
-export function createExtFetch({ log, lock = BROWSE_LOCK_DEFAULTS } = {}) {
+export function createExtFetch({ log, lock = BROWSE_LOCK_DEFAULTS, safeFetchImpl = safeFetch } = {}) {
   return async function extFetch(url, opts = {}) {
     const init = opts && typeof opts === 'object' ? opts : {};
     const method = String(init.method || 'GET').toUpperCase();
@@ -69,7 +69,13 @@ export function createExtFetch({ log, lock = BROWSE_LOCK_DEFAULTS } = {}) {
       if (typeof log === 'function') log(`扩展包 fetch 被浏览锁定拦下（${why}）`);
       throw new Error(`fetch 被出站策略拦下（${why}）`);
     }
-    const r = await safeFetch(url);
+    // 第二道：范围策略**逐跳**交给 safeFetch。只在首跳判一次的话，
+    // 一个名单内的站 302 到名单外，第二跳就被直接抓了（2026-11-05 · 外部评估 P2）。
+    const urlGuard = (u) => {
+      const g = browseDecision(u, lock);
+      return g.allow ? { ok: true } : { ok: false, reason: `${g.reason}${g.detail ? `：${g.detail}` : ''}` };
+    };
+    const r = await safeFetchImpl(url, { urlGuard });
     if (!r.ok) {
       const why = `${r.reason}${r.detail ? `：${r.detail}` : ''}`;
       if (typeof log === 'function') log(`扩展包 fetch 被拦下（${why}）`);

@@ -7,7 +7,9 @@ import scoped from './logger.js';
 import { readCustom } from './custom-config.js';
 import { PACE_DEFAULTS } from './pace.js';
 import { budgetOf } from './context-budget.js';
-import { DEFAULT_AMBIENT_BATCH } from './ambient.js';
+// `context` 三个整数的默认值与夹取搬进了 `src/context-fields.js`（零依赖叶子）——
+// 面板侧要下发同一份真值，而 §82 不许它引 `src/config.js` 本体，所以两侧引这个叶子。
+import { normalizeContextInts } from './context-fields.js';
 // D12b（E15）：插话时机的四个参数。默认值**只住在 src/interject.js** ——
 // 这里只是把归一化后的值摊平进 `cfg.trigger`（`trigger` 是白名单构造的，
 // 漏一个键就等于用户配了也不生效，是最典型的"改了不报错"）。
@@ -75,6 +77,30 @@ function readJson(file) {
 function asInt(v, fallback) {
   const n = Number.parseInt(v, 10);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * `context` 那一块的归一化 —— **唯一一份**（2026-11-03 从大对象字面量里提出来）。
+ *
+ * 为什么要有这个函数：面板的「带入最近几轮对话 / 带几条闲聊当背景」两格以前读的是
+ * `config.presets[当前大脑].context.*`（那是**切大脑时归档的快照**），
+ * 而运行时真正用的是这里算出来的顶层 `cfg.context` ⇒ 用户保存后刷新仍显示旧数字，
+ * 于是反复保存、以为没生效。要改成读真值，就不能再抄一遍夹取与默认值 ——
+ * 抄两份必然漂移（本项目头号纪律），所以把这段本身做成可复用的唯一实现，
+ * 由 `panel/lib/state-collector.js` 直接引它下发。
+ *
+ * @param {object} raw 原始配置（未经归一化的那一份）
+ */
+function normalizeContext(raw = {}) {
+  return {
+    // 三个整数的默认值与夹取在 `src/context-fields.js`（面板侧引同一份，不抄第二遍）。
+    ...normalizeContextInts(raw),
+    /**
+     * 上下文预算表（B10f-1 · C-BUDGET）。配额数字的真相源在
+     * src/context-budget.js 的 DEFAULT_BUDGET —— 这里**不写第二份数字**。
+     */
+    budget: budgetOf(raw.context?.budget),
+  };
 }
 
 function idList(v, field) {
@@ -440,12 +466,11 @@ export function loadConfig(overridePath) {
       /**
        * 纯图/纯表情闸门的宽限期（B8 · S-BARE）。
        *
-       * ⚠️ **经验值，不是 QQ 官方阈值** —— 对齐参考实现的默认 5 分钟。
-       * 它决定"刚回过话之后多久，纯图就不再唤醒它"。
-       * 取太短 → 群里刷图它每次都白跑一次模型调用；取太长 → 它刚说"发来看看"、
-       * 对方发来图，它装死（那是最气人的失败模式）。所以只拦"刚说过话"这一小段。
+       * ⚠️ **经验值，不是 QQ 官方阈值**。2026-11-04 从 5 分钟收紧到 1 分钟：
+       * B 包的实机口径是 60s，且"刚说过话"只该拦一小段；5 分钟里对方补图、
+       * 它装死的窗口太长。0 = 不拦。主人不受这道闸限制（判据在 brain.decide）。
        */
-      bareGraceMs: Math.max(0, asInt(raw.trigger?.bareGraceMs, 300000)),
+      bareGraceMs: Math.max(0, asInt(raw.trigger?.bareGraceMs, 60000)),
     },
     reply: {
       splitToken: normalizeSplitToken(raw.reply?.splitToken),
@@ -468,21 +493,7 @@ export function loadConfig(overridePath) {
       maxCharsPerChunk: Math.max(20, asInt(raw.reply?.maxCharsPerChunk, 300)),
       quoteOnReply: raw.reply?.quoteOnReply === true,
     },
-    context: {
-      recentTurns: Math.max(2, asInt(raw.context?.recentTurns, 12)),
-      ambientMessages: Math.max(0, asInt(raw.context?.ambientMessages, 20)),
-      /**
-       * 背景消息窗口的「成批更替」粒度（B10f-2 · C-AMBIENT）。
-       * 攒够几条新消息才把整批背景换掉（而不是每轮补一格 —— 那样窗口一满，
-       * 前缀断口就从段末尾前移到段开头）。**经验值** 4：背景最多落后群里 4 条。
-       */
-      ambientBatch: Math.max(1, asInt(raw.context?.ambientBatch, DEFAULT_AMBIENT_BATCH)),
-      /**
-       * 上下文预算表（B10f-1 · C-BUDGET）。配额数字的真相源在
-       * src/context-budget.js 的 DEFAULT_BUDGET —— 这里**不写第二份数字**。
-       */
-      budget: budgetOf(raw.context?.budget),
-    },
+    context: normalizeContext(raw),
     throttle: {
       minIntervalMs: numOr('minIntervalMs', raw.throttle?.minIntervalMs, asInt),
       perMinutePerSession: numOr('perMinutePerSession', raw.throttle?.perMinutePerSession, asInt),

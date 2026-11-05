@@ -356,6 +356,19 @@ export const GROUPS = [
               { t: 'note', kind: 'warn', text: '<b>拉黑优先于放行</b> —— 一个群同时出现在两个名单里，结果是<b>不回</b>。另外「必须 @」和关键词触发都拦不住拉黑。' },
             ],
           },
+          /* ── 好友申请 / 群邀请（B1.1 · 2026-11-04）────────────────────────
+             这一格存在的理由就是那条缺陷报告：申请报文从前被 `onebot.js` 塞进
+             `emit('notice')`、又被监听第一句 `post_type !== 'notice'` return 掉，
+             于是"有人加她"这件事在四层回归全绿的情况下**一个字都没留下**。
+             现在：机器人收下 + 落盘 + 私聊通知主人，主人回到这一格拍板。
+             ⚠️ 不自动通过、不做自然语言审批（维护者 2026-11-03 选定）：加好友是
+                永久性动作，误判撤不回来。 */
+          {
+            id: 'freq', title: '好友申请与群邀请', span: 12,
+            ctrls: [
+              { t: 'friendRequests' },
+            ],
+          },
           /* ── 插话冷却（2026-10-17）────────────────────────────────────────
              为什么它单独占一块玻璃板、并且**只**是一条进度条：
 
@@ -467,20 +480,51 @@ export const GROUPS = [
       },
       {
         id: 'imaging', label: '识图与发图', title: '识图与发图 —— 能发图 / 能看图',
-        desc: '主动<b>发图</b>与按需<b>看图</b>两个工具；图片先下载成本地字节再交给协议端。只影响能力，不改变判定（闸门、限流、额度不受影响）。',
+        desc: '主动发图与按需看图。识图先把图内联成字节再交给模型；内联不了才回退原地址。只影响能力，不改变闸门、限流与额度。',
         draft: true,
         cards: [
           {
-            id: 'img', title: '图片工具', span: 12,
+            id: 'img', title: '能力', span: 6,
             ctrls: [
+              { t: 'featSwitch', feat: 'vision', label: '识图', hint: '群里有人发图时，它能看懂图里说了什么',
+                when: (s) => customFeatureVisible(s, 'vision') },
               { t: 'switch', id: 'img.send', label: '允许它主动发图', bind: 'image.send',
-                hint: '开着时模型多一个 send_image 工具。改完要<b>重启机器人</b>才生效（工具在启动时注册）。' },
+                hint: '多一个 send_image 工具；改完重启机器人生效。' },
               { t: 'switch', id: 'img.view', label: '允许它按需看图', bind: 'image.view',
-                hint: '开着时模型多一个 view_image 工具（给地址 / 路径 / 消息号）。当前模型必须真的支持 vision。' },
+                hint: '多一个 view_image 工具；当前模型必须支持 vision。' },
               { t: 'text', id: 'img.root', label: '本机图片目录', bind: 'image.root', ph: '默认 images-out（相对 data/）',
-                hint: '本机路径只允许这个目录内的文件（符号链接逃逸会被 realpath 拦下）。留空 = 禁用本机路径，远端 http(s) 仍可用。' },
-              { t: 'note', kind: 'warn', text: '图片先<b>下载成本地字节</b>再交给协议端：内网地址、私网 IP、超过 8MB 的一律发不出去，也会在日志里写明原因。' },
+                hint: '只允许这个目录内的文件（realpath 防逃逸）；留空 = 禁用本机路径。' },
+              { t: 'note', kind: 'warn', text: '内网地址、私网 IP、超过 8MB 的图发不出去，原因写进日志。' },
             ],
+          },
+          {
+            id: 'grace', title: '纯图宽限', span: 6,
+            ctrls: [
+              { t: 'range', id: 'grace.ms', label: '刚回过话后，纯图/纯表情多久内不主动接',
+                bindSys: 'bareGraceMs', min: 0, max: 300000,
+                fmt: (v) => (Number(v) === 0 ? '不拦' : `${Math.round(Number(v) / 1000)} 秒`),
+                marks: [60000, 180000],
+                hint: '只在群聊、刚说过话时拦纯图；0 = 不拦。主人与私聊不受限。' },
+              { t: 'note', text: '只挡“刚回过话又只收到一张图”的白跑调用；带字/被 @ 的图照常接。' },
+            ],
+          },
+          {
+            id: 'vision', title: '识图 3.0', span: 6,
+            /* 链路与解释都是原生 HTML，放在 desc 里由 cardHtml 的 mdBold 原样保留；
+               具体数字（几张 / 多大 / 重试几次）由页头从 customMeta.vision 动态渲染，
+               不在 schema 里写第二份。 */
+            desc: '<ol class="vflow">'
+              + '<li><b>01 下载</b><span>带桌面 UA / Referer，失败重试一次</span></li>'
+              + '<li><b>02 校验</b><span>按字节头认格式，认不出就不猜</span></li>'
+              + '<li><b>03 内联 / 回退</b><span>够小就转 data URL；超限或失败保留原 URL</span></li>'
+              + '<li><b>04 去重编号</b><span>按字节去重，交给模型前逐张编号</span></li>'
+              + '<li><b>05 模型</b><span>先判类型、逐项核对；看不清就说看不清</span></li>'
+              + '</ol>'
+              + '<details class="vwhy"><summary>为什么这样</summary>'
+              + '<p>QQ 图片地址带签名、会过期，模型服务端多半取不到，所以能内联就内联。'
+              + '内联有上限是为了不让一次请求体被三张大图撑爆；超限或失败回退原 URL，不丢这张图。</p>'
+              + '</details>',
+            ctrls: [],
           },
         ],
       },
@@ -539,8 +583,10 @@ export const GROUPS = [
                 hint: '关掉 = 从不睡（自然醒永远为真）。关着的时候下面几格只是**先填好**，不会生效。' },
               { t: 'time', id: 'sl.bed', label: '几点睡', bind: 'sleep.bed' },
               { t: 'time', id: 'sl.wake', label: '几点自然醒', bind: 'sleep.wake' },
-              { t: 'tags', id: 'sl.words', label: '叫醒关键词', bind: 'sleep.wakeWords', ph: '起床, 醒醒',
-                hint: '只有 <code>owner.qq</code> 里的人说才生效 —— 这一格会随保存写入顶层 <code>owner.qq</code>（面板已支持）。' },
+              { t: 'tags', id: 'sl.words', label: '叫醒关键词', bind: 'sleep.wakeWords', ph: '留空 = 用内置那几个词',
+                hint: '只有 <code>owner.qq</code> 里的人说才生效（群里还得 <b>@ 她</b>）。'
+                  + '这一格留空不是"关掉叫醒" —— 关掉叫醒的唯一开关是「主人 QQ」没填。'
+                  + '现在生效的词与另一条不用词的路，写在下面「现在的睡眠状态」那张卡里。' },
               { t: 'text', id: 'sl.gn', label: '睡前道晚安', bind: 'sleep.goodnight', ph: '留空 = 不说' },
             ],
           },
@@ -552,6 +598,8 @@ export const GROUPS = [
                 act('让它睡', 'cmd.sleep', 'btn-ghost', '内存态，重启即恢复按作息走'),
                 act('叫它醒', 'cmd.wake'),
               ] },
+              // 怎么在 QQ 里把她叫醒 —— 数字与词表都由后端下发（见 `customMeta.sleep`）。
+              { t: 'sleepWake' },
             ],
           },
         ],
@@ -823,13 +871,13 @@ export const GROUPS = [
           {
             id: 'ctx', title: '条数与背景', span: 6,
             ctrls: [
-              { t: 'number', id: 'ctx.turns', label: '带入最近几轮对话', min: 0, max: 40, step: 1, volatile: true,
-                read: (s) => j(s, ['config', 'presets', activePreset(s), 'context', 'recentTurns'], 6),
+              { t: 'number', id: 'ctx.turns', label: '带入最近几轮对话', min: 2, max: 120, step: 1, volatile: true,
+                read: (s) => j(s, ['config', 'context', 'recentTurns'], 12),
                 save: (v) => ({ url: '/api/config', body: { context: { recentTurns: Number(v) } } }) },
-              { t: 'number', id: 'ctx.ambient', label: '带入几条群里闲聊当背景', min: 0, max: 60, step: 1, volatile: true,
-                read: (s) => j(s, ['config', 'presets', activePreset(s), 'context', 'ambientMessages'], 8),
+              { t: 'number', id: 'ctx.ambient', label: '带入几条群里闲聊当背景', min: 0, max: 120, step: 1, volatile: true,
+                read: (s) => j(s, ['config', 'context', 'ambientMessages'], 20),
                 save: (v) => ({ url: '/api/config', body: { context: { ambientMessages: Number(v) } } }) },
-              { t: 'note', text: '这两格属于<b>当前大脑的预设</b>：切大脑时各自记各自的值（服务端 <code>stashCurrentPreset</code> 负责归档）。' },
+              { t: 'note', text: '这两格是<b>全局生效值</b>（机器人当前真正带的条数）。切换大脑时服务端 <code>stashCurrentPreset</code> 会把它们各自归档一份，切回来按那一套继续。' },
             ],
           },
         ],
@@ -862,9 +910,7 @@ export const GROUPS = [
               // 没勾的连开关都不摆 —— 摆出来又关不掉，正是"点了没用"那一类。
               { t: 'featSwitch', feat: 'webSearch', label: '联网查询', hint: '遇到不懂的梗、新闻、人物时让它上网查，每条多花 2–8 秒',
                 when: (s) => customFeatureVisible(s, 'webSearch') },
-              { t: 'featSwitch', feat: 'vision', label: '识图', hint: '群里有人发图时，它能看懂图里说了什么',
-                when: (s) => customFeatureVisible(s, 'vision') },
-              { t: 'note', text: '这两项与模型能力表同源：改任一处另一处立刻跟上 —— 本页只摆一次，不做两份副本。' },
+              { t: 'note', text: '识图总开关已移到 <b>发言 → 识图与发图</b>（与模型能力表同源）。这一页只留联网查询，不做两份副本。' },
             ],
           },
         ],
@@ -872,6 +918,28 @@ export const GROUPS = [
       {
         id: 'usage', label: '用量与花费', title: '用量与花费',
         cards: [
+          {
+            // 省电上限（2026-11-03 · 群友报告 BUG-10）。
+            // 这三格以前**不存在**：上限是 `src/usage.js` 里的编译期常量，
+            // 定标依据是作者自己的用量（稳态日约 12 万 token），多群活跃部署一天就能撞到；
+            // 触顶后只写一行 bridge.log，面板一个数字都看不到 ⇒ 用户感知是
+            // 「她今天突然变笨 / 半夜不接话」，而没有任何地方能调。
+            // 默认值与回落规则唯一住在 `src/usage.js` 的 `usageLimitsOf()`，
+            // 这里显示的是**生效值**（后端下发），页面不自存数字。
+            id: 'usageLimits', title: '省电上限', span: 12,
+            ctrls: [
+              { t: 'number', id: 'u.daily', label: '每日 token 上限', bind: 'usage.dailyTokens', step: 10000, volatile: true,
+                read: (s) => j(s, ['customMeta', 'usageLimits', 'dailyTokens'], 600000),
+                hint: '达到这个量的 85% 起，先砍背景与知识包；到 100% 停止主动发言（被 @ 与私聊照旧回）。填 0 或留空不生效——会回落到默认。' },
+              { t: 'number', id: 'u.chat', label: '单个会话每日上限', bind: 'usage.perChatTokens', step: 10000, volatile: true,
+                read: (s) => j(s, ['customMeta', 'usageLimits', 'perChatTokens'], 300000),
+                hint: '挡的是"一个群把整日额度吃光"。这一条没有历史分布可依，按日额度的一半设计，可按自己群况调。' },
+              { t: 'number', id: 'u.trim', label: '开始省的比例', bind: 'usage.trimAt', step: 0.05, volatile: true,
+                read: (s) => j(s, ['customMeta', 'usageLimits', 'trimAt'], 0.85),
+                hint: '0 到 1 之间的小数（0.85 = 用到 85% 开始省）。填超出这个范围的值会回落到默认。' },
+              { t: 'note', text: '这里显示的是<b>生效值</b>（后端算好下发：没填的就是默认）。上限不是"花钱上限"——本机线路与免费档同样要挡用量与限流。' },
+            ],
+          },
           {
             id: 'cost', title: '花费', span: 12,
             ctrls: [
@@ -983,6 +1051,23 @@ export const GROUPS = [
             ],
           },
           { id: 'about', title: '这一页是什么', span: 6, ctrls: [{ t: 'protoInfo' }] },
+          {
+            /* ── 界面裁剪（2026-11-03 · 维护者要求"我们自己的组件用户也可以去掉"）──
+               把不想看的域 / 页 / 卡从导航与页面里去掉。**只隐藏不删除**：
+               删除属 G7（不可逆），而且会让 `schema.js` 里的锚点、`RENDER` 表、
+               §171 身份清单与 `panel-dom` 的逐页遍历全部对不上 ——
+               那是把"用户想清静一点"变成"这仓的门禁集体失效"。
+               名单存 id（域 / 页 / 卡分开），不存中文名、不存下标：
+               文案会漂，重排会让"第 3 个"变成别的页。
+               ⚠️ 这一张卡刻意**放在面板维护页**而不是新开一页：
+                  新开一页要重签 `panel/ui-identity.json`（§171② 钉 7 域 / 26 页），
+                  那是发版侧的动作，不该由一个显示偏好顺带触发。 */
+            id: 'trim', title: '界面裁剪', span: 12,
+            ctrls: [
+              { t: 'note', text: '点一下就从导航与页面里去掉，再点一下回来。这是<b>隐藏</b>不是删除 —— 功能、数据、快捷键都不动；最后一个能看见的一级域不允许隐藏（否则没有入口回来）。' },
+              { t: 'panelTrim' },
+            ],
+          },
           {
             /* 桌面端「启动方式」（2026-10-16）：控制台以什么形态呈现。
                ⚠️ 这两项**只在启动的一瞬间**被读一次（启动器读 config.json 的 launch 段）——
@@ -1353,7 +1438,7 @@ function quotaBtnOf(s) {
  * @param {object} s 状态
  * @param {string} key 'vision' | 'thinking' | 'webSearch'
  */
-function customFeatureVisible(s, key) {
+export function customFeatureVisible(s, key) {
   const vis = j(s, ['config', 'customVisibleFeatures'], null);
   if (!vis || !Array.isArray(vis)) return true; // 内置大脑（或旧版后端没下发）⇒ 照旧全显示
   return vis.includes(key);
@@ -1415,6 +1500,9 @@ export const CTRL_KINDS = [
   /* 运行总览三栏（2026-10-27）：中间仪表盘与右栏操作/图表是自包含区域。 */
   'overviewDash', 'overviewSide',
   'text', 'password', 'number', 'time', 'select', 'seg', 'tags',
+  /* `panelTrim`：界面裁剪的开关列表（2026-11-03）。域/页/卡三级点一下切换，
+     写进 `custom.panelHidden`（只隐藏不删除）。 */
+  'panelTrim',
   /* `ticks`：**有序档位**的横向进度条（2026-10-21 由竖向刻度改来）。
      与 `seg` 同一套数据契约（同一个 `options` / 同一个 `valueOf`/`setValue`），
      差别只在呈现：液面覆盖到第几段，所以顺序与当前档位**一眼可见**。
@@ -1430,7 +1518,7 @@ export const CTRL_KINDS = [
      ⚠️ 它与 `ticks` **不是**一回事：`ticks` 是有序少量档位的选择器（键盘换档语义），
         这个是真滑块（连续值 + 原生 range 的无障碍语义）。不要合并。 */
   'range',
-  'sleepLine', 'sleepDetail', 'modelPick', 'routeBoard', 'packages',
+  'sleepLine', 'sleepDetail', 'sleepWake', 'friendRequests', 'modelPick', 'routeBoard', 'packages',
   // 自定义大脑列表（2026-10-07）：渲染用户自己造的那几套 + 右键菜单（改名 / 删除）。
   // ⚠️ 与 `modelPick` 分开：那个是"选模型"，这个是"选大脑"，两件事的数据源也不同。
   // ⚠️ 2026-10-17 第二轮：列表控件已从页面上摘掉（模型都显示在 `brainTags` 里），

@@ -143,6 +143,7 @@ import {
 } from './lib/napcat-native.js';
 import { resolveLoginQqIn } from '../src/napcat-login.js';
 import { createProtocolGuard } from './lib/protocol-guard.js';
+import { createTryGate } from './lib/try-gate.js';
 // ── `config.json` 的唯一所有者（B11b-2 · AR-SERVERSPLIT）────────────────────
 // 读配置 / 写配置 / 记配置历史这三件事只有这一处实现。搬了实现就要**把契约也搬过去**
 // （`check-wb` 的 3i / 3k 现在扫的是 `lib/config-io.js`），否则契约会变成永远绿的摆设。
@@ -158,7 +159,7 @@ import {
   localModelExists, resolveLocalKey, mergeModelList, modelProviderMismatch,
   CLOUD_PRESETS, BUILTIN_MODELS, PRESET_KEYS,
   MODEL_LABELS,
-  normalizeThinking, buildModelCaps, readPresets, stashCurrentPreset, readZhipuPackages,
+  normalizeThinking, buildModelCaps, readPresets, stashCurrentPreset, readZhipuPackages, ownedContextOf,
   // 2026-10-17：降级链必须属于**当前这家**（自定义大脑与切换两条路都要用它）
   chainForProvider,
   // 2026-10-17：添加模型时按地址识别厂商 ⇒ 带出默认线路（唯一实现，前端不重算）
@@ -249,13 +250,12 @@ ensureUserDirs();
  * B9c 的面板鉴权将复用同一张表（读写分类必须同源，否则会出现
  * "审计记了但没鉴权"或者反过来的漏洞）。
  *
- * 分类只按**状态是否被改变**，不按"是不是 POST"：
- * `/api/try`（试一句）与 `/api/custom/preview`（预览提示词）都是 POST，
- * 但它们不写任何东西（只花一次模型调用），所以两边都不该被拦。
+ * 分类按**状态是否被改变 + 是否花得起钱**：
+ * `/api/custom/preview` 只是纯拼装，所以不拦；而 `/api/try` 会真起子进程、
+ * 真调一次模型（会产生费用与用量账），2026-11-05 起归入写路由 ——
+ * 它必须与 `/api/persona/adopt` 同类，带 token、Origin 与单飞闸。
  */
 const READ_ONLY_POST = new Set([
-  // 试一句：只花一次模型调用，不落盘
-  '/api/try',
   // 预览提示词：纯拼装，不落盘
   '/api/custom/preview',
   // 连接自检：起一个一次性脚本探协议端，不改任何状态
@@ -316,6 +316,8 @@ const WRITE_ROUTES = new Set([
   '/api/update/check', '/api/update/download', '/api/update/cancel', '/api/update/install',
   // P4 离线更新：prepare 验签/暂存，installer 收原始 EXE 并校验；都会落盘。
   '/api/update/offline/prepare', '/api/update/offline/installer',
+  // 试一句：真起子进程、真调模型、真记用量。2026-11-05 从只读表移到这里。
+  '/api/try',
   // 角色卡 AI 认领：花一次模型调用并记入账本；结果只是预览，不直接改配置。
   '/api/persona/adopt',
   // 假 QQ：起 / 说 / 停 = 进程控制，且会写数据（沙箱时写临时目录）。
@@ -533,6 +535,8 @@ const DOCKER_RM_TIMEOUT_MS = 30000;
 const DOCKER_COMPOSE_TIMEOUT_MS = 240000;
 /** 干跑（`scripts/dryrun.js`）要起一整个机器人进程再收尾，给得比 docker compose 还要宽。 */
 const DRYRUN_TIMEOUT_MS = 240000;
+/** 同一时刻只允许一次「试一句」；额满 429，释放后恢复。 */
+const tryGate = createTryGate();
 /** 给一个进程发完信号后等它自己退出的宽限（超过就升级到 SIGKILL）。 */
 const KILL_GRACE_MS = 3000;
 /** 面板自己退出前的两点时序：先让响应的 flush 走完，再留一拍给看门狗接上。 */
@@ -2357,7 +2361,7 @@ async function apiBridgeStop(req, res, url) {
 //    "点完立刻回成功"是错的 —— 它只证明文件写下去了（可能机器人根本没在跑）。
 async function apiBridgeCommand(req, res, url) {
   const body = await readBody(req);
-  const r = issueCommand(String(body?.cmd || ''));
+  const r = issueCommand(String(body?.cmd || ''), { arg: String(body?.arg ?? '') });
   return sendJson(res, r, r.ok ? 200 : 400);
 }
 
@@ -2476,7 +2480,7 @@ async function apiSwitch(req, res, url) {
     cfg.llm.maxTokens = P.maxTokens || 160;
     // 小模型温度要低才稳；0.7 是 Qwen 官方推荐、也是 QwenChat 界面在用的值
     cfg.llm.temperature = Number.isFinite(P.temperature) ? P.temperature : 0.7;
-    cfg.context = { ...(cfg.context || {}), ...(P.context || {}) };
+    cfg.context = { ...(cfg.context || {}), ...ownedContextOf(P.context) };
     cfg.llm.thinking = body.thinking ? normalizeThinking(body.thinking) : normalizeThinking(P.thinking);
     cfg.llm.features = { ...P.features };
     // 选中的规格和通道要立刻记进本机预设本身。
@@ -2532,7 +2536,7 @@ async function apiSwitch(req, res, url) {
     cfg.llm.apiKey = cfg.llm.keys?.[preset.provider] || '';
     cfg.llm.maxTokens = P.maxTokens || 400;
     cfg.llm.temperature = Number.isFinite(P.temperature) ? P.temperature : 1;
-    cfg.context = { ...(cfg.context || {}), ...(P.context || {}) };
+    cfg.context = { ...(cfg.context || {}), ...ownedContextOf(P.context) };
     // 该大脑自己记住的思考设置。智谱那套默认就是「关」——
     // 实测它默认带思考、思考 token 会把 max_tokens 吃光（正文直接是空字符串）。
     cfg.llm.thinking = body.thinking ? normalizeThinking(body.thinking) : normalizeThinking(P.thinking);
@@ -3067,35 +3071,45 @@ async function apiBalance(req, res, url) {
  * 不用猜，直接看它到底收到了什么提示词、被截断在哪。
  */
 async function apiTry(req, res, url) {
-  const body = await readBody(req);
-  const text = String(body.text || '').slice(0, 500).trim();
-  if (!text) return sendJson(res, { ok: false, error: '先说一句要试的话' }, 400);
-  pushLog(`… 试一句（不碰 QQ）：${text}`);
-
-  // 本机模型一条要十几秒，超时给足 4 分钟，别让它半路被砍
-  // ⚠️ `'--'` 不能省（H-04）：`text` 是**用户输入**，以 `-` 开头时会被下游当成一个选项。
-  //    这不是命令注入（`panel/lib/proc.js` 用 execFile + 数组传参、没有 shell），
-  //    但"一句话"变成"一个开关"就是参数注入。分隔符之后的都被下游当正文 ——
-  //    拆分规则只有一份实现（`scripts/lib/cli-args.mjs`），由 smoke 的真值表盯着。
-  const r = await sh(NODE, [path.join(PROGRAM_ROOT, 'scripts', 'dryrun.js'), '--json', '--', text], DRYRUN_TIMEOUT_MS);
-  const lines = (r.stdout || '').trim().split('\n').filter(Boolean);
-  let data = null;
+  // 一次试跑 = 一个子进程 + 一次真模型调用。额满直接拒，别让连点变成连烧。
+  if (!tryGate.acquire()) {
+    return sendJson(res, { ok: false, error: '正在试跑，请稍后再试', reason: 'busy' }, 429);
+  }
   try {
-    data = JSON.parse(lines[lines.length - 1] || '');
-  } catch {
-    /* 下面统一报错 */
+    const body = await readBody(req);
+    const text = String(body.text || '').slice(0, 500).trim();
+    if (!text) return sendJson(res, { ok: false, error: '先说一句要试的话' }, 400);
+    // 审计/面板日志不抄用户提示词，只留长度 —— `/api/logs` 不鉴权，正文可能带凭据。
+    pushLog(`… 试一句（不碰 QQ，${text.length} 字）`);
+
+    // 本机模型一条要十几秒，超时给足 4 分钟，别让它半路被砍
+    // ⚠️ `'--'` 不能省（H-04）：`text` 是**用户输入**，以 `-` 开头时会被下游当成一个选项。
+    //    这不是命令注入（`panel/lib/proc.js` 用 execFile + 数组传参、没有 shell），
+    //    但"一句话"变成"一个开关"就是参数注入。分隔符之后的都被下游当正文 ——
+    //    拆分规则只有一份实现（`scripts/lib/cli-args.mjs`），由 smoke 的真值表盯着。
+    const r = await sh(NODE, [path.join(PROGRAM_ROOT, 'scripts', 'dryrun.js'), '--json', '--', text], DRYRUN_TIMEOUT_MS);
+    const lines = (r.stdout || '').trim().split('\n').filter(Boolean);
+    let data = null;
+    try {
+      data = JSON.parse(lines[lines.length - 1] || '');
+    } catch {
+      /* 下面统一报错 */
+    }
+    if (!data) {
+      // 原始输出可能夹着模型原文/凭据 —— 出口前过同一份 maskSecrets。
+      const detail = maskSecrets((r.stdout + r.stderr).slice(-DRYRUN_TAIL_CHARS));
+      pushLog('✗ 试一句失败：干跑输出解析不出来');
+      return sendJson(res, { ok: false, error: '干跑没能跑通，看下面的原始输出', output: detail }, 500);
+    }
+    pushLog(
+      data.ok
+        ? `✔ 试一句完成（${data.ms} ms，会发 ${data.chunks.length} 段）`
+        : `✗ 试一句失败：${maskSecrets(String(data.error || '未知原因'))}`
+    );
+    return sendJson(res, data);
+  } finally {
+    tryGate.release();
   }
-  if (!data) {
-    const detail = (r.stdout + r.stderr).slice(-DRYRUN_TAIL_CHARS);
-    pushLog('✗ 试一句失败：干跑输出解析不出来');
-    return sendJson(res, { ok: false, error: '干跑没能跑通，看下面的原始输出', output: detail }, 500);
-  }
-  pushLog(
-    data.ok
-      ? `✔ 试一句完成（${data.ms} ms，会发 ${data.chunks.length} 段）`
-      : `✗ 试一句失败：${data.error}`
-  );
-  return sendJson(res, data);
 }
 
 async function apiTraceClear(req, res, url) {
@@ -3251,15 +3265,26 @@ async function apiExtensionsInstall(req, res, url) {
   const kindRaw = url.searchParams.get('kind');
   const expectedKind = kindRaw === 'skill' || kindRaw === 'plugin' ? kindRaw : null;
   const expectedId = (url.searchParams.get('id') || '').trim();
+  const expectedDigest = (url.searchParams.get('digest') || '').trim();
   if (kindRaw && !expectedKind) {
     return sendJson(res, { ok: false, error: '安装 kind 只能是 skill 或 plugin' }, 400);
   }
+  if (expectedDigest && !/^[a-f0-9]{64}$/.test(expectedDigest)) {
+    return sendJson(res, { ok: false, error: '安装摘要格式不对' }, 400);
+  }
   const r = installArchive({
-    bytes: got.buf, roots: extensionRoots(USER_ROOT), overwrite, expectedKind, expectedId,
+    bytes: got.buf, roots: extensionRoots(USER_ROOT), overwrite, expectedKind, expectedId, expectedDigest,
   });
   if (!r.ok) {
     pushLog(`· 扩展安装失败：${r.error}`);
-    return sendJson(res, { ok: false, error: r.error }, r.code || 400);
+    return sendJson(res, {
+      ok: false,
+      error: r.error,
+      ...(r.id ? { id: r.id } : {}),
+      ...(r.kind ? { kind: r.kind } : {}),
+      ...(r.dir ? { dir: r.dir } : {}),
+      ...(r.digest ? { digest: r.digest } : {}),
+    }, r.code || 400);
   }
   // 装完立刻刷一次扩展快照（模块内有 10 秒 TTL 缓存）—— 不为它新开一个 force 接口。
   const cfgNow = readConfig() || {};
@@ -3274,7 +3299,7 @@ async function apiExtensionsInstall(req, res, url) {
   });
   pushLog(`· 插件已安装：${r.dir} → ${r.root}/（${r.files} 个文件${r.replaced ? '，已覆盖旧版' : ''}；未自动启用）`);
   return sendJson(res, {
-    ok: true, id: r.id, kind: r.kind, dir: r.dir, files: r.files, replaced: r.replaced,
+    ok: true, id: r.id, kind: r.kind, dir: r.dir, files: r.files, replaced: r.replaced, digest: r.digest,
   });
 }
 

@@ -1,0 +1,180 @@
+/* 识图与发图（2026-11-04）—— 双栏紧凑页。
+   所有选择器限定在 `.vision` 下：不改全局 `.card` / `.f` / `.sw`，
+   运行总览、人格六页、工厂三页不受这点样式影响。 */
+
+.vision {
+  grid-column: 1 / -1;
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  display: grid;
+  gap: var(--s5);
+  min-width: 0;
+}
+
+/* 页头：kicker / h1+说明 / 状态 chips / 动态事实条，四行封顶。 */
+.vision .vhead { display: grid; gap: var(--s2); min-width: 0; }
+.vision .vkicker {
+  color: var(--c-text-3);
+  font-size: var(--t-xs);
+  letter-spacing: .08em;
+}
+.vision .vhead-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.vision .vhead-main { min-width: 0; }
+.vision .vhead h1 { margin: 0; font-size: var(--t-2xl); line-height: 1.2; }
+.vision .vsub {
+  margin: var(--s2) 0 0;
+  max-width: 68ch;
+  color: var(--c-text-2);
+  font-size: var(--t-md);
+}
+.vision .vchips {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.vision .vchip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-pill);
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+.vision .vchip.ok {
+  border-color: var(--c-ok-line);
+  background: var(--c-ok-bg);
+  color: var(--c-ok);
+}
+.vision .vchip.bad {
+  border-color: var(--c-danger-line);
+  background: var(--c-danger-bg);
+  color: var(--c-danger);
+}
+.vision .vchip.warn {
+  border-color: var(--c-accent-line);
+  background: var(--c-accent-weak);
+  color: var(--c-accent);
+}
+.vision .vfacts {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.vision .vfacts .vchip {
+  border-color: transparent;
+  background: var(--c-surface-2);
+}
+
+/* 双栏：左 1.08 / 右 .92；两列都允许被内容压窄（min-width:0）。 */
+.vision .vgrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
+  gap: var(--s4);
+  align-items: start;
+  min-width: 0;
+}
+.vision .vcol {
+  display: grid;
+  gap: var(--s4);
+  align-content: start;
+  min-width: 0;
+}
+.vision .vcol > .card { grid-column: auto; min-width: 0; }
+
+/* 右卡：链路在 desc 里，卡体没有控件 —— 空 card-b 不留一圈空白。 */
+.vision #card-vision .card-d { padding-bottom: var(--s4); }
+.vision #card-vision .card-b:empty { display: none; }
+
+.vision .vflow {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.vision .vflow li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: var(--s2);
+  align-items: baseline;
+  padding-left: 12px;
+}
+.vision .vflow li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: -10px;
+  width: 1px;
+  background: var(--c-line);
+}
+.vision .vflow li:last-child::before { bottom: 6px; }
+.vision .vflow li::after {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--c-accent);
+}
+.vision .vflow b {
+  color: var(--c-text-1);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+.vision .vflow span {
+  color: var(--c-text-2);
+  font-size: var(--t-sm);
+  line-height: 1.55;
+}
+.vision .vwhy {
+  margin-top: var(--s3);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--c-line-soft);
+}
+.vision .vwhy summary {
+  color: var(--c-text-3);
+  cursor: pointer;
+  font-size: var(--t-xs);
+}
+.vision .vwhy p {
+  margin: var(--s2) 0 0;
+  color: var(--c-text-2);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .vision .vgrid { grid-template-columns: minmax(0, 1fr); }
+  .vision .vchips { justify-content: flex-start; }
+}
+
+@media (max-width: 560px) {
+  .vision { gap: var(--s4); }
+  .vision .vhead-row { flex-direction: column; }
+  /* 列方向下 flex 项的 shrink-to-fit 会按 max-content 量宽：四个 nowrap chip
+     相加超过视口，flex-wrap 就没有约束可折。给 100% 宽才会真正换行。 */
+  .vision .vchips { width: 100%; justify-content: flex-start; }
+  .vision .vflow li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .vision .vflow li::before,
+  .vision .vflow li::after { display: none; }
+}

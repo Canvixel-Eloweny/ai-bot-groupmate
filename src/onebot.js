@@ -225,6 +225,8 @@ export class OneBotClient extends EventEmitter {
     this.lastStatusOk = null;    // null = 还没问过；true/false = 最近一次的结果
     this.statusTimer = null;
     this.stats = { calls: 0, timeouts: 0 };
+    /** 形状不对的入站帧（非 JSON / null / 数组 / 数字）。只用于限频告警与排障。 */
+    this.badFrames = 0;
     const probeMs = opts.statusProbeMs === undefined ? STATUS_PROBE_MS : Number(opts.statusProbeMs);
     this.statusProbeMs = Number.isFinite(probeMs) && probeMs > 0 ? probeMs : 0;
     // 待触发的重连定时器句柄。每次真的排了新的就把上一个清掉 ——
@@ -329,12 +331,26 @@ export class OneBotClient extends EventEmitter {
     });
   }
 
+  /** 脏帧计数 + 限频告警。不更新 `lastFrameAt` —— 无效流量不能把连接标成健康。 */
+  #badFrame(what) {
+    this.badFrames += 1;
+    if (this.badFrames === 1 || this.badFrames % 100 === 0) {
+      log.warn(`收到形状不对的报文（${what}），已忽略；累计 ${this.badFrames} 帧`);
+    }
+  }
+
   #onRaw(buf) {
     let payload;
     try {
       payload = JSON.parse(buf.toString());
     } catch {
-      log.debug('收到非 JSON 报文，已忽略');
+      this.#badFrame('非 JSON');
+      return;
+    }
+    // JSON `null` 会让下面的 `payload.echo` 直接抛 TypeError；数组/数字虽不抛，
+    // 也会被当成通知层层层下漏。2026-11-05：入站边界先做最低限度的形状检查。
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+      this.#badFrame(payload === null ? 'null' : (Array.isArray(payload) ? '数组' : typeof payload));
       return;
     }
     this.lastFrameAt = Date.now();
@@ -401,6 +417,12 @@ export class OneBotClient extends EventEmitter {
 
     if (payload.post_type === 'message') {
       this.emit('message', payload);
+    } else if (payload.post_type === 'request') {
+      // 好友申请 / 群邀请（B1.1）。以前它们和心跳一起被塞进 `emit('notice')`，
+      // 而监听者第一句就是 `post_type !== 'notice'` 就 return ⇒ **整条路静默丢弃**。
+      // 单独一个事件名，是为了让"没人监听 request"这件事本身变成可查的缺口，
+      // 而不是躲在"notice 我们没处理"那句话后面。
+      this.emit('request', payload);
     } else {
       this.emit('notice', payload);
     }

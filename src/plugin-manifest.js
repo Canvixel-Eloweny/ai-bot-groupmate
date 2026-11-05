@@ -139,6 +139,44 @@ export function isSafeRelPath(p) {
   return segs.every((s) => s !== '' && s !== '..');
 }
 
+/** Windows 设备名：即使带扩展名也是保留名（`con.js` 在 Windows 上不可创建）。 */
+const WIN_DEVICE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+const CONTROL_CHAR = /[\u0000-\u001f\u007f]/;
+
+/**
+ * ZIP 条目路径的**唯一规范化入口**（2026-11-05 · 外部评估 P1）。
+ *
+ * 为什么不能在 `isSafeRelPath` 上直接收紧：那个判据同时服务"清单里的 entry"，
+ * 而真实清单确实写 `./index.js`。ZIP 条目则不同 —— 顶层出现 `.` 时，
+ * `pkgDir` 会变成扩展根本身，覆盖安装会连同级扩展一起换掉。
+ *
+ * 规则：统一分隔符 → 去掉可折叠的 `.` 段 → 拒绝空段 / `..` / 绝对路径 / 盘符 /
+ * ADS 冒号 / 控制字符 / 尾点 / 尾空格 / Windows 设备名。返回分段数组，
+ * 调用方**只允许**用它算顶层、清单与写入路径。
+ *
+ * @returns {{ok:true, segments:string[], path:string}|{ok:false, error:string}}
+ */
+export function canonicalZipPath(p) {
+  if (typeof p !== 'string' || !p) return { ok: false, error: '路径为空' };
+  if (p.includes('\u0000')) return { ok: false, error: '路径含 NUL' };
+  const raw = p.replace(/\\/g, '/');
+  if (raw.startsWith('/')) return { ok: false, error: '绝对路径' };
+  if (/^[A-Za-z]:/.test(raw)) return { ok: false, error: '盘符路径' };
+  const segments = [];
+  for (const seg of raw.split('/')) {
+    if (!seg) return { ok: false, error: '空段' };
+    if (seg === '.') continue;
+    if (seg === '..') return { ok: false, error: '上跳段' };
+    if (seg.includes(':')) return { ok: false, error: 'Windows ADS 冒号' };
+    if (CONTROL_CHAR.test(seg)) return { ok: false, error: '控制字符' };
+    if (/[. ]$/.test(seg)) return { ok: false, error: '尾点或尾空格' };
+    if (WIN_DEVICE.test(seg)) return { ok: false, error: 'Windows 设备名' };
+    segments.push(seg);
+  }
+  if (!segments.length) return { ok: false, error: '规范化后为空' };
+  return { ok: true, segments, path: segments.join('/') };
+}
+
 /** 归一化一个字符串数组字段（对非字符串项直接丢弃，并记一条警告）。 */
 function strList(v, max, problems, field) {
   const raw = Array.isArray(v) ? v : [];
@@ -291,10 +329,13 @@ export function normalizeManifest(raw, { fallbackId = '', kind = null } = {}) {
     problems.push({ code: 'missing-name', text: '清单没写 name，用 id 代替' });
   }
 
-  const schemaKeys = raw.configSchema && typeof raw.configSchema === 'object' && !Array.isArray(raw.configSchema)
-    ? Object.keys(raw.configSchema)
-    : [];
-  if (schemaKeys.length === 0 && raw.configSchema) {
+  // ⚠️ 2026-11-03（群友报告 BUG-18）：`{}` 是**合法写法**（"这个包没有可配项"），
+  //    旧判据写成 `schemaKeys.length === 0 && raw.configSchema` —— 空对象既 truthy 又零键，
+  //    于是每个只写 `configSchema: {}` 的包都白挨一条"不是对象"的假警。
+  //    现在只有**给了值、且那个值不是纯对象**才报（数组、字符串、数字）。
+  const isPlainObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  const schemaKeys = isPlainObj(raw.configSchema) ? Object.keys(raw.configSchema) : [];
+  if (raw.configSchema && !isPlainObj(raw.configSchema)) {
     problems.push({ code: 'bad-schema', text: 'configSchema 不是对象，已忽略' });
   }
 
@@ -307,10 +348,8 @@ export function normalizeManifest(raw, { fallbackId = '', kind = null } = {}) {
   //    而 T117 / T167 用手搓的 manifest 直接调 `buildApi`，**绕过了归一化** →
   //    生产是坏的、测试是绿的（本项目第 12 条那一类："mock 不模拟 = 测试里不存在"）。
   // ⚠️ 生态真实用法是 `settings`（13 个包全是它），`configSchema` 是 v2 §5 的设想，两者都认。
-  const settings = raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings)
-    ? { ...raw.settings }
-    : {};
-  if (!Object.keys(settings).length && raw.settings) {
+  const settings = isPlainObj(raw.settings) ? { ...raw.settings } : {};
+  if (raw.settings && !isPlainObj(raw.settings)) {
     problems.push({ code: 'bad-settings', text: 'settings 不是对象，已忽略' });
   }
   const tags = normalizeTagList(raw.tags);

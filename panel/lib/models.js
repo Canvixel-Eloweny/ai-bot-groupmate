@@ -629,6 +629,21 @@ export function readPresets(cfg) {
  * 从当前扁平配置里抽出「属于这个大脑」的字段，回写进它的预设。
  * 这样用户在某套大脑里做的任何调整都会被记住，切走再切回来不丢。
  */
+/**
+ * 各家预设只回存**面板那一页真正拥有的**上下文字段。
+ *
+ * `context` 根对象里还有 `budget` / `ambientBatch` 等全局设置；
+ * 旧实现把它们整份抄进每个服务商预设，导致"第一次切换后预设多出两个键"，
+ * 切回来时又会用旧值覆盖全局（2026-11-05 · 外部评估 P2）。
+ * 面板的上下文路由只接受这两个 int，预设也只存这两个。
+ */
+export function ownedContextOf(ctx) {
+  const out = {};
+  if (Number.isFinite(ctx?.recentTurns)) out.recentTurns = ctx.recentTurns;
+  if (Number.isFinite(ctx?.ambientMessages)) out.ambientMessages = ctx.ambientMessages;
+  return out;
+}
+
 function presetFieldsFromConfig(cfg, provider) {
   if (provider === 'local') {
     const size = resolveLocalKey(localKeyOf(cfg?.llm?.model) || cfg?.llm?.localSize);
@@ -637,7 +652,7 @@ function presetFieldsFromConfig(cfg, provider) {
       channel: localChannelOf(cfg?.llm?.localChannel),
       maxTokens: cfg?.llm?.maxTokens,
       temperature: cfg?.llm?.temperature,
-      context: { ...(cfg?.context || {}) },
+      context: ownedContextOf(cfg?.context),
       thinking: normalizeThinking(cfg?.llm?.thinking),
       features: { ...(cfg?.llm?.features || {}) },
     };
@@ -648,7 +663,7 @@ function presetFieldsFromConfig(cfg, provider) {
     fallbackModels: [...(cfg?.llm?.fallbackModels || [])],
     maxTokens: cfg?.llm?.maxTokens,
     temperature: cfg?.llm?.temperature,
-    context: { ...(cfg?.context || {}) },
+    context: ownedContextOf(cfg?.context),
     thinking: normalizeThinking(cfg?.llm?.thinking),
     features: { ...(cfg?.llm?.features || {}) },
   };
@@ -678,7 +693,11 @@ export function stashCurrentPreset(cfg) {
   const provider = providerOf(cfg?.llm?.baseUrl);
   if (!PRESET_KEYS.includes(provider)) return readPresets(cfg);
   const presets = readPresets(cfg);
-  presets[provider] = mergeDeep(presets[provider], presetFieldsFromConfig(cfg, provider));
+  const fields = presetFieldsFromConfig(cfg, provider);
+  presets[provider] = mergeDeep(presets[provider], fields);
+  // 旧版本把整份全局 context 抄进了预设；下一次保存时收敛到"只拥有这两键"。
+  // mergeDeep 会保留旧的多余键，所以这里显式覆盖 context。
+  presets[provider].context = fields.context;
   cfg.llm.presets = presets;
   return presets;
 }

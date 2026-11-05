@@ -39,8 +39,13 @@
  * Q12 裁决①加了 `sleep` / `wake` 两个 —— 它们是"手动让它睡 / 叫它醒"，
  * 与 `abort` / `retry`（动的是"正在生成的那一轮"）不是同一层，
  * 但同样走这一条通道（Q7 的裁决就是"要加新动作就加进闭集合，不另开通道"）。
+ *
+ * B1.1 加了 `friend.resolve`（同意 / 拒绝一条好友申请或群邀请）。它是**第一个带参数**的
+ * 命令，所以下面 `parseControlRecord` 多了一个 `arg` 槽位 —— 参数的**语义**不在这个文件里
+ * （这里只管"带上去了"），住在 `src/friend-requests.js` 的 `parseResolveArg`：
+ * 加好友是永久性动作，判据必须能独立喂反例，不该混在一条通用通道里。
  */
-export const CONTROL_KINDS = ['abort', 'retry', 'sleep', 'wake', 'shutdown'];
+export const CONTROL_KINDS = ['abort', 'retry', 'sleep', 'wake', 'shutdown', 'friend.resolve'];
 
 /**
  * 命令的最大寿命（毫秒）。**经验值，非官方阈值。**
@@ -115,7 +120,11 @@ export function parseControlRecord(raw) {
   const cmd = typeof obj.cmd === 'string' ? obj.cmd : '';
   const at = Number(obj.at);
   const done = obj.done && typeof obj.done === 'object' && !Array.isArray(obj.done) ? obj.done : null;
-  return { id, cmd, at: Number.isFinite(at) ? at : 0, done };
+  // `arg`（B1.1）：命令的参数，**这里只保证它是个有限的字符串**，不解释语义。
+  // 不解释的理由：解释就要求本叶子认识每一种命令，而它认识得越少，
+  // "通道"与"动作"两份判据漂移的机会越小。上限 200 只是防一条把整份配置塞进来的命令。
+  const arg = typeof obj.arg === 'string' ? obj.arg.trim().slice(0, 200) : '';
+  return { id, cmd, at: Number.isFinite(at) ? at : 0, done, arg };
 }
 
 /**
@@ -181,7 +190,7 @@ export function controlDoneOf({ ok = false, msg = '', at = Date.now(), pid = 0 }
  * @param {object} p
  * @param {() => (string|null)} p.readRaw   读命令文件原文（读不到给 null）
  * @param {(rec:object) => void} p.writeRec 原子写回整条记录
- * @param {(cmd:string) => ({ok:boolean,msg:string})} p.exec 执行命令（真实实现只在 index.js 给）
+ * @param {(cmd:string, arg:string) => ({ok:boolean,msg:string})} p.exec 执行命令（真实实现只在 index.js 给）
  * @returns {Promise<{action:'run'|'expired'|'none', id?:string, cmd?:string, ok?:boolean, reason:string, lost?:boolean}>}
  */
 export async function runControlStep({
@@ -219,7 +228,7 @@ export async function runControlStep({
 
   let result = { ok: false, msg: '执行体没有返回结果' };
   try {
-    result = (await exec(rec.cmd)) || result;
+    result = (await exec(rec.cmd, rec.arg)) || result;
   } catch (e) {
     // 执行体抛错要如实记成"执行失败"，**不许**当成"没执行过"——
     // 后者会让这条命令每轮都被重跑一遍（而它每次都会再抛一次）。

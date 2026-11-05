@@ -44,8 +44,31 @@
 /**
  * 认识的权限名。**只有在这里登记过的权限才可能被发放** ——
  * 扩展包写一个不存在的权限名不会报错，只是永远拿不到对应能力（与参考一致）。
+ *
+ * ⚠️ 这张表有一条硬纪律：**登记 = 宿主真的实现了**。
+ *    以前 `storage` 在这张表里、也被写进了给作者看的创作提示词
+ *    （`src/extension-create-prompt.js`），但**宿主没有实现** ⇒
+ *    包按文档写 `api.storage.get(...)` 拿到的是 `undefined`，
+ *    崩出来那句是 `Cannot read properties of undefined`，指向"包写错了"，
+ *    而真正坏的是宿主名实不符。现在 `storage` 有了真实现（`plugin-host.js` 注入），
+ *    而"名字认识但宿主确实不提供"的那几个改放进下面那张表，各自说各自的错。
  */
 export const PERMISSION_NAMES = Object.freeze(['web_fetch', 'send_image', 'storage']);
+
+/**
+ * 生态里常见、但**本宿主不提供**的权限名（第 3 类，与"拼错"分开）。
+ *
+ * 为什么不并进 `PERMISSION_NAMES`：并进去就等于再次名实不符（`has()` 会说是真的）。
+ * 为什么不能当成"不认识的权限"报：社区包写 `cross_send` / `local_service` 时，
+ * "声明了不认识的权限"会把人引向"我拼错了"，而它拼得对，只是这个宿主没做。
+ * 两类的话术必须不同，否则日志在骗人。
+ */
+export const KNOWN_UNSUPPORTED_PERMISSIONS = Object.freeze([
+  'cross_send', // 跨会话代发（宿主只允许当前会话发送）
+  'send_social', // 空间 / 说说类社交接口
+  'send_audio', // 语音消息段
+  'local_service', // 调用本机其它服务（TTS 等）
+]);
 
 /**
  * 该包声明的权限（归一化：去空格、去重、只留认识的）。
@@ -54,20 +77,23 @@ export const PERMISSION_NAMES = Object.freeze(['web_fetch', 'send_image', 'stora
  * 用户写了 `web_fatch`（拼错）时，"权限声明了却没生效"是最难查的一类。
  *
  * @param {string[]} declared 清单里的 `permissions`
- * @returns {{known:string[], unknown:string[]}}
+ * @returns {{known:string[], unknown:string[], unsupported:string[]}}
+ *   `unsupported` = 名字是生态里认识的、但本宿主不提供（话术与"拼错"必须不同）。
  */
 export function splitPermissions(declared) {
   const known = [];
   const unknown = [];
+  const unsupported = [];
   const seen = new Set();
   for (const raw of Array.isArray(declared) ? declared : []) {
     const s = String(raw ?? '').trim();
     if (!s || seen.has(s)) continue;
     seen.add(s);
     if (PERMISSION_NAMES.includes(s)) known.push(s);
+    else if (KNOWN_UNSUPPORTED_PERMISSIONS.includes(s)) unsupported.push(s);
     else unknown.push(s);
   }
-  return { known, unknown };
+  return { known, unknown, unsupported };
 }
 
 /**
@@ -107,11 +133,11 @@ export function settingsOf(manifest, user) {
  *   · `settings` —— 用户在面板上填的那份（`custom.plugins.settings[id]`）；没有则只用清单默认值。
  * @returns {object} `api`
  */
-export function buildApi({ manifest, log, now, registerTool, isActive, fetch, settings } = {}) {
+export function buildApi({ manifest, log, now, registerTool, isActive, fetch, settings, dataDir, storage } = {}) {
   const m = manifest || {};
   const id = String(m.id ?? '');
   const kind = m.kind ?? null;
-  const { known, unknown } = splitPermissions(m.permissions);
+  const { known, unknown, unsupported } = splitPermissions(m.permissions);
   const has = (name) => known.includes(String(name ?? ''));
 
   const tag = `[ext:${id}]`;
@@ -126,6 +152,14 @@ export function buildApi({ manifest, log, now, registerTool, isActive, fetch, se
     const fn = log?.warn;
     if (typeof fn === 'function') {
       fn(`${tag} 声明了不认识的权限：${unknown.join(' / ')}（支持的：${PERMISSION_NAMES.join(' / ')}）`);
+    }
+  }
+  // 认识但宿主不提供的，说另一句话 —— 把"这个宿主没做"报成"你拼错了"是在误导作者。
+  if (unsupported.length) {
+    const fn = log?.warn;
+    if (typeof fn === 'function') {
+      fn(`${tag} 声明了本宿主不提供的权限：${unsupported.join(' / ')}（名字没错，但这个宿主没有对应能力；`
+        + `已知的：${PERMISSION_NAMES.join(' / ')}）`);
     }
   }
 
@@ -167,6 +201,39 @@ export function buildApi({ manifest, log, now, registerTool, isActive, fetch, se
         ? `扩展包「${id}」声明了 web_fetch，但宿主没有提供受策略约束的 fetch —— 这是宿主的接线遗漏，按拒绝处理`
         : `扩展包「${id}」没有声明 web_fetch 权限，不能访问网络（清单 permissions 里加上 "web_fetch" 即可）`
     ));
+  }
+
+  // ── dataDir：这个包自己的可写数据目录（绝对路径）────────────────────────
+  // 没有它，包只能自己猜宿主布局：v2 的包普遍写 `../../src/...` 或 `app/data`，
+  // 搬到便携布局（数据在 `userdata/`）之后那个路径根本不存在 ——
+  // 表现是"收藏明明有几十张，它说没有"，而日志里只有一行 import 失败。
+  // 默认拒绝：宿主没注入就不给（给了 `undefined` 会让人以为是自己拼错）。
+  if (typeof dataDir === 'string' && dataDir) api.dataDir = dataDir;
+
+  // ── storage：按包隔离的小 KV（声明了 `storage` 才给）────────────────────
+  // 与 `fetch` 同一条纪律：**默认拒绝**，而且"没权限"与"宿主没接线"两种错话术分开。
+  // 这一项以前只在 `PERMISSION_NAMES` 里挂着、没有任何实现 ⇒ 包按文档写
+  // `api.storage.get(k)` 直接 `Cannot read properties of undefined`，
+  // 报错指向"包写错了"，真正坏的是宿主名实不符（见上面 PERMISSION_NAMES 的注释）。
+  if (has('storage')) {
+    const wired = (typeof storage === 'object' && storage) ? storage : null;
+    const notWired = () => {
+      throw new Error(`扩展包「${id}」声明了 storage，但宿主没有注入存储实现 —— 这是宿主的接线遗漏，按拒绝处理`);
+    };
+    api.storage = wired
+      ? {
+        get: (k) => wired.get(id, String(k ?? '')),
+        set: (k, v) => wired.set(id, String(k ?? ''), v),
+        delete: (k) => wired.remove(id, String(k ?? '')),
+        remove: (k) => wired.remove(id, String(k ?? '')),
+        keys: () => wired.keys(id),
+      }
+      : { get: notWired, set: notWired, delete: notWired, remove: notWired, keys: notWired };
+  } else {
+    const denied = () => {
+      throw new Error(`扩展包「${id}」没有声明 storage 权限，不能存数据（清单 permissions 里加上 "storage" 即可）`);
+    };
+    api.storage = { get: denied, set: denied, delete: denied, remove: denied, keys: denied };
   }
 
   // ── registerTool：两种型都给 ──────────────────────────────────────────

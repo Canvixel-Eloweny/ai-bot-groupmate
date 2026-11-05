@@ -19,6 +19,7 @@ export function startMockOneBot({
   const wss = new WebSocketServer({ port });
   const sent = [];
   const actions = [];
+  const calls = [];
   // D23-2：合并转发展开要调 `get_forward_msg`。这里把**每一次调用的入参**留下来 ——
   // 断言"用没用 message_id（而不是段里那个 res_id）"只有靠它才看得见。
   const forwardCalls = [];
@@ -73,6 +74,10 @@ export function startMockOneBot({
         return;
       }
       actions.push(msg.action);
+      // 入参也留一份（B1.1）：`actions` 只有名字，而"同意好友"这种永久性动作要断言的是
+      // **带没带对那条申请的 flag、approve 是真还是假** —— 只看名字的话，
+      // 「把参数写死成 approve:true」照样全绿（那正是这条链路最坏的失败方向）。
+      calls.push({ action: msg.action, params: msg.params || {} });
       actionCount += 1;
       // 半断连：连接还在，但这条（以及之后的）动作永远没有回包。
       if (silent.has(msg.action) || (muteAfter > 0 && actionCount > muteAfter)) return;
@@ -113,6 +118,7 @@ export function startMockOneBot({
   return {
     sent,
     actions,
+    calls,
     forwardCalls,
     listening,
     clientReady,

@@ -136,10 +136,16 @@ export function fakeStart(opts = {}, env = {}) {
   }
   let child;
   try {
+    // ⚠️ 只在配置文件**真的存在**时才注入 QQBOT_CONFIG（2026-11-05 · 外部评估 P2）。
+    //    干净检出没有 config.json，旧实现把不存在的路径硬塞给 fake-qq，
+    //    子进程启动即 ENOENT —— 而面板这边只看到 30 秒没就绪。
+    //    不注入时 fake-qq 会按自己的规则回退到 config.example.json。
+    const env = { ...process.env, QQBOT_DATA_DIR: DATA_DIR };
+    if (fs.existsSync(CONFIG_FILE)) env.QQBOT_CONFIG = CONFIG_FILE;
     child = spawn(NODE, args, {
       cwd: PROGRAM_ROOT,
       // 用户根由面板传给脚本：安装版的 data/config 不在 repo 根下。
-      env: { ...process.env, QQBOT_CONFIG: CONFIG_FILE, QQBOT_DATA_DIR: DATA_DIR },
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });

@@ -44,17 +44,34 @@ function stampOf(now) {
  *            text:string, messageId:string, mentionedSelf:boolean, media:number,
  *            timestamp:number, self:boolean}}
  */
-export function incomingMessagePayload({ chatKey, scene, evt, parsed, sender, now } = {}) {
+export function incomingMessagePayload({ chatKey, scene, evt, parsed, sender, now, selfId } = {}) {
+  const text = String(parsed?.text ?? '');
+  const stamp = stampOf(now);
+  // 生态里读的是 `userId` / `chatId` / `now`（v2 的 `createSkillApi` 那套字段名）。
+  // 本宿主的形状用的是 `senderId` / `chatKey` / `timestamp` —— 语义同一个，名字两套。
+  // 这里**同时给两套**（不是改名）：改名会让已按本宿主形状写的包当场失效，
+  // 而"两个名字指向同一个值"只要由这一处产出就不会漂。
+  const key = String(chatKey ?? '');
+  const cid = key.includes(':') ? key.slice(key.indexOf(':') + 1) : '';
+  // `/命令 参数…`：命令型包要的是已经切好的那一段，不该每个包自己再 split 一遍
+  // （各自 split 的版本对空格、全角斜杠、大小写的处理会各自漂移）。
+  const cmd = /^\s*\/([A-Za-z][\w-]*)/.exec(text);
   return {
-    chatKey: String(chatKey ?? ''),
+    chatKey: key,
     scene: String(scene ?? ''),
     senderId: String(evt?.user_id ?? ''),
+    userId: String(evt?.user_id ?? ''),
+    chatId: cid,
+    selfId: String(selfId ?? evt?.self_id ?? ''),
     senderName: String(sender ?? ''),
-    text: String(parsed?.text ?? ''),
+    text,
+    command: cmd ? cmd[1].toLowerCase() : '',
+    args: cmd ? text.slice(cmd[0].length).trim() : '',
     messageId: String(evt?.message_id ?? ''),
     mentionedSelf: Boolean(parsed?.mentionedSelf),
     media: mediaCountOf(parsed),
-    timestamp: stampOf(now),
+    timestamp: stamp,
+    now: stamp,
     self: false,
   };
 }

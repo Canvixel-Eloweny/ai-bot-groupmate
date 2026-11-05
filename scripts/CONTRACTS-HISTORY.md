@@ -1820,3 +1820,186 @@
 //     28 → **26 页**并重签；`/api/state.people` / `gallery` 读盘口保留；
 //     通用 `pluginSettings` 控件进入 RESERVED_UNUSED（等扩展设置页重做时接回）。
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  §180 · 界面裁剪：只隐藏不删除（2026-11-03）
+// ══════════════════════════════════════════════════════════════════════════════
+//  ① 判据：`custom.panelHidden` 必须过 `readCustom` 的白名单投影，且三张表
+//     （domains / subs / cards）一起归一化。漏投影 = 面板保存一次就把用户的
+//     隐藏名单抹掉（holidays 那个坑的同族）；只发一张 = 改了 A 丢了 B。
+//  ② 形状：**隐藏一律用 `hidden` 属性，不许把 GROUPS / subs 滤掉**。
+//     `data-g` / `data-s` 与 `S.gi` / `S.si` 是按**下标**记账的，滤数组会让
+//     "点第三个"变成"选中第二个域" —— 比隐藏本身难得多，也静默得多。
+//  ③ 自锁防护（两处硬闸，不靠提示文案）：「界面裁剪」这张卡是唯一的恢复入口，
+//     显示侧是**豁免于名单**（`c.id === 'trim' || !hs.cards.has(c.id)`），
+//     写侧 `id === 'trim'` 直接拒；最后一个能看见的一级域禁止隐藏
+//     （全隐藏 = 零入口，用户回不来）。
+//     ⚠️ 写成 `c.id !== 'trim'` 不是"另一种拦法"，而是"这张卡永不渲染"——
+//        比自锁更快的自锁。本批真踩过：真渲染里面板维护页只剩三张卡，
+//        裁剪卡自己消失了。§180④ 钉的是豁免形式那个字面量，P5 变异专打这个形状。
+//  ④ 遍历不变量：隐藏项**仍必须**被 `panel-dom` 逐页遍历覆盖。
+//     这正是"只隐藏不删除"的可执行形式 —— 一旦有人改成过滤，隐藏页就从
+//     遍历里消失，"某页白屏"从此没人守。
+//  ⑤ 段数：MIN 156 → **157**（+1，新增 §180）。
+//  ⑥ 刻意**没有**新开一页：新开一页要重签 `panel/ui-identity.json`
+//     （§171② 钉 7 域 / 26 页），那是发版侧动作，不该由一个显示偏好顺带触发。
+//     这一张卡因此挂在已有的「维护 → 面板维护」页上。
+
+// ════════════════════════════════════════════════════════
+//  §50㉒ · 叫醒的暗号摆到台面上（2026-11-04 · BUG-12 方案②）
+// ════════════════════════════════════════════════════════
+//  ① 判据：睡着以后只有两条路能把她叫起来（说到词 / 私聊连发），而页面上
+//     一个字都没提 —— 半夜她不回话时用户唯一的线索是自己的记忆。群友报的正是这个。
+//     本条**不改门禁行为**（B4 已回退，紧急唤醒那套原样留着），只做"把规则说出来"。
+//  ② 形状：**一条规则住一处，六个人都从那一处取**。
+//     `src/sleep.js` 的三个常量 → `wakeRouteMetaOf()` 换算 → `customMeta.sleep` 下发
+//     → `sleepWake` 渲染 → schema 挂卡 + 类型白名单 → demo 夹具 → 快照带此刻生效的词表。
+//  ③ 本段第一条是**反向**判据：面板文案里出现「10 秒内连发 3 条」或内置词表本体就变红。
+//     正向的"页面必须显示这些数字"永远拦不住"把数字抄进文案"—— 抄的那一份照样显示 10/3。
+//     所以这条纪律真正生效的方向是**禁止第二份**，W3 专打它。
+//  ④ demo 夹具那份**必然是抄的**（浏览器侧引不到 src）—— 抄就要逐字盯：
+//     §50㉒⑤ 拿它逐字比 `WAKE_WORDS_DEFAULT` / `WAKE_BURST` / `EMERGENCY_QUIET_MS`。
+//  ⑤ 顺带修掉一处真 bug：面板标签表写的是 `updateAt`，后端下发的是 `updatedAt`
+//     ⇒ 那一行既没有中文名、时间戳也不格式化（"两端对上"缺口的又一例，没有门盯过它）。
+//  ⑥ 段数**不变**（157）：这是既有 §50 里加的第 ㉒ 条子判据，不是新一段。
+//     配 `test/mutations/wake-words-b4b-1104.mjs` W1–W7（7/7 BLOCKED），
+//     并把 `sec-s12e-1005.mjs` N6 的锚点命中数 1 → **2**（新增的 `sleepWake` 是第二个
+//     真消费点，apply 必须配 `/g` 逐处换掉，否则第二处还在读、这一发打不中）。
+
+// ════════════════════════════════════════════════════════
+//  §181 · 好友申请 / 群邀请（B1.1 · 2026-11-04）
+// ════════════════════════════════════════════════════════
+//  ① 缺陷本体是**静默丢弃**：`onebot.js` 把所有非 message 报文都 `emit('notice')`，
+//     而 notice 监听第一句 `if (evt?.post_type !== 'notice') return;`（那句是心跳
+//     过滤需要的，不能拆）⇒ `request` 报文整条被吞。有人加她、她被群邀请，
+//     四层回归全绿、界面一个字都没有。
+//  ② 判据形状：**一条报文穿过四道门**（分流 → 监听 → 落盘 → 面板拍板），
+//     任何一道漏了都不报错。所以 ①/⑤ 两段合起来才是完整的：只钉 emit 不钉监听
+//     就是"改了分发没改消费"，表现与原来一模一样。
+//  ③ 控制通道**扩参数是三处一起**：`CONTROL_KINDS` 加种类 / `parseControlRecord`
+//     加 `arg` 槽 / `runControlStep` 把 `rec.arg` 交给执行体。少任何一处的症状
+//     都是"面板发了、机器人读成空"。（`exec` 的语义只在本文件搬运，不解释 ——
+//     解释就要求通道认识每一种命令。）
+//  ④ 两条红线：全仓 `set_friend_add_request` **恰 1 个调用点**且必须在
+//     `resolveFriendRequest` 里（多一个就是有人加了自动通过，而加好友撤不回来）；
+//     群邀请走 `set_group_add_request`（共用接口时"flag 无效"会被读成"申请过期"，
+//     bug 伪装成正常）。
+//  ⑤ 本轮**自己写出来又自己抓到的一处假绿**：§181⑦ 第一版判 `/控制台/`，
+//     而文案里"都堆在控制台的那一格"这半句也带这三个字 —— R13 把"去哪儿拍板"
+//     整句删掉照样绿（NOT-BLOCKED）。收紧成 `由你在控制台里点` 之后 14/14。
+//     教训：**判据要盯那半句指令本身，不能盯一个可能由别处满足的词。**
+//  ⑥ 文件名只有一份（叶子导出 `FRIEND_REQ_FILE_NAME`，两侧各自 `path.join(DATA_DIR, …)`），
+//     反向钉前端不许出现文件名字面量 —— 界面不该知道盘上叫什么。
+//  ⑦ 段数：MIN 157 → **158**（+1，新增 §181）。配套：
+//     `test/mutations/friend-requests-b11-1104.mjs` R1–R14（14/14 BLOCKED）、
+//     smoke T457–T461（含**真进程端到端**：推真报文 → 机器人自己落盘；
+//     写带 arg 的命令 → 真进程用那条申请的 flag 调 set_friend_add_request → 盘上改成已同意）、
+//     panel-dom 好友申请 4 条（含 flag 绑在按钮上、删文件退回空态）。
+//  ⑧ 顺带把 `test/mock-onebot.js` 加了 `calls`（每个动作的**入参**）—— 只有
+//     `actions`（名字）的话，"把参数写死成 approve:true"照样全绿，而那正是这条路
+//     最坏的失败方向。
+
+// ════════════════════════════════════════════════════════
+//  §182 · 识图与发图（识图 3.0 + 双栏紧凑页 · 2026-11-04）
+// ════════════════════════════════════════════════════════
+//  ① 背景：`88aa1d7` 已把入站图内联成 data URL（1.5MB + 失败回退），但还缺
+//     UA/Referer、失败重试、sha256 去重、第 N 张编号、类型优先提示、
+//     dropped trace、纯图宽限主人豁免与 60s 默认；面板仍是 1168×333 的整宽大卡。
+//  ② 内联上限**只有一份**：`src/images.js` 的 `VISION_INLINE_MAX_BYTES=1_500_000`，
+//     `src/vision.js` 只引用不重写。改成 5MB 会把三张图 base64 后撑到 20MB+。
+//  ③ 纯图宽限的面板写链是**三件套**：schema `bindSys:'bareGraceMs'` +
+//     state-collector 下发扁平 `bareGraceMs` + config-route 接受 `body.bareGraceMs`。
+//     写成 `bind:'trigger.bareGraceMs'` 会落到 `custom.*`，滑块能拖、保存成功、后端不读。
+//  ④ 纯图闸门**本来就在私聊早退之后**，这次只加主人豁免；不要再写第二份场景判据。
+//  ⑤ 自定义识图页必须按左右列调用 `cardsHtml`：界面裁剪的卡级隐藏只在那里发生，
+//     手写卡片会让用户隐藏的卡在这一页"复活"（§180⑤ 的同类缺口）。
+//  ⑥ `vision.css` 必须同时进 `NEXT_ASSETS` 与 `index.html`，否则 §58 双向比对判红
+//     或浏览器 404；全部规则限定 `.vision`，不碰运行总览/人格/工厂。
+//  ⑦ 段数：MIN 158 → **159**（+1，新增 §182）。配套：
+//     `test/check-vision.mjs`（22 条纯函数/headers 断言，已进 `check:features`）、
+//     `test/mutations/vision-3-2026-11-04.mjs`（14/14 BLOCKED）、
+//     smoke T23 加主人/私聊两个方向、panel-dom 新 11 条（三卡 / 1440+1024 两列 /
+//     820+390 单列 / 高度 / 事实条 / 模型页无总开关 / bindSys / 总开关可渲染 / 无溢出）。
+
+// ════════════════════════════════════════════════════════
+//  §183 · P1 封堵（扩展 ZIP 根覆盖 + PEM 正文泄露 · 2026-11-05）
+// ════════════════════════════════════════════════════════
+//  ① 背景：外部评估以 `c4f852c` 为快照复现两项 P1 ——
+//     含 `./plugin.json` 的 ZIP 覆盖安装会把扩展根本身当成包目录；
+//     PEM 规则只匹配 BEGIN 标头，正文可进普通回复、主动发言、日志与 trace。
+//  ② ZIP 侧：`plugin-manifest.js` 新增 `canonicalZipPath`（去 `.` 段、拒 `..`/
+//     绝对路径/盘符/ADS/控制字符/尾点尾空格/设备名）；`planInstall` **只规范化一次**，
+//     用同一份分段算顶层、清单与写入路径，并对 NFC+casefold 别名判重；
+//     `installArchive` 用 `safeInstallTarget` 把目标锁成扩展根的直接子目录，
+//     覆盖确认绑定 id/kind/SHA-256 摘要。保留 `isSafeRelPath` 原语义（`./index.js` 仍合法）。
+//  ③ PEM 侧：`egress.js` 新增 `redactPemBlocks` / `redactCredentialsBeforeShape`；
+//     `brain.parseReply` 与 `proactive.plannedProactiveChunks` 在第一次 split/hardWrap
+//     **之前**擦除 PEM 块与运行时凭据；`maskSecrets`、`maskEgress`、`bridge-io.writeTrace`
+//     （深脱敏）、`dryrun` 共用同一份识别规则。
+//  ④ 替换文本 `[私钥块已脱敏]` 不含 `BEGIN … PRIVATE KEY`，否则 `maskEgress` 的
+//     「打完再自扫」会永远失败；只有标头、没有正文的代码示例保持可读。
+//  ⑤ 段数：MIN 159 → **160**（+1，新增 §183）。配套：
+//     `test/check-ext-archive.mjs`（16 条）、`test/check-pem-mask.mjs`（15 条），
+//     两条都已进 `check:features`；定向变异清单 `test/mutations/audit-p1-2026-11-05.mjs`。
+
+// ════════════════════════════════════════════════════════
+//  §184 · B2 守卫（OneBot 脏帧 / /api/try 鉴权与单飞 / 逐跳重定向 · 2026-11-05）
+// ════════════════════════════════════════════════════════
+//  ① OneBot：`JSON.parse` 之后、读 `payload.echo` 之前要求非 null、非数组、对象；
+//     脏帧进 `badFrames` 计数并限频告警，不更新 `lastFrameAt`（无效流量不算健康）。
+//  ② `/api/try`：从 `READ_ONLY_POST` 移入 `WRITE_ROUTES`（token + Origin + 审计）；
+//     `createTryGate()` 单飞，额满 429 `reason:'busy'`，`finally` 释放；
+//     日志只记字数、错误输出过 `maskSecrets` —— `/api/logs` 不鉴权，不能抄提示词。
+//  ③ 更新下载：`fetchCheckedRedirects()` 手动跟 3xx，**每一跳先 validateUrl 再 fetch**；
+//     跨主机丢 authorization/cookie，错误信息只留 origin+path（签名查询串不进日志）。
+//  ④ 扩展浏览：`createExtFetch` 把 `browseDecision` 包成 `urlGuard` 交给 safeFetch；
+//     safeFetch 在 DNS 之前逐跳调用它，重定向到名单外时目标请求数为 0。
+//  ⑤ 段数：MIN 160 → **161**（+1，新增 §184）。配套：
+//     `test/check-onebot-frames.mjs`、`test/check-try-auth.mjs`、`test/check-fetch-redirect.mjs`
+//     均已进 `check:features`；`test/installer-p3.mjs` 的重定向断言改为"逐跳校验"；
+//     定向变异清单 `test/mutations/audit-b2-2026-11-05.mjs`。
+
+// ════════════════════════════════════════════════════════
+//  §185 · B3 回合管线（图文合并保留媒体 / 按轮用量 · 2026-11-05）
+// ════════════════════════════════════════════════════════
+//  ① 图文合并：`mergePending` 除 `lines` 外保存 `events`（前序事件结构）；
+//     `handleMessage` 用 `expandForwardText` + `flattenMessage` 按时间顺序展开，
+//     再由 `waiting.mergeImageLists` 去重、封顶 3 —— 先图后文不再丢图。
+//     前序图片只进 `parsed.images`（识图），不变成未读/记忆/背景文字。
+//  ② 用量归属：主链路改为回合作用域 `turnUsage = run.usage`，账本与 trace 读同一个
+//     局部值；`src/index.js` 里 **零 `llm.lastUsage`**（并发 ≥2 时不再互相覆盖）。
+//  ③ 段数：MIN 161 → **162**（+1，新增 §185）。配套：
+//     `test/check-wait-images.mjs` 加合并纯函数与接线断言（46 条）、
+//     `test/check-usage-attribution.mjs`（7 条）；定向变异
+//     `test/mutations/audit-b3-2026-11-05.mjs`。
+
+// ════════════════════════════════════════════════════════
+//  §186 · B4 发送许可最终复核（2026-11-05 · 外部评估 P2）
+// ════════════════════════════════════════════════════════
+//  ① `src/send-permission.js`：纯判据，与 `brain.gateReason` 同源；`ownerBypass`
+//     只豁免私聊，空 id 拒绝。
+//  ② `bot.sendMsg` 包装是**唯一**发送边界：主回复 / 垫话 / 主动 / 工具发图 /
+//     跨群 send_to / owner 通知全部经过它；包装里调用同一份判据。
+//  ③ 主回复保留进 hook 前的快路径，并在 `await sendGuard.check()` 返回后、
+//     `bot.sendMsg()` 之前再做一次**同步**最终复核（钩子期间撤权不再照发）。
+//  ④ `deliverFromBot` 透传 `ownerBypass`；只有 `sayToOwner` 显式传 true。
+//  ⑤ 段数：MIN 162 → **163**（+1，新增 §186）。配套：
+//     `test/check-send-recheck.mjs`（12 条，已进 `check:features`）；
+//     定向变异清单 `test/mutations/audit-b4-2026-11-05.mjs`。
+
+// ════════════════════════════════════════════════════════
+//  §187 · B5 首次启动与构建输入（2026-11-05 · 外部评估 P2）
+// ════════════════════════════════════════════════════════
+//  ① 假 QQ：面板只在 `config.json` 存在时注入 `QQBOT_CONFIG`；`fake-qq.mjs` 对
+//     缺失的环境变量路径在离线/沙箱下回退 `config.example.json`，显式 `--config`
+//     缺失仍硬错。干净检出由此可启动。
+//  ② 预设：`models.ownedContextOf` 只取 `recentTurns` / `ambientMessages`；
+//     `stashCurrentPreset` 用它覆盖 context（旧预设的多余键在下一次保存时收敛）；
+//     `server.apiSwitch` 应用预设时也只取这两个键，全局 budget/ambientBatch 留根。
+//  ③ Docker 回退：新增 `docker/napcat/ensure-inputs.sh` 集中检查四样输入
+//     （entrypoint.sh / templates/ / NapCat.Shell.zip / linuxqq.deb），
+//     `bootstrap.sh` 在 build 前调用；两个下载脚本改走可移植 `fsize.sh`
+//     （GNU `stat -c%s` / BSD `stat -f%z`）。
+//  ④ 段数：MIN 163 → **164**（+1，新增 §187）。配套：
+//     `test/check-preset-context.mjs`（5 条）、`test/check-bootstrap-inputs.mjs`（8 条），
+//     都已进 `check:features`；定向变异 `test/mutations/audit-b5-2026-11-05.mjs`。

@@ -63,7 +63,7 @@
     ],
     "interjectChance": 0.15,
     "interjectCooldownMs": 600000,
-    "bareGraceMs": 300000,
+    "bareGraceMs": 60000,
     "interjectActiveWindowMs": 1800000,
     "interjectActiveBoost": 1.5,
     "interjectColdGapMs": 600000,

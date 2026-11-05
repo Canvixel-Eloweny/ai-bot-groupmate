@@ -23,7 +23,7 @@ import { execFileSync } from 'node:child_process';
 import { PROGRAM_ROOT, panelFile } from './user-root.js';
 import { writeJsonAtomic, truncateLinesAtomic } from './atomic-write.js';
 import { shouldClearStale } from './ephemeral.js';
-import { maskSecrets } from './egress.js';
+import { maskSecrets, maskSecretsDeep } from './egress.js';
 import { journalLineOf, JOURNAL_MAX_LINES } from './bridge-lock.js';
 import { isOurBridge, parsePgrepLine, firstPathOf, PGREP, LSOF, PGREP_LIST_FLAGS } from './bridge-proc.js';
 import { sampleOf, recordSample } from './trace-stats.js';
@@ -204,9 +204,12 @@ function writeTrace(rec) {
   // 留档的**唯一接线点**：所有记录（含 skip）都从这里过，但只有带 prompt 的那些
   // 才产生样本 —— 与 prompt-diff 读 trace 的口径（只取带 prompt 的记录）严格一致，
   // 否则两边算出来的中位数会系统性对不上。
-  noteCacheSample(rec);
+  // 2026-11-05：先脱敏再落盘/取样。`raw` 是模型原文，旧实现直接 JSON.stringify，
+  // 完整 PEM 正文会原样进 local-trace.jsonl。
+  const safe = maskSecretsDeep(rec);
+  noteCacheSample(safe);
   try {
-    fs.appendFileSync(TRACE_FILE, JSON.stringify(rec) + '\n');
+    fs.appendFileSync(TRACE_FILE, JSON.stringify(safe) + '\n');
     // 截断也走原子写（B10a · O-ATOMIC）：旧实现是原地 `writeFileSync` 覆盖，
     // 它和同一时刻的 append 撞车时，刚 append 进来的那一行会被整段覆盖掉 ——
     // 表现是"刚刚那条记录不见了"，而且再也查不到。

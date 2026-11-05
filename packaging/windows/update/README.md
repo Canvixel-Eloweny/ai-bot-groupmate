@@ -52,9 +52,11 @@ node packaging/windows/update/make-manifest.mjs \
   --out <目录>/latest.json
 ```
 
-- 生产默认 `installer.url` / `notesUrl` 指向固定 GitHub tag。
+- 生产默认 `installer.url` / `notesUrl` 指向固定 GitHub tag；默认同时写入
+  `gh-proxy.com` 与 `ghproxy.net` 两个镜像（0.1.6+ 客户端会按 `installer.mirrors` 回退）。
 - 本地验收可加 `--installer-url http://127.0.0.1:PORT/... --notes-url http://127.0.0.1:PORT/notes --test`。
-- `--min-version`、`--min-windows`、`--expires-at`、`--mirrors` 可覆盖。
+- `--min-version`、`--min-windows`、`--expires-at` 可覆盖；`--mirrors` 可替换默认镜像。
+- 发布版 `release-check` 会拒绝空 `installer.mirrors`，避免全部客户端直连 GitHub。
 
 ### 发布“当前版本”的清单（0.1.3）
 

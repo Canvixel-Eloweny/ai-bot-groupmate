@@ -34,6 +34,8 @@ import {
 //    「让它睡」当成「停止机器人」。
 export const CONTROL_LABELS = {
   abort: '中止本轮', retry: '重试本轮', sleep: '让它睡', wake: '叫它醒', shutdown: '停止机器人（优雅退出）',
+  // B1.1：同意 / 拒绝一条好友申请或群邀请。参数住在 `arg` 里（语义由 `src/friend-requests.js` 判）。
+  'friend.resolve': '处理一条好友申请',
 };
 
 /** 读命令文件。**读不到/坏 JSON 一律给 null**（面板不该因为一个可选通道崩掉）。 */
@@ -93,9 +95,12 @@ export function clearCommand(id) {
  *    宁可回一句"上一条还没被执行"，让它可解释。
  *
  * @param {string} cmd 命令种类（闭集合，判据在叶子）
+ * @param {{now?:number, arg?:string}} o `arg` 只有 `friend.resolve` 用得到（B1.1）：
+ *        这里**只搬运不解释** —— 参数对不对由机器人那一侧的 `parseResolveArg` 判，
+ *        面板判一次、机器人再判一次的话，两份判据早晚漂移（同 `controlDecision` 的理由）。
  * @returns {{ok:boolean, id?:string, msg:string}}
  */
-export function issueCommand(cmd, { now = Date.now() } = {}) {
+export function issueCommand(cmd, { now = Date.now(), arg = '' } = {}) {
   if (!CONTROL_KINDS.includes(cmd)) {
     return { ok: false, msg: `不认识的命令「${cmd}」—— 面板只会发 ${CONTROL_KINDS.map((k) => CONTROL_LABELS[k] || k).join(' / ')}` };
   }
@@ -110,7 +115,7 @@ export function issueCommand(cmd, { now = Date.now() } = {}) {
   }
   const id = newControlId({ now });
   try {
-    writeJsonAtomic(CONTROL_FILE, { id, cmd, at: now, done: null });
+    writeJsonAtomic(CONTROL_FILE, { id, cmd, at: now, done: null, arg: String(arg ?? '') });
   } catch (e) {
     return { ok: false, msg: `写不了命令文件：${e.message}` };
   }

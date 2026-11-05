@@ -72,8 +72,16 @@ ok('有可用的配置来源（config.json / config.example.json）', cfgOk);
 const started = fakeStart({ offline: true, sandbox: true }, { bridgeRunning: false });
 ok('启动被接受', started.ok === true);
 try {
-  await waitFor(() => texts().includes('开始说话吧'), 30000, '会话连上并进入可打字状态');
+  // 子进程提前退出时不要再干等 30 秒：就绪或退出，二者先到先算。
+  await waitFor(
+    () => texts().includes('开始说话吧') || fakeSnapshot(0).running === false,
+    30000,
+    '会话连上并进入可打字状态（或提前退出）',
+  );
   ok('启动日志里有"开始说话吧"', texts().includes('开始说话吧'));
+  if (!texts().includes('开始说话吧')) {
+    console.error('假 QQ 没能就绪，最后几行输出：\n' + texts().slice(-8).join('\n'));
+  }
   ok('会话标记为在跑', fakeSnapshot(0).running === true);
   const empty = fakeSend('   ');
   ok('空的一句不发（真会话）', empty.ok === false);

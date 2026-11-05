@@ -59,11 +59,11 @@ export default [
     id: 'M3',
     note: '主回复那一处忘了声明来源 —— 主回复的账会整族归进"未标注"',
     file: 'src/index.js',
-    anchor: /^    if \(llm\.lastUsage\) recordUsage\(\{ \.\.\.llm\.lastUsage, chat: session\.key, source: USAGE_SOURCES\.agent \}\);$/m,
+    anchor: /^    if \(turnUsage\) recordUsage\(\{ \.\.\.turnUsage, chat: session\.key, source: USAGE_SOURCES\.agent \}\);$/m,
     count: 1,
     apply: (s) => s.replace(
-      '    if (llm.lastUsage) recordUsage({ ...llm.lastUsage, chat: session.key, source: USAGE_SOURCES.agent });',
-      '    if (llm.lastUsage) recordUsage({ ...llm.lastUsage, chat: session.key }); // 变异：漏了来源'
+      '    if (turnUsage) recordUsage({ ...turnUsage, chat: session.key, source: USAGE_SOURCES.agent });',
+      '    if (turnUsage) recordUsage({ ...turnUsage, chat: session.key }); // 变异：漏了来源'
     ),
     layer: 'check-wb',
     expect: 'BLOCKED',
@@ -98,12 +98,12 @@ export default [
     id: 'M6',
     note: '新开第四个记账调用点（一条没登记的、会花钱的旁路）',
     file: 'src/index.js',
-    anchor: /^    if \(llm\.lastUsage\) recordUsage\(\{ \.\.\.llm\.lastUsage, chat: session\.key, source: USAGE_SOURCES\.agent \}\);$/m,
+    anchor: /^    if \(turnUsage\) recordUsage\(\{ \.\.\.turnUsage, chat: session\.key, source: USAGE_SOURCES\.agent \}\);$/m,
     count: 1,
     apply: (s) => s.replace(
-      '    if (llm.lastUsage) recordUsage({ ...llm.lastUsage, chat: session.key, source: USAGE_SOURCES.agent });',
-      '    if (llm.lastUsage) recordUsage({ ...llm.lastUsage, chat: session.key, source: USAGE_SOURCES.agent });\n'
-        + '    recordUsage({ ...llm.lastUsage, chat: session.key, source: USAGE_SOURCES.agent }); // 变异：旁路多记一笔'
+      '    if (turnUsage) recordUsage({ ...turnUsage, chat: session.key, source: USAGE_SOURCES.agent });',
+      '    if (turnUsage) recordUsage({ ...turnUsage, chat: session.key, source: USAGE_SOURCES.agent });\n'
+        + '    recordUsage({ ...turnUsage, chat: session.key, source: USAGE_SOURCES.agent }); // 变异：旁路多记一笔'
     ),
     layer: 'check-wb',
     expect: 'BLOCKED',

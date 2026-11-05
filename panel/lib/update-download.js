@@ -33,6 +33,67 @@ function abortError(reason, fallback) {
   return err;
 }
 
+/** 错误信息里只留 origin + path：签名 URL 的查询参数不能进日志。 */
+function displayUrl(raw) {
+  try {
+    const u = new URL(String(raw));
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return String(raw);
+  }
+}
+
+/**
+ * 手动跟重定向：**每一跳先过 validateUrl，再发请求**（2026-11-05 · 外部评估 P2）。
+ *
+ * `redirect:'follow'` 只会把最终 URL 交回来 —— 中间那几跳已经发出去了，
+ * 白名单只能事后拒绝，攻击者要的"请求到达禁止目标"已经发生。这里把
+ * `Location` 解析、白名单、协议检查全放在下一次 `fetch` 之前。
+ *
+ * @returns {{res:Response, finalUrl:string}}
+ */
+export async function fetchCheckedRedirects(rawUrl, {
+  fetchImpl = fetch,
+  signal,
+  headers = null,
+  validateUrl,
+  maxRedirects = 5,
+} = {}) {
+  let current = String(rawUrl);
+  let currentHeaders = headers && typeof headers === 'object' ? { ...headers } : {};
+  const seen = new Set();
+  for (let hop = 0; hop <= maxRedirects; hop += 1) {
+    if (seen.has(current)) throw new Error(`重定向循环：${displayUrl(current)}`);
+    seen.add(current);
+    if (validateUrl) {
+      const v = validateUrl(current);
+      if (!v.ok) throw new Error(v.reason || `URL 不在白名单：${displayUrl(current)}`);
+    }
+    const res = await fetchImpl(current, { signal, headers: currentHeaders, redirect: 'manual' });
+    const status = Number(res.status) || 0;
+    if (status >= 300 && status < 400) {
+      const loc = res.headers && typeof res.headers.get === 'function' ? res.headers.get('location') : '';
+      // 旧响应体必须关掉，否则连接会被一直占着。
+      try { await res.body?.cancel?.(); } catch { /* ignore */ }
+      if (!loc) throw new Error(`重定向缺少 Location（HTTP ${status}）`);
+      let next;
+      try { next = new URL(String(loc), current); } catch { throw new Error('重定向 Location 解析失败'); }
+      if (next.protocol !== 'https:' && next.protocol !== 'http:') {
+        throw new Error(`重定向到不允许的协议：${next.protocol}`);
+      }
+      if (next.host !== new URL(current).host) {
+        // 跨主机不传播敏感头；Range 不是凭据，保留以支持断点续传。
+        delete currentHeaders.authorization;
+        delete currentHeaders.cookie;
+      }
+      current = next.href;
+      continue;
+    }
+    return { res, finalUrl: current };
+  }
+  throw new Error(`重定向超过 ${maxRedirects} 跳`);
+}
+
 /**
  * 取一个小文件（清单/签名）并施加硬上限。
  * 跟随重定向，但最终 URL 必须通过调用方的 validateUrl。
@@ -43,6 +104,7 @@ export async function fetchCapped(url, {
   signal,
   validateUrl,
   userAgent = 'estrella-bot-updater',
+  fetchImpl = fetch,
 } = {}) {
   if (!Number.isInteger(maxBytes) || maxBytes <= 0) throw new Error('fetchCapped 需要正整数 maxBytes');
   const ctl = new AbortController();
@@ -53,16 +115,13 @@ export async function fetchCapped(url, {
     else signal.addEventListener('abort', onAbort, { once: true });
   }
   try {
-    const res = await fetch(url, {
+    const { res, finalUrl } = await fetchCheckedRedirects(url, {
+      fetchImpl,
       signal: ctl.signal,
-      redirect: 'follow',
       headers: { 'user-agent': userAgent },
+      validateUrl,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    if (validateUrl) {
-      const v = validateUrl(res.url || url);
-      if (!v.ok) throw new Error(v.reason);
-    }
     const len = Number(res.headers.get('content-length') || 0);
     if (len > maxBytes) throw new Error(`响应超过上限 ${maxBytes} 字节`);
     const chunks = [];
@@ -75,7 +134,7 @@ export async function fetchCapped(url, {
       }
       chunks.push(chunk);
     }
-    return { buffer: Buffer.concat(chunks), url: res.url || url, bytes: total };
+    return { buffer: Buffer.concat(chunks), url: finalUrl, bytes: total };
   } finally {
     clearTimeout(timer);
     if (signal) signal.removeEventListener('abort', onAbort);
@@ -110,6 +169,7 @@ export async function downloadWithProgress({
   signal,
   onProgress,
   validateUrl,
+  fetchImpl = fetch,
 }) {
   if (!Array.isArray(urls) || urls.length === 0) throw new Error('没有可用的下载地址');
   fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -168,17 +228,15 @@ export async function downloadWithProgress({
       try {
         const headers = { 'user-agent': 'estrella-bot-updater' };
         if (startAt > 0) headers.Range = `bytes=${startAt}-`;
-        const res = await fetch(url, { signal: ctl.signal, headers });
+        const { res, finalUrl } = await fetchCheckedRedirects(url, {
+          fetchImpl,
+          signal: ctl.signal,
+          headers,
+          validateUrl,
+        });
         if (!res.ok) {
-          errors.push(`${url} → HTTP ${res.status}`);
+          errors.push(`${displayUrl(url)} → HTTP ${res.status}`);
           break;
-        }
-        if (validateUrl) {
-          const v = validateUrl(res.url || url);
-          if (!v.ok) {
-            errors.push(`${url} → ${v.reason}`);
-            break;
-          }
         }
 
         let start = 0;
@@ -187,7 +245,7 @@ export async function downloadWithProgress({
           const m = /^bytes (\d+)-(\d+)\/(\d+|\*)$/.exec(cr);
           if (!m || Number(m[1]) !== startAt) {
             dropPart();
-            errors.push(`${url} → Content-Range 与续传位置不符`);
+            errors.push(`${displayUrl(url)} → Content-Range 与续传位置不符`);
             break;
           }
           start = startAt;
@@ -199,7 +257,7 @@ export async function downloadWithProgress({
         const totalHeader = Number(res.headers.get('content-length') || 0);
         const total = start + totalHeader;
         if (expectedSize && totalHeader > 0 && total !== expectedSize) {
-          errors.push(`${url} → 大小不符（${total} ≠ ${expectedSize}）`);
+          errors.push(`${displayUrl(url)} → 大小不符（${total} ≠ ${expectedSize}）`);
           break;
         }
 
@@ -234,24 +292,24 @@ export async function downloadWithProgress({
 
         if (signal?.aborted) throw abortError(signal.reason, '下载已取消');
         if (expectedSize && got !== expectedSize) {
-          errors.push(`${url} → 不完整（${got}/${expectedSize}）`);
+          errors.push(`${displayUrl(url)} → 不完整（${got}/${expectedSize}）`);
           break;
         }
         const sha256 = await sha256File(part);
         if (expectedSha256 && sha256 !== expectedSha256.toLowerCase()) {
           if (round === 0) continue; // 残段可能被改过/来自别的版本：丢掉重下一次
-          errors.push(`${url} → SHA-256 校验不过`);
+          errors.push(`${displayUrl(url)} → SHA-256 校验不过`);
           break;
         }
         fs.renameSync(part, dest);
         try { fs.rmSync(partMeta, { force: true }); } catch { /* ignore */ }
-        return { url, bytes: got, sha256 };
+        return { url: finalUrl, bytes: got, sha256 };
       } catch (e) {
         if (signal?.aborted || e?.code === 'ABORTED') {
           dropPart();
           throw abortError(signal?.reason, '下载已取消');
         }
-        errors.push(`${url} → ${e && e.message ? e.message : e}`);
+        errors.push(`${displayUrl(url)} → ${e && e.message ? e.message : e}`);
         break; // 网络层错误：换下一个源
       } finally {
         clearTimeout(idle);

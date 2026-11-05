@@ -78,6 +78,13 @@ export const DEMO = {
   },
   customMeta: {
     similarThreshold: 0.5,
+    // 叫醒那两条路的参数（2026-11-04 · BUG-12 方案②）。演示态是浏览器侧的固定夹具，
+    // 引不到 `src/sleep.js`，所以这一份必然是抄的 —— 抄的就要有门盯着：
+    // §50 拿它逐字比 `WAKE_WORDS_DEFAULT` / `WAKE_BURST` / `EMERGENCY_QUIET_MS`，漂了就红。
+    sleep: {
+      words: ['起床', '醒醒', '醒一醒', '别睡了', '起来了'],
+      burstWindowSec: 10, burstCount: 3, emergencyQuietMin: 10,
+    },
     replyLengths: {
       short: { label: '短', hint: '每条尽量 15 字以内，像随手打的' },
       normal: { label: '中等', hint: '每条 20–40 字' },
@@ -85,6 +92,32 @@ export const DEMO = {
     },
     fieldMeta: { numbers: { minIntervalMs: 1500, minIntervalMsSec: 1.5, cooldownSec: 0, proactiveIntervalMin: 90, quietFrom: 23, quietTo: 8, antiFloodChunks: 2 },
       bounds: { cooldownSec: [0, 600], proactiveIntervalMin: [5, 1440], quietFrom: [0, 23], quietTo: [0, 23] } },
+    // 与 `src/memory-record.js` 的三张表同形（§68 逐条比对，抄漏一条就红）。
+    // 演示态也要有按钮表：页面从这张表取按钮，取不到就一个按钮都不画。
+    memoryReview: {
+      statusOrder: ['candidate', 'confirmed', 'rejected', 'archived', 'superseded'],
+      statusLabels: {
+        candidate: '候选 · 还没复证',
+        confirmed: '已确认 · 会进提示词',
+        rejected: '已否掉 · 不再注入',
+        archived: '已收起 · 不注入也不删',
+        superseded: '已被后来的观察推翻 · 不再注入',
+      },
+      actions: {
+        confirm: '认可：进提示词',
+        reject: '否掉：永不注入（只有人能让它回来）',
+        archive: '收起：不注入、也不删，随时可收回',
+        restore: '收回人工判定：回到按独立证据推出的自然状态',
+        delete: '删除：从文件里移除，不可撤销',
+      },
+      actionsFor: {
+        candidate: ['confirm', 'reject', 'delete'],
+        confirmed: ['archive', 'reject', 'delete'],
+        rejected: ['restore', 'confirm', 'delete'],
+        archived: ['confirm', 'restore', 'delete'],
+        superseded: ['restore', 'delete'],
+      },
+    },
     playRules: [
       { id: 'inCharacter', text: '始终以角色身份说话和行动，不跳出角色。' },
       { id: 'noAuto', text: '不替用户决定、行动、感受或说话。' },
@@ -147,6 +180,15 @@ export const DEMO = {
       { t: Date.now(), model: 'GLM-4.6V', origin: 'cloud', free: true, think: 'on', level: 'low', p: 843, c: 62, r: 0, cost: 0, source: 'agent' },
     ],
     rates: {},
+  },
+  // 待处理的好友申请 / 群邀请（B1.1 · 演示态；真值来自机器人的 data 文件）。
+  friendRequests: {
+    list: [
+      { flag: 'd1', kind: 'friend', userId: '100000001', groupId: '', comment: '我是小王呀', at: Date.now(), status: 'pending', result: '' },
+      { flag: 'd2', kind: 'group', userId: '100000002', groupId: '100000', comment: '拉你进群聊剧本', at: Date.now() - 86400000, status: 'pending', result: '' },
+      { flag: 'd3', kind: 'friend', userId: '100000003', groupId: '', comment: '', at: Date.now() - 172800000, status: 'denied', result: '已拒绝', handledAt: Date.now() - 172000000 },
+    ],
+    pending: 2, unreadable: false, ever: true,
   },
   memoryRecords: [
     { id: 'rm1', kind: 'person', kindShort: '群友画像', text: '（演示）小鱼喜欢追剧，最近在补老剧', status: 'confirmed', samples: 6, chatKey: 'group:100000', userId: '10001', firstSeenAt: Date.now(), lastSeenAt: Date.now() },

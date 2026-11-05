@@ -107,11 +107,11 @@ export default [
     count: 1,
     apply: (s) => {
       const from = s.indexOf('    // ── 第一道：**范围**（browseLock，D15）');
-      const to = s.indexOf('    const r = await safeFetch(url);');
+      const to = s.indexOf('    const urlGuard = (u) => {');
       if (from < 0 || to < 0 || to < from) return s; // 锚点不在 → 命中数校验兜住
       const gate = s.slice(from, to);
       const rest = s.slice(0, from) + s.slice(to);
-      const at = rest.indexOf('    const r = await safeFetch(url);');
+      const at = rest.indexOf('    const r = await safeFetchImpl(url, { urlGuard });');
       const afterCall = rest.indexOf('\n', at) + 1;
       return rest.slice(0, afterCall) + gate + rest.slice(afterCall);
     },

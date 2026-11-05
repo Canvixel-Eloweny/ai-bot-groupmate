@@ -363,10 +363,14 @@ export function sendOnce(url, {
   timeoutMs = NET_POLICY.timeoutMs,
   totalMs = timeoutMs * 3,
   maxBytes = NET_POLICY.maxBytes,
+  headers = null,
 } = {}) {
   return new Promise((resolve) => {
     const mod = url.protocol === 'https:' ? https : http;
     const options = { method: 'GET' };
+    /* 图片下载要带固定的 UA / Referer / Accept（QQ 图床对裸 Node UA 常回 403）。
+       只接受一份显式传入的静态头：不接受调用方拿它带凭据去任意主机。 */
+    if (headers && typeof headers === 'object') options.headers = { ...headers };
     if (pinned) {
       options.lookup = (hostname, opts, cb) => {
         if (opts && opts.all) cb(null, [{ address: pinned.address, family: pinned.family }]);
@@ -438,6 +442,9 @@ export async function safeFetch(rawUrl, opts = {}) {
   const policy = { ...NET_POLICY, ...(opts.policy || {}) };
   const resolve = opts.resolve || defaultResolve;
   const request = opts.request || sendOnce;
+  /* 只透传调用方显式给的那一份静态头（目前只有图片下载的 UA/Referer/Accept）。
+     每一跳重新传给 `request`：带签名的图床经常 302 到另一个 CDN 主机。 */
+  const headers = opts.headers && typeof opts.headers === 'object' ? { ...opts.headers } : null;
 
   let cur = parseTarget(rawUrl);
   if (!cur.ok) return cur;
@@ -445,6 +452,21 @@ export async function safeFetch(rawUrl, opts = {}) {
   const trail = [];
   for (let hop = 0; ; hop += 1) {
     const host = bareHost(cur.url.hostname);
+
+    // ⓪ 可选的**逐跳范围策略**（2026-11-05 · 外部评估 P2）：扩展浏览锁定
+    //    以前只在首跳调用方里判一次，重定向到名单外就绕过去了。放在 DNS 之前 ——
+    //    被拒的目标连解析都不发生。
+    if (typeof opts.urlGuard === 'function') {
+      let g;
+      try {
+        g = opts.urlGuard(cur.url.href);
+      } catch (e) {
+        return { ok: false, reason: 'blocked-by-policy', detail: `出站策略判定失败：${e?.message ?? e}` };
+      }
+      if (g && g.ok === false) {
+        return { ok: false, reason: 'blocked-by-policy', detail: g.reason || '出站策略拒绝' };
+      }
+    }
 
     // ⓵ URL 里直接写的**字面 IP** 先就地判一次 —— 这一道**不依赖 DNS**，
     //    所以"URL 里直接写 169.254.169.254"这种最省事的攻击连解析都到不了。
@@ -471,7 +493,12 @@ export async function safeFetch(rawUrl, opts = {}) {
     const pinned = { address: first.address, family: first.family };
     trail.push({ host, address: pinned.address });
 
-    const res = await request(cur.url, { pinned, timeoutMs: policy.timeoutMs, maxBytes: policy.maxBytes });
+    const res = await request(cur.url, {
+      pinned,
+      timeoutMs: policy.timeoutMs,
+      maxBytes: policy.maxBytes,
+      ...(headers ? { headers } : {}),
+    });
     if (!res.ok) return res;
 
     const status = res.status;

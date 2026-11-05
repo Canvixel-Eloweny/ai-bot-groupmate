@@ -115,50 +115,21 @@ ensure_image() {
   return 1
 }
 
-# 本地构建要先把两个大文件放到宿主机：NapCat 本体 + Linux QQ 安装包。
-# 不在镜像里联网下的原因：GitHub 单线程 30-50 KB/s 且频繁断流，
-# 腾讯 CDN 更是经常直接 403。先下好再 COPY，快且可复现。
+# 本地构建要先把**四样输入**放到宿主机：entrypoint.sh / templates/ /
+# NapCat 本体 / Linux QQ 安装包。不在镜像里联网下的原因：GitHub 单线程
+# 30-50 KB/s 且频繁断流，腾讯 CDN 更是经常直接 403。先下好再 COPY，快且可复现。
+# 集中检查与补齐在 docker/napcat/ensure-inputs.sh（2026-11-05 · 外部评估 P2）：
+# 旧实现只查两个大文件，干净检出的回退构建会先 COPY 失败。
 ensure_build_inputs() {
   local dir="$ROOT/docker/napcat"
-  local missing=0
-
-  if [ ! -f "$dir/NapCat.Shell.zip" ]; then
-    echo "  · 缺少 NapCat 本体，尝试并行分块下载…"
-    ( cd "$dir" && ./fetch-napcat.sh ) || {
-      bad "NapCat 本体没拿到"
-      echo "    手动处理：cd $dir && ./fetch-napcat.sh"
-      missing=1
-    }
-  else
-    ok "NapCat 本体已就绪"
+  if ( cd "$dir" && bash ./ensure-inputs.sh ); then
+    ok "源码回退构建输入齐全"
+    return 0
   fi
-
-  if [ ! -f "$dir/linuxqq.deb" ]; then
-    warn "缺少 Linux QQ 安装包（腾讯 CDN 常对本机返回 403）"
-    echo "  · 先自动试一次并行下载…"
-    if ( cd "$dir" && ./fetch-linuxqq.sh ); then
-      ok "Linux QQ 安装包已就绪"
-    else
-      echo
-      echo "    自动下载失败。请用浏览器手动下载（开着加速器一般能成功）："
-      local qqurl
-      qqurl="$(curl -fsSL --max-time 20 \
-        https://cdn-go.cn/qq-web/im.qq.com_new/latest/rainbow/linuxConfig.js 2>/dev/null \
-        | grep -oE 'https://[^"]+arm64_01\.deb' | head -1)"
-      echo "      ${qqurl:-https://im.qq.com/linuxqq/ （进页面点下载）}"
-      echo
-      echo "    下载后把文件放到（名字必须叫 linuxqq.deb）："
-      echo "      $dir/linuxqq.deb"
-      echo
-      echo "    然后重跑本脚本。也可以试试关掉加速器再让我重试 ——"
-      echo "    腾讯 CDN 可能对境外 IP 返回 403。"
-      missing=1
-    fi
-  else
-    ok "Linux QQ 安装包已就绪"
-  fi
-
-  return $missing
+  warn "源码回退构建的输入没齐（缺项见上）—— 已停止，不会执行 build"
+  echo "    手动处理：cd $dir && bash ./ensure-inputs.sh"
+  echo "    Linux QQ 装不上时可参考 README 用浏览器手动下载到 $dir/linuxqq.deb"
+  return 1
 }
 
 bold "3/5 准备镜像"

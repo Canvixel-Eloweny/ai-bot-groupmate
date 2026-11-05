@@ -144,6 +144,37 @@ export const USAGE_LIMITS = Object.freeze({
   trimAt: 0.85,
 });
 
+/**
+ * **生效**上限 = 用户显式填过的那几个覆盖 `USAGE_LIMITS`（2026-11-03）。
+ *
+ * 为什么默认值只留在上面那个常量里、这里不再写一份数字：`USAGE_LIMITS` 是
+ * 面板与机器人共用的**唯一**默认值住处（§D8 也钉着它必须仍被导出）。
+ * 两处各存一份，改了常量忘了改默认（或反之）就只剩一个"界面上说 60 万、
+ * 实际按另一个数裁"的谜。
+ *
+ * 坏值一律回落默认（不 clamp 到边界）：填了 `0` / `-5` / `"abc"` 的人想要的是
+ * "取消这个上限"，而那不该由一个数字输入框误触 —— 回落并让面板显示生效值，
+ * 比悄悄按一个奇怪的值裁更诚实。
+ *
+ * @param {object} custom 归一化后的 `cfg.custom`（`custom.usage` 那一格）
+ */
+export function usageLimitsOf(custom) {
+  const u = (custom && typeof custom.usage === 'object' && custom.usage) || {};
+  const posInt = (v, d) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : d;
+  };
+  const ratio = (v, d) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 && n <= 1 ? n : d;
+  };
+  return {
+    dailyTokens: posInt(u.dailyTokens, USAGE_LIMITS.dailyTokens),
+    perChatTokens: posInt(u.perChatTokens, USAGE_LIMITS.perChatTokens),
+    trimAt: ratio(u.trimAt, USAGE_LIMITS.trimAt),
+  };
+}
+
 /** 一条账的 token 合计。只认 `p` / `c` 两个字段 —— 思考 token 已含在 `c` 里，不许再加一遍。 */
 export function tokenTotalOf(rec) {
   return (Number(rec?.p) || 0) + (Number(rec?.c) || 0);

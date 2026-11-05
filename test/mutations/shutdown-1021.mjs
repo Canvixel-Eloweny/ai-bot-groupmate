@@ -17,9 +17,12 @@ export default [
     id: 'S1',
     note: 'shutdown 退出控制命令闭集合 —— §123① 必须变红（面板停止回到硬杀）',
     file: CC,
-    anchor: /, 'shutdown'\]/,
+    // ⚠️ 锚点重锚（2026-11-04 · B1.1）：`friend.resolve` 加进闭集合后 `shutdown` 不再是
+    //    数组最后一项，旧锚点 `, 'shutdown']` 实物命中 0 次。判据没变（摘掉这一格仍然
+    //    必须让 §123① 变红），只是**位置跟着实现搬** —— 去掉尾部 `]`、apply 也不再补它。
+    anchor: /, 'shutdown'/,
     count: 1,
-    apply: (s) => s.replace(", 'shutdown']", ']'),
+    apply: (s) => s.replace(", 'shutdown'", ''),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

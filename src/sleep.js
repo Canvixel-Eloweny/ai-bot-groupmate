@@ -122,6 +122,26 @@ function normalizeWakeWords(raw) {
 }
 
 /**
+ * 叫醒那两条路的**对外形状**（2026-11-04 · BUG-12 方案②：把暗号摆到台面上）。
+ *
+ * 它存在的理由只有一个：词表与数字不许在面板抄第二份。
+ * `WAKE_WORDS_DEFAULT` / `WAKE_BURST` / `EMERGENCY_QUIET_MS` 是判据的本体，而页面要
+ * 说"10 秒内连发 3 条""临时醒 10 分钟""词是这几个" —— 那些字面量一旦写死在
+ * `panel/next/app.js` 里，改常量的人不会想起去改文案，于是页面开始撒谎。
+ *
+ * ⚠️ `words` 取的是**归一化之后**那份（`readSleep` 已经做完回落）。这里不再判空、
+ *    不再回落："回落规则有两份"是比抄数字更早的开始撒谎的方式。
+ */
+export function wakeRouteMetaOf(sl = {}) {
+  return {
+    words: Array.isArray(sl?.wakeWords) ? sl.wakeWords : [],
+    burstWindowSec: WAKE_BURST.windowMs / 1000,
+    burstCount: WAKE_BURST.count,
+    emergencyQuietMin: EMERGENCY_QUIET_MS / 60000,
+  };
+}
+
+/**
  * 正文里命中了哪一个叫醒词（没命中返回空串）。
  *
  * 用 `includes` 而不是整句相等：真人是「在吗？起床了没」这样喊的，不是只发两个字。

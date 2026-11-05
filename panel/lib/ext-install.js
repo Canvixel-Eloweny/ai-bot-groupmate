@@ -15,10 +15,11 @@
  *    才会真实发生的情况，能在测试里被确定性地制造出来，从而真的验证回滚。
  *    这是"判据层 IO 全入参"那条纪律在**多步落盘**上的形态。
  */
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  isSafeRelPath, isValidPluginId, normalizeManifest, stripBom, MANIFEST_FILES,
+  canonicalZipPath, isSafeRelPath, isValidPluginId, normalizeManifest, stripBom, MANIFEST_FILES,
 } from '../../src/plugin-manifest.js';
 import { tmpPathOf } from '../../src/atomic-write.js';
 import { readZip } from './zip.js';
@@ -55,14 +56,28 @@ export function planInstall(entries, { roots = [], expectedKind = null } = {}) {
 
   // ① 路径安全：整包任一条不过就**整包拒绝** —— 半个包比拒绝更坏
   //    （"装上了但少几个文件"没有任何地方看得出来）。
-  //    判据复用 `src/plugin-manifest.js` 的 `isSafeRelPath`（唯一实现，禁自写 `..` 判据）。
+  //    先过 `isSafeRelPath`（唯一基础判据），再用 `canonicalZipPath` 做 ZIP 专用规范化。
+  //    ⚠️ 规范化**只做一次**：顶层、清单、写入路径全部用同一份结果。分开算的话，
+  //    `p/plugin.json` 与 `p/./plugin.json` 会出现"预检是 A、落盘是 B"。
+  const canonEntries = [];
+  const seen = new Map();
   for (const e of files0) {
     if (e.link) return { ok: false, error: `「${e.name}」是符号链接 —— 扩展包里不允许符号链接` };
     if (!isSafeRelPath(e.name)) return { ok: false, error: `「${e.name}」不是安全的相对路径` };
+    const canon = canonicalZipPath(e.name);
+    if (!canon.ok) return { ok: false, error: `「${e.name}」不是安全的相对路径（${canon.error}）` };
+    // NFC + casefold 判重：macOS/Windows 文件系统会把大小写或 Unicode 别名折叠成同一个路径。
+    const key = canon.segments.map((s) => s.normalize('NFC').toLowerCase()).join('/');
+    const prev = seen.get(key);
+    if (prev) {
+      return { ok: false, error: `「${e.name}」与「${prev}」规范化后是同一个路径 —— 同名条目会让预检与落盘不一致` };
+    }
+    seen.set(key, e.name);
+    canonEntries.push({ entry: e, segments: canon.segments });
   }
 
   // ② 顶层形状：恰好一个包根目录。
-  const tops = [...new Set(files0.map((e) => e.name.split(/[\\/]/)[0]))];
+  const tops = [...new Set(canonEntries.map((x) => x.segments[0]))];
   if (tops.length > 1) {
     return { ok: false, error: `这个 ZIP 里有多个顶层目录（${tops.slice(0, 4).join('、')}）—— 请把单个扩展包目录打成一个 ZIP` };
   }
@@ -71,15 +86,17 @@ export function planInstall(entries, { roots = [], expectedKind = null } = {}) {
   //    （`复读拦截` / `定时文案推送`…），英文那个是清单里的 `id`。
   //    第一版拿 `isValidPluginId(pkgDir)` 当判据 → **会把所有真实扩展包拒掉**。
   //    目录名只需"安全的相对路径"这一点（上面已逐条校验过）。
-  if (!pkgDir || pkgDir.length > 80) {
-    return { ok: false, error: `顶层目录名「${pkgDir}」不可用（空或过长）` };
+  //    ⚠️ `.` / `..` 必须单独拒：`./plugin.json` 的顶层是 `.`，装到扩展根上，
+  //    覆盖安装会把同级扩展全部换掉（2026-11-05 · 外部评估 P1）。
+  if (!pkgDir || pkgDir === '.' || pkgDir === '..' || pkgDir.length > 80) {
+    return { ok: false, error: `顶层目录名「${pkgDir}」不可用（空、.、.. 或过长）` };
   }
 
   const files = [];
-  for (const e of files0) {
-    const rel = e.name.split(/[\\/]/).slice(1).join('/');
-    if (!rel) return { ok: false, error: `「${e.name}」是包根下的文件 —— 扩展包必须整个装在一个目录里` };
-    files.push({ rel, data: e.data });
+  for (const x of canonEntries) {
+    const rel = x.segments.slice(1).join('/');
+    if (!rel) return { ok: false, error: `「${x.entry.name}」是包根下的文件 —— 扩展包必须整个装在一个目录里` };
+    files.push({ rel, data: x.entry.data });
   }
 
   // ③ 清单：按既有优先序取第一份存在的，用它决定 kind 与目标根。
@@ -157,15 +174,70 @@ const textOf = (w) => String(
 );
 
 /**
+ * 把 `target` 锁死在扩展根的直接子目录上。
+ *
+ * 这条闸挡的不是"别的包"，而是**根目录本身**：`pkgDir='.'` 时
+ * `path.join(root, '.')` 就是 root，覆盖安装会把整个扩展根换掉。
+ * 规范化层已经拒了 `.`，这里再做一次纵深防御（fail-closed，且不依赖字符串层没被改坏）。
+ */
+function safeInstallTarget(plan, io) {
+  const rootDir = path.resolve(plan.root.dir);
+  const pkgDir = String(plan.pkgDir ?? '');
+  if (!pkgDir || pkgDir === '.' || pkgDir === '..'
+    || pkgDir.includes('/') || pkgDir.includes('\\')) {
+    return { ok: false, error: '目标目录名不安全（必须是扩展根下的单段目录）' };
+  }
+  const target = path.join(rootDir, pkgDir);
+  if (path.dirname(target) !== rootDir) return { ok: false, error: '目标不在扩展根下，拒绝安装' };
+
+  const lstat = typeof io.lstatSync === 'function' ? io.lstatSync : null;
+  const realpath = typeof io.realpathSync === 'function' ? io.realpathSync : null;
+  if (lstat) {
+    try {
+      const rootSt = lstat(rootDir);
+      if (rootSt?.isSymbolicLink?.()) return { ok: false, error: '扩展根是符号链接，拒绝安装' };
+      if (typeof rootSt?.isDirectory === 'function' && !rootSt.isDirectory()) {
+        return { ok: false, error: '扩展根不是目录，拒绝安装' };
+      }
+    } catch { /* 根还不存在：下面 mkdir 会建 */ }
+  }
+  const exists = io.existsSync(target);
+  if (exists && lstat) {
+    const st = lstat(target);
+    if (st?.isSymbolicLink?.()) return { ok: false, error: '目标目录是符号链接，拒绝覆盖' };
+    if (typeof st?.isDirectory === 'function' && !st.isDirectory()) {
+      return { ok: false, error: '目标不是目录，拒绝覆盖' };
+    }
+  }
+  if (exists && realpath) {
+    let realRoot = '';
+    let realTarget = '';
+    try {
+      realRoot = realpath(rootDir);
+      realTarget = realpath(target);
+    } catch (e) {
+      return { ok: false, error: `无法解析扩展路径：${msgOf(e)}` };
+    }
+    if (path.dirname(realTarget) !== realRoot) {
+      return { ok: false, error: '目标解析后不在扩展根下，拒绝覆盖' };
+    }
+  }
+  return { ok: true, target, rootDir };
+}
+
+/**
  * 装一个 ZIP。**三步**：备份 → 原子替换 → 提交；任一步失败都回到原样。
  *
  * @param {{bytes:Buffer, roots:Array<object>, overwrite?:boolean, io?:object,
- *          expectedKind?:string|null, expectedId?:string}} o
- * @returns {{ok:true, id:string, kind:string, dir:string, root:string, files:number, replaced:boolean}
- *          | {ok:false, code:number, error:string}}
+ *          expectedKind?:string|null, expectedId?:string, expectedDigest?:string}} o
+ * @returns {{ok:true, id:string, kind:string, dir:string, root:string, files:number,
+ *            replaced:boolean, digest:string}
+ *          | {ok:false, code:number, error:string, id?:string, kind?:string,
+ *             dir?:string, digest?:string}}
  */
 export function installArchive({
-  bytes, roots = [], overwrite = false, io = REAL_IO, expectedKind = null, expectedId = '',
+  bytes, roots = [], overwrite = false, io = REAL_IO,
+  expectedKind = null, expectedId = '', expectedDigest = '',
 } = {}) {
   const z = readZip(bytes);
   if (!z.ok) return { ok: false, code: 400, error: z.error };
@@ -173,21 +245,39 @@ export function installArchive({
   const plan = planInstall(z.entries, { roots, expectedKind });
   if (!plan.ok) return { ok: false, code: 400, error: plan.error };
 
-  // 更新场景：页面已经点名了要覆盖的包 id，就不允许“选错包”静默装成另一个。
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  const bind = { id: plan.id, kind: plan.kind, dir: plan.pkgDir, digest };
+
+  // 更新场景：页面已经点名了要覆盖的包 id/内容，就不允许“选错包”静默装成另一个。
   // 放在任何落盘之前 —— 拒绝时旧包一个字节都不动。
   const wantId = String(expectedId || '');
   if (wantId && plan.id !== wantId) {
     return {
       ok: false,
       code: 409,
+      ...bind,
       error: `这个包的 id 是「${plan.id}」，与要更新的「${wantId}」不一致 —— 已拒绝，旧包未改动`,
     };
   }
+  const wantDigest = String(expectedDigest || '');
+  if (wantDigest && wantDigest !== digest) {
+    return {
+      ok: false,
+      code: 409,
+      ...bind,
+      error: '包内容与确认覆盖时的不一致 —— 已拒绝，旧包未改动',
+    };
+  }
 
-  const target = path.join(plan.root.dir, plan.pkgDir);
+  const goals = safeInstallTarget(plan, io);
+  if (!goals.ok) return { ok: false, code: 400, error: goals.error };
+  const { target, rootDir } = goals;
   const exists = io.existsSync(target);
   if (exists && !overwrite) {
-    return { ok: false, code: 409, error: '同名包已存在（要覆盖请显式确认）' };
+    return {
+      ok: false, code: 409, ...bind,
+      error: '同名包已存在（要覆盖请显式确认）',
+    };
   }
 
   // 备份目录与目标**同根同级**（同一文件系统，rename 才是原子的），
@@ -195,7 +285,7 @@ export function installArchive({
   const backup = tmpPathOf(target);
   let hadBackup = false;
   try {
-    io.mkdirSync(plan.root.dir, { recursive: true });
+    io.mkdirSync(rootDir, { recursive: true });
   } catch (e) {
     return { ok: false, code: 500, error: `安装目录不可写：${msgOf(e)}` };
   }
@@ -243,6 +333,7 @@ export function installArchive({
     root: path.basename(plan.root.dir),
     files: plan.files.length,
     replaced: hadBackup,
+    digest,
   };
 }
 

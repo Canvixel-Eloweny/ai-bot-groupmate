@@ -213,6 +213,21 @@ export async function acquireLock({
   if (d.action === 'refuse') return { ok: false, action: 'refuse', reason: d.reason, body: null, tookOver: false };
 
   const body = lockBodyOf({ pid: ownPid, at: now, beatAt: now });
+  // ── `hold` 必须在这里就交卷，不能往下走去"占"一次锁（2026-11-03 · BUG-02）──────
+  // `acquireLock` 只在启动时调用一次 ⇒ 本进程此刻**不可能**已经写过这把锁，
+  // 所以"锁里就是本进程 pid"只有一种来源：上一轮留下的残留锁与我们的 pid 撞了号
+  // （容器 / PID 命名空间重启后 pid 复位、崩溃后 pid 被复用）。
+  // 往下走的后果不是"多写一次"，而是**把自己拒在门外**：
+  //   hold ⇒ tookOver=false ⇒ 选独占路径 `claimRec`（不存在才创建）
+  //   ⇒ 文件已存在 ⇒ EEXIST ⇒ 重读重判仍是 hold
+  //   ⇒ 返回「锁在提交的瞬间被另一个实例占上了：锁就是本进程的」⇒ 退出码 3。
+  // 此时进程表里并没有第二个实例，只能人工删 `.bridge.lock` —— 对非技术用户不可自愈。
+  // 这里顺手用覆盖写刷新一次时间戳（那份记录的 at/beatAt 是上一轮的），
+  // 刷不动也照样放行：锁的归属已经没有争议，心跳那一支会补上 beatAt。
+  if (d.action === 'hold') {
+    try { writeRec(body); } catch { /* 附属文件写不进不该挡住启动 */ }
+    return { ok: true, action: 'hold', reason: d.reason, body, tookOver: false };
+  }
   // [W1a] 首次占锁走独占提交 · [W1c] 接管走独占替换；两者都没注入才回落到覆盖写。
   const useClaim = !tookOver && typeof claimRec === 'function';
   const useReclaim = tookOver && typeof reclaimRec === 'function';

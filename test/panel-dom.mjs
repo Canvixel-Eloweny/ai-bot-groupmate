@@ -223,6 +223,22 @@ try {
   }, null, 2), 'utf8');
 } catch { /* 缺模板就按默认 */ }
 
+/* ── 结构化记忆的按钮夹具（2026-11-03 · 批 A）────────────────────────────
+   0.1.7 的实测事故：页面自己写死了一份 `['confirmed','rejected','archived']` 当**动作**发出去，
+   那三个是**状态**名 ⇒ `/api/memory/review` 每条 400「不认识的动作」⇒ 三个按钮全点不动，
+   而四层回归全绿 —— 后端三张表自洽有人核，**前端有没有用它们没人核**。
+   这里塞两条不同状态的记录，让「按钮由后端 actionsFor 下发」这件事在真浏览器里被点一次。
+   走 `QQBOT_MEMORY_RECORDS`（§68⑨ 就是为测试留的这个开关），不碰真机那份文件。 */
+const RECORDS_FIXTURE = path.join(USERDATA, 'memory-records.fixture.json');
+fs.writeFileSync(RECORDS_FIXTURE, `${JSON.stringify({
+  items: [
+    { id: 'dom-cand', kind: 'topic', text: '（DOM 夹具）周三晚上固定开黑', status: 'candidate', samples: 2,
+      chatKey: 'group:100000', firstSeenAt: Date.now(), lastSeenAt: Date.now() },
+    { id: 'dom-conf', kind: 'person', text: '（DOM 夹具）小鱼喜欢追剧', status: 'confirmed', samples: 6,
+      chatKey: 'group:100000', firstSeenAt: Date.now(), lastSeenAt: Date.now() },
+  ],
+}, null, 2)}\n`);
+
 const panel = spawn(NODE, ['panel/server.js'], {
   cwd: ROOT,
   env: {
@@ -231,6 +247,7 @@ const panel = spawn(NODE, ['panel/server.js'], {
     QQBOT_SANDBOX: '1',
     QQBOT_MODE: 'dev',
     QQBOT_USER_ROOT: USERDATA,
+    QQBOT_MEMORY_RECORDS: RECORDS_FIXTURE,
     QQBOT_GITHUB_STAR_FIXTURE: path.join(USERDATA, 'github-star.fixture.json'),
     NODE_OPTIONS: '',
   },
@@ -683,6 +700,65 @@ try {
 
   const counts = r.map((x) => `${x.label.trim()}=${x.cards}`).join(' ');
   console.log(`  每页卡片数：${counts}`);
+
+  /* ── 结构化记忆：复核按钮（2026-11-03 · 批 A 的 A3 真渲染证明）────────────
+     为什么这道要真点一次而不是扫源码：A3 的症状是「按钮画得出来、点下去必 400」，
+     源码里看着一切正常。§68⑧b 那条判据钉的是"页面读没读 actionsFor"，
+     这条断言钉的是"点下去真的落盘了吗" —— 两个都要，少一个就是半只眼。
+     夹具里两条记录状态不同（候选 / 已确认），所以按钮组合**必须不同**：
+     相同就说明页面又在自列一份固定名单。 */
+  console.log('\n── 结构化记忆：复核按钮 ──');
+  const mrMod = await import(new URL('../src/memory-record.js', import.meta.url));
+  const memBtns = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+    const groups = () => [...document.querySelectorAll('#nav1 .grp')];
+    const subs = () => [...document.querySelectorAll('#nav2 .sub')];
+    if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
+      window.__navAutoHide.reveal(); await sleep(400);
+    }
+    const g = groups().find((x) => (x.title || x.textContent || '').includes('记忆'));
+    if (!g) return { err: '找不到记忆域' };
+    g.click(); await sleep(320);
+    const s = subs().find((x) => (x.title || x.textContent || '').includes('自我记忆'));
+    if (!s) return { err: '找不到自我记忆页' };
+    s.click(); await sleep(520);
+    const rows = () => [...document.querySelectorAll('#page .mem-record')].map((a) => ({
+      status: a.getAttribute('data-status'),
+      acts: [...a.querySelectorAll('[data-a="mem.review"]')].map((b) => String(b.dataset.p || '').split('|')[1]),
+    }));
+    const before = rows();
+    /* 真点一次「否掉」：候选 → 已否掉。这一步就是 0.1.7 全军覆没的那一步。 */
+    const cand = [...document.querySelectorAll('#page .mem-record')].find((a) => a.getAttribute('data-status') === 'candidate');
+    const btn = cand ? [...cand.querySelectorAll('[data-a="mem.review"]')].find((b) => /\\|reject$/.test(b.dataset.p || '')) : null;
+    if (!btn) return { err: '候选那行没有 reject 按钮', before };
+    btn.click();
+    await sleep(1400);
+    return { before, after: rows(), clicked: String(btn.dataset.p || '') };
+  })()`);
+  ok(!memBtns.err, `结构化记忆页在真浏览器里画出了夹具条目${memBtns.err ? `（${memBtns.err}）` : ''}`);
+  {
+    const byStatus = {};
+    for (const x of (memBtns.before || [])) byStatus[x.status] = x.acts;
+    const want = mrMod.REVIEW_ACTIONS_FOR;
+    const mismatch = Object.keys(want)
+      .filter((st) => byStatus[st])
+      .filter((st) => byStatus[st].join(',') !== want[st].join(','))
+      .map((st) => `${st} 实得 [${byStatus[st]}] 应为 [${want[st]}]`);
+    ok(Object.keys(byStatus).length === 2 && mismatch.length === 0,
+      `按钮集合逐状态等于后端下发的 actionsFor（${mismatch.join(' · ') || '两行都对'}）`);
+    const badAction = (memBtns.before || []).flatMap((x) => x.acts)
+      .filter((a) => !(mrMod.REVIEW_ACTION_IDS || []).includes(a));
+    ok(badAction.length === 0,
+      `每个按钮发出去的动作名后端都认（不认的：${badAction.join(',') || '无'}）—— 0.1.7 传的是状态名，点了必 400`);
+    const flipped = (memBtns.after || []).find((x) => x.status === 'rejected');
+    ok(Boolean(flipped), '真点一次「否掉」之后那行真的变成已否掉（请求没被后端拒）');
+    let diskStatus = '';
+    try {
+      const items = JSON.parse(fs.readFileSync(RECORDS_FIXTURE, 'utf8')).items || [];
+      diskStatus = String((items.find((x) => x.id === 'dom-cand') || {}).status || '');
+    } catch { diskStatus = '读不到夹具'; }
+    ok(diskStatus === 'rejected', `点下去真的落了盘（夹具里 dom-cand 的 status = ${diskStatus}）`);
+  }
 
   /* ── 工厂三页（2026-10-31 · 二级导航驱动）──────────────────────────────
      工厂不再是顶栏圆钮 + 空白占位：三个二级页各挂一份常驻 iframe，
@@ -4255,6 +4331,368 @@ try {
     && fpsUi.end.range === '0' && /不限/.test(fpsUi.end.tag)
     && fpsUi.end.cap === 0 && fpsUi.end.measure > 0,
   `恢复 0 后回到显示器刷新率（${JSON.stringify(fpsUi?.end)}）`);
+
+  /* ── 识图与发图（2026-11-04 · §182）──────────────────────────────────
+     这一屏要证：三卡都在、1440 两列、390 单列且不溢出、页面高度 ≤900、
+     纯图宽限滑块真的挂在 `bindSys` 上，以及模型页确实不再有识图总开关。
+     只断言"元素存在"不够：列数与高度是这次重做的核心，必须量 computed。 */
+  console.log('\n── 识图与发图（双栏 · 总开关搬家 · 纯图宽限）──');
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  const visionUi = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+    const reveal = async () => {
+      if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
+        window.__navAutoHide.reveal(); await sleep(400);
+      }
+    };
+    const clickSub = async (groupWord, subWord) => {
+      await reveal();
+      const g = [...document.querySelectorAll('#nav1 .grp')]
+        .find((x) => (x.title || x.textContent || '').includes(groupWord));
+      if (!g) return '找不到域 ' + groupWord;
+      g.click(); await sleep(360);
+      const s = [...document.querySelectorAll('#nav2 .sub')]
+        .find((x) => (x.title || x.textContent || '').includes(subWord));
+      if (!s) {
+        return '找不到页 ' + subWord + '：'
+          + [...document.querySelectorAll('#nav2 .sub')].map((x) => (x.textContent || '').trim()).join('/');
+      }
+      s.click(); await sleep(700);
+      return '';
+    };
+    const errModel = await clickSub('模型', '思考与能力');
+    const caps = document.getElementById('card-caps');
+    const modelFeat = !!document.querySelector('#card-caps [data-feat="vision"]');
+    const modelNote = caps ? (caps.textContent || '').includes('识图与发图') : false;
+    const errImg = await clickSub('发言', '识图与发图');
+    const S = window.__next;
+    /* 测试夹具是自定义大脑，可能没声明 vision ⇒ 开关按设计隐藏。这里临时把
+       customVisibleFeatures 置空（= 内置大脑的形态）再画一次，证明控件本身在页面上，
+       并把截图留成"开关可见"的样子；量完恢复原值。 */
+    const featInit = !!document.querySelector('#card-img [data-feat="vision"]');
+    let featAfterDeclare = featInit;
+    if (!featInit && S && S.state && S.state.config) {
+      window.__visionOrigVisible = S.state.config.customVisibleFeatures;
+      window.__visionPaused = true;
+      window.__nextPauseRefresh?.(true);
+      S.state.config.customVisibleFeatures = null;
+      window.__nextRepaint();
+      await sleep(600);
+      featAfterDeclare = !!document.querySelector('#card-img [data-feat="vision"]');
+    }
+    const grid = document.querySelector('#page .vgrid');
+    const cols = grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length : 0;
+    const cards = ['card-img', 'card-grace', 'card-vision'].map((id) => !!document.getElementById(id));
+    const range = document.querySelector('[data-id="grace.ms"]');
+    const graceCtrl = S && S.reg ? S.reg.get('grace.ms') : null;
+    const graceBind = graceCtrl && graceCtrl.bindSys ? graceCtrl.bindSys : '';
+    const facts = (document.querySelector('#page .vfacts') || {}).textContent || '';
+    const pageH = document.getElementById('page').getBoundingClientRect().height;
+    return {
+      errModel, errImg, cols, cards, range: !!range, graceBind, facts: facts.trim(),
+      modelFeat, modelNote, pageH, featInit, featAfterDeclare,
+      sw: document.documentElement.scrollWidth, iw: window.innerWidth,
+    };
+  })()`);
+  ok(!visionUi.errModel && !visionUi.errImg,
+    `识图页与模型能力卡都能打开（${visionUi.errModel || ''}${visionUi.errImg || ''}${visionUi.errModel || visionUi.errImg ? '' : 'ok'}）`);
+  ok(visionUi.cards.every(Boolean) && visionUi.cols === 2,
+    `识图页三卡 + 1440 两列（card=${JSON.stringify(visionUi.cards)} cols=${visionUi.cols}）`);
+  ok(visionUi.featInit || visionUi.featAfterDeclare,
+    `识图总开关能在识图页渲染（初始=${visionUi.featInit} 声明后=${visionUi.featAfterDeclare}）`);
+  ok(visionUi.range && visionUi.graceBind === 'bareGraceMs',
+    `纯图宽限滑块挂在 bindSys:bareGraceMs 上（range=${visionUi.range} bind=${visionUi.graceBind || '空'}）`);
+  ok(/最多\s*3\s*张/.test(visionUi.facts || '') && /1\.5\s*MB/.test(visionUi.facts || ''),
+    `事实条读后端上限（实得「${visionUi.facts}」）`);
+  ok(visionUi.modelFeat === false && visionUi.modelNote === true,
+    `模型页能力卡不再有识图总开关，且有指路文案（feat=${visionUi.modelFeat} note=${visionUi.modelNote}）`);
+  ok(visionUi.pageH <= 900, `1440 页面高度 ≤900（实得 ${Math.round(visionUi.pageH)}）`);
+  ok(visionUi.sw <= visionUi.iw, `1440 无横向溢出（${visionUi.sw}/${visionUi.iw}）`);
+  await shot('panel-vision-1440.png');
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+  await new Promise((res) => setTimeout(res, 420));
+  const visionNarrow = await evalJs(`(() => {
+    const grid = document.querySelector('#page .vgrid');
+    const page = document.getElementById('page');
+    const vision = document.querySelector('#page .vision');
+    const cols = grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length : 0;
+    /* 只量**页面内容**：顶栏/导航是全局壳，390 下它们自己有横向滚动/隐藏逻辑，
+       与本页重做无关；把 document.scrollWidth 当判据会把别处的既有行为算进来。
+       页面内容仍按元素逐个扫，任何一项越过视口都算红。 */
+    const bad = [...document.querySelectorAll('#page *')].filter((e) => {
+      if (!e.getClientRects().length) return false;
+      return e.getBoundingClientRect().right > innerWidth + 1;
+    }).slice(0, 12).map((e) => {
+      const r = e.getBoundingClientRect();
+      return {
+        tag: e.tagName,
+        id: e.id || '',
+        cls: String(e.className || '').slice(0, 60),
+        right: Math.round(r.right),
+        w: Math.round(r.width),
+      };
+    });
+    return {
+      cols,
+      pageSw: page ? page.scrollWidth : -1,
+      pageCw: page ? page.clientWidth : -1,
+      visionRight: vision ? Math.round(vision.getBoundingClientRect().right) : -1,
+      iw: window.innerWidth,
+      bad,
+    };
+  })()`);
+  ok(visionNarrow.cols === 1
+    && visionNarrow.pageSw <= visionNarrow.pageCw + 1
+    && visionNarrow.visionRight <= visionNarrow.iw + 1
+    && visionNarrow.bad.length === 0,
+  `390 单列且页面内容无横向溢出（${JSON.stringify(visionNarrow)}）`);
+  await shot('panel-vision-390.png');
+
+  const visionAt = async (width) => {
+    await send('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false });
+    await new Promise((res) => setTimeout(res, 420));
+    return evalJs(`(() => {
+      const grid = document.querySelector('#page .vgrid');
+      const page = document.getElementById('page');
+      const vision = document.querySelector('#page .vision');
+      const cols = grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length : 0;
+      const bad = [...document.querySelectorAll('#page *')].filter((e) => {
+        if (!e.getClientRects().length) return false;
+        return e.getBoundingClientRect().right > innerWidth + 1;
+      }).length;
+      return {
+        cols,
+        pageSw: page ? page.scrollWidth : -1,
+        pageCw: page ? page.clientWidth : -1,
+        visionRight: vision ? Math.round(vision.getBoundingClientRect().right) : -1,
+        iw: innerWidth,
+        bad,
+      };
+    })()`);
+  };
+  const vision1024 = await visionAt(1024);
+  ok(vision1024.cols === 2 && vision1024.pageSw <= vision1024.pageCw + 1
+    && vision1024.visionRight <= vision1024.iw + 1 && vision1024.bad === 0,
+  `1024 两列且页面内容无横向溢出（${JSON.stringify(vision1024)}）`);
+  await shot('panel-vision-1024.png');
+  const vision820 = await visionAt(820);
+  ok(vision820.cols === 1 && vision820.pageSw <= vision820.pageCw + 1
+    && vision820.visionRight <= vision820.iw + 1 && vision820.bad === 0,
+  `820 单列且页面内容无横向溢出（${JSON.stringify(vision820)}）`);
+  await shot('panel-vision-820.png');
+
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await evalJs(`(() => {
+    if (!window.__visionPaused) return false;
+    const S = window.__next;
+    if (S && S.state && S.state.config) S.state.config.customVisibleFeatures = window.__visionOrigVisible;
+    delete window.__visionPaused;
+    delete window.__visionOrigVisible;
+    window.__nextPauseRefresh?.(false);
+    window.__nextRepaint();
+    return true;
+  })()`);
+  await new Promise((res) => setTimeout(res, 350));
+
+  /* ── 界面裁剪（2026-11-03 · §180）──────────────────────────────────────
+     这一屏要证的是三件事，都不是"看起来对"能代替的：
+       ① 隐藏是 `hidden` 属性，**节点仍在 DOM 里** —— 这是"隐藏页仍被逐页遍历"
+          这条不变量的实物形式；改成滤数组的话这里必红。
+       ② 卡级隐藏真的从页面上消失，而恢复入口那张卡永远在。
+       ③ 点完立刻生效（名单落盘 + 重渲染），不需要再按保存条。 */
+  console.log('\n── 界面裁剪（隐藏不删除 · 隐藏项仍在 DOM）──');
+  const trimUi = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+    const groups = () => [...document.querySelectorAll('#nav1 .grp')];
+    const subs = () => [...document.querySelectorAll('#nav2 .sub')];
+    if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
+      window.__navAutoHide.reveal(); await sleep(400);
+    }
+    const g = groups().find((x) => (x.title || x.textContent || '').includes('维护'));
+    if (!g) return { err: '找不到维护域' };
+    g.click(); await sleep(360);
+    const s = subs().find((x) => (x.title || x.textContent || '').includes('面板维护'));
+    if (!s) return { err: '找不到面板维护页' };
+    s.click(); await sleep(560);
+    const chipOf = () => [...document.querySelectorAll('#page [data-a="panel.hide"]')]
+      .find((b) => /\\|about$/.test(b.dataset.p || ''));
+    const chips = [...document.querySelectorAll('#page [data-a="panel.hide"]')];
+    const aboutChip = chipOf();
+    if (!aboutChip) {
+      return {
+        err: '裁剪卡里没有 about 那张卡的开关',
+        chips: chips.length,
+        titles: [...document.querySelectorAll('#page .card-h')].map((h) => (h.textContent || '').trim().slice(0, 16)),
+        sub: (document.querySelector('#nav2 .sub[aria-selected="true"]') || {}).textContent || '',
+      };
+    }
+    const cardIn = () => [...document.querySelectorAll('#page .card-h')].some((h) => /这一页是什么/.test(h.textContent || ''));
+    const before = cardIn();
+    aboutChip.click();
+    await sleep(2200);
+    const afterHide = {
+      before, gone: !cardIn(),
+      trimStill: !!document.querySelector('#page [data-a="panel.hide"]'),
+      domGroups: document.querySelectorAll('#nav1 .grp').length,
+      hiddenNodes: document.querySelectorAll('#nav1 .grp[hidden], #nav2 .sub[hidden]').length,
+    };
+    const back = chipOf();
+    if (back) { back.click(); await sleep(2200); }
+    return { chips: chips.length, afterHide, restored: cardIn() };
+  })()`);
+  ok(!trimUi.err, `界面裁剪卡渲染出来（开关 ${trimUi.chips ?? 0} 个）${trimUi.err ? `（${trimUi.err} · 当前页「${trimUi.sub}」· 卡：${JSON.stringify(trimUi.titles)}）` : ''}`);
+  ok(Boolean(trimUi.afterHide && trimUi.afterHide.before && trimUi.afterHide.gone),
+    `点掉一张卡后它真的从页面上消失（前=${trimUi.afterHide?.before} 后=${trimUi.afterHide?.gone}）`);
+  ok(Boolean(trimUi.afterHide && trimUi.afterHide.trimStill),
+    '恢复入口那张卡不会被自己隐藏（自锁硬闸在真渲染里成立）');
+  ok(Boolean(trimUi.afterHide && trimUi.afterHide.domGroups === 7),
+    `一级域节点数仍是 7（实得 ${trimUi.afterHide?.domGroups}）—— 隐藏是 hidden 属性而不是把节点删掉，逐页遍历照旧覆盖`);
+  ok(Boolean(trimUi.restored), '再点一次真的恢复（名单落盘 + 重渲染，不需要再按保存条）');
+
+  /* ── 好友申请 / 群邀请（B1.1 · 2026-11-04 · §181）──────────────────────────
+     这一格要证的是**四端对上**：机器人落的那份文件 → 采集器读它 → 页面画出来 →
+     按钮上带的就是那一条申请的 flag。少任何一端的症状都是"页面看起来正常"，
+     而这正是这条缺陷报告原本的形状（申请被静默吞掉、四层全绿）。
+     夹具直接写进子进程那个 `USERDATA/data/`（与 `path.join(userRoot,'data')` 同一条推导），
+     不新造一个 env —— 多一个开关就多一处"测试里才成立"的漂移面。 */
+  console.log('\n── 好友申请（机器人落盘 → 采集 → 页面 → 按钮带 flag）──');
+  const frFixture = path.join(USERDATA, 'data', 'friend-requests.json');
+  const FR_FLAG_A = 'dom-req-a';
+  const FR_FLAG_B = 'dom-req-b';
+  const writeFr = (obj) => {
+    fs.mkdirSync(path.dirname(frFixture), { recursive: true });
+    fs.writeFileSync(frFixture, JSON.stringify(obj));
+  };
+  writeFr({
+    updatedAt: Date.now(),
+    requests: [
+      { flag: FR_FLAG_A, kind: 'friend', userId: '100000001', groupId: '', comment: '我是小王呀', at: Date.now(), status: 'pending', result: '' },
+      { flag: FR_FLAG_B, kind: 'group', userId: '100000002', groupId: '100000', comment: '', at: Date.now() - 60000, status: 'pending', result: '' },
+      { flag: 'dom-req-c', kind: 'friend', userId: '100000003', groupId: '', comment: '', at: Date.now() - 120000, status: 'denied', result: '已拒绝', handledAt: Date.now() - 60000 },
+    ],
+  });
+  const frUi = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+    if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
+      window.__navAutoHide.reveal(); await sleep(400);
+    }
+    const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => (x.title || x.textContent || '').includes('发言'));
+    if (!g) return { err: '找不到发言域' };
+    g.click(); await sleep(420);
+    const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => (x.title || x.textContent || '').includes('触发方式'));
+    if (!s) return { err: '找不到触发方式页' };
+    s.click(); await sleep(700);
+    const read = () => {
+      const cards = [...document.querySelectorAll('#page .card-h')].map((h) => (h.textContent || '').trim().slice(0, 20));
+      const btns = [...document.querySelectorAll('#page [data-a="friend.resolve"]')]
+        .map((b) => ({ p: b.dataset.p || '', t: (b.textContent || '').trim() }));
+      const txt = (document.querySelector('#page') || {}).textContent || '';
+      return { cards, btns, txt: txt.slice(0, 4000) };
+    };
+    // 3 秒轮询把新写的文件带进页面（采集器每次读盘，面板每 3 秒刷一次）
+    let a = read();
+    for (let i = 0; i < 24 && !/等你的决定/.test(a.txt); i++) { await sleep(500); a = read(); }
+    const seen = a;
+    // 清掉那份文件 → 应当退回"还没有人申请过"的空态（而不是"读不出"或留着旧数据）
+    return {
+      err: '', cards: seen.cards, btns: seen.btns,
+      hasCard: seen.cards.some((t) => /好友申请/.test(t)),
+      pend: /等你的决定/.test(seen.txt),
+      countBtns: seen.btns.length,
+      flagsOnBtns: seen.btns.map((b) => b.p),
+      deniedShown: /已拒绝/.test(seen.txt),
+      groupShown: /群邀请/.test(seen.txt) && seen.txt.includes('100000'),
+    };
+  })()`);
+  ok(!frUi.err && frUi.hasCard,
+    `触发方式页上有「好友申请与群邀请」这张卡${frUi.err ? `（${frUi.err}）` : `（卡：${JSON.stringify(frUi.cards)}）`}`);
+  ok(frUi.pend && frUi.countBtns === 4 && frUi.flagsOnBtns.includes(`${FR_FLAG_A}|true`)
+    && frUi.flagsOnBtns.includes(`${FR_FLAG_A}|false`) && frUi.flagsOnBtns.includes(`${FR_FLAG_B}|true`),
+    `两条待处理各有「同意 / 拒绝」两个按钮，且按钮带的就是那一条申请的 flag（实得 ${frUi.countBtns} 个：${JSON.stringify(frUi.flagsOnBtns)}）`);
+  ok(frUi.groupShown && frUi.deniedShown,
+    `群邀请显示的是群号（${frUi.groupShown}）· 处理过的那条显示"已拒绝"而不是消失（${frUi.deniedShown}）`);
+  // 空态：删掉文件后必须退回"还没有人申请过"，不能留着旧数据、也不能把"读不出"说成"没有"
+  fs.rmSync(frFixture, { force: true });
+  const frEmpty = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+    let txt = '';
+    for (let i = 0; i < 24; i++) {
+      const b = [...document.querySelectorAll('#nav2 .sub')].find((x) => (x.title || x.textContent || '').includes('主动与免打扰'));
+      if (b) { b.click(); await sleep(300); }
+      const t = [...document.querySelectorAll('#nav2 .sub')].find((x) => (x.title || x.textContent || '').includes('触发方式'));
+      if (t) { t.click(); await sleep(500); }
+      txt = (document.querySelector('#page') || {}).textContent || '';
+      if (/还没有人申请/.test(txt)) break;
+      await sleep(500);
+    }
+    return { empty: /还没有人申请/.test(txt), stale: /等你的决定/.test(txt), won: /她不会自己答应/.test(txt) };
+  })()`);
+  ok(frEmpty.empty && !frEmpty.stale && frEmpty.won,
+    `文件删掉后退回空态（空态 ${frEmpty.empty} · 没留着旧的 ${!frEmpty.stale} · 并且写明"她不会自己答应" ${frEmpty.won}）`);
+
+  /* ── 叫醒暗号摆到台面（2026-11-04 · §50㉒）─────────────────────────────
+     这一屏要证的不是"有没有这段话"，而是**页面上的词和数字是从后端来的**。
+     单比"显示 10 秒"是假绿 —— 写死的文案也显示 10 秒。所以两件事合起来才算证明：
+       ① 这里：把用户改过的词表写进配置，页面必须跟着变（动态侧：值真的流到了文案）；
+       ② §50㉒：反向钉 app.js 的源码里不许出现「10 秒内连发 3 条」与内置词表（静态侧：
+          它没有写死的那一份可显示）。
+     两边各自都留了缺口，合起来才把"改常量而页面不说实话"这条路堵死。 */
+  console.log('\n── 叫醒暗号（词表与连发参数由后端下发 · 不是写死）──');
+  const wakeUi = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+    const meta = document.querySelector('meta[name="panel-token"]');
+    const post = (body) => fetch('/api/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(meta && meta.content ? { Authorization: 'Bearer ' + meta.content } : {}),
+      },
+      body: JSON.stringify(body),
+    }).then((r) => r.json()).catch((e) => ({ ok: false, error: String(e) }));
+    const WAKE_TEST_WORDS = ['甲号叫醒词', '乙号叫醒词'];
+    const put = await post({ custom: { sleep: { wakeWords: WAKE_TEST_WORDS } } });
+    // 3 秒轮询 + 一次重绘：POST 不会自己触发 refresh（那是"保存条"那条路做的事）。
+    await sleep(4200);
+    // 上一段在导航里点了很久 —— 自动上收可能已经把它收起来了，先呼出再点（同上一段的做法）。
+    if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
+      window.__navAutoHide.reveal(); await sleep(400);
+    }
+    const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => (x.title || x.textContent || '').includes('发言'));
+    if (!g) return { err: '找不到发言域' };
+    g.click(); await sleep(420);
+    const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => (x.title || x.textContent || '').includes('主动与免打扰'));
+    if (!s) return { err: '找不到主动与免打扰页' };
+    s.click(); await sleep(700);
+    const txt = (document.querySelector('#page') || {}).textContent || '';
+    const m = ((window.__next || {}).state || {}).customMeta || {};
+    const sl = m.sleep || null;
+    const back = await post({ custom: { sleep: { wakeWords: [] } } });
+    await sleep(4200);
+    const afterTxt = (document.querySelector('#page') || {}).textContent || '';
+    return {
+      err: '', putOk: Boolean(put && put.ok !== false), backOk: Boolean(back && back.ok !== false),
+      meta: sl, words: WAKE_TEST_WORDS,
+      hasBlock: /把她叫醒有两条路/.test(txt),
+      wordsIn: WAKE_TEST_WORDS.every((w) => txt.includes('「' + w + '」')),
+      defaultWordsOut: !/「起床」/.test(txt),
+      burstIn: Boolean(sl) && txt.includes(sl.burstWindowSec + ' 秒内连发 ' + sl.burstCount + ' 条'),
+      quietIn: Boolean(sl) && txt.includes('安静 ' + sl.emergencyQuietMin + ' 分钟'),
+      // 改回默认之后，内置那几个词要重新出现在页面上（回落规则也只有一份）
+      restoredWords: /「起床」/.test(afterTxt),
+      pokeNote: /拍一拍/.test(txt),
+      sample: txt.slice(txt.indexOf('把她叫醒'), txt.indexOf('把她叫醒') + 220),
+    };
+  })()`);
+  ok(!wakeUi.err && wakeUi.hasBlock,
+    `「把她叫醒有两条路」这块真的渲染在主动与免打扰页上${wakeUi.err ? `（${wakeUi.err}）` : `（夹具写配置 ok=${wakeUi.putOk}）`}`);
+  ok(Boolean(wakeUi.meta) && wakeUi.words.every((w) => String(w).length > 0),
+    `后端下发了叫醒参数（窗口 ${wakeUi.meta?.burstWindowSec} 秒 × ${wakeUi.meta?.burstCount} 条 · 临时醒 ${wakeUi.meta?.emergencyQuietMin} 分钟 · 词 ${JSON.stringify(wakeUi.meta?.words)}）`);
+  ok(wakeUi.wordsIn && wakeUi.defaultWordsOut,
+    `用户改过的词表真的落到了文案里（看到「${wakeUi.words?.join('」「')}」= ${wakeUi.wordsIn}，而内置默认那份已不在 = ${wakeUi.defaultWordsOut}）—— 页面显示的不是写死的那一份`);
+  ok(wakeUi.burstIn && wakeUi.quietIn,
+    `文案里的三个数字逐字等于 \`customMeta.sleep\`（连发 ${wakeUi.burstIn} · 临时醒 ${wakeUi.quietIn}）`);
+  ok(wakeUi.restoredWords && wakeUi.pokeNote,
+    `清空那一格后回落成内置词表（${wakeUi.restoredWords}）· 还写明拍一拍叫不醒（${wakeUi.pokeNote}）`);
 } catch (e) {
   fails.push(`守卫自己出错：${e && e.message ? e.message : e}`);
 } finally {

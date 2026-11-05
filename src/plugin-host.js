@@ -78,6 +78,7 @@ import {
 // 扩展包的 fetch（受出站策略约束）。与 `ext-scope.js` 同族：外来代码要碰
 // 网络，就只给"审过地址"的那一条路。
 import { createExtFetch } from './ext-fetch.js';
+import { createExtStorage } from './ext-storage.js';
 import { scopedToolId } from './tool-registry.js';
 
 /**
@@ -397,6 +398,15 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
   const info = typeof log.info === 'function' ? log.info.bind(log) : () => {};
   const warn = typeof log.warn === 'function' ? log.warn.bind(log) : () => {};
 
+  /**
+   * 扩展包的按包隔离小 KV（2026-11-03）。
+   * 落点刻意在 `data/ext-storage/` 下**一文件一包**，而不是把整个 `data/` 交给包：
+   * 第三方代码拿到共享数据根，就等于能覆盖机器人的会话存档与记忆文件 ——
+   * 而"包能存自己的状态"这件事并不需要那个权限。隔离在文件布局上成立，
+   * 就不需要"运行时判 owner"那种会漂的软约束。
+   */
+  const extStorage = createExtStorage({ dir: path.join(root, 'data', 'ext-storage'), log });
+
   /** id → 运行记录。**只由本闭包写**（快照从它投影出来）。 */
   const records = new Map();
   /**
@@ -472,7 +482,10 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
       //    直接拼 `file://` 会因未转义而在 import 时抛 ERR_UNSUPPORTED_ESM_URL_SCHEME。
       mod = await import(pathToFileURL(entryPath).href);
     } catch (e) {
-      const detail = `import 失败：${e?.message ?? e}`;
+      // 把**解析出来的绝对入口**一起打出来：只有 `Cannot find module` 的话，
+      // 用户与作者都只能猜是目录名、入口字段还是布局问题（群友迁移报告里那批
+      // "6 个扩展 import 失败"就是这样查不动的）。
+      const detail = `import 失败：${e?.message ?? e}（入口解析到 ${entryPath}）`;
       record(p.id, { ...base, state: HOST_STATE.FAILED, reason: 'import-failed', detail });
       warn(`扩展包 ✗ ${p.dirName}（id ${p.id}）：${detail}`);
       return;
@@ -531,6 +544,13 @@ export function createExtensionHost({ root, registry, bus, getCustom, log = {}, 
         // `ext-fetch.js` 只负责把结果还原成真的 Response（扩展包写的是 res.json()）。
         // ⚠️ 不给它 → `buildApi` 按默认拒绝处理（连声明了权限的包也拿不到网络）。
         fetch: extFetch,
+        // 这个包自己的数据目录（绝对路径）。**不是**共享的 `data/` ——
+        // 拿到共享根就等于能覆盖机器人的会话存档与记忆文件。
+        // 以前没有这一项，包只能自己猜宿主布局（v2 的包普遍写 `app/data`），
+        // 便携布局下那个路径不存在 ⇒ 表现为"它说没有数据"，日志里只有一行 import 失败。
+        dataDir: path.join(root, 'data', 'ext', String(p.id ?? '')),
+        // 按包隔离的小 KV；`buildApi` 会按包 id 把键空间切开（声明了 storage 才给）。
+        storage: extStorage,
         registerTool: (def, { owner }) => {
           const name = scopedToolId(owner, def?.id ?? def?.name);
           // ⚠️ 把宿主 ctx 收成**这个包自己的**：`sender` 换成按本包清单声明裁剪过的那一份。

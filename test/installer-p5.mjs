@@ -41,8 +41,12 @@ function makeKey() {
   };
 }
 
-function fixtureManifest({ version = '0.1.3', size, sha } = {}) {
+function fixtureManifest({ version = '0.1.3', size, sha, mirrors } = {}) {
   const now = Date.now();
+  const defaultMirrors = [
+    `https://gh-proxy.com/https://github.com/${GH}/releases/download/v${version}/Estrella-Bot-Setup-${version}.exe`,
+    `https://ghproxy.net/https://github.com/${GH}/releases/download/v${version}/Estrella-Bot-Setup-${version}.exe`,
+  ];
   return {
     schemaVersion: 1,
     appId: 'com.estrellabot.windows',
@@ -56,21 +60,21 @@ function fixtureManifest({ version = '0.1.3', size, sha } = {}) {
     installer: {
       kind: 'nsis',
       url: `https://github.com/${GH}/releases/download/v${version}/Estrella-Bot-Setup-${version}.exe`,
-      mirrors: [],
+      mirrors: mirrors === undefined ? defaultMirrors : mirrors,
       size,
       sha256: sha,
     },
   };
 }
 
-function writeFixtureRelease({ version = '0.1.3', key = makeKey(), tamper } = {}) {
+function writeFixtureRelease({ version = '0.1.3', key = makeKey(), tamper, mirrors } = {}) {
   const root = tmp();
   const dir = path.join(root, 'release');
   fs.mkdirSync(dir, { recursive: true });
   const exeName = `Estrella-Bot-Setup-${version}.exe`;
   const exe = Buffer.from(`fake installer ${version}`);
   fs.writeFileSync(path.join(dir, exeName), exe);
-  const manifest = fixtureManifest({ version, size: exe.length, sha: sha256(exe) });
+  const manifest = fixtureManifest({ version, size: exe.length, sha: sha256(exe), mirrors });
   const raw = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
   const sig = crypto.sign(null, raw, key.privateKey).toString('base64');
   fs.writeFileSync(path.join(dir, 'latest.json'), raw);
@@ -118,6 +122,10 @@ ck('make-manifest --allow-current 放行且字段与 EXE 一致', () => {
   assert.equal(m.installer.sha256, sha256(bytes));
   assert.equal(m.installer.url, `https://github.com/${GH}/releases/download/v${VER}/${exeName}`);
   assert.equal(m.notesUrl, `https://github.com/${GH}/releases/tag/v${VER}`);
+  assert.deepEqual(m.installer.mirrors, [
+    `https://gh-proxy.com/https://github.com/${GH}/releases/download/v${VER}/${exeName}`,
+    `https://ghproxy.net/https://github.com/${GH}/releases/download/v${VER}/${exeName}`,
+  ]);
 });
 
 /* ── 2. release-check 正向与负向 ───────────────────────────────────── */
@@ -127,6 +135,14 @@ ck('release-check 好夹具通过', () => {
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
   assert.match(r.stdout, /发布资产校验通过/);
   assert.match(r.stdout, /签名有效/);
+  assert.match(r.stdout, /installer\.mirrors：2 个/);
+});
+
+ck('release-check 拒绝空 mirrors', () => {
+  const fx = writeFixtureRelease({ mirrors: [] });
+  const r = runCheck(fx);
+  assert.notEqual(r.status, 0);
+  assert.match(`${r.stdout}\n${r.stderr}`, /installer\.mirrors 为空/);
 });
 
 ck('release-check 拒绝清单版本不符', () => {

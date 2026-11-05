@@ -67,6 +67,26 @@ export const HOOK_POINTS = Object.freeze([
   'after-incoming-message',
 ]);
 
+/**
+ * 生态里的**旧名字 → 本宿主的钩子点**（2026-11-03）。
+ *
+ * 为什么必须有：社区包（习惯日历 / 好感度 / 心情 / 防吵架那批）写的是
+ * `incoming-message` 或 `message`。本宿主的点叫 `after-incoming-message`，
+ * 于是它们的注册被当成"未知钩子点"拒掉 ⇒ **包永远是死的**，
+ * 而表现只是"装了没反应"。语义上这两批包要的是同一件事：
+ * "入站一条消息，让我记一笔账"（不要求一定会被回复）。
+ *
+ * ⚠️ 别名**只补名字，不补否决权**。`after-incoming-message` 刻意不消费返回值，
+ * 所以靠 `return { handled:true, reply:'…' }` 代答命令的那类包
+ * （/roll、/签到 等）**仍然不会生效** —— 那要改的是主链路的决策顺序，
+ * 不是这张别名表。这一条必须说出来（见 `on()` 里的一次性告警），
+ * 否则"名字收了、语义没接"会变成另一种静默失效。
+ */
+export const HOOK_POINT_ALIASES = Object.freeze({
+  'incoming-message': 'after-incoming-message',
+  message: 'after-incoming-message',
+});
+
 /** 单条钩子的默认超时（毫秒）与硬天花板。默认值同时登记在 `field-schema.js`。 */
 export const HOOK_TIMEOUT_MS = 5000;
 export const HOOK_TIMEOUT_LIMIT = 120000;
@@ -94,7 +114,15 @@ export function createHookBus({ log, timeoutMs = HOOK_TIMEOUT_MS } = {}) {
      * @returns {boolean} 是否受理（未知钩子点 / 非函数 → false，并告警）
      */
     on(point, fn, { owner = '' } = {}) {
-      const key = String(point ?? '');
+      let key = String(point ?? '');
+      const aliased = HOOK_POINT_ALIASES[key];
+      if (aliased) {
+        // 收下来（否则这批包全灭），但**必须说出来它拿到的是什么**：
+        // 别名指向的点不消费返回值，靠代答命令的那类包不会生效。
+        warn(`扩展包「${owner}」注册的钩子点「${key}」是本宿主的旧名字，已接到「${aliased}」—— `
+          + '该点只通知、不代答（return 的 handled/reply 不会被消费），所以命令型包仍需宿主接进主链路');
+        key = aliased;
+      }
       if (!points.has(key)) {
         warn(`扩展包「${owner}」注册了未知钩子点「${key}」，已忽略（支持：${HOOK_POINTS.join(' / ')}）`);
         return false;

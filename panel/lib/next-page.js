@@ -114,6 +114,9 @@ export const NEXT_ASSETS = {
   /* 运行总览三栏（2026-10-27）：只作用于 `.ov*` / `#card-chain|dash|side` / `.ov-fold`，
      颜色仍走 `--c-*`。磁盘↔HTTP 双向比对见 check-wb §58①。 */
   'overview.css': 'text/css; charset=utf-8',
+  /* 识图与发图（2026-11-04）：双栏紧凑页。全部规则限定 `.vision`，
+     不改全局卡片/控件；磁盘↔HTTP 双向比对见 check-wb §58①。 */
+  'vision.css': 'text/css; charset=utf-8',
   /* `sortable.js`（2026-10-03 · 模型线路拖拽排序）：可排序列表引擎，接在
      `app.js` 的 `mountRouteSort()` 上（唯一接线点）。⚠️ 顺序仍然是硬要求：
      它启动时读 `window.Motion`，排在 `motion.js` 之后 —— 反了就是

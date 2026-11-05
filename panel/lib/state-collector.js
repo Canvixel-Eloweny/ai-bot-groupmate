@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import path from 'node:path';
+import { FRIEND_REQ_FILE_NAME, pendingRequestsOf } from '../../src/friend-requests.js';
 import {
   ENHANCE, ENHANCE_KEYS, ENHANCE_GROUPS, PERSONA_KEYS, PLAY_RULES, REPLY_LENGTHS, SCENES,
   resolvePlayRules,
@@ -12,6 +14,14 @@ import { FEATURE_LABEL, ZHIPU_MODEL_META } from '../../src/model-caps.js';
 import { LOCK_REFUSE_EXIT_CODE } from '../../src/bridge-lock.js';
 import { fieldMeta } from '../../src/field-schema.js';
 import { isLocalBase, onebotEndpointOf, providerOf } from '../../src/net-rules.js';
+import { normalizeContextInts } from '../../src/context-fields.js';
+import { usageLimitsOf } from '../../src/usage.js';
+// 识图主链路的上限（2026-11-04）：面板显示后端真实生效值，不在前端抄数字。
+// `src/vision.js` 是零依赖叶子，面板侧只读它的常量。
+import { VISION_MAX_IMAGES, VISION_FETCH_ATTEMPTS, VISION_INLINE_MAX_BYTES } from '../../src/vision.js';
+// 叫醒那两条路的词表与连发参数（2026-11-04 · BUG-12 方案②）。判据住在 `src/sleep.js`，
+// 面板只转述它算好的那份 —— 页面里写死「10 秒 / 3 条 / 起床醒醒」就是第二份真相。
+import { wakeRouteMetaOf } from '../../src/sleep.js';
 import { livenessVerdictOf } from '../../src/onebot-liveness.js';
 // L3 聚合层（2026-10-20）：面板只转述"识别到的后端"，不自己再写一份名字映射。
 import { backendOfSelfReport, backendLabel } from '../../src/backend/registry.js';
@@ -57,7 +67,7 @@ import { state } from './runtime-state.js';
 import { buildPersonaSections } from '../../src/prompt-sections.js';
 import { MBTI_AXES, MBTI_TYPES, mbtiInfoOf } from '../../src/mbti.js';
 import { STAR_SIGNS, ZODIAC_ANIMALS, birthdayInfoOf } from '../../src/birthday.js';
-import { resolvePersonaFile } from '../../src/user-root.js';
+import { resolvePersonaFile, DATA_DIR } from '../../src/user-root.js';
 import { EMO_GROUPS } from '../../src/emotion-keys.js';
 import { moodPromptLines } from '../../src/emotion.js';
 
@@ -219,6 +229,26 @@ function extensionPromptPreviewOf(snapshot, eff) {
     },
     plugin: { lines: pluginPlan.lines, used: pluginPlan.used, sections: plugin.sections.length },
   };
+}
+
+/**
+ * 读机器人那份待处理申请（B1.1 · 2026-11-04）。
+ *
+ * ⚠️ **面板只读不写** —— 这个文件的唯一写者是机器人进程（与 `sleep-state.json` 同一条
+ *    "单一所有者"纪律）。同意 / 拒绝走的是控制通道，不是直接改这份文件：
+ *    绕过机器人去改盘，页面会显示"已同意"而协议端根本没收到那一次调用。
+ * 读不到 / 坏 JSON ⇒ 空列表 + 一个如实的 `unreadable`，不谎报"没有申请"。
+ */
+function readFriendRequestsOf() {
+  const file = path.join(DATA_DIR, FRIEND_REQ_FILE_NAME);
+  try {
+    if (!fs.existsSync(file)) return { list: [], pending: 0, unreadable: false, ever: false };
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const list = Array.isArray(raw?.requests) ? raw.requests : [];
+    return { list, pending: pendingRequestsOf(list).length, unreadable: false, ever: true };
+  } catch {
+    return { list: [], pending: 0, unreadable: true, ever: false };
+  }
 }
 
 export function makeStateCollector(deps) {
@@ -568,6 +598,12 @@ export function makeStateCollector(deps) {
         localSize: resolveLocalKey(localKeyOf(cfg?.llm?.model) || cfg?.llm?.localSize),
         // 四套大脑各自存着的那份设置（面板切换时直接用它渲染，不用再发一次请求）
         presets: readPresets(cfg),
+        // ── 运行时**真正在用**的上下文窗口（2026-11-03）─────────────────────
+        // 面板那两格以前读的是 `presets[当前大脑].context.*`（切大脑时的归档快照），
+        // 而保存写的是顶层 `context` ⇒ 改完刷新仍显示旧数字，用户以为没生效、反复重填。
+        // 真值在顶层，就下发顶层；夹取与默认值取自 `src/context-fields.js` 那**一份**
+        // （面板不许引 `src/config.js` 本体 —— §82 的准入判据，所以共享的是叶子）。
+        context: normalizeContextInts(cfg),
         activePreset: providerOf(baseUrl),
         // 自定义大脑（2026-10-07）：**刻意不混进 `presets`** —— 那张表是
         // "服务商 → 一套设置"，而自定义是"用户自己命名的多套"，形状不同。
@@ -618,6 +654,12 @@ export function makeStateCollector(deps) {
         privateUsers: cfg?.allow?.private || [],
         // 主人 QQ（2026-10-21）：睡眠叫醒的唯一身份判据，加载时会自动补进私聊白名单。
         owners: cfg?.owner?.qq || [],
+        // ⚠️ 同一个数组的**第二个键名**，不是第二份数据（值就是上面那个引用）。
+        //    为什么必须有：面板那格控件写的是 `bindSys: 'ownerQq'`（§123⑧），
+        //    而这里只下发过 `owners` ⇒ 绑定器两条路径都取不到值 ⇒
+        //    **「主人 QQ」配好了也永远显示空白**，用户会以为没保存、反复重填。
+        //    `owners` 保留 —— 检查表与旧脚本都在读它（§123⑩ 钉的也是它）。
+        ownerQq: cfg?.owner?.qq || [],
         // 当前读的是真配置还是模板。用模板时面板**保存不会写进模板**，
         // 用户看到"保存成功"却不生效 —— 这一格就是用来把这件事摆到台面上的。
         source: fs.existsSync(CONFIG_FILE) ? 'config.json' : 'config.example.json',
@@ -632,6 +674,10 @@ export function makeStateCollector(deps) {
            于是它是**唯一一条只能手改 config.json 的发言闸门**。
            下发的是**毫秒原值**：换算成分钟只发生在前端控件那一处（`scale`）。 */
         interjectCooldownMs: cfg?.trigger?.interjectCooldownMs ?? 300000,
+        /* 纯图宽限（2026-11-04）：`src/brain.js` 用它判「刚说过话后的纯图」；
+           与 interjectCooldownMs 同一族 —— 面板不给出入口的话，用户只能手改 config.json。
+           下发 ms 原值，秒数换算只发生在前端 `range` 控件的 `fmt` 里。 */
+        bareGraceMs: cfg?.trigger?.bareGraceMs ?? 60000,
         personaName: cfg?.persona?.name || '',
         // 人设文件路径（2026-10-25）：只在页面上**只读展示** —— 写入口仍在 config.json。
         // 不下发文件正文：提示词页需要的那份已经在 `personaPrompt` 里算进去了。
@@ -679,6 +725,8 @@ export function makeStateCollector(deps) {
       // 结构化记忆（ATI-3 存量 + 人工复核的状态，ATI-5）。
       // 面板在这里是**读 + 只改状态**；新增与复证仍然只有机器人进程做（`appendRecord`）。
       memoryRecords: memoryRecordsOf(),
+      // 待处理的好友申请 / 群邀请（B1.1）。机器人收下并通知主人之后，主人就在这里拍板。
+      friendRequests: readFriendRequestsOf(),
       // 场景 / 回复长短的**显示名**。放后端是为了让面板不必再抄一份中文表
       // （抄两份必然漂移，这个项目已经因为同样的原因踩过好几次）。
       customMeta: {
@@ -720,6 +768,24 @@ export function makeStateCollector(deps) {
         // 页面用它填三件事：① 提示文字里的数字（`data-num`）；② `<input min max>`（`data-limit`）；
         // ③ 收集表单时的兜底值。以前这三处各抄一次，漂了只会让界面撒谎。
         fieldMeta: fieldMeta(),
+        // 识图主链路的真实上限（2026-11-04）：页面事实条读这里，不在 schema/app.js 里
+        // 写死「3 张 / 1.5MB / 重试 1 次」—— 改常量的人不会想起改文案。
+        vision: {
+          maxImages: VISION_MAX_IMAGES,
+          inlineMaxBytes: VISION_INLINE_MAX_BYTES,
+          attempts: VISION_FETCH_ATTEMPTS,
+        },
+        // 用量上限的**生效值**（2026-11-03）。以前它是 `src/usage.js` 里的编译期常量：
+        // 超限只写一行 bridge.log，面板一个数字都看不到，用户感知是"她今天突然变笨/不接话"，
+        // 而且没有任何地方能调 —— 定标依据是**作者自己的用量**，不是所有部署的用量。
+        // 默认值仍只有 `USAGE_LIMITS` 那一处（这里调的是同一个函数，不抄数字）。
+        usageLimits: usageLimitsOf(custom),
+        // 叫醒那两条路的**真值**（2026-11-04 · BUG-12 方案②）。
+        // 此前页面从没说过"要怎样才能把她叫醒"：半夜她不回话时，用户唯一的线索是
+        // 自己的记忆。而词表与连发参数住在 `src/sleep.js`，抄进面板文案必然漂移
+        // （改常量的人不会想起改文案），所以这里下发、前端只渲染。
+        // `words` 用的是 `readSleep` 归一化后的那份（回落规则不重复实现）。
+        sleep: wakeRouteMetaOf(custom.sleep),
         // 结构化记忆那一块的中文名与按钮表（ATI-5）。全部来自 `src/memory-record.js` ——
         // 面板一个中文名都不自存；`actionsFor` 还顺手挡掉"已确认的条目还给一个「认可」按钮"
         // 这种说了等于没说的界面。

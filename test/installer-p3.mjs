@@ -261,7 +261,7 @@ async function main() {
     );
   });
 
-  await ckA('重定向后校验最终 URL（不是初始 URL）', async () => {
+  await ckA('重定向：每一跳先校验再请求（首跳与最终 URL 都过白名单）', async () => {
     const seen = [];
     const srv = await serve((req, res) => {
       if (req.url === '/redirect') {
@@ -283,8 +283,35 @@ async function main() {
         validateUrl: (u) => { seen.push(u); return { ok: true }; },
       });
       assert.equal(r.buffer.toString(), '{"ok":true}');
-      assert.equal(seen.length, 1);
-      assert.match(seen[0], /\/manifest\.json$/);
+      assert.equal(seen.length, 2);
+      assert.match(seen[0], /\/redirect$/);
+      assert.match(seen[1], /\/manifest\.json$/);
+    } finally {
+      srv.server.close();
+    }
+  });
+
+  await ckA('重定向到白名单外：目标请求数为 0（先校验再请求）', async () => {
+    const hits = [];
+    const srv = await serve((req, res) => {
+      hits.push(req.url);
+      if (req.url === '/redirect') {
+        res.writeHead(302, { location: '/forbidden' });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('should-not-be-fetched');
+    });
+    try {
+      await assert.rejects(
+        () => fetchCapped(`http://127.0.0.1:${srv.port}/redirect`, {
+          maxBytes: 1024,
+          validateUrl: (u) => (/\/redirect$/.test(u) ? { ok: true } : { ok: false, reason: '不在白名单' }),
+        }),
+        /不在白名单/,
+      );
+      assert.deepEqual(hits, ['/redirect']);
     } finally {
       srv.server.close();
     }

@@ -305,6 +305,8 @@ export const BACKEND_SOURCES = [
   // 协议端进程级守护（2026-10-22）：纯判据 + 注入式实例，零 src 依赖（L1）。
   // 进表的理由同 napcat-native.js —— 改了它必须重启面板才生效。
   'panel/lib/protocol-guard.js',
+  // 「试一句」单飞闸（2026-11-05）：零 import 的纯工厂。改了它面板要重启才生效。
+  'panel/lib/try-gate.js',
   // D21：ZIP 编解码（读与写共用**同一份** crc32）与扩展包安装（staging / 备份 / 回滚）。
   // 进表的理由同上 —— 改了它们必须重启面板才生效，否则"页面换了而判据还是旧的"。
   'panel/lib/zip.js',

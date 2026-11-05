@@ -900,6 +900,50 @@ function quietHours(v) {
  * 把 config.json 里的 `custom` 段归一化成完整可用的结构。
  * 任何缺失/非法字段都回落到默认值 —— 老的 config.json 不做迁移也能跑。
  */
+/**
+ * `custom.usage` 的投影（2026-11-03）：只保留**用户显式填的合法值**，其余留 undefined。
+ *
+ * 不在这里放默认值、也不在这里 clamp 到边界 —— 生效值的算法唯一住在
+ * `src/usage.js` 的 `usageLimitsOf()`（它才认识 `USAGE_LIMITS` 那份默认）。
+ * 这里若再写一份默认，就成了"面板显示 A、机器人按 B 裁"的第二个真相源。
+ */
+function usageFields(v) {
+  const u = (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+  const keepPos = (key, max) => {
+    const n = Number(u[key]);
+    return Number.isFinite(n) && n > 0 && n <= max ? n : undefined;
+  };
+  const keepRatio = (key) => {
+    const n = Number(u[key]);
+    return Number.isFinite(n) && n > 0 && n <= 1 ? n : undefined;
+  };
+  return {
+    dailyTokens: keepPos('dailyTokens', 1e12),
+    perChatTokens: keepPos('perChatTokens', 1e12),
+    trimAt: keepRatio('trimAt'),
+  };
+}
+
+/**
+ * 面板导航的**隐藏名单**（2026-11-03 · 维护者要求"我们自己的组件用户也可以去掉"）。
+ *
+ * 三条纪律：
+ * ① **只隐藏，不删除**。删除属 G7（不可逆），而且会让 `schema.js` 里的锚点、
+ *    `RENDER` 表、§171 身份清单、逐页遍历全部对不上 —— 那是把"用户想清静一点"
+ *    变成"这仓的门禁集体失效"。隐藏保住源码，只改显示。
+ * ② 存的是 **id**（`domain` / `sub` / `card` 三张表分开），不是中文名、不是序号。
+ *    中文名会随文案漂，序号会随导航重排漂；只有 id 是稳定的。
+ * ③ 这里**不校验 id 存不存在**：名单由面板按 `GROUPS` 生成，写错的名字只是不生效，
+ *    不值得为它引入"配置层认识界面结构"这条反向依赖。
+ */
+function panelHiddenFields(v) {
+  const o = (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+  const ids = (key) => (Array.isArray(o[key]) ? o[key] : [])
+    .map((x) => String(x ?? '').trim()).filter(Boolean).slice(0, 60)
+    .filter((x, i, a) => a.indexOf(x) === i);
+  return { domains: ids('domains'), subs: ids('subs'), cards: ids('cards') };
+}
+
 export function readCustom(raw) {
   const c = mergeDeep(CUSTOM_DEFAULTS, raw?.custom);
   // ⚠️ 命名空间存在性必须看**原始 raw**，不能看 mergeDeep 后的 c.extensions：
@@ -996,6 +1040,15 @@ export function readCustom(raw) {
     //    归一化归 `holidays.js`（它拥有"什么算合法登记"的判据），这里只取出来喂给它 ——
     //    与 browseLock / sleep / forwardExpand / crossSend 同一条纪律。
     holidays: normalizeHolidays(c.holidays),
+    // 用量上限（2026-11-03）：**这里不存默认值** —— 默认值唯一住在 `src/usage.js`
+    // 的 `USAGE_LIMITS`，这一格只把用户显式填过的数原样带出去（没填 = undefined，
+    // 由 `usageLimitsOf()` 回落默认）。
+    // ⚠️ 必须出现在这个返回对象里：readCustom 是白名单投影，漏了它，
+    //    面板保存一次就会把用户填的上限从 config.json 里抹掉（holidays 那个坑的同族）。
+    usage: usageFields(c.usage),
+    // 面板导航隐藏名单（2026-11-03）。同样必须在白名单投影里列出来 ——
+    // 漏了就等于"用户在面板上点掉一张卡，下一次保存又回来了"。
+    panelHidden: panelHiddenFields(c.panelHidden),
     memory: {
       auto: bool(c.memory.auto),
       manual: memoryItems(c.memory.manual),

@@ -1,6 +1,7 @@
 // 出口闸门的规则表只在 src/egress.js 一份（唯一入口表）。这里只做**消费**：
 // 主动路径与主链路用的是同一批规则，不在这里另写任何"什么不该发"的判据。
-import { scanEgress } from './egress.js';
+import { scanEgress, maskEgress } from './egress.js';
+import { redactCredentialsBeforeShape } from './egress.js';
 // B33：内部标记的判据与主链路**同一个叶子**（外壳/词干/旧措辞都在那儿，各写一份必然漂）。
 import { scanInternalMarks, stripInternalMarks } from './internal-marks.js';
 
@@ -73,7 +74,10 @@ export function planProactiveSend({ groups = [], sessionOf, throttle, budgetLeve
  * @returns {{chunks:string[], blocked:string|null, internal:string[]}} blocked 为出口闸门命中的规则名
  */
 export function plannedProactiveChunks(text, { maxChunks = 5 } = {}) {
-  const raw = String(text)
+  // 与主链路同一条顺序：凭据先抹，再分句/截断。晚一步 PEM 正文与长 Key 就被拆散了。
+  const pre = redactCredentialsBeforeShape(String(text));
+  const preMasked = pre.rules.join(' / ');
+  const raw = pre.text
     .split(/\|\||\n+/)
     .map((s) => s.trim())
     .filter(Boolean)
@@ -90,5 +94,29 @@ export function plannedProactiveChunks(text, { maxChunks = 5 } = {}) {
       return cleaned;
     })
     .filter(Boolean);
-  return { chunks, blocked: scanEgress(chunks.join('\n')), internal: [...new Set(internalRaw)] };
+  const blocked = scanEgress(chunks.join('\n'));
+  // ⚠️ 没命中时 `blocked` **仍是 `null`**（不是 `''`）：`null` 是 `scanEgress` 原本的语义，
+  //    而 T134 钉的就是"干净文案 `blocked === null`"。改成空串等于改了返回形状没人复核。
+  if (!blocked) return { chunks, blocked: null, masked: preMasked, internal: [...new Set(internalRaw)] };
+  // 与主链路 `brain.parseReply` **逐字同一条口径**（2026-11-03）：先就地打码，
+  // 打完自证扫得干净就照发；扫不干净才交回 `blocked` 让调用方整条不发。
+  // 主动发言以前是这条链上最难查的失败：表现为"该说话时一声不吭"，
+  // 而原因只在 `sayToGroup` 抛出的那句里，群里没有任何痕迹。
+  const rules = [];
+  const maskedChunks = chunks.map((c) => {
+    const m = maskEgress(c);
+    if (!m.trusted) return null;
+    rules.push(...m.rules);
+    return m.text;
+  });
+  if (maskedChunks.some((c) => c === null)) {
+    // 打不干净 ⇒ 交回 `blocked`，**chunks 原样不动**：主动链的"不发"是调用方抛错实现的，
+    // 这里清空反而会把"谁拦的"搞成两处（主链路的清空口径是 `parseReply` 特有的）。
+    return { chunks, blocked, masked: preMasked, internal: [...new Set(internalRaw)] };
+  }
+  return {
+    chunks: maskedChunks, blocked: null,
+    masked: [preMasked, [...new Set(rules)].join(' / ')].filter(Boolean).join(' / '),
+    internal: [...new Set(internalRaw)],
+  };
 }

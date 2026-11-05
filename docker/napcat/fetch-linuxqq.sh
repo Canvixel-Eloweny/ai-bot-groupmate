@@ -10,6 +10,7 @@
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
+source ./fsize.sh
 
 CHUNKS="${QQDL_CHUNKS:-8}"
 OUT="linuxqq.deb"
@@ -62,10 +63,10 @@ dl() {
   want=$((end - start + 1))
   for try in 1 2 3 4 5 6 7 8 9 10; do
     have=0
-    [ -f "$out" ] && have=$(stat -f%z "$out" 2>/dev/null || echo 0)
+    [ -f "$out" ] && have=$(fsize "$out")
     [ "$have" -ge "$want" ] && return 0
     curl -sL -r $((start + have))-$end --connect-timeout 30 --max-time 280 "$URL" -o "$out" 2>/dev/null
-    have=$(stat -f%z "$out" 2>/dev/null || echo 0)
+    have=$(fsize "$out")
     [ "$have" -ge "$want" ] && return 0
   done
   return 1
@@ -84,7 +85,7 @@ for i in $(seq 0 $((CHUNKS - 1))); do
 done
 rm -f .qpart.*
 
-GOT=$(stat -f%z "${OUT}.part" 2>/dev/null || echo 0)
+GOT=$(fsize "${OUT}.part")
 if [ "$GOT" -ne "$TOTAL" ]; then
   echo "✗ 大小不符：拿到 ${GOT}，期望 $TOTAL"
   exit 1

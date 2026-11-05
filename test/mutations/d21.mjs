@@ -105,9 +105,9 @@ export default [
     note: '自己写一份 `..` 判据（与 plugin-manifest 那份必然漂：`..foo.js` 是合法文件名）',
     file: 'panel/lib/ext-install.js',
     anchor: /^  for \(const e of files0\) \{$/m,
-    // ⚠️ 这个形状在文件里出现**两次**（安全校验循环 / 组装相对路径循环），
-    //    锚点数必须写 2；`apply` 的 `replace` 只改**第一处**（安全那一处）。
-    count: 2,
+    // ⚠️ 2026-11-05：组装相对路径的循环已改为 `for (const x of canonEntries)`，
+    //    这个形状只剩安全校验那一处 ⇒ 锚点数从 2 改为 1。
+    count: 1,
     apply: (s) => s.replace(
       '  for (const e of files0) {',
       "  for (const e of files0) {\n    if (e.name.includes('..')) return { ok: false, error: '越界' }; // 变异：自写一份判据"

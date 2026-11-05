@@ -92,7 +92,7 @@ console.log = (first, ...rest) => {
  *       提交门 `pre-commit.sh` 正是因此才把 `node_modules` **软链**进闸门用的临时 worktree。
  *       记在这里是为了下次有人量到 17 时**别以为闸门坏了**。
  */
-const MIN_CONTRACTS = 156;
+const MIN_CONTRACTS = 164;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -360,6 +360,53 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
     if (!/if \(blocked\)/.test(prBody)) {
       bad++; n++;
       console.log('✗ parseReply 没有消费 blocked —— 拦了不留痕（静默失效，用户只看到"它突然不理我"）');
+    }
+    // ── 2026-11-03（维护者批准）：命中改成"就地打码后照发"，fail-closed 靠自证保留 ──
+    // 这四条一起才成立，缺任何一条都是"看着更安全、其实换了语义"：
+    //   ① 打码实现只有一份（`egress.js` 的 `maskEgress`），两条出口链都调它；
+    //   ② `maskEgress` 内部必须**用同一道 scanEgress 复扫自己的输出** —— 这是退路的判据；
+    //   ③ "打不干净 ⇒ 整条不发"那一支在两处都必须在（不能只写主链路、漏掉主动链）；
+    //   ④ 打码结果必须带出**规则名**（`masked`）并落 trace/日志 —— 只抹不留痕，
+    //      用户下次看到"她说话带一串星号"就无从归因。
+    const egSrc2 = stripComments(fs.readFileSync(new URL('../src/egress.js', import.meta.url), 'utf8'));
+    const egBody2 = fnSlice(egSrc2, 'export function maskEgress(', 200);
+    if (!egBody2) {
+      bad++; n++;
+      console.log('✗ 抽不出 maskEgress() 的函数体 —— 出口打码这条判据失效（抽取失败一律当失败）');
+    } else if (!/const left = scanEgress\(s\)/.test(egBody2) || !/trusted: left === null/.test(egBody2)) {
+      bad++; n++;
+      console.log('✗ maskEgress 没有"打完再用同一道 scanEgress 复扫"这一步 —— 打码是否打干净变成不可证的事，'
+        + '而调用方据此照发就等于把闸门改成 fail-open');
+    } else if (/isBlocking\(/.test(egBody2)) {
+      bad++; n++;
+      console.log('✗ maskEgress 用了 isBlocking() —— 哨兵（闸门规则异常）会被当成"没命中"，出口闸门静默变 fail-open');
+    }
+    if (!/import \{ scanEgress, maskEgress \} from '.\/egress.js'/.test(brain)) {
+      bad++; n++;
+      console.log('✗ brain.js 没有引 maskEgress —— 主链路的打码是第二份实现，或根本没有');
+    }
+    if (!/if \(maskedChunks\.some\(\(c\) => c === null\)\) \{/.test(prBody)) {
+      bad++; n++;
+      console.log('✗ parseReply 没有"打不干净就整条不发"那一支 —— 退路被删，任何打码失败都会变成把原文发进群');
+    }
+    if (!/masked, internal/.test(prBody) && !/masked:/.test(prBody)) {
+      bad++; n++;
+      console.log('✗ parseReply 没有把打码命中的规则名交回调用方（masked）—— 抹掉了却没人知道抹过');
+    }
+  }
+  {
+    // 主动链：与主链路**同一份**打码实现 + 同一条退路（这条链以前是"一声不吭"最难查的那条）。
+    const proSrc2 = fs.readFileSync(new URL('../src/proactive.js', import.meta.url), 'utf8');
+    if (!/import \{ scanEgress, maskEgress \} from '.\/egress.js'/.test(proSrc2)
+      || !/if \(maskedChunks\.some\(\(c\) => c === null\)\) \{/.test(proSrc2)) {
+      bad++; n++;
+      console.log('✗ 主动链没有接同一份 maskEgress，或缺"打不干净就不发"那一支 —— '
+        + '两条出口链口径一旦不同，就会有一条把原文发出去');
+    }
+    const idxSrc2 = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+    if (!/rec\.masked = masked \|\| '';/.test(idxSrc2) || !/出口闸门就地打码/.test(idxSrc2)) {
+      bad++; n++;
+      console.log('✗ 打码这件事没有落 trace（rec.masked）也没有打日志 —— 与 `blocked` 同一条纪律：拦了不留痕就是静默失效');
     }
   }
   if (!/maskSecrets\(/.test(lg)) { bad++; n++; console.log('✗ src/logger.js 的 emit() 没有接日志脱敏 maskSecrets()'); }
@@ -1827,7 +1874,16 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
   const bodyOfFn = (text, name) => {
     const m = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(text);
     if (!m) return null;
-    const i = text.indexOf('{', m.index);
+    // ⚠️ 2026-11-05：参数里可能有解构（`{ ownerBypass = false } = {}`）。
+    //    直接找第一个 `{` 会把**参数对象**当成函数体，于是 deliverFromBot 的
+    //    闸门断言在真空里变绿/变红。先配平参数括号，再从括号后找函数体。
+    let p = m.index + m[0].length - 1;
+    let pd = 0;
+    for (; p < text.length; p += 1) {
+      if (text[p] === '(') pd += 1;
+      else if (text[p] === ')') { pd -= 1; if (pd === 0) break; }
+    }
+    const i = text.indexOf('{', p + 1);
     if (i < 0) return null;
     let d = 0;
     for (let j = i; j < text.length; j += 1) {
@@ -1951,6 +2007,31 @@ const LIB_SRC_ALLOW = [
   // 2026-10-21（Win-v0.1.2 移植）：角色卡十维分级。零依赖叶子（闭包 = 1），
   // 面板只渲染分数、不抄门槛表；自然不触达 llm / brain / onebot / index / config / logger。
   'persona-grade.js',
+  // 2026-11-03（上下文预算回显）：`context` 三个整数的默认值与夹取。
+  // 面板要下发**运行时真正在用的那份**（以前读 presets 归档快照 ⇒ 保存后显示旧值），
+  // 而夹取与默认值不许在面板侧抄第二遍；§82 又不许引 `src/config.js` 本体，
+  // 所以共享这个叶子。闭包 = { context-fields, ambient }（2 个模块），
+  // 两者都零 IO / 零 env / 零网络，不触达 llm / brain / onebot / index / config / logger。
+  'context-fields.js',
+  // 2026-11-03（用量上限可配）：`USAGE_LIMITS` 的**生效值算法**（用户填的覆盖默认）。
+  // 面板必须显示与机器人**同一个**上限 —— 在面板侧再抄一份默认与回落规则，
+  // 就会出现"界面说 60 万、实际按另一个数裁"。闭包 = { usage, holidays, user-root }，
+  // 三者都不触达 llm / brain / onebot / index / config / logger；
+  // 且 `panel/server.js` 早就在引 `src/usage.js`（取 USAGE_SOURCES），不是新开的进程纠缠。
+  'usage.js',
+  // 2026-11-04（BUG-12 方案② · 叫醒暗号摆到台面）：`src/sleep.js` 是**零依赖叶子**
+  // （全文没有一个 import，闭包规模 = 1），面板要它算好的那份词表与连发参数
+  // （`wakeRouteMetaOf`）。页面里写死「10 秒 / 3 条 / 起床、醒醒」就是第二份真相 ——
+  // 改常量的人不会想起改文案，于是页面开始撒谎。不触达 llm / brain / onebot / index / config / logger。
+  'sleep.js',
+  // 2026-11-04（B1.1 好友申请）：面板要读机器人那份待处理列表。这个叶子**零依赖**
+  // （不 import、不碰 IO，`now` 全部入参），面板只取文件名与"还等拍板的那几条"两个东西 ——
+  // 状态闭集合与筛选判据不许在面板抄第二份，否则"failed"在两边显示成不同的话。
+  'friend-requests.js',
+  // 2026-11-04（识图加固）：面板要显示主链路真实上限（几张 / 多大 / 重试几次），
+  // 不许在 app.js 再抄一份数字。闭包 = { vision, images }；两者零 IO / 零 env / 零网络，
+  // 不触达 llm / brain / onebot / index / config / logger。
+  'vision.js',
   // 2026-10-25（人设域六页）：MBTI / 生日彩蛋 / 21 项情绪键 / 提示词分段。
   // 四个都是零依赖叶子（prompt-sections 只 import mbti + birthday，闭包 3 个模块），
   // 面板要它们在 `/api/state` 里算出与 brain **同一份**提示词文本 ——
@@ -2270,6 +2351,8 @@ const LIB_SRC_ALLOW = [
       'panel/lib/update.js': 2,
       // 假 QQ 的 stdout 分类（2026-11-01）：零 import 的纯函数叶子 ⇒ L0。
       'panel/lib/fake-line.js': 0,
+      // 「试一句」单飞闸（2026-11-05）：零 import 的纯工厂 ⇒ L0。
+      'panel/lib/try-gate.js': 0,
       // 假 QQ 会话壳（2026-10-21）：只依赖 L0 的 paths.js / fake-line.js + node 内置 ⇒ L1。
       'panel/lib/fake-session.js': 1,
     };
@@ -3176,12 +3259,102 @@ const LIB_SRC_ALLOW = [
     problems.push('扩展包契约的输入集合为空：一个扩展包源文件都没扫到 —— 上面那条 EX-NOFRONT 是在真空里通过的');
   }
 
+  // ⑩ 清单里的**空对象是合法写法**（2026-11-03 · 群友报告 BUG-18）。
+  //     旧判据 `schemaKeys.length === 0 && raw.configSchema`：空对象既 truthy 又零键 ⇒
+  //     每个只写 `configSchema: {}` / `settings: {}`（"这个包没有可配项"）的包
+  //     都白挨一条「不是对象」的假警。
+  //     这里**真的调一次归一化**而不是扫源码 —— 判据落在行为上，改回旧写法立刻红。
+  {
+    const { normalizeManifest: nm10 } = await import(new URL('../src/plugin-manifest.js', import.meta.url));
+    const codesOf = (raw) => ((nm10(raw) || {}).problems || []).map((x) => x.code);
+    const falseAlarm = [
+      ['configSchema', 'bad-schema'],
+      ['settings', 'bad-settings'],
+    ].filter(([field, code]) => codesOf({ id: 't-empty', name: 't', [field]: {} }).includes(code));
+    if (falseAlarm.length) {
+      problems.push(`清单里写 ${falseAlarm.map((x) => `${x.field}: {}`).join(' / ')} 被报成"不是对象" —— `
+        + '空对象是合法写法（"这个包没有可配项"），这是假警');
+    }
+    // 反向那一半必须有：修假警不许把真警一起拆掉（只测"不报"的判据，等于鼓励把检查删了）。
+    const stillCaught = [
+      ['configSchema', ['a'], 'bad-schema'],
+      ['settings', 'nope', 'bad-settings'],
+    ].filter(([field, value, code]) => !codesOf({ id: 't-bad', name: 't', [field]: value }).includes(code));
+    if (stillCaught.length) {
+      problems.push(`清单里 ${stillCaught.map((x) => x.field).join(' / ')} 给了非对象（数组/字符串）却不再报错 —— `
+        + '真警也一起没了，这条判据就变成了"把检查拆掉"');
+    }
+  }
+
+  // ⑪ 权限表**名实相符**（2026-11-03 · 群友报告 BUG-13 / MIG-07）。
+  //     `storage` 以前挂在 PERMISSION_NAMES 里、也被写进给作者看的创作提示词，
+  //     但宿主**没有实现** ⇒ 包按文档写 `api.storage.get(k)` 得到
+  //     `Cannot read properties of undefined`，报错指向"包写错了"。
+  //     这张表以后再加权限，必须同时把实现与接线一起加进来 —— 这条判据就是拦这个的。
+  {
+    const apiSrc = stripComments(read('../src/plugin-api.js'));
+    const hostSrc2 = stripComments(read('../src/plugin-host.js'));
+    const storeSrc = stripComments(read('../src/ext-storage.js'));
+    const permNames = (/export const PERMISSION_NAMES = Object.freeze\(\[([^\]]*)\]/.exec(apiSrc) || [, ''])[1]
+      .split(',').map((x) => x.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+    const unbacked = permNames.filter((p) => p !== 'web_fetch' && p !== 'send_image'
+      && !new RegExp(`api\\.${p}\\s*=`).test(apiSrc));
+    if (unbacked.length) {
+      problems.push(`权限表里这些名字没有对应的 api.* 实现（名实不符 = 包按文档写就崩）：${unbacked.join(' / ')}`);
+    }
+    if (!/storage: extStorage/.test(hostSrc2) || !/dataDir: path\.join\(root, 'data', 'ext'/.test(hostSrc2)) {
+      problems.push('plugin-host 没有把 storage / dataDir 接进 buildApi —— 纯函数写得再对也没人注入（"写了没人读"）');
+    }
+    // ⚠️ 2026-11-04 变异实测（X3/X4 第一次跑出 NOT-BLOCKED）：
+    //    "文件里出现过这个 token"这种写法抓不到**只改其中一处**的缺陷 ——
+    //    `api.storage =` 有两个赋值点（有权限那一支 / 未声明那一支），
+    //    `writeJsonAtomic(` 有两个调用点（set / remove）。改掉一处，另一处仍让判据绿。
+    //    与 §52②b「常量在、上限亡」是同一个形状，所以这里一律改成**数数量**。
+    if (countOf(apiSrc, /api\.storage\s*=/g) !== 2) {
+      problems.push(`api.storage 的赋值点应有 2 处（声明了→实现 / 没声明→明确拒绝），实际 ${countOf(apiSrc, /api\.storage\s*=/g)} 处 —— `
+        + '少一处就是包拿到 undefined，报错指向"包写错了"而坏的是宿主');
+    }
+    if (!/api\.storage = wired\s*\?/.test(apiSrc)) {
+      problems.push('api.storage 在"声明了 storage"那一支里没有接到注入的实现 —— 权限发了但拿到的是拒绝函数，'
+        + '面板显示"已授权"而包永远存不进东西');
+    }
+    if (countOf(storeSrc, /writeJsonAtomic\(/g) !== 2) {
+      problems.push(`ext-storage.js 的原子写调用点应有 2 处（set / remove），实际 ${countOf(storeSrc, /writeJsonAtomic\(/g)} 处 —— `
+        + '少一处就是那条路径崩溃留半截 JSON，包"以为状态被清空"');
+    }
+    if (!/export function createExtStorage\(/.test(storeSrc)) {
+      problems.push('ext-storage.js 缺 createExtStorage —— 上面的计数判据会在空串上假绿');
+    }
+    // 两张权限表不许重叠：重叠的话 `has()` 与告警会各说一套。
+    const unsup = (/export const KNOWN_UNSUPPORTED_PERMISSIONS = Object.freeze\(\[([^\]]*)\]/.exec(apiSrc) || [, ''])[1]
+      .split(',').map((x) => x.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+    const collide = unsup.filter((p) => permNames.includes(p));
+    if (collide.length) problems.push(`"宿主不提供"与"已实现"两张表重叠：${collide.join(' / ')}`);
+    if (!unsup.length) problems.push('KNOWN_UNSUPPORTED_PERMISSIONS 空了 —— 生态常见名字（cross_send/local_service…）会重新被报成"拼错了"');
+  }
+
+  // ⑫ 钩子点别名：值必须是真实存在的点，且**必须说清"不代答"**。
+  //     只补名字不补语义 = 命令型包"注册成功了却还是没反应"，那是另一种静默失效。
+  {
+    const busSrc = stripComments(read('../src/hook-bus.js'));
+    const aliasBody = (/export const HOOK_POINT_ALIASES = Object\.freeze\(\{([\s\S]*?)\}\);/.exec(busSrc) || [, ''])[1];
+    const aliasTargets = [...aliasBody.matchAll(/:\s*'([^']+)'/g)].map((m) => m[1]);
+    if (!aliasTargets.length) problems.push('HOOK_POINT_ALIASES 空了 —— 社区包的 incoming-message/message 会重新被当"未知钩子点"拒掉（包永远是死的）');
+    const pointsBody = (/export const HOOK_POINTS = Object\.freeze\(\[([\s\S]*?)\]\);/.exec(busSrc) || [, ''])[1];
+    const bad = aliasTargets.filter((t) => !pointsBody.includes(`'${t}'`));
+    if (bad.length) problems.push(`钩子别名指向不存在的点：${bad.join(' / ')} —— 别名表自己就是下一个"注册了但没人调"`);
+    if (!/不代答|不会被消费/.test(busSrc)) {
+      problems.push('别名受理时没有说清"该点不代答（handled/reply 不被消费）"—— 命令型包会以为接上了');
+    }
+  }
+
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
     console.log(
       `✓ 扩展包宿主：判据各一份 · 接线是调用点 · 两套 skills 未混 · apiVersion 闸在位`
         + ` · EX-NOFRONT 扫了 ${extFiles.length} 个扩展包源文件（0 违规）· 三件套齐（gitignore 锚定 + 沙箱排除 + env 覆盖）`
-        + ` · 数据目录三件套齐且被 ${dataDirUsers.length} 个真实扩展包 import`
+        + ` · 数据目录三件套齐且被 ${dataDirUsers.length} 个真实扩展包 import · 空对象清单不误报、非对象仍抓得住`
+        + ` · 权限表名实相符（storage 有实现、未提供的与拼错的分开说）· 钩子别名指向真实点且说清不代答`
     );
   }
 }
@@ -3752,6 +3925,39 @@ const LIB_SRC_ALLOW = [
   const leaked = Object.values(labels).filter((v) => app15.includes(v));
   if (leaked.length) {
     problems.push(`现役面板里出现了状态中文名的完整字符串：${leaked.join(' / ')} —— 中文名只许由后端下发（抄一份必然漂移）`);
+  }
+  // ⑧b **按钮表**：页面必须从后端下发的 `actionsFor` 取按钮，而不是自己列一份。
+  //     0.1.7 实测事故：渲染器写死了 `[['confirmed','确认'],['rejected','否决'],['archived','收起']]`
+  //     当作**动作**发出去 —— 那三个是**状态**名。后端 `REVIEW_ACTIONS` 只认
+  //     confirm/reject/archive/restore/delete ⇒ `/api/memory/review` 每条 400「不认识的动作」
+  //     ⇒ 「认可/否决/收起」三个按钮**全部点不动**，而且不报错（只弹一句失败原因）。
+  //     上面 ① 只核了后端三张表自洽，**从没核前端有没有用它们** —— 这就是它能发出去的原因。
+  if (!/meta\.actionsFor\?\.\[r\.status\]/.test(app15)) {
+    problems.push('页面没有从下发的 actionsFor 取按钮（`meta.actionsFor?.[r.status]`）—— 页面自列按钮迟早把状态名当动作名发出去');
+  }
+  if (/data-a="mem\.review" data-p="[^"]*\|(confirmed|rejected|archived|superseded|candidate)"/.test(app15)) {
+    problems.push('mem.review 的 data-p 传的是状态名而不是动作名 —— 后端只认 confirm/reject/archive/restore/delete，点了必 400');
+  }
+  // ⑧c 演示快照里那份 `memoryReview` 是**第二份拷贝**（离线打开 `file://` 也要画得出按钮）。
+  //     拷贝本身是这文件的既有惯例（playRules / fieldMeta / replyLengths 都抄了），
+  //     但抄了就得钉住：与后端逐条比对，漂了立刻红 —— 否则演示态会教用户一套后端不认的动作名。
+  {
+    const { DEMO } = await import(new URL('../panel/next/demo-state.js', import.meta.url));
+    const dm = (DEMO?.customMeta || {}).memoryReview;
+    if (!dm) {
+      problems.push('demo-state.js 没有 memoryReview —— 离线演示时结构化记忆一个按钮都画不出来');
+    } else {
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      if (!same(dm.actions, actions)) {
+        problems.push('demo-state.js 的 memoryReview.actions 与后端 REVIEW_ACTIONS 不一致 —— 演示态会显示一套后端不认的动作');
+      }
+      if (!same(dm.actionsFor, actionsFor)) {
+        problems.push('demo-state.js 的 memoryReview.actionsFor 与后端 REVIEW_ACTIONS_FOR 不一致 —— 演示态的按钮组合是真的界面给不出的');
+      }
+      if (!same(dm.statusLabels, labels)) {
+        problems.push('demo-state.js 的 memoryReview.statusLabels 与后端 RECORD_STATUS_LABELS 不一致 —— 演示态的中文名的会和真机不一样');
+      }
+    }
   }
   // ⑨ 三件套（漏掉任一都不报错，只会安静地污染真机数据或提交进仓库）
   if (!gi.includes(recFile)) {
@@ -5119,8 +5325,38 @@ const LIB_SRC_ALLOW = [
   }
 
   // ⑤ 接线点（index.js / tool-loop.js / proactive.js）
-  if (!/usageGateOf\(\{ chatKey: session\.key \}\)/.test(idxSrc)) {
-    problems.push('index.js 主链路没有按会话问一次档位 —— 花费判据永远拿不到 chatKey');
+  // ⚠️ 2026-11-03 重锚：两处调用都多带了 `limits`（上限从"编译期常量"变成可配）。
+  //    钉的仍是那件事本身 —— 主链路按会话问一次、planFor 把档位送进主动发言，
+  //    并要求**两处都显式传 limits**（不传就悄悄用回常量，面板填了也不生效）。
+  if (!/usageGateOf\(\{ chatKey: session\.key, limits: usageLimitsOf\(cfg\.custom\) \}\)/.test(idxSrc)) {
+    problems.push('index.js 主链路没有按会话问一次档位（或没把生效上限传进去）—— 花费判据拿不到 chatKey，或用户填的上限不生效');
+  }
+  if (!/usageGateOf\(\{ limits: usageLimitsOf\(cfg\.custom\) \}\)\.level/.test(idxSrc)) {
+    problems.push('index.js 的 planFor 没有把花费档位传进 planProactiveSend（或没传 limits）—— 同上（接线断了 / 上限改了不生效）');
+  }
+  // ⑤b 上限可配这件事本身必须有闸：默认值只许有一处，投影不许丢。
+  if (!/export function usageLimitsOf\(/.test(usageSrc)) {
+    problems.push('src/usage.js 没有导出 usageLimitsOf —— 生效上限没有唯一算法，面板与机器人会各算一份');
+  }
+  if (!/usage: usageFields\(c\.usage\)/.test(read('../src/custom-config.js'))) {
+    problems.push('readCustom 的白名单投影里没有 usage —— 面板保存一次就把用户填的上限从 config.json 里抹掉（holidays 那个坑的同族）');
+  }
+  if (!/usageLimits: usageLimitsOf\(custom\)/.test(read('../panel/lib/state-collector.js'))) {
+    problems.push('customMeta 里没有 usageLimits —— 页面只能自存一份默认数字，显示的就不是生效值');
+  }
+  // ⑤c 生效值必须**真的跟着用户填的走**。只钉"函数在、被调用了"不够：
+  //     一个恒返回 `USAGE_LIMITS` 的实现同样满足上面两条，而面板填什么都不生效 ——
+  //     那比根本没有这三格更坏（用户会以为自己调过了）。
+  {
+    const ul = await import(new URL('../src/usage.js', import.meta.url));
+    const got = ul.usageLimitsOf({ usage: { dailyTokens: 123456, perChatTokens: 654321, trimAt: 0.5 } });
+    if (got.dailyTokens !== 123456 || got.perChatTokens !== 654321 || got.trimAt !== 0.5) {
+      problems.push(`usageLimitsOf 没采纳用户填的值（实得 ${JSON.stringify(got)}）—— 上限改了不生效`);
+    }
+    const back = ul.usageLimitsOf({ usage: { dailyTokens: 0, trimAt: 9 } });
+    if (back.dailyTokens !== ul.USAGE_LIMITS.dailyTokens || back.trimAt !== ul.USAGE_LIMITS.trimAt) {
+      problems.push(`坏值没有回落默认（实得 ${JSON.stringify(back)}）—— 填 0 / 越界应回到常量，而不是按 0 把每一轮都裁掉`);
+    }
   }
   // 记账必须**带上会话键**（主链路那一处）。缺它时 perChat 永远算成 0，
   // 而且不会有任何报错 —— 典型"写了没人读"的反面（"该传的没传"）。
@@ -5132,8 +5368,10 @@ const LIB_SRC_ALLOW = [
   //    而"带会话键 + 判空"这两件真正要守的事一个字都没变。
   //    —— 与下面 `buildMessagesWithMeta` 那条是同一个教训（假阳性会逼人改一个本来对的实现），
   //       所以这里改成：只钉"判空 + 带到会话键"，尾巴不再管。
-  if (!/if \(llm\.lastUsage\) recordUsage\(\{\s*\.\.\.llm\.lastUsage,\s*chat: session\.key/.test(idxSrc)) {
-    problems.push('index.js 主链路记账没带会话键（或丢了 `if (llm.lastUsage)` 判空）—— perChat 口径会静默失真');
+  // 2026-11-05：主链路已改用**本轮局部** `turnUsage`（并发下不再读写共享 `llm.lastUsage`）。
+  // 判据同步到局部变量；§185 另外反向钉死"index.js 里不许再出现 llm.lastUsage"。
+  if (!/if \(turnUsage\) recordUsage\(\{\s*\.\.\.turnUsage,\s*chat: session\.key/.test(idxSrc)) {
+    problems.push('index.js 主链路记账没带会话键（或丢了 `if (turnUsage)` 判空）—— perChat 口径会静默失真');
   }
   // ⚠️ 判据**不能写死单行形状**（D9a 实测）：它原来是
   //    `buildMessagesWithMeta\(session, evt, parsed, \{ saving:` —— D9a 把这一处改成多行
@@ -5169,7 +5407,7 @@ const LIB_SRC_ALLOW = [
   else if (!/budgetLevel === 'degrade'/.test(proBody)) {
     problems.push('planProactiveSend 没有消费 budgetLevel —— 花费触顶挡不住主动发言');
   }
-  if (!/budgetLevel: usageGateOf\(\)\.level/.test(idxSrc)) {
+  if (!/budgetLevel: usageGateOf\(\{ limits: usageLimitsOf\(cfg\.custom\) \}\)\.level/.test(idxSrc)) {
     problems.push('index.js 的 planFor 没有把花费档位传进 planProactiveSend —— 同上（接线断了）');
   }
   // 触顶**只挡主动**：主链路不许因为档位而拒答（用户裁决「只降档不哑掉」）
@@ -7011,6 +7249,29 @@ const LIB_SRC_ALLOW = [
   if (a3.ok !== false || bf !== untouched) {
     problems.push('真占用时没有拒绝、或拒绝了却改动了锁文件 —— 顶掉别人的锁就是双开');
   }
+  // ⑩ **锁里写的就是本进程 pid** 时，不能把自己拒在门外（2026-11-03 · 群友报告 BUG-02）。
+  //     旧形状：`hold` ⇒ `tookOver=false` ⇒ 选独占路径 `claimRec`（不存在才创建）
+  //     ⇒ 文件已存在 ⇒ EEXIST ⇒ 重读重判仍是 hold ⇒ 返回「锁在提交的瞬间被另一个实例
+  //     占上了：锁就是本进程的」⇒ 退出码 3 —— 而进程表里根本没有第二个实例，
+  //     只能人工删 `.bridge.lock`（容器/PID 命名空间重启后 pid 复位必撞）。
+  //     ⚠️ 必须**注入 claimRec**：不注入就退化成覆盖写，那一支根本测不到。
+  {
+    const own = JSON.stringify(bl.lockBodyOf({ pid: 100, at: lt - 60_000, beatAt: lt - 60_000 }));
+    let claimHits = 0;
+    const a4 = await bl.acquireLock({
+      readRaw: () => own,
+      writeRec: () => {},
+      claimRec: () => { claimHits += 1; throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' }); },
+      ownPid: 100, now: lt, alive: () => true,
+    });
+    if (!a4.ok || a4.action !== 'hold') {
+      problems.push(`锁里是本进程 pid 时启动被拒（ok=${a4.ok} action=${a4.action}：${a4.reason}）—— `
+        + '残留锁与自己的 pid 撞号就永远起不来，只能人工删锁文件');
+    }
+    if (claimHits !== 0) {
+      problems.push('hold 那一支又去走独占 claimRec —— EEXIST 会把"本来就属于自己的锁"变成拒绝启动的理由');
+    }
+  }
 
   // ⑪ [W1] **占锁必须是独占提交**（2026-09-29 · 外包任务1 复核证实 + 本仓结构复现：
   //     现行实现是 read→judge→**普通覆盖写**，8 进程对齐启动下 **6/6 轮双抢**）。
@@ -7234,10 +7495,16 @@ const LIB_SRC_ALLOW = [
   }
 
   // ⑤ 顺序：**先范围、后形态**（写反了照样跑通，但拒绝理由会指错方向）
-  const decAt = ef.indexOf('browseDecision(');
-  const safeAt = ef.indexOf('safeFetch(');
-  if (decAt < 0) problems.push('ext-fetch.js 里找不到 browseDecision( —— 本节契约失效');
-  if (safeAt < 0) problems.push('ext-fetch.js 里找不到 safeFetch( —— 本节契约失效');
+  // ⚠️ 2026-11-05：首跳范围闸已具名成 `const gate = ...`，urlGuard 里还有第二处调用。
+  //    判据必须盯**首跳那一处**，否则把它挪到 safeFetch 之后，第一处会变成 urlGuard 里的调用，
+  //    判据仍然假绿。
+  const decAt = ef.indexOf('const gate = browseDecision(url, lock);');
+  // ⚠️ 2026-11-05：生产调用带注入面，写成 `safeFetchImpl(`；判据必须认这个形状，
+  //    同时确认逐跳策略 `{ urlGuard }` 真的交下去了（§184④ 另有正向断言）。
+  const safeAt = ef.indexOf('safeFetchImpl(');
+  if (decAt < 0) problems.push('ext-fetch.js 里找不到首跳 `const gate = browseDecision(url, lock);` —— 本节契约失效');
+  if (safeAt < 0) problems.push('ext-fetch.js 里找不到 safeFetchImpl( —— 本节契约失效');
+  if (!/\{ urlGuard \}/.test(ef)) problems.push('ext-fetch.js 没有把 urlGuard 交给 safeFetch —— 浏览名单只查首跳，重定向可绕过');
   if (decAt >= 0 && safeAt >= 0 && decAt > safeAt) {
     problems.push('ext-fetch.js 里 browseDecision 排在 safeFetch **之后** —— 越界请求会先按"地址形态"给理由，排障的人会顺着错方向查');
   }
@@ -8497,6 +8764,11 @@ const LIB_SRC_ALLOW = [
       if (!(iGate < iDecide)) problems.push('睡眠门禁排在 decide **之后** —— 模型已经跑过一次（白花 token）');
       if (!(iGate < iEat)) problems.push('睡眠门禁排在未读消费**之后** —— 睡着的那条会被标成"处理完了"，D30 的"留在未读"没了');
     }
+    // ⚠️ 2026-11-03：曾在这里加过"主人豁免"（`&& !ownerAwake`）并配套改过下面这条计数，
+    //    实跑 smoke 时 T342 当场变红 —— 豁免会**短路掉刻意设计的紧急唤醒**
+    //    （私聊连发 N 条 ⇒ emergency override ⇒ 落盘/刷新/不补看那一整套，
+    //    Q34 + Q213 + Q214 三条断言钉着它）。主人半夜该不该被直接放行是产品决定，
+    //    不是这条判据该替用户定的。已回退，判据恢复原样。
     const gates = [...hm50.matchAll(/sleepSnap\?\.asleep/g)].length;
     if (gates !== 1) problems.push(`handleMessage 里 sleepSnap?.asleep 出现 ${gates} 次（应恰 1）—— 多处判会漂`);
   }
@@ -9108,6 +9380,73 @@ const LIB_SRC_ALLOW = [
     }
   }
 
+  // ㉒ 叫醒的暗号**摆到台面上**（2026-11-04 · BUG-12 方案② · 维护者选定"保留暗号但说清楚"）。
+  //
+  // 这一条治的不是代码，是**看不见的规则**：睡着之后只有两条路能把她叫起来，
+  // 而页面上一个字都没提 —— 半夜她不回话时，用户唯一的线索是自己的记忆（或翻源码）。
+  // 群友报的就是这个（"主人半夜私聊她不理"）。
+  //
+  // ⚠️ 判据形状照本会话立的那条纪律：**两端对上** + **不许抄第二份**。
+  //    数字与词表只住在 `src/sleep.js`；一旦文案里写死「10 秒 / 3 条 / 起床醒醒」，
+  //    改常量的人不会想起改文案，于是页面开始撒谎 —— 那比"没说"更坏。
+  {
+    const wakeSlp = read50('src/sleep.js');
+    const wakeCol = stripComments(fs.readFileSync(path.join(REPO, 'panel', 'lib', 'state-collector.js'), 'utf8'));
+    const wakeSch = stripComments(fs.readFileSync(path.join(REPO, 'panel', 'next', 'schema.js'), 'utf8'));
+    const wakeDemo = stripComments(fs.readFileSync(path.join(REPO, 'panel', 'next', 'demo-state.js'), 'utf8'));
+    const metaBody = fnSlice(wakeSlp, 'export function wakeRouteMetaOf(', 40);
+
+    // ① 换算只在叶子里做，且**由常量算出来**（不是把数字重新写一遍）。
+    if (!metaBody) problems.push('抽不出 wakeRouteMetaOf() 的函数体 —— §50㉒ 的换算判据全部失效（抽取失败一律当失败）');
+    else {
+      for (const [t, why] of [
+        [/WAKE_BURST\.windowMs\s*\/\s*1000/, 'burstWindowSec 不是由 WAKE_BURST.windowMs 换算的（页面会显示一个和判据无关的秒数）'],
+        [/WAKE_BURST\.count/, 'burstCount 不是 WAKE_BURST.count（连发条数会变成文案里的第二个数）'],
+        [/EMERGENCY_QUIET_MS\s*\/\s*60000/, 'emergencyQuietMin 不是由 EMERGENCY_QUIET_MS 换算的（"临时醒多久"会漂）'],
+        [/sl\?\.wakeWords/, '词表没有取归一化后的那份（回落规则会长出第二份）'],
+      ]) if (!t.test(metaBody)) problems.push(`§50㉒：${why}`);
+    }
+    // ② 后端真的下发（写了没人发 = 页面永远走"没拿到"那一支）。
+    if (!/sleep:\s*wakeRouteMetaOf\(custom\.sleep\)/.test(wakeCol)) {
+      problems.push('§50㉒：`customMeta.sleep` 没有由 `wakeRouteMetaOf(custom.sleep)` 下发 —— 换算函数写了但没人调用');
+    }
+    // ③ 前端真的读它，而且**没有把数字与词表抄进文案**。
+    if (!/sleepWake:/.test(page50) || !/j\(s,\s*\[?['"]customMeta['"],\s*['"]sleep['"]/.test(page50)) {
+      problems.push('§50㉒：面板没有 `sleepWake` 控件或它不读 `customMeta.sleep` —— 后端下发了却没人看（叫醒的暗号仍然只在源码里）');
+    }
+    for (const [pat, name] of [
+      [/10\s*秒内连发\s*3\s*条/, '「10 秒内连发 3 条」'],
+      [/['"`]起床['"`]\s*,\s*['"`]醒醒['"`]/, '内置词表本身'],
+    ]) {
+      if (pat.test(page50)) problems.push(`§50㉒：面板文案里写死了${name} —— 那是判据的第二份，改 src/sleep.js 的人不会想起来这里`);
+    }
+    // ④ 控件挂在已有的睡眠状态卡上，且在类型白名单里（不在就整块不渲染，页面看起来"正常"）。
+    if (!/\{\s*t:\s*'sleepWake'\s*\}/.test(wakeSch) || !/'sleepWake'/.test(wakeSch)) {
+      problems.push('§50㉒：`sleepWake` 没有被摆进 schema 的睡眠状态卡，或缺于控件类型白名单 —— 页面会静默少一块');
+    }
+    // ⑤ 演示态那份是**抄的**，所以必须逐字等于常量（抄而不盯必漂）。
+    const dv = (wakeDemo.match(/sleep:\s*\{[^}]*words:\s*\[([^\]]*)\][^}]*burstWindowSec:\s*(\d+)[^}]*burstCount:\s*(\d+)[^}]*emergencyQuietMin:\s*(\d+)/) || []);
+    const wantWords = U50.WAKE_WORDS_DEFAULT.map((w) => `'${w}'`).join(', ');
+    if (!dv.length) problems.push('§50㉒：demo 夹具里找不到 `customMeta.sleep` —— 演示页会走"没拿到"那一支，逐页遍历看不到这段文案');
+    else {
+      if (dv[1].replace(/\s+/g, '') !== wantWords.replace(/\s+/g, '')) {
+        problems.push(`§50㉒：demo 的词表与 \`WAKE_WORDS_DEFAULT\` 不一致（夹具是 ${dv[1]}）—— 演示页与真机两套暗号`);
+      }
+      if (Number(dv[2]) !== U50.WAKE_BURST.windowMs / 1000 || Number(dv[3]) !== U50.WAKE_BURST.count
+        || Number(dv[4]) !== U50.EMERGENCY_QUIET_MS / 60000) {
+        problems.push('§50㉒：demo 的连发窗口 / 条数 / 临时醒分钟数与 `src/sleep.js` 的常量不一致 —— 演示页在教错的规则');
+      }
+    }
+    // ⑥ 运行态那侧同样要闭环：快照带**此刻生效**的词表，页面有中文名（配置那格说的是"我想"，这里说"现在")。
+    if (!/wakeWords:\s*sc\.wakeWords/.test(idx50)) {
+      problems.push('§50㉒：睡眠快照没有下发此刻生效的词表 —— 配置改了但机器人还没重载时，页面会说谎');
+    }
+    if (!/wakeWords:\s*'生效中的叫醒词'/.test(page50)) {
+      problems.push('§50㉒：面板没给快照里的 `wakeWords` 中文名 —— 后端下发了却没人看（新键会原样铺出实现名）');
+    }
+    subHit('D31缺陷批');
+  }
+
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
     console.log(
@@ -9118,6 +9457,8 @@ const LIB_SRC_ALLOW = [
         + ' · **叫醒**：排在门禁之前 · 零模型调用 · 身份只认 QQ 号且未配主人即关闭 · 零定时器 · owner 走 idList · 叫醒态优先于计划'
         + ' · **缺陷批（Q33/Q34/Q35/Q37）**：兑现的正式叫醒也补看（置位在 settleWake / 消费只在 tick 尾部，恰 1 处）'
         + ' · 紧急态刷新即落盘 · 面板口径是"未消费"不是"积压" · reply 记录带 sleep:{wakeKind,catchUp}'
+        + ' · **暗号摆到台面（§50㉒）**：词表与连发参数只住 `src/sleep.js` → `customMeta.sleep` 下发 → 面板只渲染，'
+        + '反向钉面板文案里不许写死「10 秒 / 3 条 / 内置词表」 · demo 夹具逐字等于常量 · 快照另带此刻生效的词表'
         // Q87：把子计数打出来 —— "这一段到底跑了几条"必须看得见，否则它被静默跳过时
         //       输出里连一点痕迹都没有（段数自证只数 ✓ 的行数）。
         + ` · 子判据 ${subCountOf('D31缺陷批')} 条（§51 核下限）`
@@ -9264,7 +9605,9 @@ const LIB_SRC_ALLOW = [
         + '第二步挡 LLBot（它两个入参键都按 resId 字符串解读，整数 message_id 明确不认）');
     }
     // fail-open：失败必须**吞掉**并如实回落，而不是把异常抛给调用方（那会让这条消息整条丢掉）。
-    if (!/catch\s*\(/.test(exBody) || !/return\s*\{\s*text:\s*''\s*,\s*stat\s*\}/.test(exBody)) {
+    // ⚠️ 2026-11-03 重锚：回落的返回体多了 `images: []`（转发节点里的图要和文本同源回落）。
+    //    钉的仍是那件事本身 —— 「失败时返回空文本 + 带 stat」，不是钉它恰好只有两个键。
+    if (!/catch\s*\(/.test(exBody) || !/return\s*\{\s*text:\s*''\s*,\s*(images:\s*\[\]\s*,\s*)?stat\s*\}/.test(exBody)) {
       problems.push('expandForwardText() 不是 fail-open —— 展开失败必须吞掉异常并回落成空串（宁可它只看见占位符）');
     }
     // 失败也要留痕（"它说看不见"必须查得到原因，不许静默）
@@ -9335,12 +9678,25 @@ const LIB_SRC_ALLOW = [
   // ⑪ 展开出来的文本**真的被送进 flatten 了**吗。
   //    "算了但没人用"是这类改动的标准失败形态：展开函数跑了、日志也打了，
   //    而正文里仍是 `[合并转发]` —— 它照样回「我看不见转发的内容」，四层全绿。
-  //    ⚠️ 判据放宽到"同一行的三件套形状"（不钉空格），但**数量必须恰 1** ——
-  //       两处喂法意味着有一处不受上限与"只进 text"两条约定约束。
-  if (countOf(idx52, /forwardText:/g) !== 1
-    || !/flattenMessage\(evt\.message,\s*selfId,\s*\{\s*forwardText/.test(idx52)) {
-    problems.push('展开出来的文本没有被送进 flattenMessage（或送了两处）—— 它照样会回「我看不见转发的内容」，'
-      + '而四层全绿（D23-2 的标准失败形态）');
+  //    ⚠️ 判据放宽到"同一行的三件套形状"（不钉空格），但**数量必须钉死** ——
+  //       喂法多于展开器调用点，就意味着有一处不受上限与"只进 text"两条约定约束。
+  //    2026-11-03：从 1 处放到 2 处（直接转发的消息 + **引用了一条聊天记录**的消息），
+  //    但把原来"只数个数"升级成**逐个点名两处**，并要求两处喂进去的文本
+  //    都来自同一个 `expandForwardText`（调用点也恰 2）—— 比旧判据更严，不是更松。
+  //    2026-11-05：第 3 处是**连发合并里的前序事件**（先图后文那条链），同样点名。
+  if (countOf(idx52, /forwardText:/g) !== 3
+    || countOf(idx52, /await expandForwardText\(/g) !== 3) {
+    problems.push(`forwardText 喂入点 / expandForwardText 调用点数量不对（forwardText=${countOf(idx52, /forwardText:/g)} 调用=${countOf(idx52, /await expandForwardText\(/g)}，应各 3）—— `
+      + '多一处喂法就有一处不受上限与"只进 text"两条约定约束');
+  }
+  if (!/flattenMessage\(evt\.message,\s*selfId,\s*\{\s*forwardText:\s*forward\.text\s*\}\)/.test(idx52)) {
+    problems.push('直接转发展开出来的文本没有送进 flattenMessage —— 它照样会回「我看不见转发的内容」');
+  }
+  if (!/flattenMessage\(qMsg,\s*selfId,\s*\{\s*probe:\s*false,\s*forwardText:\s*qf\.text\s*\}\)/.test(idx52)) {
+    problems.push('引用那条聊天记录展开的文本没有送进 flattenMessage —— 引用「聊天记录」时正文仍只剩占位符');
+  }
+  if (!/flattenMessage\(old\.message,\s*selfId,\s*\{\s*probe:\s*false,\s*forwardText:\s*fwd\.text\s*\}\)/.test(idx52)) {
+    problems.push('连发合并的前序转发事件没有走 expandForwardText/flattenMessage —— 前序转发图仍会丢');
   }
   subHit('D23-2');
 
@@ -15585,11 +15941,17 @@ let gDistBad = bad;
     if (!download.includes(needle)) problems.push(`update-download.js 缺：${why}`);
   }
 
-  /* GitHub 会把资产 302 到 release-assets；校验必须看 res.url（最终 URL），
-     两处（fetchCapped / downloadWithProgress）缺一不可。变异 U4 会把它改回 url。 */
-  const finalUrlChecks = (download.match(/validateUrl\(res\.url \|\| url\)/g) || []).length;
-  if (finalUrlChecks !== 2) {
-    problems.push(`update-download.js 对重定向后最终 URL 的校验不是 2 处（现 ${finalUrlChecks}）—— 改回校验初始 URL 会让 GitHub 302 再次失败`);
+  /* GitHub 会把资产 302 到 release-assets；校验必须**逐跳**做，而不是只看最终 URL。
+     两处（fetchCapped / downloadWithProgress）都必须走 fetchCheckedRedirects；
+     改回 redirect:follow 会让中间跳先打出去，白名单只能事后拒绝。 */
+  const hopChecks = (download.match(/fetchCheckedRedirects\(url, \{/g) || []).length;
+  const manualRedirect = /redirect: 'manual'/.test(download);
+  const perHopValidate = /validateUrl\(current\)/.test(download);
+  if (hopChecks !== 2 || !manualRedirect || !perHopValidate) {
+    problems.push(`update-download.js 的逐跳校验不完整（调用 ${hopChecks}/2 · manual=${manualRedirect} · 逐跳 validate=${perHopValidate}）—— 改回 follow 会让中间跳先打出去`);
+  }
+  if (!/fetchImpl\(current, \{ signal/.test(download)) {
+    problems.push('fetchCheckedRedirects 的每次请求没挂 signal —— 超时/取消对重定向链无效');
   }
 
   // ⑤ 只从 ready 安装；spawn 只出现一次；没有自动安装
@@ -15919,13 +16281,19 @@ let gDistBad = bad;
   if (!(total >= perSource)) problems.push('总预算必须 ≥ 单源预算，否则第一个源都跑不完一轮');
   if (!(panelIdle >= 10000 && panelIdle <= 60000)) problems.push(`面板口 IDLE_TIMEOUT_MS 不在 10–60 秒区间（${panelIdle}）`);
 
-  // ② 每个 fetch 都挂着 signal；且同一个函数里不许再开第二个裸 fetch
-  for (const [label, slice] of [['downloadWithMirrors', toolsDl], ['downloadWithProgress', panelDl]]) {
+  // ② 每个网络口都挂着 signal；且同一个函数里不许再开第二个裸调用。
+  //    ⚠️ 2026-11-05：面板下载改走 `fetchCheckedRedirects()`（手动逐跳校验），
+  //    函数体里不再直接出现 `fetch(` —— 判据必须跟着实现走，否则会把正确的逐跳实现判红。
+  for (const [label, slice, callNeedle] of [
+    ['downloadWithMirrors', toolsDl, 'fetch('],
+    ['downloadWithProgress', panelDl, 'fetchCheckedRedirects('],
+  ]) {
     if (!slice) continue;
-    const n = (slice.match(/fetch\(/g) || []).length;
-    if (n !== 1) problems.push(`${label} 里的 fetch( 应该是 1 处，实测 ${n} —— 新增网络调用必须带超时`);
-    const at = slice.indexOf('fetch(');
-    if (at >= 0 && !/signal/.test(slice.slice(at, at + 260))) problems.push(`${label} 的 fetch 没挂 signal（超时无效）`);
+    const re = new RegExp(callNeedle.replace('(', '\\('), 'g');
+    const n = (slice.match(re) || []).length;
+    if (n !== 1) problems.push(`${label} 里的 ${callNeedle} 应该是 1 处，实测 ${n} —— 新增网络调用必须带超时`);
+    const at = slice.indexOf(callNeedle);
+    if (at >= 0 && !/signal/.test(slice.slice(at, at + 260))) problems.push(`${label} 的 ${callNeedle} 没挂 signal（超时无效）`);
   }
   // ② 空闲计时逐块重挂：必须发生在数据块循环**体里面**（用 braceAt 取准确循环体，
   //    固定字符窗口会把 finally/下一源的文字也框进来，那样判据会被喂绿）。
@@ -16778,10 +17146,42 @@ if (bad === gDistBad) console.log('✓ 安装 / 更新 / 协议端获取（合�
   if (!/source: fs\.existsSync\(CONFIG_FILE\)/.test(sc) || !/owners: cfg\?\.owner\?\.qq/.test(sc)) {
     problems.push('§123⑩ 状态里没有配置来源 / 主人名单 —— 检查表无法提示"正在用模板"与"私聊为空"');
   }
+  // ⑪ 上面 ⑧ 钉了控件叫 `ownerQq`，但状态里**只下发过 `owners`** ⇒ 绑定器两条取数路径
+  //     （`draft.sys` 与 `getPath(s.config, bindSys)`）都落空 ⇒ 主人 QQ 配好了界面仍显示空白。
+  //     0.1.4 审计报告 BUG-09 报到 0.1.7 还在，就是因为 ⑧⑨⑩ 三条各自都绿、**没人把两端接起来核**。
+  if (!/ownerQq: cfg\?\.owner\?\.qq \|\| \[\]/.test(sc)) {
+    problems.push("§123⑪ 状态里没有 ownerQq —— 控件 bindSys: 'ownerQq' 取不到值，主人 QQ 永远显示空白（写得进、读不出）");
+  }
+  // ⑫ 上下文预算那两格必须读**运行态真值**（顶层 `config.context`），不是 presets 归档快照。
+  //     保存写的是顶层（⑧⑨ 那对），读却读 presets ⇒ 两份真相源 ⇒ "改完刷新还是旧数字"。
+  if (!/context: normalizeContextInts\(cfg\)/.test(sc)) {
+    problems.push('§123⑫ 状态里没有顶层 context 的生效值 —— 面板那两格没有真值可读，只能回去读归档快照');
+  }
+  if (!/import \{ normalizeContextInts \} from '\.\.\/\.\.\/src\/context-fields\.js'/.test(sc)) {
+    problems.push('§123⑫ 面板侧没有引 context-fields 叶子 —— 夹取与默认值一旦在面板抄第二份，两边就会漂');
+  }
+  if (!/j\(s, \['config', 'context', 'recentTurns'\], 12\)/.test(sch)
+    || !/j\(s, \['config', 'context', 'ambientMessages'\], 20\)/.test(sch)) {
+    problems.push("§123⑬ 上下文预算控件没有读 ['config','context',…] 这条真值路径（默认值也须与后端一致 12/20）");
+  }
+  if (/j\(s, \['config', 'presets', activePreset\(s\), 'context'/.test(sch)) {
+    problems.push("§123⑬ 上下文预算又回去读 presets 归档快照了 —— 保存后刷新仍显示旧值（BUG-08 的原始形状）");
+  }
+  // ⑭ 控件的 `min` / `max` 必须与后端对齐：
+  //     · `recentTurns` 后端下限是 2（`context-fields.js`），控件以前写 0 ⇒ 填 0/1 被悄悄改成 2，
+  //       界面上那个"0"是假的；
+  //     · 上限 40 / 60 是早期拍的，重度群一天就能撞到 —— 两格统一放到 120。
+  if (!/id: 'ctx\.turns',[^\n]*min: 2[^\n]*max: 120/.test(sch)) {
+    problems.push('§123⑭ ctx.turns 的 min/max 与后端夹取或放宽后的上限不一致（应 min:2 max:120）');
+  }
+  if (!/id: 'ctx\.ambient',[^\n]*min: 0[^\n]*max: 120/.test(sch)) {
+    problems.push('§123⑭ ctx.ambient 的 min/max 不一致（后端允许 0，上限应同为 120）');
+  }
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
     console.log('✓ 优雅停止与首启（§123）：shutdown 闭集合+30s 寿命 · index 幂等消费 · stopBridge 先优雅后强杀并清命令 · '
-      + '--only=check 两种写法 · ask 非 TTY 降级 · 模板无占位 · ownerQq 面板可写 · 状态下发来源/主人');
+      + '--only=check 两种写法 · ask 非 TTY 降级 · 模板无占位 · ownerQq 面板可写**且读得出** · '
+      + '状态下发来源/主人 · 上下文预算读运行态真值（非 presets 归档）且 min 与后端夹取一致');
   }
 }
 
@@ -17021,7 +17421,14 @@ let gPortBad = bad;
     ['巡逻计划', /const plan = patrolPlanOf\(\{/],
     ['巡逻挂 tick', /if \(runPatrolTick\(now\.getTime\(\)\) > 0\) return;/],
     ['巡逻记账', /if \(decision\.kind === 'patrol' && session\) \{[\s\S]{0,120}heatState\.patrol\[session\.key\]/],
-    ['巡逻不自喂', /!evt\.isPatrol/],
+    // ⚠️ 2026-11-03 收紧：旧写法 `/!evt\.isPatrol/` 只要**全文件任何一处**有这个 token 就绿，
+    //    而背景段那一处恰恰**没有**（自喂就是从那里发生的）—— 一条永远抓不到东西的判据。
+    //    现在钉到背景段那一个条件上：漏掉 `!evt.isPatrol` 必红。
+    ['巡逻不进背景段', /if \(allowed && scene === 'group' && !evt\.isPoke && !evt\.isPatrol\) \{/],
+    // 被拦下的巡逻也要推进"这批看过了"：只记成功那一支的话，配置性拒因会每 30 秒重排同一批。
+    ['巡逻被拒也记账', /if \(evt\.isPatrol && decision\.kind !== 'patrol' && session\) \{[\s\S]{0,160}heatState\.patrol\[session\.key\]/],
+    // 与 decide() 同源的互斥：必须 @ / 主动发言总闸关 ⇒ 这一轮根本不该排。
+    ['巡逻与必须@互斥', /if \(cfg\.trigger\?\.requireAtInGroup \|\| cfg\.custom\?\.allowProactive === false\) return 0;/],
     ['启动读账本', /loadHeatState\(\);/],
     ['退出补写', /saveHeatState\(true\);/],
   ]) if (!re.test(idx)) problems.push(`index 缺少 ${name}`);
@@ -17053,7 +17460,8 @@ let gPortBad = bad;
   const fsx = read('panel/lib/fake-session.js');
   for (const [name, re] of [
     ['PROGRAM_ROOT', /PROGRAM_ROOT/],
-    ['CONFIG/DATA env', /QQBOT_CONFIG: CONFIG_FILE, QQBOT_DATA_DIR: DATA_DIR/],
+    // 2026-11-05：只在 config.json 存在时才注入 QQBOT_CONFIG（干净检出不再 ENOENT）。
+    ['CONFIG/DATA env', /const env = \{ \.\.\.process\.env, QQBOT_DATA_DIR: DATA_DIR \};[\s\S]{0,120}?if \(fs\.existsSync\(CONFIG_FILE\)\) env\.QQBOT_CONFIG = CONFIG_FILE;/],
     ['脚本存在预检', /fs\.existsSync\(FAKE_SCRIPT\)/],
     ['唯一会话', /if \(st\.child\) return/],
     ['真机冲突拒绝', /env\.bridgeRunning && !sandbox/],
@@ -17525,6 +17933,7 @@ if (bad === gPortBad) console.log('✓ Win-v0.1.2 移植（合并 §125–§130�
   {
     const onebotSrc133 = read('../src/onebot.js');
     const indexSrc133 = read('../src/index.js');
+    const visionSrc133 = read('../src/vision.js');
     const llmSrc133 = read('../src/llm.js');
     const memorySrc133 = read('../src/memory.js');
     const configSrc133 = read('../src/config.js');
@@ -17563,6 +17972,37 @@ if (bad === gPortBad) console.log('✓ Win-v0.1.2 移植（合并 §125–§130�
     }
     if (!/check-message-reliability\.mjs/.test(pkgSrc133)) {
       problems.push('§133⑧：B 批自检没有进 check:features —— 判据会像旧 verify-panel 一样烂掉');
+    }
+    // ⑨ 入站图片必须在**发模型之前**内联成 data URL（2026-11-03 · 群友报告逐条复验；
+    //    2026-11-04 搬到 src/vision.js，判据跟着搬）。
+    //    QQ 的图片地址是带签名、会过期的临时下载地址：模型服务端取不到，DeepSeek 这类
+    //    OpenAI 兼容端对非 data URL 的 image_url 直接 400。旧症状是「你发的图我刷不出来」
+    //    而 trace 的 vision 明明记了 1 张 —— 我们看到了图，模型没看到。
+    if (!/export async function prepareVisionImages\(/.test(visionSrc133)
+      || !/imageBytesOf\(raw, \{ maxBytes: VISION_INLINE_MAX_BYTES, timeoutMs \}\)/.test(visionSrc133)
+      || !/data:\$\{mime\};base64/.test(visionSrc133)) {
+      problems.push('§133⑨：prepareVisionImages 没有走「取字节 + 内联上限 + data URL」这三件 —— 图仍会以临时 URL 交给模型');
+    } else if (!/images\.push\(raw\)/.test(visionSrc133)) {
+      problems.push('§133⑨：prepareVisionImages 在单张失败时没有原样保留 URL —— 下载失败会把这张图从上下文里整个抹掉');
+    }
+    if (!/prepareVisionImages\(\{ list: parsed\.images, imageBytesOf, log \}\)/.test(indexSrc133)
+      || !/parsed\.images = preparedVision\.images/.test(indexSrc133)) {
+      problems.push('§133⑨：主链路没有真的调用 prepareVisionImages —— 函数写了没人读（本项目头号形状：定义了≠生效了）');
+    }
+    if (!/export const VISION_INLINE_MAX_BYTES = 1_500_000/.test(read('../src/images.js'))) {
+      problems.push('§133⑨：内联上限没有独立于 view_image 的 8MB —— 三张大图会把一次模型请求的 body 撑爆');
+    }
+    // ⑩ 合并转发**节点里的图片**必须被收集（2026-11-03）。旧实现 renderNode 只取 `.text`，
+    //    flattenMessage 收好的 images 没人接 ⇒ 转发的截图/表情包整段丢给模型看一串「[图片]」。
+    //    同一轮的引用侧也要展一层：引用「一条聊天记录」时 qp.text 只剩占位符。
+    if (!/for \(const u of flat\.images \|\| \[\]\) forwardImages\.push\(u\)/.test(indexSrc133)) {
+      problems.push('§133⑩：expandForwardText 的 renderNode 又只取 .text 了 —— 转发节点里的图会再次整段丢掉');
+    }
+    if (!/new Set\(\[\.\.\.\(parsed\.images \|\| \[\]\), \.\.\.forward\.images\]\)/.test(indexSrc133)) {
+      problems.push('§133⑩：转发收集到的图片没有并进 parsed.images —— 收了等于没收（brain 只看 parsed.images）');
+    }
+    if (!/await expandForwardText\(\{ message: qMsg/.test(indexSrc133)) {
+      problems.push('§133⑩：引用「一条聊天记录」没有复用 expandForwardText 展开 —— 引用转发的图与正文照旧看不见');
     }
     console.log('✓ 模型与消息可靠性（§133）：群图允许根 · 引用取数 · length 重试 · 小额额度 · 类型归一 · 面板上限');
   }
@@ -18476,6 +18916,23 @@ let gShellBad = bad;
   }
   if (!/const showFallback = setTimeout\(/.test(main) || !/fallback show \(ready-to-show timeout\)/.test(main)) {
     p.push('§151①：缺少 ready-to-show 超时兜底 show（隐藏窗口可能永远不首绘）');
+  }
+  // 0.1.7 事故：`decideStartVisibility()` 重构成 `currentStartPlan()`（返回 `{ action }`）之后，
+  // ready-to-show 与兜底 timer 里各留了一处**裸 `decision`** —— 它从来没被声明过。
+  // `:1071` 那处在**同步**回调里 ⇒ 每次启动都抛 ReferenceError ⇒ `uncaughtException` ⇒ `app.exit(1)`，
+  // 而 `showWindow()` 已经先跑过 ⇒ 用户看到的是「控制台窗口一闪就没」。
+  // ⚠️ `node --check` 抓不到（读一个未声明的变量是合法语法），所以只能由下面这三条钉住。
+  if (!/if \(\(action === 'show' \|\| pendingShow\) && !win\.isVisible\(\)\) showWindow\(true\);/.test(main)) {
+    p.push("§151①：兜底 timer 的可见性判断不再读 currentStartPlan 的 action —— 0.1.7 的 `decision is not defined` 会复活");
+  }
+  if (!/log\(`start decision=\$\{action\} visible=\$\{win\.isVisible\(\)\}`\)/.test(main)) {
+    p.push('§151①：ready-to-show 的启动留档行不再读 action —— 那一行正是 0.1.7 每次启动必抛的地方（标签 `decision=` 是 VM 验收证据，别改）');
+  }
+  // 同族的第二个未声明标识符，而且**更阴**：三处调用都在 `try{}catch{}` 里 ⇒ 一声不吭。
+  // 后果不是崩，是 `panelCommandLine()` 恒返回 '' ⇒ 三个「身份不可确认，不杀」守卫永远走拒支，
+  // `stopProcessTree()` 在 Windows 上永远不执行 taskkill ⇒ 面板卡死后杀不掉、退出留孤儿 node。
+  if (!/const \{[^}]*\bspawnSync\b[^}]*\} = require\('node:child_process'\)/.test(main)) {
+    p.push("§151①：main.js 没有从 node:child_process 导入 spawnSync —— 进程命令行探测与杀进程树会静默失效（面板杀不掉）");
   }
   if (!/\.restart\.json/.test(panel)) {
     p.push('§151③：面板重启看门狗没有落盘 intent，退出时收不掉');
@@ -19981,11 +20438,16 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
       p.push('§164①：sent-stats.js 缺唯一写口/路径来源/吞异常，或 sentFilePath 又被导出成无引用 API');
     }
     subHit('发言账本');
+    // 2026-11-05：记账从主文件内联搬进 `createGuardedSender`（与许可复核同一个唯一发送边界）。
+    // 判据跟实现走：index 负责把 `recordSentRound` 交给工厂，工厂必须在 send 之后才记账。
+    const permSrc164 = read('../src/send-permission.js');
     const wrapAt163 = indexSrc.indexOf('const sendMsgRaw = bot.sendMsg.bind(bot);');
-    const recAt163 = indexSrc.indexOf('recordSentRound({ n: 1');
-    if (wrapAt163 < 0 || recAt163 < 0 || recAt163 < wrapAt163
-      || !/await sendMsgRaw\(scene, id, segments\)/.test(indexSrc)) {
-      p.push('§164②：index.js 没有在 sendMsg 成功后按 n=1 记账 —— 主动出站/发图/插件 sender 会漏计');
+    const recAt163 = permSrc164.indexOf('recordSent({ n: 1');
+    const sendAt163 = permSrc164.indexOf('const result = await send(scene, id, segments);');
+    if (wrapAt163 < 0 || recAt163 < 0 || sendAt163 < 0 || recAt163 < sendAt163
+      || !/bot\.sendMsg = createGuardedSender\(\{/.test(indexSrc)
+      || !/recordSent: recordSentRound,/.test(indexSrc)) {
+      p.push('§164②：记账不在唯一发送边界的 send 成功之后 —— 主动出站/发图/插件 sender 会漏计');
     }
     subHit('发言账本');
     if (!/export function makeSentReport\(/.test(reportSrc)
@@ -20489,8 +20951,9 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
       p.push('§169：文件夹导入没接线（选择或拖拽）');
     }
     if (/还不支持从文件夹导入|还没装「创造插件」/.test(pf + app)) p.push('§169：仍保留“未实现”死文案');
-    if (!/overwrite=1/.test(app) || !/installZip\(file, kind, \{ overwrite: true \}\)/.test(app)) {
-      p.push('§169：覆盖安装没有前端重试');
+    if (!/overwrite=1/.test(app)
+      || !/installZip\(file, bindKind, \{ overwrite: true, expectId: bindId, expectDigest: bindDigest \}\)/.test(app)) {
+      p.push('§169：覆盖安装没有前端重试（或重试丢了 id/kind/摘要绑定）');
     }
     if (!/api\/backgrounds/.test(boot) || !/4,242/.test(dom) || !/自定义背景上传后走同源 URL/.test(dom)) {
       p.push('§169：panel-boot/panel-dom 没覆盖新接口');
@@ -21298,6 +21761,638 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
     else console.log('✓ 记忆/知识包降噪（§179）：8/6/4 栏 · 预算与覆盖率条 · 筛选/空态按钮 · 卡头无横线 · 面板 DOM 绑定');
   }
 
+  // 180) 界面裁剪：只隐藏不删除（§180 · 2026-11-03 · 维护者要求"我们自己的组件用户也可以去掉"）
+  {
+    const p180 = [];
+    const app180 = stripComments(read('../panel/next/app.js'), 'js');
+    const sch180 = stripComments(read('../panel/next/schema.js'), 'js');
+    const cc180 = stripComments(read('../src/custom-config.js'), 'js');
+    const dom180 = read('../test/panel-dom.mjs');
+
+    // ① 名单必须过白名单投影。`readCustom` 是投影而不是透传 ——
+    //    漏列 `panelHidden` 的话"用户点掉一张卡，下一次保存又回来了"（holidays 那个坑的同族）。
+    if (!/panelHidden: panelHiddenFields\(c\.panelHidden\)/.test(cc180)) {
+      p180.push('§180①：readCustom 的投影里没有 panelHidden —— 面板保存一次就把用户的隐藏名单抹掉');
+    }
+    if (!/function panelHiddenFields\(/.test(cc180)
+      || !/domains: ids\('domains'\), subs: ids\('subs'\), cards: ids\('cards'\)/.test(cc180)) {
+      p180.push('§180①：panelHiddenFields 不是三张表（domains/subs/cards）—— 少一张就是改了 A 丢了 B');
+    }
+
+    // ② **隐藏用 hidden 属性，不许滤数组**：`data-g` / `data-s` 与 `S.gi` / `S.si`
+    //    按下标记账，滤掉会让"点第三个"变成"选中第二个域"。
+    if (!/hs\.domains\.has\(g\.id\) \? ' hidden' : ''/.test(app180)) {
+      p180.push('§180②：renderNav1 不再用 hidden 属性隐藏一级域 —— 改成滤数组会打乱 data-g 下标');
+    }
+    if (!/hs\.subs\.has\(su\.id\) \? ' hidden' : ''/.test(app180)) {
+      p180.push('§180②：renderNav2 不再用 hidden 属性隐藏二级页 —— 同上，data-s 下标会漂');
+    }
+
+    // ③ 当前选中项被隐藏时必须退到第一个可见的（否则用户停在一屏空白上，看着像面板坏了）。
+    if (!/function ensureVisibleSelection\(/.test(app180)
+      || !/^\s+ensureVisibleSelection\(\);/m.test(app180)) {
+      p180.push('§180③：缺 ensureVisibleSelection 或它没被 paintPage 调用 —— 隐藏当前页会把界面停在空白页');
+    }
+
+    // ④ 恢复入口不能被自己藏起来（显示侧与写侧各一道，缺一道就有自锁路径）。
+    //     ⚠️ 显示侧的正确形式是**豁免于隐藏名单**（`c.id === 'trim' || !hidden`），
+    //        不是把它从渲染里排除（`c.id !== 'trim'`）—— 后者实测直接让这张卡消失，
+    //        真渲染当场抓到（面板维护页只剩三张卡）。判据必须钉前者。
+    if (!/c\.id === 'trim' \|\| !hs\.cards\.has\(c\.id\)/.test(app180) || !/id === 'trim'/.test(app180)) {
+      p180.push('§180④：「界面裁剪」这张卡可以被隐藏（或被判据写成了"永不渲染"）—— 恢复入口没了，用户改坏就回不来');
+    }
+    // 最后一个能看见的一级域不许隐藏（同理：零入口）。
+    if (!/visibleDomains <= 1/.test(app180) || !/至少要留一个能看见的一级域/.test(app180)) {
+      p180.push('§180④：最后一个可见域没有被护住 —— 全隐藏会让控制台没有任何入口');
+    }
+
+    // ⑤ 卡级滤除点必须在 cardsHtml（唯一的卡渲染入口），不是在别处另起一套。
+    if (!/const list = cards\.filter\(\(c\) => \(c\.id === 'trim' \|\| !hs\.cards\.has\(c\.id\)\)/.test(app180)) {
+      p180.push('§180⑤：cardsHtml 没有按名单滤卡 —— 名单存了却不生效，是"写了没人读"');
+    }
+    if (!/id: 'trim', title: '界面裁剪'/.test(sch180) || !/\{ t: 'panelTrim' \}/.test(sch180)) {
+      p180.push('§180⑤：面板没有「界面裁剪」这张卡 / 控件 —— 功能只能靠手改 config.json');
+    }
+
+    // ⑥ **隐藏项仍必须参与逐页遍历**：这是"只隐藏不删除"这条纪律的可执行形式。
+    //    遍历靠 DOM 存在性，所以 hidden 属性不影响它；一旦有人改成滤数组，
+    //    隐藏页就会从遍历里消失 —— 那正是"某页白屏"从此没人守的形状。
+    if (!/界面裁剪/.test(dom180) || !/hidden/.test(dom180)) {
+      p180.push('§180⑥：panel-dom 没有覆盖界面裁剪（隐藏后仍在 DOM / 仍被遍历）—— 隐藏改成过滤时没人拦');
+    }
+
+    if (p180.length) { bad++; for (const x of p180) console.log('✗ ' + x); }
+    else console.log('✓ 界面裁剪（§180）：名单走白名单投影 · 用 hidden 不滤下标 · 选中项自动退让 · 恢复入口与最后可见域有硬闸 · 隐藏页仍被逐页遍历');
+  }
+
+  // 181) 好友申请 / 群邀请（B1.1 · 2026-11-04 · 群友报告"有人加她像什么都没发生"）
+  {
+    const p181 = [];
+    const ob = stripComments(read('../src/onebot.js'), 'js');
+    const idx = stripComments(read('../src/index.js'), 'js');
+    const cc = stripComments(read('../src/control-channel.js'), 'js');
+    const frs = stripComments(read('../src/friend-requests.js'), 'js');
+    const ctl = stripComments(read('../panel/lib/control.js'), 'js');
+    const col = stripComments(read('../panel/lib/state-collector.js'), 'js');
+    const srv = stripComments(read('../panel/server.js'), 'js');
+    const app = stripComments(read('../panel/next/app.js'), 'js');
+    const sch = stripComments(read('../panel/next/schema.js'), 'js');
+    const dom = read('../test/panel-dom.mjs');
+
+    // ① 报文必须**分流**，而且新事件名必须有监听者 —— 原始缺陷就是"塞进 notice 那一支，
+    //    而监听第一句把非 notice 全 return 掉"。只钉 emit 不钉监听 = 半个门（本项目反复踩）。
+    if (!/post_type === 'request'/.test(ob) || !/emit\('request', payload\)/.test(ob)) {
+      p181.push('§181①：onebot.js 没有把 post_type=request 单独 emit —— 申请又会被塞回 notice 那一支，而监听第一句就 return');
+    }
+    if (!/bot\.on\('request'/.test(idx)) {
+      p181.push('§181①：index.js 没有监听 request —— 事件名改了照样没人接，表现与原来一模一样（"改了分发没改消费"）');
+    }
+    // 反向：`emit('notice')` 那一支不许再把 request 收进去（else 分支必须排在 request 之后）。
+    const iReq = ob.indexOf("payload.post_type === 'request'");
+    const iNot = ob.indexOf("this.emit('notice'");
+    if (iReq < 0 || iNot < 0 || iReq > iNot) {
+      p181.push('§181①：request 的分流没有排在 notice 兜底之前 —— 顺序反了等于没分（这是"排后面就与没冻同形"的同族）');
+    }
+
+    // ② 路径只有一份：文件名住在叶子里，两侧都从 `DATA_DIR` 拼；面板与前端不许出现文件名字面量。
+    if (!/export const FRIEND_REQ_FILE_NAME = 'friend-requests\.json'/.test(frs)) {
+      p181.push('§181②：叶子没有导出那份文件名 —— 写侧与读侧各写一个字面量，改一处就永远读成空列表');
+    }
+    if (!/path\.join\(DATA_DIR, FRIEND_REQ_FILE_NAME\)/.test(idx) || !/path\.join\(DATA_DIR, FRIEND_REQ_FILE_NAME\)/.test(col)) {
+      p181.push('§181②：机器人或面板没有用那份名字拼路径（DATA_DIR + FRIEND_REQ_FILE_NAME）—— 目录级三件套（git/沙箱/env）就绕过去了');
+    }
+    if (/friend-requests\.json/.test(app) || /friend-requests\.json/.test(sch)) {
+      p181.push('§181②：前端代码里出现了文件名字面量 —— 界面不该知道盘上叫什么，那是第二份真相');
+    }
+
+    // ③ 控制通道"扩参数"必须三处一起：闭集合 / 记录形状 / 传给执行体。
+    //    少任何一处的表现都是"面板发了、机器人读成空"，而且四层全绿。
+    if (!/'friend\.resolve'/.test(cc)) p181.push('§181③：CONTROL_KINDS 里没有 friend.resolve —— 命令会在判据层被当"不认识的命令"拒掉');
+    if (!/const arg = typeof obj\.arg === 'string'/.test(cc) || !/done, arg \};/.test(cc)) {
+      p181.push('§181③：parseControlRecord 没有 arg 槽位 —— 带参数的命令会被静默丢掉参数（好友申请点同意却什么都不同意）');
+    }
+    if (!/exec\(rec\.cmd, rec\.arg\)/.test(cc)) {
+      p181.push('§181③：runControlStep 没把 rec.arg 交给执行体 —— 判据收下了参数但没人用（"写了没人读"）');
+    }
+    if (!/function runControlCommand\(cmd, arg = ''\)/.test(idx) || !/resolveFriendRequest\(arg\)/.test(idx)) {
+      p181.push('§181③：index.js 的执行体没接 arg —— 面板发的 flag 到不了协议端那一次调用');
+    }
+
+    // ④ 永久性动作不能被自动化：全仓 `set_friend_add_request` **恰 1 个调用点**，
+    //    且它必须住在 `resolveFriendRequest` 里（由控制通道触发）。多一个调用点就是有人加了自动通过。
+    const nFriendApi = (idx.match(/set_friend_add_request/g) || []).length;
+    if (nFriendApi !== 1) {
+      p181.push(`§181④：index.js 里 set_friend_add_request 出现 ${nFriendApi} 次（应恰 1）—— 多于一个就是有人加了自动同意，`
+        + '而"通过谁加好友"是撤不回来的永久性动作（维护者 2026-11-03 明确：不自动通过）');
+    }
+    const iResolveFn = idx.indexOf('async function resolveFriendRequest(');
+    const iApiCall = idx.indexOf('set_friend_add_request');
+    if (iResolveFn < 0 || iApiCall < 0 || iApiCall < iResolveFn || iApiCall - iResolveFn > 2000) {
+      p181.push('§181④：那次调用不在 resolveFriendRequest 里 —— 同意好友必须只有一个由人拍板的出口');
+    }
+    // 群邀请走**另一个**接口（拿好友那个去调，协议端报"flag 无效"，会被读成"申请过期了"）。
+    if (!/set_group_add_request/.test(idx) || !/kind === 'group' \? 'set_group_add_request'/.test(idx)) {
+      p181.push('§181④：群邀请没有走 set_group_add_request —— 两种申请共用一个接口时，失败会伪装成"申请过期"');
+    }
+
+    // ⑤ 两端对上：后端下发 → 面板渲染 → 按钮绑到命令。少一环就是"看不见"或"点了没反应"。
+    if (!/friendRequests: readFriendRequestsOf\(\)/.test(col)) {
+      p181.push('§181⑤：/api/state 没有下发 friendRequests —— 读文件的函数写了但没人调用');
+    }
+    if (!/friendRequests: \(x\) => \{/.test(app) || !/j\(s, \['friendRequests'\]/.test(app)) {
+      p181.push('§181⑤：面板没有 friendRequests 渲染器或它不读那一格 —— 后端下发了却没人看（记忆按钮 400 那条的同族）');
+    }
+    if (!/data-a="friend\.resolve"/.test(app)) p181.push('§181⑤：页面上没有同意 / 拒绝按钮的动作绑定 —— 列出来了也拍不了板');
+    if (!/id: 'freq', title: '好友申请与群邀请'/.test(sch) || !/'friendRequests'/.test(sch)) {
+      p181.push('§181⑤：这一格没进 schema（或缺于控件类型白名单）—— 页面会静默少一块，看起来一切正常');
+    }
+    if (!/cmd, arg/.test(srv) || !/body\?\.arg/.test(srv)) {
+      p181.push('§181⑤：/api/bridge/command 没有透传 arg —— 前端发了、服务端丢了，机器人永远收到空参数');
+    }
+    if (!/arg: String\(arg \?\? ''\)/.test(ctl)) {
+      p181.push('§181⑤：面板写命令文件时没带 arg —— 闭集合加了种类但通道不搬参数');
+    }
+
+    // ⑥ 失败与空态不许伪装成"没有申请"（读不到 ≠ 没有）。
+    if (!/unreadable: true/.test(col)) {
+      p181.push('§181⑥：解析失败没有单独的 unreadable 态 —— 会把"读不出"显示成"没人申请过"，那比报错误导得多');
+    }
+    if (!/这一格读不出内容/.test(app)) {
+      p181.push('§181⑥：面板没有把 unreadable 那个人话状态渲染出来 —— 后端给了标志但用户看不见（还是两端对上那一类）');
+    }
+
+    // ⑦ 通知文案必须告诉主人"去哪儿拍板"。**实跑一次函数**，不是扫源码（§50 立的纪律）。
+    const FR = await import('../src/friend-requests.js');
+    const notice = FR.requestNoticeTextOf({ kind: 'friend', userId: '12345', comment: '我是小王' }, { pending: 2 });
+    // ⚠️ 判的是**那半句指令本身**（`由你在控制台里点`），不是"文案里出现过控制台三个字" ——
+    //    实测踩到：`pending > 1` 那半句里也有"堆在控制台"，只判 /控制台/ 的话，
+    //    把"去哪儿拍板"整句删掉照样绿（R13 第一版就是这么 NOT-BLOCKED 的）。
+    //    同时要求"不会自己答应"在场：文案不许反过来教用户"她会自动通过"。
+    if (!/由你在控制台里点/.test(notice) || !/不会自己答应/.test(notice)
+      || !notice.includes('12345') || !notice.includes('我是小王') || !notice.includes('第 2 条')) {
+      p181.push(`§181⑦：通知里没有"由你在控制台里点"这句指令，或没带申请人信息 / 没写明不自动答应（实跑得到「${notice}」）—— `
+        + '主人只被告知"有人在申请"却不知道下一步在哪，等于把一条缺陷报告换成另一条');
+    }
+    if (/自动通过|自动同意/.test(notice)) p181.push('§181⑦：通知文案里出现了"自动通过/自动同意" —— 口径是不自动，文案不许反过来教用户');
+    // 四种状态都有人话（把实现名铺给用户 = 页面在要求人读源码）。
+    for (const k of ['approved', 'denied', 'failed']) {
+      if (!new RegExp(`status === '${k}'`).test(app)) p181.push(`§181⑦：状态「${k}」在页面上没有对应的人话 —— 会把实现名直接铺出来`);
+    }
+    if (!/FRIEND_REQ_STATUS\.includes\(status\)/.test(frs)) {
+      p181.push('§181⑦：resolveRequestOf 不校验状态闭集合 —— 写进一个没人认识的形状，页面只能显示原始值');
+    }
+
+    // ⑧ 逐页遍历必须覆盖这一格（与 §180⑥ 同一条纪律）。
+    if (!/好友申请/.test(dom) || !/friend\.resolve/.test(dom)) {
+      p181.push('§181⑧：panel-dom 没有覆盖好友申请那一格 —— "列出来了但按钮死了"从此没人守');
+    }
+
+    if (p181.length) { bad++; for (const x of p181) console.log('✗ ' + x); }
+    else console.log('✓ 好友申请 / 群邀请（§181）：报文分流且有监听者 · 文件名只有一份（反向钉前端不许知道盘上叫什么）· 控制通道三处一起扩 arg · 同意只有一个由人拍板的出口且群邀请走另一个接口 · 下发/渲染/按钮/透传四端对上 · 读不出不等于没有 · 通知实跑并带"去控制台" · panel-dom 覆盖');
+  }
+
+  // 182) 识图与发图（2026-11-04 · B 包识图 3.0 加固 + 双栏紧凑页）
+  //   这一节盯的是"图到底有没有交给模型 / 上限是不是同一份 / 面板能不能存进去"。
+  //   旧实现只把原 URL 塞给模型；并行任务补了 data URL，本批补的是它能悄悄退化的地方。
+  {
+    const p182 = [];
+    const visionSrc182 = read('../src/vision.js');
+    const indexSrc182 = read('../src/index.js');
+    const brainSrc182 = read('../src/brain.js');
+    const imagesSrc182 = read('../src/images.js');
+    const safeSrc182 = read('../src/safe-fetch.js');
+    const cfgSrc182 = read('../src/config.js');
+    const exampleSrc182 = read('../config.example.json');
+    const routeSrc182 = read('../panel/lib/config-route.js');
+    const stateSrc182 = read('../panel/lib/state-collector.js');
+    const appSrc182 = read('../panel/next/app.js');
+    const htmlSrc182 = read('../panel/next/index.html');
+    const pkgSrc182 = read('../package.json');
+    const domSrc182 = read('../test/panel-dom.mjs');
+    const visionTestSrc182 = read('../test/check-vision.mjs');
+    const { GROUPS: G182 } = await import('../panel/next/schema.js');
+    const { NEXT_ASSETS: NA182 } = await import('../panel/lib/next-page.js');
+
+    // ① 准备层：3 张、1.5MB 复用、去重、失败回退、重试次数、图片头。
+    if (!/VISION_MAX_IMAGES = 3/.test(visionSrc182)
+      || !/VISION_FETCH_ATTEMPTS = 2/.test(visionSrc182)
+      || !/imageBytesOf\(raw, \{ maxBytes: VISION_INLINE_MAX_BYTES, timeoutMs \}\)/.test(visionSrc182)
+      || !/sha256Of/.test(visionSrc182)
+      || !/seenBytes\.has\(key\)/.test(visionSrc182)
+      || !/images\.push\(raw\)/.test(visionSrc182)) {
+      p182.push('§182①：src/vision.js 缺「3 张 / 1.5MB 取字节 / sha256 去重 / 失败回退原 URL」之一 —— 识图加固会静默退回直传 URL');
+    }
+    subHit('识图加固');
+
+    if (!/Referer: 'https:\/\/im\.qq\.com\/'/.test(visionSrc182)
+      || !/User-Agent/.test(visionSrc182) || !/Accept/.test(visionSrc182)) {
+      p182.push('§182②：图片请求头缺 UA / Referer / Accept 之一 —— QQ 图床会回 403，而日志只看到"下载失败"');
+    }
+    subHit('识图加固');
+
+    // ② safeFetch：headers 只从显式入参透传，且每一跳都带。
+    if (!/headers = null/.test(safeSrc182) || !/options\.headers = \{ \.\.\.headers \}/.test(safeSrc182)
+      || !/\.\.\.\(headers \? \{ headers \} : \{\}\)/.test(safeSrc182)) {
+      p182.push('§182③：safeFetch / sendOnce 没有把显式 headers 透传到每一跳 —— 图片头只对首跳生效');
+    }
+    subHit('识图加固');
+
+    // ③ 接线：只在识图开且模型支持时准备；trace 记 dropped。
+    if (!/prepareVisionImages\(\{ list: parsed\.images, imageBytesOf, log \}\)/.test(indexSrc182)
+      || !/parsed\.images = preparedVision\.images/.test(indexSrc182)
+      || !/parsed\.visionDropped = preparedVision\.dropped/.test(indexSrc182)
+      || !/dropped: Array\.isArray\(parsed\.visionDropped\)/.test(indexSrc182)
+      || !/headers: VISION_FETCH_HEADERS/.test(indexSrc182)) {
+      p182.push('§182④：index.js 没有把 prepareVisionImages 的结果接进 parsed / trace，或图片头没交给 safeFetch —— 加固写了没人读');
+    }
+    subHit('识图加固');
+
+    // ④ brain：编号 + 类型优先提示 + 纯图闸门主人豁免。
+    if (!/visionNoteFor\(imgs\.length\)/.test(brainSrc182)
+      || !/第\$\{i \+ 1\}张：/.test(brainSrc182)
+      || !/isOwner\(evt\.user_id, this\.cfg\.owner\?\.qq \|\| \[\]\)/.test(brainSrc182)) {
+      p182.push('§182⑤：brain.js 缺「第N张 / 类型优先提示 / 主人豁免」之一 —— 图仍会被当成一串无编号 URL');
+    }
+    subHit('识图加固');
+
+    // ⑤ 看图工具提示词：先判类型、逐项核对，不再是"一两句话描述"。
+    if (!/VISION_INLINE_MAX_BYTES = 1_500_000/.test(imagesSrc182)
+      || !/先判断/.test(imagesSrc182) || !/看不清/.test(imagesSrc182)) {
+      p182.push('§182⑥：VIEW_IMAGE_PROMPT 退回旧形状，或内联上限不再是 1.5MB —— 两张图两套口径');
+    }
+    subHit('识图加固');
+
+    // ⑥ 纯图宽限：默认 60s；三件套（schema / state-collector / config-route）缺一不可。
+    if (!/bareGraceMs: Math\.max\(0, asInt\(raw\.trigger\?\.bareGraceMs, 60000\)\)/.test(cfgSrc182)
+      || !/"bareGraceMs": 60000/.test(exampleSrc182)) {
+      p182.push('§182⑦：bareGraceMs 默认不是 60s（config.js / config.example.json）—— 纯图宽限仍是 5 分钟');
+    }
+    if (!/bareGraceMs: cfg\?\.trigger\?\.bareGraceMs \?\? 60000/.test(stateSrc182)
+      || !/typeof body\.bareGraceMs === 'number'/.test(routeSrc182)
+      || !/cfg\.trigger\.bareGraceMs = Math\.round/.test(routeSrc182)) {
+      p182.push('§182⑦：bareGraceMs 的面板写链断了（state-collector / config-route）—— 滑块能拖、保存被静默丢掉');
+    }
+    subHit('识图加固');
+
+    // ⑦ schema：识图页三张卡；总开关只在识图页；纯图宽限用 bindSys。
+    const subs182 = G182.flatMap((g) => g.subs);
+    const imaging182 = subs182.find((s) => s.id === 'imaging');
+    const caps182 = subs182.flatMap((s) => s.cards || []).find((c) => c.id === 'caps');
+    const visionFeat182 = subs182.flatMap((s) => (s.cards || []).flatMap((c) => c.ctrls || []))
+      .filter((x) => x.t === 'featSwitch' && x.feat === 'vision');
+    if (!imaging182 || !['img', 'grace', 'vision'].every((id) => (imaging182.cards || []).some((c) => c.id === id))) {
+      p182.push('§182⑧：识图页不是 img / grace / vision 三张卡 —— 双栏页面的左右列没有稳定落点');
+    }
+    if (visionFeat182.length !== 1 || !(imaging182.cards || []).some((c) => (c.ctrls || []).some((x) => x.feat === 'vision'))) {
+      p182.push('§182⑧：识图总开关不是"恰好一份、且在识图页" —— 模型页又长出一份副本，或识图页没有入口');
+    }
+    if ((caps182?.ctrls || []).some((x) => x.t === 'featSwitch' && x.feat === 'vision')) {
+      p182.push('§182⑧：模型页能力卡仍有 featSwitch vision —— 两份开关会互相覆盖');
+    }
+    const graceCtl182 = (imaging182.cards || []).find((c) => c.id === 'grace')?.ctrls || [];
+    if (!graceCtl182.some((x) => x.t === 'range' && x.bindSys === 'bareGraceMs')) {
+      p182.push('§182⑧：纯图宽限没有 range + bindSys:bareGraceMs —— 用 bind 会写进 custom，后端读不到');
+    }
+    subHit('识图加固');
+
+    // ⑧ 渲染：自定义页必须走 cardsHtml（否则界面裁剪隐藏的卡会复活）。
+    if (!/function imagingHtml\(/.test(appSrc182)
+      || !/g\.id === 'speak' && su\.id === 'imaging'/.test(appSrc182)
+      || !/cardsHtml\(left\)/.test(appSrc182) || !/cardsHtml\(right\)/.test(appSrc182)) {
+      p182.push('§182⑨：imagingHtml 没接进 buildHtml，或没按左右列调用 cardsHtml —— 卡片会绕开界面裁剪');
+    }
+    subHit('识图加固');
+
+    // ⑨ 资产：CSS 必须同时进 NEXT_ASSETS 与入口页；面板事实条读后端常量。
+    if (!Object.prototype.hasOwnProperty.call(NA182, 'vision.css')
+      || !/href="\.\/vision\.css"/.test(htmlSrc182)) {
+      p182.push('§182⑩：vision.css 没登记 NEXT_ASSETS 或没进 index.html —— 页面 404 / §58 双向比对判红');
+    }
+    if (!/vision: \{/.test(stateSrc182) || !/maxImages: VISION_MAX_IMAGES/.test(stateSrc182)) {
+      p182.push('§182⑩：customMeta.vision 没下发 —— 页面只能把「3 张 / 1.5MB」写死成第二份真相');
+    }
+    subHit('识图加固');
+
+    // ⑩ 测试面：单测与面板 DOM 都必须覆盖，且进 check:features。
+    if (!/prepareVisionImages/.test(visionTestSrc182) || !/VISION_FETCH_HEADERS/.test(visionTestSrc182)) {
+      p182.push('§182⑪：test/check-vision.mjs 没有覆盖准备层与图片头 —— 新判据没有反例');
+    }
+    if (!/check-vision\.mjs/.test(pkgSrc182)) {
+      p182.push('§182⑪：check-vision.mjs 没进 check:features —— 这道自检会像旧 verify-panel 一样烂掉');
+    }
+    if (!/vgrid/.test(domSrc182) || !/card-vision/.test(domSrc182) || !/bareGraceMs/.test(domSrc182)) {
+      p182.push('§182⑪：panel-dom 没有覆盖识图页的双栏 / 右卡 / 纯图宽限 —— 真渲染里白屏或单列没人拦');
+    }
+    subHit('识图加固');
+
+    if (p182.length) { bad++; for (const x of p182) console.log('✗ ' + x); }
+    else console.log('✓ 识图与发图（§182）：3 张/1.5MB/UA+Referer · 去重回退 · dropped trace · 第N张提示 · 主人豁免 · 60s 三件套 · 总开关唯一 · cardsHtml 不绕裁剪 · CSS 双登记');
+  }
+
+  // 183) P1 封堵（2026-11-05 · 外部评估：扩展 ZIP 根覆盖 + PEM 正文泄露）
+  //   这两项都是"看起来装好了/发出去了，实际把同级扩展或私钥正文一起带走"。
+  {
+    const p183 = [];
+    const manifestSrc183 = read('../src/plugin-manifest.js');
+    const extSrc183 = read('../panel/lib/ext-install.js');
+    const serverSrc183 = read('../panel/server.js');
+    const appSrc183 = read('../panel/next/app.js');
+    const egSrc183 = read('../src/egress.js');
+    const brainSrc183 = read('../src/brain.js');
+    const proSrc183 = read('../src/proactive.js');
+    const bridgeSrc183 = read('../src/bridge-io.js');
+    const drySrc183 = read('../scripts/dryrun.js');
+    const pkgSrc183 = read('../package.json');
+
+    // ① ZIP 专用规范化：`.` / `..` / ADS / 设备名 / 尾点尾空格。
+    if (!/export function canonicalZipPath\(/.test(manifestSrc183)
+      || !/seg === '\.'/.test(manifestSrc183)
+      || !/seg === '\.\.'/.test(manifestSrc183)
+      || !/seg\.includes\(':'\)/.test(manifestSrc183)
+      || !/WIN_DEVICE/.test(manifestSrc183)
+      || !/\[\. \]\$/.test(manifestSrc183)) {
+      p183.push('§183①：plugin-manifest 没有 ZIP 专用规范化（. / .. / ADS / 设备名 / 尾点）—— 顶层 . 仍可能落成扩展根');
+    }
+    subHit('P1封堵');
+
+    // ② 安装口：规范化只做一次、目标严格子目录、覆盖绑定摘要。
+    if (!/canonicalZipPath\(e\.name\)/.test(extSrc183)
+      || !/pkgDir === '\.'/.test(extSrc183)
+      || !/seen\.get\(key\)/.test(extSrc183)
+      || !/if \(prev\)/.test(extSrc183)
+      || !/path\.dirname\(target\) !== rootDir/.test(extSrc183)
+      || !/目标不在扩展根下，拒绝安装/.test(extSrc183)
+      || !/目标目录是符号链接/.test(extSrc183)
+      || !/expectedDigest/.test(extSrc183)
+      || !/createHash\('sha256'\)/.test(extSrc183)) {
+      p183.push('§183②：ext-install 没有把规范化后的路径、严格子目录、内容摘要同时钉住 —— 覆盖安装仍可能换掉整根或换包');
+    }
+    subHit('P1封堵');
+
+    // ③ 面板：覆盖重试必须带回 id/kind/摘要。
+    if (!/expectedDigest/.test(serverSrc183) || !/expectDigest/.test(appSrc183)
+      || !/bindDigest/.test(appSrc183) || !/b\.digest/.test(appSrc183)) {
+      p183.push('§183③：覆盖确认没有把服务端识别的 id/kind/摘要带回重试 —— 确认与实际覆盖目标解绑');
+    }
+    subHit('P1封堵');
+
+    // ④ 出口：整块 PEM 识别/擦除与深脱敏只有一份实现。
+    if (!/export function redactCredentialsBeforeShape\(/.test(egSrc183)
+      || !/PEM_BEGIN_RE/.test(egSrc183)
+      || !/export function redactPemBlocks\(/.test(egSrc183)
+      || !/export function maskSecretsDeep\(/.test(egSrc183)
+      || !/hasPemSecret/.test(egSrc183)) {
+      p183.push('§183④：egress 没有整块 PEM 识别/擦除 —— 只遮标头时正文照漏');
+    }
+    subHit('P1封堵');
+
+    // ⑤ 主链路：擦除必须先于 split（hardWrap 会切断长 Key）。
+    const prBody183 = fnSlice(brainSrc183, 'parseReply(raw) {', 400);
+    if (!prBody183 || !/redactCredentialsBeforeShape\(/.test(prBody183)
+      || prBody183.indexOf('redactCredentialsBeforeShape(') > prBody183.indexOf('.split(splitter)')) {
+      p183.push('§183⑤：brain.parseReply 没有在 split/hardWrap 之前擦凭据 —— 长 Key 被折行切开后值匹配失效');
+    }
+    subHit('P1封堵');
+
+    // ⑥ 主动链：同一顺序、同一实现。
+    const proBody183 = fnSlice(proSrc183, 'export function plannedProactiveChunks(', 300);
+    if (!proBody183 || !/redactCredentialsBeforeShape\(/.test(proBody183)
+      || proBody183.indexOf('redactCredentialsBeforeShape(') > proBody183.indexOf('.split(/\\|\\||')) {
+      p183.push('§183⑥：主动链没有在分句之前擦凭据 —— 与主链路口径分叉');
+    }
+    subHit('P1封堵');
+
+    // ⑦ trace / dryrun：整条记录落盘/打印前深脱敏。
+    if (!/maskSecretsDeep\(rec\)/.test(bridgeSrc183) || !/maskSecretsDeep\(out\)/.test(drySrc183)) {
+      p183.push('§183⑦：trace / dryrun 没有在落盘/打印前做深脱敏 —— 模型原文仍可能带 PEM 正文');
+    }
+    subHit('P1封堵');
+
+    // ⑧ 回归入口：两条 P1 测试必须真的进 check:features。
+    if (!/check-ext-archive\.mjs/.test(pkgSrc183) || !/check-pem-mask\.mjs/.test(pkgSrc183)) {
+      p183.push('§183⑧：两条 P1 回归没进 check:features —— 修完没有门守着');
+    }
+    subHit('P1封堵');
+
+    if (p183.length) { bad++; for (const x of p183) console.log('✗ ' + x); }
+    else console.log('✓ P1 封堵（§183）：ZIP 规范化一次 + 扩展根严格子目录 + 覆盖绑定摘要 · PEM 整块先擦再分段且回复/主动/日志/trace/dryrun 同源');
+  }
+
+  // 184) B2 守卫（2026-11-05 · OneBot 脏帧 / /api/try 鉴权与单飞 / 逐跳重定向）
+  {
+    const p184 = [];
+    const onebotSrc184 = read('../src/onebot.js');
+    const serverSrc184 = read('../panel/server.js');
+    const dlSrc184 = read('../panel/lib/update-download.js');
+    const sfSrc184 = read('../src/safe-fetch.js');
+    const extSrc184 = read('../src/ext-fetch.js');
+    const pkgSrc184 = read('../package.json');
+    const docSrc184 = readDoc('docs/API_CONTRACT.md') || '';
+
+    // ① OneBot：形状检查先于 payload.echo，脏帧计数且不更新连接健康。
+    const rawBody184 = fnSlice(onebotSrc184, '#onRaw(buf) {', 300);
+    if (!rawBody184 || !/badFrames \+= 1/.test(onebotSrc184)
+      || !/typeof payload !== 'object'/.test(rawBody184)
+      || !/Array\.isArray\(payload\)/.test(rawBody184)
+      || rawBody184.indexOf('typeof payload !==') > rawBody184.indexOf('payload.echo')) {
+      p184.push('§184①：OneBot 入站没有形状守卫（或守卫在 payload.echo 之后）—— JSON null 仍可让进程退出');
+    }
+    subHit('B2守卫');
+
+    // ② /api/try：写路由 + 单飞 + 429 + 日志不抄提示词。
+    const ro184 = (serverSrc184.match(/const READ_ONLY_POST = new Set\(\[([\s\S]*?)\]\);/)?.[1] || '');
+    const wr184 = (serverSrc184.match(/const WRITE_ROUTES = new Set\(\[([\s\S]*?)\]\);/)?.[1] || '');
+    if (/\/api\/try/.test(ro184) || !/\/api\/try/.test(wr184)
+      || !/tryGate\.acquire\(\)/.test(serverSrc184) || !/tryGate\.release\(\)/.test(serverSrc184)
+      || !/reason: 'busy'[\s\S]{0,80}429/.test(serverSrc184)
+      || !/text\.length/.test(serverSrc184)
+      || !/maskSecrets\(\(r\.stdout \+ r\.stderr\)/.test(serverSrc184)) {
+      p184.push('§184②：/api/try 仍是只读路由，或缺单飞/429/日志脱敏 —— 无 token 也能真调模型、连点就多计费');
+    }
+    subHit('B2守卫');
+
+    // ③ 更新下载：手动重定向，每一跳先校验再请求。
+    if (!/export async function fetchCheckedRedirects\(/.test(dlSrc184)
+      || !/redirect: 'manual'/.test(dlSrc184)
+      || (dlSrc184.match(/fetchCheckedRedirects\(url, \{/g) || []).length < 2) {
+      p184.push('§184③：update-download 仍是 redirect:follow / 只验最终 URL —— 中间跳已经发出去了');
+    }
+    subHit('B2守卫');
+
+    // ④ safeFetch / ext-fetch：逐跳 urlGuard。
+    if (!/if \(typeof opts\.urlGuard === 'function'\) \{/.test(sfSrc184)
+      || !/blocked-by-policy/.test(sfSrc184)
+      || !/safeFetchImpl/.test(extSrc184) || !/\{ urlGuard \}/.test(extSrc184)) {
+      p184.push('§184④：扩展浏览没有把 browseLock 逐跳传给 safeFetch —— 首跳允许、重定向到名单外就绕过去了');
+    }
+    subHit('B2守卫');
+
+    // ⑤ 回归入口 + 契约文档同步。
+    if (!/check-onebot-frames\.mjs/.test(pkgSrc184)
+      || !/check-try-auth\.mjs/.test(pkgSrc184)
+      || !/check-fetch-redirect\.mjs/.test(pkgSrc184)) {
+      p184.push('§184⑤：B2 的三条回归没进 check:features —— 修完没有门守着');
+    }
+    if (!/\/api\/try[\s\S]{0,400}\*\*写路由\*\*（`WRITE_ROUTES`/.test(docSrc184)) {
+      p184.push('§184⑤：API_CONTRACT 没写清 /api/try 已是写路由（token + Origin + 429）—— 外部调用方会按旧文档裸调');
+    }
+    subHit('B2守卫');
+
+    if (p184.length) { bad++; for (const x of p184) console.log('✗ ' + x); }
+    else console.log('✓ B2 守卫（§184）：OneBot 形状守卫先于 echo · /api/try 写路由+单飞 429+日志只记字数 · 更新下载逐跳手动重定向 · 扩展浏览逐跳 urlGuard · 三条回归进 check:features');
+  }
+
+  // 185) B3 回合管线（2026-11-05 · 图文合并保留媒体 / 按轮用量）
+  {
+    const p185 = [];
+    const waitSrc185 = read('../src/waiting.js');
+    const idxSrc185 = read('../src/index.js');
+    const pkgSrc185 = read('../package.json');
+    const waitTest185 = read('../test/check-wait-images.mjs');
+
+    // ① 纯函数：按事件顺序去重封顶。
+    if (!/export function mergeImageLists\(lists, cap = 3\)/.test(waitSrc185)
+      || !/out\.includes\(img\)/.test(waitSrc185)
+      || !/out\.length >= cap/.test(waitSrc185)) {
+      p185.push('§185①：waiting.js 没有 mergeImageLists（按顺序/去重/封顶）—— 前序图片只能靠整包去猜');
+    }
+    subHit('B3管线');
+
+    // ② 接线：合并缓存保留事件，handleMessage 展开后并入。
+    if (!/const events = prev \? \[\.\.\.\(prev\.events \|\| \[\]\), prev\.evt\] : \[\];/.test(idxSrc185)
+      || !/evt\.mergedEvents = events;/.test(idxSrc185)
+      || !/mergePending\.set\(key, \{ timer, evt, lines, events,/.test(idxSrc185)
+      || !/prev\.evt\.mergedEvents = prev\.events \|\| \[\];/.test(idxSrc185)
+      || !/for \(const old of evt\.mergedEvents\)/.test(idxSrc185)
+      || !/expandForwardText\(old\)/.test(idxSrc185)
+      || !/flattenMessage\(old\.message, selfId, \{ probe: false, forwardText: fwd\.text \}\)/.test(idxSrc185)
+      || !/mergeImageLists\(\[priorImages, parsed\.images\], 3\)/.test(idxSrc185)) {
+      p185.push('§185②：合并缓存/图片接线不完整 —— 先图后文仍会丢图，或前序图被当成新一轮消息');
+    }
+    subHit('B3管线');
+
+    // ③ 用量：主链路只用本轮局部值，禁止共享 llm.lastUsage。
+    if (!/let turnUsage = null;/.test(idxSrc185)
+      || !/turnUsage = run\.usage;/.test(idxSrc185)
+      || !/if \(turnUsage\) recordUsage\(\{ \.\.\.turnUsage, chat: session\.key/.test(idxSrc185)
+      || !/const usedModel = turnUsage\?\.model \|\| '';/.test(idxSrc185)
+      || /llm\.lastUsage/.test(idxSrc185)) {
+      p185.push('§185③：主链路仍在读写 llm.lastUsage —— 并发 ≥2 时两轮会互相覆盖用量');
+    }
+    subHit('B3管线');
+
+    // ④ 回归入口：合并纯函数与用量静态判据都进 check:features。
+    if (!/mergeImageLists\(/.test(waitTest185) || !/check-usage-attribution\.mjs/.test(pkgSrc185)) {
+      p185.push('§185④：B3 的回归没进 check:features —— 修完没有门守着');
+    }
+    subHit('B3管线');
+
+    if (p185.length) { bad++; for (const x of p185) console.log('✗ ' + x); }
+    else console.log('✓ B3 回合管线（§185）：合并缓存保留前序事件并按序展开图片（去重/封顶 3）· 主链路用量只读本轮 turnUsage，index.js 零 llm.lastUsage');
+  }
+
+  // 186) B4 发送许可最终复核（2026-11-05 · 外部评估 P2）
+  {
+    const p186 = [];
+    const permSrc186 = read('../src/send-permission.js');
+    const idxSrc186 = read('../src/index.js');
+    const pkgSrc186 = read('../package.json');
+
+    // ① 纯判据：ownerBypass 只豁免私聊，空 id 拒绝。
+    if (!/export function sendPermissionReason\(scene, id, \{ ownerBypass = false, gateReason \} = \{\}\)/.test(permSrc186)
+      || !/ownerBypass === true && scene === 'private'/.test(permSrc186)
+      || !/id 为空/.test(permSrc186)) {
+      p186.push('§186①：send-permission.js 判据不完整 —— owner 豁免会误伤群发，或空 id 被当成某个群');
+    }
+    subHit('B4复核');
+
+    // ② 唯一发送边界：所有 bot.sendMsg 调用都从包装过；包装里调用同一份判据。
+    if ((idxSrc186.match(/bot\.sendMsg = createGuardedSender\(\{/g) || []).length !== 1
+      || !/send: sendMsgRaw,/.test(idxSrc186)
+      || !/gateReason: \(e\) => brain\.gateReason\(e\),/.test(idxSrc186)
+      || !/export function createGuardedSender\(/.test(permSrc186)
+      || !/const why = sendPermissionReason\(scene, id, \{/.test(permSrc186)) {
+      p186.push('§186②：bot.sendMsg 不是唯一的 createGuardedSender 边界，或工厂没调用 sendPermissionReason —— 工具发图/主动路径会绕过复核');
+    }
+    subHit('B4复核');
+
+    // ③ 主回复：快路径 + hook 之后的最终复核，且最终复核紧贴 sendMsg。
+    const hookAt186 = idxSrc186.indexOf('await sendGuard.check(');
+    const finalAt186 = idxSrc186.indexOf('const lateFinal = lateSendReason(');
+    const mainSendAt186 = idxSrc186.indexOf('await bot.sendMsg(scene, id, payload)');
+    if ((idxSrc186.match(/lateSendReason\(/g) || []).length !== 2
+      || !(hookAt186 >= 0 && finalAt186 > hookAt186 && mainSendAt186 > finalAt186)) {
+      p186.push('§186③：主回复没有在 hook 之后、sendMsg 之前做最终复核 —— 钩子期间撤权仍会发出');
+    }
+    subHit('B4复核');
+
+    // ④ owner 豁免显式且只由 sayToOwner 传；回归入口在。
+    if (!/async function deliverFromBot\(scene, chatId, text, \{ ownerBypass = false \} = \{\}\)/.test(idxSrc186)
+      || !/await bot\.sendMsg\(scene, String\(chatId\), \[textSegment\(chunks\[i\]\)\], \{ ownerBypass \}\);/.test(idxSrc186)
+      || !/deliverFromBot\('private', id, text, \{ ownerBypass: true \}\)/.test(idxSrc186)
+      || !/check-send-recheck\.mjs/.test(pkgSrc186)) {
+      p186.push('§186④：owner 豁免没有显式传参 / 没进 check:features —— 运营通知会被群白名单误杀，或修完没有门守着');
+    }
+    subHit('B4复核');
+
+    if (p186.length) { bad++; for (const x of p186) console.log('✗ ' + x); }
+    else console.log('✓ B4 发送许可（§186）：唯一 sendMsg 边界复核 · 主回复 hook 后最终同步复核 · deliverFromBot 透传 ownerBypass · 仅 sayToOwner 显式豁免 · 回归进 check:features');
+  }
+
+  // 187) B5 首次启动与构建输入（2026-11-05 · 干净检出假 QQ / 预设上下文字段 / Docker 回退）
+  {
+    const p187 = [];
+    const fakeSessionSrc187 = read('../panel/lib/fake-session.js');
+    const fakeQqSrc187 = read('../scripts/fake-qq.mjs');
+    const modelsSrc187 = read('../panel/lib/models.js');
+    const serverSrc187 = read('../panel/server.js');
+    const inputsSrc187 = read('../docker/napcat/ensure-inputs.sh');
+    const bootSrc187 = read('../scripts/bootstrap.sh');
+    const linuxSrc187 = read('../docker/napcat/fetch-linuxqq.sh');
+    const napSrc187 = read('../docker/napcat/fetch-napcat.sh');
+    const pkgSrc187 = read('../package.json');
+
+    // ① 假 QQ：只在 config.json 真的存在时注入绝对路径。
+    if (!/if \(fs\.existsSync\(CONFIG_FILE\)\) env\.QQBOT_CONFIG = CONFIG_FILE;/.test(fakeSessionSrc187)
+      || /QQBOT_CONFIG: CONFIG_FILE/.test(fakeSessionSrc187)
+      || !/opts\.offline \|\| opts\.sandbox/.test(fakeQqSrc187)
+      || !/配置文件不存在/.test(fakeQqSrc187)) {
+      p187.push('§187①：假 QQ 仍无条件传不存在的 config.json（或没有离线/沙箱回退）—— 干净检出起不来');
+    }
+    subHit('B5首次启动');
+
+    // ② 预设上下文字段：只拥有 recentTurns / ambientMessages。
+    if (!/export function ownedContextOf\(ctx\)/.test(modelsSrc187)
+      || (modelsSrc187.match(/context: ownedContextOf\(cfg\?\.context\)/g) || []).length !== 2
+      || !/presets\[provider\]\.context = fields\.context;/.test(modelsSrc187)
+      || (serverSrc187.match(/ownedContextOf\(P\.context\)/g) || []).length !== 2) {
+      p187.push('§187②：预设仍在回存整份全局 context —— 首次切换会多出 budget/ambientBatch，切回来覆盖全局');
+    }
+    subHit('B5首次启动');
+
+    // ③ Docker 输入：四样齐全才 build；两个下载脚本走可移植 fsize。
+    if (!/missing\+=\(\"entrypoint\.sh\"\)/.test(inputsSrc187)
+      || !/missing\+=\(\"templates\/\"\)/.test(inputsSrc187)
+      || !/missing\+=\(\"NapCat\.Shell\.zip\"\)/.test(inputsSrc187)
+      || !/missing\+=\(\"linuxqq\.deb\"\)/.test(inputsSrc187)
+      || !/bash \.\/ensure-inputs\.sh/.test(bootSrc187)
+      || !/ensure_build_inputs \|\| return 1/.test(bootSrc187)
+      || !/source \.\/fsize\.sh/.test(linuxSrc187) || !/source \.\/fsize\.sh/.test(napSrc187)
+      || /stat -f%z/.test(linuxSrc187 + napSrc187)) {
+      p187.push('§187③：Docker 回退没有集中检查四样输入，或下载脚本仍只认 BSD stat —— 干净检出会先 COPY 失败');
+    }
+    subHit('B5首次启动');
+
+    // ④ 回归入口。
+    if (!/check-preset-context\.mjs/.test(pkgSrc187) || !/check-bootstrap-inputs\.mjs/.test(pkgSrc187)) {
+      p187.push('§187④：B5 的两条回归没进 check:features —— 修完没有门守着');
+    }
+    subHit('B5首次启动');
+
+    if (p187.length) { bad++; for (const x of p187) console.log('✗ ' + x); }
+    else console.log('✓ B5 首次启动（§187）：假 QQ 只在配置存在时注入且可回退示例 · 预设只回存两个上下文键 · Docker 回退四样输入集中检查 + 可移植 fsize · 两条回归进 check:features');
+  }
+
   // ① 契约块数下限。`ran + 1` 里那个 +1 就是**本段自己**（本段也走 console.log、也被计入），
   //    于是这里比的是"算上本段一共多少段"，与 `process.on('exit')` 的口径完全一致。
   //    ⚠️ 放在 §148 之后：桌面壳三段与其它契约块一样必须先计入，再比下限。
@@ -21305,7 +22400,7 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
     problems.push(`只跑了 ${ran + 1} 段契约（下限 ${MIN_CONTRACTS}）—— 有人删了断言，或某一段被提前 return 掉了`);
   }
 
-const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8], ['扩展卸载', 5], ['安装中文路径', 5], ['常规页安全内缩', 10], ['假QQ对话', 3], ['记忆降噪', 3]];
+const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8], ['扩展卸载', 5], ['安装中文路径', 5], ['常规页安全内缩', 10], ['假QQ对话', 3], ['记忆降噪', 3], ['识图加固', 10], ['P1封堵', 8], ['B2守卫', 5], ['B3管线', 4], ['B4复核', 4], ['B5首次启动', 4]];
   for (const [bucket, min] of HEAVY_SUB_MIN) {
     const c = subCountOf(bucket);
     if (c < min) {

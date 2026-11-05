@@ -32,6 +32,7 @@ import { capabilitiesOf } from '../src/model-caps.js';
 import { createToolRegistry } from '../src/tool-registry.js';
 import { TOOL_ROUND_MAX } from '../src/tool-loop.js';
 import { recordUsage } from '../src/usage.js';
+import { maskSecrets, maskSecretsDeep } from '../src/egress.js';
 
 // 开关与正文的拆分只有一份实现（`scripts/lib/cli-args.mjs`）—— 见该模块的文件头。
 // `--` 之后的一律算正文（H-04）；没有它时行为与改造前逐字相同。
@@ -121,7 +122,7 @@ if (asJson) {
     skillsUsed: brain.skillsInPrompt(evt, parsed).map((s) => ({ kind: s.kind, name: s.name })),
   };
   if (!decision.respond) {
-    console.log(JSON.stringify(out));
+    console.log(JSON.stringify(maskSecretsDeep(out)));
     process.exit(0);
   }
   const messages = brain.buildMessages(session, evt, parsed);
@@ -149,7 +150,7 @@ if (asJson) {
     out.ms = Date.now() - t0;
     out.error = e.message;
   }
-  console.log(JSON.stringify(out));
+  console.log(JSON.stringify(maskSecretsDeep(out)));
   process.exit(0);
 }
 
@@ -182,12 +183,12 @@ if (llm.lastUsage) {
   const u = llm.lastUsage;
   console.log(`用量      : 输入 ${u.prompt} tok（缓存命中 ${u.cached}）| 输出 ${u.completion} tok | 其中思考 ${u.reasoning} tok`);
 }
-console.log(`原始输出  : ${JSON.stringify(raw)}`);
+console.log(`原始输出  : ${JSON.stringify(maskSecrets(raw))}`);
 console.log('─'.repeat(58));
 
 if (silent) {
   console.log('结果      : 机器人选择不说话（[SILENT]）');
 } else {
   console.log(`结果      : 会发 ${chunks.length} 条消息`);
-  chunks.forEach((c, i) => console.log(`  [${i + 1}] ${c}`));
+  chunks.forEach((c, i) => console.log(`  [${i + 1}] ${maskSecrets(c)}`));
 }

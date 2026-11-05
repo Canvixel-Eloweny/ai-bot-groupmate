@@ -34,6 +34,28 @@ export const WAIT_DEFAULTS = Object.freeze({
   typing: true,
 });
 
+/**
+ * 连发合并时按**事件顺序**拼接图片：去重、保序、封顶。
+ *
+ * 单独成纯函数是为了让"先图后文 / 先文后图 / 连续多图"的顺序与去重能被直接断言；
+ * 留在 `index.js` 的合并闭包里的话，只能靠真起一个机器人去观察。
+ *
+ * @param {Array<Array<string>>} lists 按时间从旧到新的图片列表
+ * @param {number} cap 上限（与识图链的 3 张同规）
+ * @returns {string[]}
+ */
+export function mergeImageLists(lists, cap = 3) {
+  const out = [];
+  for (const list of Array.isArray(lists) ? lists : []) {
+    for (const img of Array.isArray(list) ? list : []) {
+      if (typeof img !== 'string' || !img || out.includes(img)) continue;
+      out.push(img);
+      if (out.length >= cap) return out;
+    }
+  }
+  return out;
+}
+
 /** 只接受非负整数，其余回落 —— 配置里填 "abc" / -5 不该变成 NaN 等待 */
 function posInt(v, fallback) {
   const n = Number(v);

@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const net = require('node:net');
 const path = require('node:path');
-const { spawn, execFileSync } = require('node:child_process');
+const { spawn, spawnSync, execFileSync } = require('node:child_process');
 const {
   app, BrowserWindow, Tray, Menu, Notification, dialog, ipcMain, screen, shell, session, nativeImage, nativeTheme, crashReporter,
 } = require('electron');
@@ -1047,7 +1047,7 @@ function createWindow() {
       ]);
     } catch { /* 页面还没就绪：仍然尝试 show，至少不是永久无窗口 */ }
     if (!win || win.isDestroyed() || isQuitting) return;
-    if ((decision === 'show' || pendingShow) && !win.isVisible()) showWindow(true);
+    if ((action === 'show' || pendingShow) && !win.isVisible()) showWindow(true);
   }, 4000);
   win.once('ready-to-show', () => {
     clearTimeout(showFallback);
@@ -1068,7 +1068,8 @@ function createWindow() {
       if (!win || win.isDestroyed()) return;
       try { win.webContents.setBackgroundThrottling(true); } catch { /* 老版本无此 API */ }
     }, 12000);
-    log(`start decision=${decision} visible=${win.isVisible()}`);
+    /* 日志标签保持 `decision=`（docs/desktop/OPEN-ON-START.md 拿它当 VM 验收证据行）。 */
+    log(`start decision=${action} visible=${win.isVisible()}`);
     if (SMOKE_NOTIFY) {
       setTimeout(() => {
         const sent = showNotification({ title: 'Estrella Bot', body: '通知通道工作正常' });

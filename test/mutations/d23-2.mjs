@@ -195,19 +195,22 @@ const M10 = {
 };
 
 // ── M11：渲染器不再复用 flattenMessage（**只由行为层拦**） ───────────────────
+// ⚠️ 2026-11-03 重锚：renderNode 从"箭头直接返回 .text"改成"块体 + 顺手收集 flat.images"
+//    （转发节点里的图以前整段丢掉）。锚点跟着搬到新的实现位置，**语义没动**：
+//    仍然是"把 flattenMessage 换成自己 String 一把"，仍然只该由 smoke T345① 拦。
 const M11 = {
   id: 'M11',
   note: '渲染器自己 String 一把（不再复用 flattenMessage）—— 段 → 文本出现第二份实现：@ 显示名、图片 / 表情占位符、嵌套封顶全部与主链路漂开。预期 BLOCKED（**只由** smoke T345① 拦：提示词里不再是「小王: 今晚吃什么」）',
   file: IDX,
-  anchor: /const renderNode = \(node\) => flattenMessage\(/,
+  anchor: /const flat = flattenMessage\(/,
   count: 1,
   apply: (s) => s.replace(
-    'const renderNode = (node) => flattenMessage(\n'
-    + '      nodeSegmentsOf(node),\n'
-    + "      bot.selfId ?? String(evt.self_id ?? ''),\n"
-    + '      { probe: false },\n'
-    + '    ).text;',
-    "const renderNode = (node) => String(node?.message ?? '');"
+    'const flat = flattenMessage(\n'
+    + '        nodeSegmentsOf(node),\n'
+    + "        bot.selfId ?? String(evt.self_id ?? ''),\n"
+    + '        { probe: false },\n'
+    + '      );',
+    "const flat = { text: String(node?.message ?? ''), images: [] };"
   ),
   layer: 'smoke',
   expect: 'BLOCKED',

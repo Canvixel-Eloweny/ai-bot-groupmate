@@ -26,6 +26,7 @@
  *   NODE_OPTIONS= node scripts/mutate.mjs test/mutations/overview-2026-10-27.mjs
  */
 const INDEX = 'src/index.js';
+const PERM = 'src/send-permission.js';
 const REPORT = 'panel/lib/sent-report.js';
 const SERVER = 'panel/server.js';
 const APP = 'panel/next/app.js';
@@ -36,10 +37,11 @@ export default [
     id: 'M1',
     note: 'sendMsg 成功后把 recordSentRound 的 n 改成 0 —— §164② 必须变红'
       + '（今日发言恒 0；热力图和 KPI 看起来都"正常"，只是没数）。预期 BLOCKED',
-    file: INDEX,
-    anchor: /recordSentRound\(\{ n: 1, chatKey/,
+    // 2026-11-05：记账已随唯一发送边界搬进 createGuardedSender。
+    file: PERM,
+    anchor: /recordSent\(\{ n: 1, chatKey/,
     count: 1,
-    apply: (s) => s.replace('recordSentRound({ n: 1, chatKey', 'recordSentRound({ n: 0, chatKey'),
+    apply: (s) => s.replace('recordSent({ n: 1, chatKey', 'recordSent({ n: 0, chatKey'),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

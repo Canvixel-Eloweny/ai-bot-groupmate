@@ -55,12 +55,23 @@ async function main() {
   if (cmp === 0) console.log('  （发布当前版本：--allow-current）');
   const appId = argOf('--app-id', pkg.appId);
   const base = 'https://github.com/Canvixel-Eloweny/ai-bot-groupmate';
-  const installerUrl = argOf('--installer-url',
-    `${base}/releases/download/v${version}/Estrella-Bot-Setup-${version}.exe`);
+  const defaultInstallerUrl = `${base}/releases/download/v${version}/Estrella-Bot-Setup-${version}.exe`;
+  const installerUrl = argOf('--installer-url', defaultInstallerUrl);
   const notesUrl = argOf('--notes-url', `${base}/releases/tag/v${version}`);
   const now = new Date();
   const expires = argOf('--expires-at', new Date(now.getTime() + 30 * 24 * 3600 * 1000).toISOString());
-  const mirrors = argOf('--mirrors').split(',').map((s) => s.trim()).filter(Boolean);
+  /* 默认给 GitHub 主地址配两个镜像：大陆网络下直连 GitHub 资产经常超时或只有几十 KB/s，
+     而 0.1.6 起的客户端已经支持 installer.mirrors。自定义 installer-url 时默认不加，
+     避免把无关域名写进清单；此时用 --mirrors 显式给。 */
+  const defaultMirrors = installerUrl === defaultInstallerUrl
+    ? [
+        `https://gh-proxy.com/${defaultInstallerUrl}`,
+        `https://ghproxy.net/${defaultInstallerUrl}`,
+      ]
+    : [];
+  const mirrorsArg = argOf('--mirrors');
+  const mirrors = (mirrorsArg ? mirrorsArg.split(',') : defaultMirrors)
+    .map((s) => s.trim()).filter(Boolean);
   const testMode = has('--test');
 
   const size = fs.statSync(exe).size;
@@ -100,6 +111,7 @@ async function main() {
   console.log(`✓ 清单：${out}`);
   console.log(`  version=${version} size=${size} sha256=${sha256.slice(0, 16)}…`);
   console.log(`  installer=${installerUrl}`);
+  console.log(`  mirrors=${mirrors.length ? mirrors.join(' , ') : '（无）'}`);
 }
 
 main().catch((e) => {

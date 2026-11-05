@@ -68,8 +68,27 @@ async function main() {
     : (process.env.QQBOT_DATA_DIR || path.join(APP, 'data')));
   fs.mkdirSync(dataDir, { recursive: true });
 
-  const cfgSource = opts.config || process.env.QQBOT_CONFIG
-    || (fs.existsSync(path.join(APP, 'config.json')) ? path.join(APP, 'config.json') : path.join(APP, 'config.example.json'));
+  // ⚠️ 环境变量可能指向一个**不存在**的文件（干净检出 / 面板旧逻辑）。
+  //    - 显式 `--config` 缺失：硬错，绝不静默换一份；
+  //    - 离线 / 沙箱：回退 config.example.json 并说清楚；
+  //    - 真实模型模式：也报错——悄悄换成示例配置会让用户以为连的是自己的 key。
+  const explicit = opts.config || '';
+  let cfgSource = explicit || process.env.QQBOT_CONFIG || '';
+  if (cfgSource && !fs.existsSync(cfgSource)) {
+    if (!explicit && (opts.offline || opts.sandbox)) {
+      console.warn(`QQBOT_CONFIG 指向的文件不存在（${cfgSource}），离线/沙箱模式改用 config.example.json`);
+      cfgSource = '';
+    } else {
+      console.error(`配置文件不存在：${cfgSource}`);
+      console.error('请检查 --config 参数或 QQBOT_CONFIG 环境变量；也可以去掉它，让脚本按 config.json / config.example.json 回退。');
+      process.exit(1);
+    }
+  }
+  if (!cfgSource) {
+    cfgSource = fs.existsSync(path.join(APP, 'config.json'))
+      ? path.join(APP, 'config.json')
+      : path.join(APP, 'config.example.json');
+  }
   const base = readJson(cfgSource);
 
   const bot = await startFakeOnebot({

@@ -8,8 +8,13 @@ import { pickSkillsForPrompt, pickPersonaCard, skillLines } from './skills.js';
 import { memoryScopeOf } from './memory-scope.js';
 // 好友私聊按群友接待：好友表来自协议端（index.js 拉取），这里只做成员判定。
 import { isFriend } from './friends.js';
+// 主人判定只有一处实现（逐字比较，不经过模型）；纯图宽限的主人豁免读它。
+import { isOwner } from './sleep.js';
+// 入站图片的“怎么看这 N 张图”提示，与识图准备层同源。
+import { visionNoteFor } from './vision.js';
 import { autoMemoryForPrompt, recordsForPrompt, recallForPrompt, wantsRecall, RECALL_MAX } from './memory.js';
-import { scanEgress } from './egress.js';
+import { scanEgress, maskEgress } from './egress.js';
+import { redactCredentialsBeforeShape } from './egress.js';
 import { budgetOf, applyBudget, anchorHistory, HIST_ANCHOR, SAVING_DROP } from './context-budget.js';
 import { extensionPlanOf, skillExtPlanOf } from './extension-prompts.js';
 import { pickAmbient } from './ambient.js';
@@ -276,7 +281,8 @@ export class Brain {
     //   ① 必须在 `named` 判定**之后** —— 被 @ 的纯图是明确点名，必须穿透这道闸；
     //   ② 必须在 `requireAtInGroup` **之后** —— 默认配置（群里必须 @）下这条路径
     //      根本走不到，放前面会平白改掉既有配置的 deny 文案，而那是纯粹的噪声。
-    if (isBareMedia(parsed) && now - (session.lastReplyAt || 0) < trigger.bareGraceMs) {
+    if (isBareMedia(parsed) && now - (session.lastReplyAt || 0) < trigger.bareGraceMs
+      && !isOwner(evt.user_id, this.cfg.owner?.qq || [])) {
       return deny_('纯图/纯表情且刚说过话，不主动接');
     }
 
@@ -785,13 +791,13 @@ export class Brain {
       : [];
 
     if (imgs.length) {
-      messages.push({
-        role: 'user',
-        content: [
-          ...imgs.map((u) => ({ type: 'image_url', image_url: { url: u } })),
-          { type: 'text', text },
-        ],
+      const parts = [{ type: 'text', text: visionNoteFor(imgs.length) }];
+      imgs.forEach((u, i) => {
+        parts.push({ type: 'text', text: `第${i + 1}张：` });
+        parts.push({ type: 'image_url', image_url: { url: u } });
       });
+      parts.push({ type: 'text', text });
+      messages.push({ role: 'user', content: parts });
     } else {
       messages.push({ role: 'user', content: text });
     }
@@ -828,9 +834,16 @@ export class Brain {
    *     调用方**必须**把它记进日志与 trace（同为"拦了不留痕"那一条）。
    */
   parseReply(raw) {
-    const text = stripThink(String(raw ?? '').trim());
-    if (!text) return { silent: true, chunks: [], internal: [] };
-    if (text === SILENT || text.startsWith(`${SILENT}`)) return { silent: true, chunks: [], internal: [] };
+    // 凭据必须在**第一次 split / 折行之前**抹掉：等到分段后再扫，
+    // PEM 正文已经被拆成多段、长 Key 被 hardWrap 切成两半，任何整串匹配都认不出来
+    // （2026-11-05 · 外部评估 P1）。
+    const pre = redactCredentialsBeforeShape(String(raw ?? ''));
+    const preMasked = pre.rules.join(' / ');
+    const text = stripThink(pre.text.trim());
+    if (!text) return { silent: true, chunks: [], internal: [], masked: preMasked };
+    if (text === SILENT || text.startsWith(`${SILENT}`)) {
+      return { silent: true, chunks: [], internal: [], masked: preMasked };
+    }
 
     const { splitToken, maxChunks, maxCharsPerChunk } = this.cfg.reply;
     const safety = this.cfg.custom?.safety || {};
@@ -896,18 +909,36 @@ export class Brain {
     const cap = safety.antiFlood ? Math.min(maxChunks, numDefault('antiFloodChunks')) : maxChunks;
     chunks = chunks.slice(0, cap).map((c) => hardWrap(c, maxCharsPerChunk));
 
-    // ── 出口闸门（B8 · S-EGRESS）──
-    // 上面那三道只在**段落**级别过滤，丢的是"敏感词所在的这一段"。凭据和本机路径
-    // 不属于敏感词：模型一旦把自己家的绝对路径或一个 API Key 说出来，**整条**都不该发
-    // （丢一段留一段，剩下的半句照样把上下文泄了）。
+    // ── 出口闸门（B8 · S-EGRESS；2026-11-03 起改成"就地打码后照发"）──────────
+    // 上面那三道只在**段落**级别过滤，丢的是"敏感词所在的这一段"。
+    // 旧行为是命中就**整条丢弃**：一句话里带一个 Key 或一段本机路径，群里一个字都没有，
+    // 也没有任何解释 ⇒ 用户视角是"她突然不理我"。但安全目标从来是
+    // **"不泄露匹配到的那一段"**，不是**"不开口"** —— 代价落在用户身上，
+    // 收益只有"少泄露那 20 个字符"。（维护者已批准这一改动。）
     //
-    // 命中就把 chunks 清空并**把原因交回调用方**去记日志与 trace ——
-    // 这里不自己打日志：没有会话上下文，报了也不知道是哪一轮。而"静默拦掉"
-    // 正是本项目最怕的失败模式（用户只看到"它突然不理我"）。
+    // 现在：命中 ⇒ 逐段打码 ⇒ `maskEgress` **自己再扫一遍打码结果自证**。
+    //   · 扫干净了 ⇒ 照发打码版，并把命中的**规则名**放进 `masked`（绝不含原文）；
+    //   · 还扫得到 ⇒ 说明这张规则表打不干净（被改坏、或某条替换文本自己留着锚点），
+    //     **退回旧行为整条不发** —— 所以 fail-closed 没有被削弱，只是从
+    //     "命中就沉默"变成"打不干净才沉默"。
+    // 这里不自己打日志：没有会话上下文，报了也不知道是哪一轮。
     const blocked = scanEgress(chunks.join('\n'));
-    if (blocked) return { silent: true, chunks: [], blocked, internal };
+    if (blocked) {
+      const rules = [];
+      const maskedChunks = chunks.map((c) => {
+        const m = maskEgress(c);
+        if (!m.trusted) return null;
+        rules.push(...m.rules);
+        return m.text;
+      });
+      if (maskedChunks.some((c) => c === null)) {
+        return { silent: true, chunks: [], blocked, internal, masked: preMasked };
+      }
+      const masked = [preMasked, [...new Set(rules)].join(' / ')].filter(Boolean).join(' / ');
+      return { silent: maskedChunks.length === 0, chunks: maskedChunks, blocked: '', masked, internal };
+    }
 
-    return { silent: chunks.length === 0, chunks, internal };
+    return { silent: chunks.length === 0, chunks, internal, masked: preMasked };
   }
 
   /**

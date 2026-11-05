@@ -114,6 +114,13 @@ if (manifest) {
   if (manifest.version !== version) bad(`清单版本 ${manifest.version} ≠ 期望 ${version}`);
   else ok(`清单版本：${version}`);
 
+  const mirrors = manifest.installer && manifest.installer.mirrors;
+  if (!Array.isArray(mirrors) || mirrors.length === 0) {
+    bad('installer.mirrors 为空：发布版必须至少配置一个镜像（避免所有客户端直连 GitHub）');
+  } else {
+    ok(`installer.mirrors：${mirrors.length} 个`);
+  }
+
   try {
     const u = new URL(manifest.installer.url);
     const expected = `/${GH}/releases/download/v${version}/${exeName}`;

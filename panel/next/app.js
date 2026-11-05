@@ -12,7 +12,7 @@
  *   ③ **草稿只在显式保存时提交**；切页不丢草稿（草稿按路径存，不按页面存）。
  */
 
-import { GROUPS, CTRL_KINDS, $, brainPickOf } from './schema.js';
+import { GROUPS, CTRL_KINDS, $, brainPickOf, customFeatureVisible } from './schema.js';
 import { DEMO } from './demo-state.js';
 import { initSettings, factoryWipeOn } from './settings.js';
 // `href` 的协议白名单（第 10 轮 · 开源前审查 H-01）。⚠️ 与 `esc` 是**两件事**：
@@ -704,6 +704,8 @@ const ACTIONS = {
   'bridge.start': async () => { busy(true, '启动机器人…'); try { const r = await post('/api/bridge/start'); toastResult(r, '已启动'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'bridge.stop': async () => { if (!(await confirmToast('停止机器人？', { okLabel: '停止' }))) return; busy(true, '停止中…'); try { const r = await post('/api/bridge/stop'); toastResult(r, '已停止'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'cmd.sleep': () => bridgeCmd('sleep'), 'cmd.wake': () => bridgeCmd('wake'),
+  // B1.1：同意 / 拒绝一条好友申请或群邀请。载荷是 `<flag>|<approve>`（判据在 `src/friend-requests.js`）。
+  'friend.resolve': (p) => bridgeCmd('friend.resolve', String(p || '')),
   'cmd.abort': () => bridgeCmd('abort'), 'cmd.retry': () => bridgeCmd('retry'),
   'check': async () => { busy(true, '自检中…'); try { const r = await post('/api/check'); modal('连接自检', `<pre class="mono" style="white-space:pre-wrap;font-size:12px;">${esc(r.output || '')}</pre>`, [{ label: '知道了', style: 'btn-primary' }]); } catch (e) { toast(`自检失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'groups.load': async () => { busy(true, '读取群列表…'); try { const r = await api('/api/groups'); S.extra.groups = r.groups || []; modal('机器人已加入的群', r.groups?.length ? `<div class="rows">${r.groups.map((g) => `<div class="row flat"><span class="mono">${esc(g.id)}</span><span class="spacer"></span><span>${esc(g.name)}</span></div>`).join('')}</div>` : '<div class="empty">协议端没连上，或还没加入任何群。</div>', [{ label: '知道了', style: 'btn-primary' }]); } catch (e) { toast(`读取失败：${e.message}`, 'bad'); } finally { busy(false); } },
@@ -870,6 +872,45 @@ const ACTIONS = {
   'usage.reset': async () => { if (!(await confirmToast('清零用量统计？会删掉 panel/ 下所有 usage*.jsonl。', { okLabel: '清零' }))) return; try { const r = await post('/api/usage/reset'); toastResult(r, '已清零'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
   'trace.clear': async () => { if (!(await confirmToast('清空对话流记录？', { okLabel: '清空' }))) return; try { await post('/api/trace/clear'); toast('已清空', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
   'logs.clear': async () => { try { await post('/api/logs/clear'); S.logCursor = 0; S.extra.logs = null; toast('已清空', 'ok'); paintPage(false); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
+  /* 界面裁剪（2026-11-03）：切换某一项的隐藏状态。
+     名单一次提交**三张全发** —— `patchCustom` 只动传上来的键，
+     只发 `domains` 会把 `subs` / `cards` 那两张一起丢掉（那是"改了 A 丢了 B"的老形状）。
+     最后一个能看见的一级域拒绝隐藏：零入口的控制台用户自己回不来。 */
+  'panel.hide': async (p) => {
+    const [kind, id] = String(p || '').split('|');
+    const key = kind === 'domain' ? 'domains' : kind === 'sub' ? 'subs' : kind === 'card' ? 'cards' : '';
+    if (!key || !id) return;
+    // 恢复入口不许被藏起来（写的一侧也拦）。显示侧的形式是**豁免于名单**
+    // （`c.id === 'trim' ||`），不是"排除渲染"—— 后者会让这张卡自己消失，见 cardsHtml 那条。
+    if (key === 'cards' && id === 'trim') { toast('「界面裁剪」这张卡是恢复入口，不能隐藏。', 'warn'); return; }
+    const h = ((S.state || DEMO).custom || {}).panelHidden || {};
+    const pick = (k) => (Array.isArray(h[k]) ? [...h[k]] : []);
+    const lists = { domains: pick('domains'), subs: pick('subs'), cards: pick('cards') };
+    const arr = lists[key];
+    const at = arr.indexOf(id);
+    if (at >= 0) arr.splice(at, 1);
+    else {
+      if (key === 'domains' && GROUPS.filter((g) => g.id !== id).every((g) => lists.domains.includes(g.id))) {
+        toast('至少要留一个能看见的一级域 —— 全部隐藏会让控制台没有入口，自己也回不来。', 'warn');
+        return;
+      }
+      arr.push(id);
+    }
+    try {
+      const r = await post('/api/config', { custom: { panelHidden: lists } });
+      if (r && r.ok === false) { toast(r.error || r.msg || '没改成', 'bad'); return; }
+      toast(lists[key].includes(id) ? '已隐藏（随时在这里点回来）' : '已恢复显示', 'ok');
+      await refresh(true);
+    } catch (e) { toast(`失败：${e.message}`, 'bad'); }
+  },
+  'panel.hide.reset': async () => {
+    try {
+      const r = await post('/api/config', { custom: { panelHidden: { domains: [], subs: [], cards: [] } } });
+      if (r && r.ok === false) { toast(r.error || r.msg || '没改成', 'bad'); return; }
+      toast('已全部恢复显示', 'ok');
+      await refresh(true);
+    } catch (e) { toast(`失败：${e.message}`, 'bad'); }
+  },
   'mem.auto.clear': async () => { if (!(await confirmToast('清空历史存量？手动记忆与结构化记忆不受影响。', { okLabel: '清空' }))) return; try { const r = await post('/api/custom/memory/clear'); toastResult(r, '已清空'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
   'mem.auto.del': async (id) => { try { const r = await post('/api/custom/memory/delete', { id }); toastResult(r, '已删除'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
   'mem.review': async (p) => { const [id, action] = String(p).split('|'); try { const r = await post('/api/memory/review', { id, action }); toastResult(r, `已${action}`); await refresh(true); } catch (e) { toast(e.message === '这条不在了' ? '这条已经不在了（可能另一个窗口刚删过），正在刷新' : `失败：${e.message}`, 'bad'); await refresh(true); } },
@@ -1113,10 +1154,12 @@ const ACTIONS = {
   },
 };
 
-async function bridgeCmd(cmd) {
+async function bridgeCmd(cmd, arg = '') {
   if (!S.online) return DEMO_BLOCK();
   try {
-    const r = await post('/api/bridge/command', { cmd });
+    // `arg` 只有 `friend.resolve` 用得到（B1.1）。面板**不解释**它 —— 参数对不对由
+    // 机器人那一侧的 `parseResolveArg` 判，两边各判一次早晚漂移（同 `controlDecision` 的理由）。
+    const r = await post('/api/bridge/command', { cmd, arg });
     toastResult(r, `已下发 ${cmd}，等机器人取走`);
     await refresh(true);
   } catch (e) { toast(`下发失败：${e.message}`, 'bad'); }
@@ -1847,18 +1890,26 @@ async function installZip(file, kind = 'plugin', opts = {}) {
   if (!S.online) return DEMO_BLOCK();
   const overwrite = opts.overwrite === true;
   const expectId = /^[A-Za-z0-9_-]{1,40}$/.test(String(opts.expectId || '')) ? String(opts.expectId) : '';
+  const expectDigest = /^[a-f0-9]{64}$/.test(String(opts.expectDigest || '')) ? String(opts.expectDigest) : '';
   if (!overwrite && !(await confirmToast('装这个包？同名包不会被覆盖（那是另一条确认）。', { okLabel: '安装' }))) return;
   busy(true, '校验并安装…');
   try {
-    const q = `kind=${encodeURIComponent(kind === 'skill' ? 'skill' : 'plugin')}${overwrite ? '&overwrite=1' : ''}${expectId ? `&id=${encodeURIComponent(expectId)}` : ''}`;
+    const q = `kind=${encodeURIComponent(kind === 'skill' ? 'skill' : 'plugin')}${overwrite ? '&overwrite=1' : ''}${expectId ? `&id=${encodeURIComponent(expectId)}` : ''}${expectDigest ? `&digest=${encodeURIComponent(expectDigest)}` : ''}`;
     const r = await api(`/api/extensions/install?${q}`, { method: 'POST', body: file });
     toast(`已装入 ${r.id}（${r.kind}）· ${r.files} 个文件。装完默认不启用 —— 在列表里勾上它，然后重启机器人。`, 'ok');
     await refresh(true);
   } catch (e) {
     if (!overwrite && (e.status === 409 || /同名包已存在/.test(e.message))) {
       busy(false);
-      const yes = await confirmToast('同名包已存在，要用这个包覆盖吗？旧包会先备份再替换。', { okLabel: '覆盖安装' });
-      if (yes) return installZip(file, kind, { overwrite: true });
+      // 覆盖确认必须绑定**服务端识别出的那一包**：id/kind/摘要一起带回去，
+      // 否则重试这一跳等于把"确认"与"实际要覆盖的目标"解绑（2026-11-05 · 外部评估 P1）。
+      const b = e.body && typeof e.body === 'object' ? e.body : {};
+      const bindId = /^[A-Za-z0-9_-]{1,40}$/.test(String(b.id || '')) ? String(b.id) : expectId;
+      const bindKind = b.kind === 'skill' || b.kind === 'plugin' ? b.kind : kind;
+      const bindDigest = /^[a-f0-9]{64}$/.test(String(b.digest || '')) ? String(b.digest) : '';
+      const which = bindId ? `「${bindId}」` : '同名包';
+      const yes = await confirmToast(`${which}已存在，要用这个包覆盖吗？旧包会先备份再替换。`, { okLabel: '覆盖安装' });
+      if (yes) return installZip(file, bindKind, { overwrite: true, expectId: bindId, expectDigest: bindDigest });
       return;
     }
     toast(`安装失败：${e.message}`, 'bad');
@@ -2113,21 +2164,50 @@ function openUpdateStream() {
 }
 
 /* ════════════════════════════════════════════════ 7. 导航 ═══ */
+/* ── 隐藏名单（2026-11-03 · 维护者要求"我们自己的组件用户也可以去掉"）───────
+   三条不是可选项：
+   ① **只隐藏，不删除**。删除属 G7（不可逆），而且会让 `schema.js` 里的锚点、
+      `RENDER` 表、§171 身份清单、`panel-dom` 逐页遍历全部对不上 ——
+      把"用户想清静一点"变成"这仓的门禁集体失效"。隐藏保住源码，只改显示。
+   ② 名单存 **id**（域 / 二级页 / 卡分开），不存中文名、不存下标：
+      文案会漂，重排会让"第 3 个"变成别的页，只有 id 稳定。
+   ③ 一级/二级都用 `hidden` **属性**，而不是把数组滤掉 ——
+      `data-g` / `data-s` 与 `S.gi` / `S.si` 是按**下标**记账的，
+      滤掉会让"点第三个"变成"选中第二个域"，那是比隐藏难得多、也静默得多的 bug。
+      代价是隐藏项仍在 DOM 里 —— 这正是我们要的：`panel-dom` 的逐页遍历照旧覆盖它们。 */
+const hiddenSets = () => {
+  const h = (S.state && S.state.custom && S.state.custom.panelHidden) || {};
+  const toSet = (a) => new Set(Array.isArray(a) ? a : []);
+  return { domains: toSet(h.domains), subs: toSet(h.subs), cards: toSet(h.cards) };
+};
+/** 当前域/页被隐藏时退到第一个没被隐藏的（否则用户会停在一屏空白上）。 */
+function ensureVisibleSelection() {
+  const hs = hiddenSets();
+  const visG = GROUPS.map((g, i) => ({ g, i })).filter(({ g }) => !hs.domains.has(g.id));
+  if (!visG.length) return;                 // 全隐藏 = 等于没设（不许把界面弄成零入口）
+  if (hs.domains.has((GROUPS[S.gi] || {}).id)) S.gi = visG[0].i;
+  const subs = (GROUPS[S.gi] && GROUPS[S.gi].subs) || [];
+  const visS = subs.map((su, i) => ({ su, i })).filter(({ su }) => !hs.subs.has(su.id));
+  if (visS.length && hs.subs.has((subs[S.si] || {}).id)) S.si = visS[0].i;
+}
+
 function renderNav1() {
   const inner = $id('navInner');
+  const hs = hiddenSets();
   /* ⚠️ 只摘**按钮**，不动 `.nav-ind` —— 指示器是 index.html 里的静态元素，
      让它活过每一次重建是"切换时能滑过去"的**前提**（见 index.html 的注释）。
      用 `innerHTML = …` 一把换掉最省事，但那会把指示器一起清掉。
      导航显示短标签；完整名称放进 title/aria-label，页面头仍用全名。 */
   inner.querySelectorAll('.grp').forEach((b) => b.remove());
   inner.insertAdjacentHTML('afterbegin', GROUPS.map((g, i) => `
-    <button class="grp" role="tab" data-g="${i}" aria-selected="${i === S.gi}" title="${esc(g.label)}（${g.subs.length} 页）" aria-label="${esc(g.label)}（${g.subs.length} 页）">${esc(g.short || g.label)}<span class="cnt">${g.subs.length}</span></button>`).join(''));
+    <button class="grp" role="tab" data-g="${i}"${hs.domains.has(g.id) ? ' hidden' : ''} aria-selected="${i === S.gi}" title="${esc(g.label)}（${g.subs.length} 页）" aria-label="${esc(g.label)}（${g.subs.length} 页）">${esc(g.short || g.label)}<span class="cnt">${g.subs.length}</span></button>`).join(''));
   layoutNavDock(false);
 }
 function renderNav2() {
   const g = GROUPS[S.gi];
+  const hs = hiddenSets();
   $id('nav2').innerHTML = g.subs.map((su, i) => `
-    <button class="sub" role="tab" data-s="${i}"${su.frame ? ` data-frame="${esc(su.frame)}"` : ''} aria-selected="${i === S.si}" title="${esc(su.label)}" aria-label="${esc(su.label)}">${esc(su.short || su.label)}</button>`).join('');
+    <button class="sub" role="tab" data-s="${i}"${hs.subs.has(su.id) ? ' hidden' : ''}${su.frame ? ` data-frame="${esc(su.frame)}"` : ''} aria-selected="${i === S.si}" title="${esc(su.label)}" aria-label="${esc(su.label)}">${esc(su.short || su.label)}</button>`).join('');
   /* B30：原来这里还往 `#pageMeta` 填「即时页 / 点一下立刻生效」，该节点已整块删除 ——
      草稿页的保存入口仍是页面底部的保存条（savebar），功能不受影响。 */
   layoutNavDock(true);
@@ -2681,6 +2761,9 @@ function paintPage(rebuildNav = true, nav = {}) {
   pagePaintPending = false;
   const rebuildNav1 = rebuildNav && nav.nav1 !== false;
   const rebuildNav2 = rebuildNav && nav.nav2 !== false;
+  // 用户刚把当前所在的域/页隐藏掉时，先退到第一个还看得见的 ——
+  // 否则他会停在一屏空白上，而那看起来像"面板坏了"。
+  ensureVisibleSelection();
   /* ⚠️ 只在**切页**（rebuildNav）时关右键浮层，**不在 3 秒轮询时关**：
      轮询每 3 秒把 `#page` 重建一次，若每次都关，菜单活不过 3 秒（用户还没看清就没了）。
      安全前提：动作只认打开时捕获的 `b.id`，不回头查 DOM ⇒ 轮询换掉节点不影响点击。 */
@@ -2771,7 +2854,9 @@ function paintPage(rebuildNav = true, nav = {}) {
     S.reg = new Map();
     if (isPersona) PSN_UID = 0;
     const uidMark = PSN_UID;
-    const buildHtml = () => `
+    const buildHtml = () => (g.id === 'speak' && su.id === 'imaging')
+      ? imagingHtml(su)
+      : `
       <div class="wrap-head" style="grid-column:span 12;">
         <h1 style="font-size:var(--t-2xl);">${esc(su.title || su.label)}</h1>
         ${su.desc ? `<p class="hint" style="margin:6px 0 0;max-width:80ch;">${su.desc}</p>` : ''}
@@ -2867,7 +2952,14 @@ function paintPage(rebuildNav = true, nav = {}) {
  *    作者在 schema 里写下的顺序。
  */
 function cardsHtml(cards) {
-  const list = cards.filter((c) => !c.when || c.when(S.state || DEMO));
+  // 隐藏的卡在这里滤掉（不是从 schema 里删 —— 见 §7 开头那三条纪律）。
+  // 滤掉只影响这一屏的显示：`RENDER` 表、动作处理、`panel-dom` 的逐页遍历都照旧。
+  const hs = hiddenSets();
+  // ⚠️ `trim` 这张卡**永远不算被隐藏**：它是唯一的恢复入口。写成 `c.id !== 'trim'`
+  //    会变成"这张卡根本不渲染"—— 那是比自锁更快的自锁（真渲染里当场暴露：
+  //    面板维护页只剩三张卡，裁剪卡自己消失了）。正确形式是"豁免于隐藏名单"，不是"排除"。
+  const list = cards.filter((c) => (c.id === 'trim' || !hs.cards.has(c.id))
+    && (!c.when || c.when(S.state || DEMO)));
   const out = [];
   for (let i = 0; i < list.length; i++) {
     if (!list[i].col) { out.push(cardHtml(list[i])); continue; }
@@ -2878,6 +2970,62 @@ function cardsHtml(cards) {
     out.push(`<div class="card-col">${group.map((c) => cardHtml(c)).join('')}</div>`);
   }
   return out.join('');
+}
+
+/* ── 识图与发图：双栏紧凑页（2026-11-04）──────────────────────────────
+   通用页头 + 一张 span-12 大卡会把 3 个控件拉成 1168×333 的空板。这一页改成
+   左列「能力 + 纯图宽限」、右列「识图 3.0 五步链路」，最大宽度 1040px。
+   ⚠️ 卡片仍然走 `cardsHtml`：界面裁剪的卡级隐藏只发生在那里；手写卡片会让
+      用户在裁剪页隐藏的卡在这页“复活”。
+   ⚠️ 数字从 `customMeta.vision` 读，页面不写第二份。 */
+function imagingHtml(su) {
+  const s = S.state || DEMO;
+  const caps = capsOf(s);
+  const v = j(s, ['customMeta', 'vision'], null);
+  const visionOn = !!j(s, ['config', 'features', 'vision'], false);
+  const sendOn = !!j(s, ['custom', 'image', 'send'], false);
+  const viewOn = !!j(s, ['custom', 'image', 'view'], false);
+  const support = caps && caps.known && caps.features ? caps.features.vision : null;
+  const visionVisible = customFeatureVisible(s, 'vision');
+  const chip = (text, tone) => `<span class="vchip${tone ? ` ${tone}` : ''}">${esc(text)}</span>`;
+  const supportText = support === false ? '当前大脑不支持看图'
+    : support === null ? '模型能力未声明'
+      : visionVisible ? '当前大脑支持看图'
+        : '当前大脑未声明识图';
+  const supportTone = support === false ? 'bad' : support === true && !visionVisible ? 'warn' : support === true ? 'ok' : '';
+  const maxN = Number.isFinite(Number(v?.maxImages)) ? Number(v.maxImages) : '?';
+  const mb = Number.isFinite(Number(v?.inlineMaxBytes))
+    ? (Number(v.inlineMaxBytes) / 1e6).toFixed(1)
+    : '?';
+  const retries = Number.isFinite(Number(v?.attempts)) ? Math.max(0, Number(v.attempts) - 1) : '?';
+  const facts = v
+    ? `<div class="vfacts">${chip(`最多 ${maxN} 张`)}${chip(`单张 ${mb} MB`)}${chip(`失败重试 ${retries} 次`)}</div>`
+    : '<div class="vfacts"><span class="hint">后端还没下发识图上限 —— 页面不猜数字。</span></div>';
+  const cards = su.cards || [];
+  const left = cards.filter((c) => c.id !== 'vision');
+  const right = cards.filter((c) => c.id === 'vision');
+  return `<div class="vision">
+    <header class="vhead">
+      <div class="vkicker">发言 → 识图与发图</div>
+      <div class="vhead-row">
+        <div class="vhead-main">
+          <h1>${esc(su.title || su.label)}</h1>
+          <p class="vsub">${mdBold(su.desc || '')}</p>
+        </div>
+        <div class="vchips">
+          ${chip(supportText, supportTone)}
+          ${chip(`识图${visionOn ? '开' : '关'}`, visionOn ? 'ok' : '')}
+          ${chip(`发图${sendOn ? '开' : '关'}`, sendOn ? 'ok' : '')}
+          ${chip(`看图${viewOn ? '开' : '关'}`, viewOn ? 'ok' : '')}
+        </div>
+      </div>
+      ${facts}
+    </header>
+    <div class="vgrid">
+      <div class="vcol">${cardsHtml(left)}</div>
+      <div class="vcol">${cardsHtml(right)}</div>
+    </div>
+  </div>`;
 }
 
 function cardHtml(c) {
@@ -4522,6 +4670,82 @@ const RENDER = {
       : `<div class="hint">机器人没在跑，或这一版还没下发睡眠态。作息本身${sl.enabled ? '已启用' : '<b>未启用</b>'}。</div>`}
       <div class="hint">这一栏是**这一版新加的**：旧页面只有上面那两行只读提示，睡眠状态在页面上一格都看不到（只能从 trace 里翻）。</div></div>`;
   },
+  /* 怎么在 QQ 里把她叫醒（2026-11-04 · BUG-12 方案②：把暗号摆到台面上）。
+     这条卡要治的是"半夜她不回话，而页面上一个字都没说怎么才能叫醒她" ——
+     以前唯一的线索是用户自己的记忆（或翻源码）。
+     ⚠️ 词表与那三个数字**只从 `customMeta.sleep` 取**（后端由 `src/sleep.js` 算好下发）：
+        写死在这里就是第二份真相，改常量的人不会想起改文案，页面从此撒谎。
+        所以下发缺失时这里明说"没拿到"，**不猜**。 */
+  sleepWake: (x) => {
+    const s = S.state || DEMO;
+    const m = j(s, ['customMeta', 'sleep'], null);
+    const sl = j(s, ['custom', 'sleep'], {});
+    const ef = j(s, ['effective', 'sleep'], null);
+    const words = (m && Array.isArray(m.words) ? m.words : []).map((w) => `「${esc(w)}」`);
+    if (!words.length || !m.burstWindowSec || !m.burstCount) {
+      return `<div class="hint"><b>叫醒她的路</b>：这一版的后端没有下发词表与连发参数（<code>customMeta.sleep</code> 是空的）。`
+        + `页面不猜数字 —— 上面那格「叫醒关键词」留空时用的是内置那几个词。</div>`;
+    }
+    const lines = [
+      `<div>① <b>说到词</b>：${words.join(' ')} 之一。群里<b>要 @ 她</b>才作数（不 @ 的话，任何一句带"起床"的闲聊都会把她喊起来）；`
+        + `私聊不用 @，但要说满 <b>${esc(String(m.burstWindowSec))} 秒</b>没再连发才兑现 —— 那是给下面②让路。</div>`,
+      `<div>② <b>不说词也行</b>：私聊 <b>${esc(String(m.burstWindowSec))} 秒内连发 ${esc(String(m.burstCount))} 条</b> = 紧急唤醒。`
+        + `这一条是"临时醒"（安静 <b>${esc(String(m.emergencyQuietMin))} 分钟</b>后按作息决定要不要接着睡，`
+        + `期间你每说一句都重新计时），①那两条才是本夜正式起床。</div>`,
+      `<div>拍一拍<b>叫不醒</b> —— 它的语义是"召唤"，不是"叫起床"。</div>`,
+    ];
+    const warns = [];
+    if (sl.enabled !== true) {
+      warns.push('作息<b>没启用</b> —— 她从不睡，所以这两条路现在无事可做（不是坏了）。');
+    } else if (ef && Number(ef.owners) === 0) {
+      warns.push('⚠️ 现在<b>谁都叫不醒</b>：「主人 QQ」一个都没填 —— 两条路整体关闭（这是配置没填完，不是代码坏了）。');
+    } else if (ef && ef.privateWake === false) {
+      warns.push('⚠️ 主人没写进「同意私聊的 QQ 号」：私聊那两条只有在她<b>已经是好友</b>时才走得通（好友接待默认开）；'
+        + '群里 @ 她 + 说到词不受这一条影响。');
+    }
+    return `<div class="hint"><b>把她叫醒有两条路</b>（只认「主人 QQ」里填的人）：</div>`
+      + `<div class="hint">${lines.join('')}</div>`
+      + (warns.length ? `<div class="hint">${warns.join('')}</div>` : '');
+  },
+  /* 待处理的好友申请 / 群邀请（B1.1 · 2026-11-04）。
+     数据来自 `state.friendRequests`（机器人写的文件，面板只读 —— 单一所有者），
+     点按钮走控制通道回机器人执行（只有它握着协议端的连接与 token）。
+     ⚠️ 处理结果**从文件里回读**，不在点下去的那一刻编：控制通道那条路本来就
+        "只负责写、不假装知道结果"（见 `apiBridgeCommand` 的注释）。 */
+  friendRequests: (x) => {
+    const s = S.state || DEMO, fr = j(s, ['friendRequests'], null);
+    const list = (fr && Array.isArray(fr.list)) ? fr.list : [];
+    const row = (r) => {
+      const kind = r.kind === 'group' ? '群邀请' : '加好友';
+      const who = r.userId ? `来自 <b class="mono">${esc(r.userId)}</b>` : '来自 <b>（没有号）</b>';
+      const grp = r.kind === 'group' && r.groupId ? ` · 群 <b class="mono">${esc(r.groupId)}</b>` : '';
+      const note = r.comment ? ` · 留言「${esc(r.comment)}」` : '';
+      const when = Number(r.at) > 1e12 ? ` · ${esc(new Date(Number(r.at)).toLocaleString())}` : '';
+      if (r.status === 'pending') {
+        const btn = (ok, label, cls) => `<button class="btn btn-xs ${cls}" data-a="friend.resolve" data-p="${esc(String(r.flag))}|${ok}">${label}</button>`;
+        return `<div class="mem-filters"><span class="mem-sub">${esc(kind)} ${who}${grp}${note}${when}</span>`
+          + `${btn('true', '同意', '')}${btn('false', '拒绝', 'btn-ghost')}</div>`;
+      }
+      const tag = r.status === 'approved' ? '已同意' : r.status === 'denied' ? '已拒绝'
+        : r.status === 'failed' ? '<b>失败</b>' : esc(String(r.status || '未知'));
+      return `<div class="mem-filters"><span class="mem-sub">${esc(kind)} ${who}${grp}${when} · ${tag}`
+        + `${r.result ? ` —— ${esc(r.result)}` : ''}</span></div>`;
+    };
+    if (fr && fr.unreadable) {
+      return `<div class="hint"><b>这一格读不出内容</b>：机器人那份申请文件在，但解析不了`
+        + `（多半是写到一半被打断）。为了不把"读不出"说成"没有申请"，这里如实报空。</div>`;
+    }
+    if (!list.length) {
+      return `<div class="hint">还没有人申请加她或邀请她进群。收到申请时她会<b>私聊通知主人</b>，`
+        + `并把那一条列在这里等主人拍板 —— <b>她不会自己答应</b>（加好友是永久性动作）。</div>`;
+    }
+    const pend = list.filter((r) => r.status === 'pending');
+    const rest = list.filter((r) => r.status !== 'pending').slice(-5).reverse();
+    return `<div>${pend.length ? `<div class="hint"><b>${pend.length} 条等你的决定</b>（同意 / 拒绝都会立刻发给协议端）：</div>`
+        + pend.map(row).join('') : '<div class="hint">没有待处理的了。</div>'}
+      ${rest.length ? `<details class="mem-basis"><summary>处理过的（${rest.length}）</summary>${rest.map(row).join('')}</details>` : ''}
+    </div>`;
+  },
   modelPick: (x) => {
     const s = S.state || DEMO;
     const cur = j(s, ['config', 'model'], '');
@@ -4857,6 +5081,43 @@ const RENDER = {
       </div>
     </div>`;
   },
+  /* ── 界面裁剪（2026-11-03）：把不想看的域 / 页 / 卡从导航与页面里去掉 ──────
+     只隐藏不删除（理由见 §7 开头）。每一项点一下切换，状态来自**已保存的**名单，
+     所以点完立即生效、不需要再按保存条。
+     ⚠️ 最后一个还看得见的域**不给隐藏** —— 把控制台弄成零入口比留着它更坏，
+        而且那种状态下用户连回到这里的路都没有。 */
+  panelTrim: () => {
+    const hs = hiddenSets();
+    /* 刻意复用记忆页那套 `mem-filter` / `mem-filters` / `mem-sub` 类：
+       它们是已经过真渲染验收的芯片样式与 `.on` 选中态，另写一份 CSS
+       就是第二套视觉（会漂，也更容易被用户判成"风格不一致"）。 */
+    const chip = (kind, id, label, hidden, disabled) => `<button class="mem-filter${hidden ? ' on' : ''}"${
+      disabled ? ' disabled' : ''} data-a="panel.hide" data-p="${kind}|${esc(id)}" aria-pressed="${hidden}">${esc(label)}</button>`;
+    const visibleDomains = GROUPS.filter((g) => !hs.domains.has(g.id)).length;
+    const rows = GROUPS.map((g) => {
+      const gHidden = hs.domains.has(g.id);
+      const lastOne = !gHidden && visibleDomains <= 1;
+      const cardList = (g.subs || []).flatMap((su) => (su.cards || [])
+        .map((c) => ({ su, c })));
+      const subs = (g.subs || []).map((su) => chip('sub', su.id, su.label, hs.subs.has(su.id), false)).join('');
+      /* 卡级开关放在 `<details>` 里：26 页 × 若干卡全平铺会把这一屏变成一堵墙
+         （维护者的既有口径是"少解释、别把内容强行拉满"）。 */
+      const cards = cardList.length
+        ? `<details class="mem-basis"><summary>这一域的卡（${cardList.length}）</summary><div class="mem-filters">${
+            cardList.map(({ su, c }) => chip('card', c.id, `${su.label}·${c.title || c.id}`, hs.cards.has(c.id), false)).join('')
+          }</div></details>`
+        : '';
+      return `<div class="mem-filters" style="align-items:center">
+        ${chip('domain', g.id, g.label, gHidden, lastOne)}
+        <span class="mem-sub">${(g.subs || []).length} 页</span>
+        ${subs}
+      </div>${cards}`;
+    }).join('');
+    const total = hs.domains.size + hs.subs.size + hs.cards.size;
+    return `<div>${rows}
+      <div class="mem-filters"><button class="btn btn-sm"${total ? '' : ' disabled'} data-a="panel.hide.reset">全部恢复（当前隐藏 ${total} 项）</button></div>
+    </div>`;
+  },
   memRecords: (x) => {
     const s = S.state || DEMO, rs = s.memoryRecords || [];
     const meta = j(s, ['customMeta', 'memoryReview'], {});
@@ -4909,7 +5170,7 @@ const RENDER = {
         </div>
         ${r.detail ? `<details class="mem-basis"><summary>依据${r.inferred ? '（含推测）' : ''}</summary><div>${esc(r.detail)}</div></details>` : ''}
         <div class="mem-actions">
-          ${[['confirmed', '确认'], ['rejected', '否决'], ['archived', '收起']].map(([k, l]) => `<button class="btn btn-xs ${r.status === k ? 'btn-primary' : ''}" data-a="mem.review" data-p="${esc(r.id)}|${k}">${l}</button>`).join('')}
+          ${(meta.actionsFor?.[r.status] || []).map((a) => `<button class="btn btn-xs ${a === 'delete' ? 'btn-danger' : ''}" data-a="mem.review" data-p="${esc(r.id)}|${a}">${esc(String(meta.actions?.[a] || a).split('：')[0])}</button>`).join('')}
         </div>
       </article>`)
         : `<div class="mem-empty"><b>这个状态没有记忆</b><span>切换上面的筛选看看。</span></div>`}
@@ -7261,13 +7522,17 @@ const SLEEP_LABEL = {
   enabled: '作息已启用', asleep: '此刻睡着', bed: '入睡时刻', wake: '自然醒时刻',
   bedAt: '本次入睡于', wakeAt: '下次自然醒于', wakeUntil: '临时醒到', mode: '模式',
   wakeKind: '叫醒方式', reason: '判定依据', pending: '压着的未读条数', owners: '可叫醒的主人数',
-  privateWake: '允许私聊叫醒', updateAt: '状态更新于',
+  privateWake: '允许私聊叫醒', updatedAt: '状态更新于',
+  wakeWords: '生效中的叫醒词',
 };
-const TS_KEYS = new Set(['bedAt', 'wakeAt', 'wakeUntil', 'updateAt']);
+const TS_KEYS = new Set(['bedAt', 'wakeAt', 'wakeUntil', 'updatedAt']);
 function sleepVal(k, v) {
   if (v === null || v === undefined || v === '') return '—';
   if (typeof v === 'boolean') return v ? '是' : '否';
   if (TS_KEYS.has(k) && Number(v) > 1e12) return new Date(Number(v)).toLocaleString();
+  // 数组（现在只有 `wakeWords`）按顿号铺成人话；让它落到下面那条 `JSON.stringify`
+  // 会把 `"起床"` 这种带引号的形态直接摊给用户看。
+  if (Array.isArray(v)) return v.length ? v.join('、') : '（空）';
   if (typeof v === 'object') return JSON.stringify(v);
   return String(v);
 }

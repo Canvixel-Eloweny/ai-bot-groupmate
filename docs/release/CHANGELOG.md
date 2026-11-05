@@ -3,6 +3,15 @@
 本项目在 `main` 上持续迭代，每个对外可见的版本打一个 tag。以下按**批次**记录对外可见的变化。
 内部批次台账（含未交付项与裁决记录）是**内部件，不随公开仓库发布**。
 
+## 0.1.8 — 2026-11-05
+
+**Startup crash fix and update-download fallback.** Fixes the desktop shell crash introduced in
+0.1.7: the window-ready path read an undeclared `decision` and could close the console immediately
+after launch. The signed update manifest now includes GitHub proxy mirrors by default, and the
+release check rejects an empty mirror list; clients from 0.1.6 onward already use these mirrors
+when the direct GitHub download fails. Includes the post-0.1.7 group-reported fixes and hardening
+already verified in the repository. The Windows installer remains unsigned.
+
 ## 0.1.7 — 2026-11-02
 
 **Chat view, quieter memory pages, cleaner navigation.** The console's raw terminal echo is now a

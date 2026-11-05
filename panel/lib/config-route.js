@@ -256,6 +256,13 @@ export function makeConfigRoute(deps) {
     if (typeof body.interjectCooldownMs === 'number' && Number.isFinite(body.interjectCooldownMs)) {
       cfg.trigger.interjectCooldownMs = Math.round(Math.min(5 * 3600e3, Math.max(0, body.interjectCooldownMs)));
     }
+    /* 纯图宽限（`trigger.bareGraceMs`，2026-11-04）：
+       与 interjectCooldownMs 同一族 —— 后端 `brain.decide` 一直在读它，
+       而这条路由的 trigger 白名单里从来没有它。面板画了滑块、保存被静默丢掉，
+       症状与插话冷却那次一模一样。值域 0..5 分钟；0 = 不拦。 */
+    if (typeof body.bareGraceMs === 'number' && Number.isFinite(body.bareGraceMs)) {
+      cfg.trigger.bareGraceMs = Math.round(Math.min(5 * 60e3, Math.max(0, body.bareGraceMs)));
+    }
     if (Array.isArray(body.aliases)) cfg.trigger.aliases = body.aliases.map((s) => String(s).trim()).filter(Boolean);
     if (typeof body.personaName === 'string' && body.personaName.trim()) {
       cfg.persona = cfg.persona || {};

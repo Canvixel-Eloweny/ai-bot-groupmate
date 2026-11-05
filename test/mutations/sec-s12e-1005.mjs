@@ -106,10 +106,14 @@ const N5 = {
 const N6 = {
   id: 'N6',
   note: 'app.js 把 `[\'effective\', \'sleep\']` 读成别的键 —— 后端下发了却没人看。预期 BLOCKED（§50）',
-  anchor: /\['effective', 'sleep'\]/,
-  count: 1,
+  anchor: /\['effective', 'sleep'\]/g,
+  // ⚠️ 命中数 1 → **2**（2026-11-04 · §50㉒ 把叫醒的暗号摆到台面上）：除了 `sleepDetail`，
+  //    新增的 `sleepWake` 也要读同一份快照（「主人 QQ 没填 = 谁都叫不醒」那条警告的输入）。
+  //    两处都是**真消费点**，不是重复代码 —— 所以必须逐个换掉（配 `/g`）：
+  //    只换第一处的话第二处还在读，这一发就打不中"后端下发了却没人看"这件事了。
+  count: 2,
   file: APP,
-  apply: (s) => s.replace(/\['effective', 'sleep'\]/, "['effective', 'sleepX']"),
+  apply: (s) => s.replace(/\['effective', 'sleep'\]/g, "['effective', 'sleepX']"),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };

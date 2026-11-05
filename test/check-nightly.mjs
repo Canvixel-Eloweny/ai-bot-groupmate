@@ -97,7 +97,9 @@ ok('发送点只有三处：主链路 + deliverFromBot + 发图工具', (indexJs
   && /bot\.sendMsg\(scene, id, payload\)/.test(indexJs)
   && /bot\.sendMsg\(scene, String\(chatId\), \[textSegment/.test(indexJs)
   && /bot\.sendMsg\(scene, chatId, \[imageSegment\(imageFileOf\(got\.bytes\)\)\]\)/.test(indexJs));
-ok('私聊出站走 deliverFromBot，不另开第二条', /async function sayToOwner\(text\)/.test(indexJs) && /deliverFromBot\('private', id, text\)/.test(indexJs));
+ok('私聊出站走 deliverFromBot，不另开第二条',
+  /async function sayToOwner\(text\)/.test(indexJs)
+  && /deliverFromBot\('private', id, text, \{ ownerBypass: true \}\)/.test(indexJs));
 ok('没配 owner.qq 时明确报错（不静默吞掉）', /没配 owner\.qq，夜间产出没有收件人/.test(indexJs));
 ok('生成时关思考（小额度会被 reasoning 吃光）', /thinking: \{ mode: 'off' \}/.test(indexJs.slice(indexJs.indexOf('async function composeNightly'))));
 ok('夜间产出的花费计入用量（别偷账）', /recordUsage\(\{ \.\.\.usage, source: USAGE_SOURCES\.nightly \}\)/.test(indexJs));
