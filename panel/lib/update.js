@@ -38,6 +38,13 @@ export const PHASES = Object.freeze([
   'downloading', 'ready', 'installing', 'error',
 ]);
 
+/** 清单的候选来源：官方 latest 地址 + 两个 GitHub 代理。签名校验不变。 */
+export function manifestMirrorUrls(manifestUrl) {
+  const primary = String(manifestUrl || '');
+  if (!primary) return [];
+  return [primary, `https://gh-proxy.com/${primary}`, `https://ghproxy.net/${primary}`];
+}
+
 const ALLOWED_TRANSITIONS = {
   disabled: [],
   idle: ['checking'],
@@ -146,7 +153,6 @@ export function createUpdater(deps = {}) {
       disabledReason = `更新地址不可用：${check.reason}`;
     }
   }
-  const sigUrl = `${manifestUrl}.sig`;
   const cacheDir = path.join(updateDir, 'cache');
   const stateFile = path.join(updateDir, 'state.json');
 
@@ -183,6 +189,7 @@ export function createUpdater(deps = {}) {
     downloadedAt: 0,
     offline: null,
     source: '',
+    dismissedVersion: '',
   };
   let downloadedFile = '';
   let downloadCtl = null;
@@ -210,6 +217,7 @@ export function createUpdater(deps = {}) {
     downloadedAt: state.downloadedAt,
     offline: state.offline ? { ...state.offline } : null,
     source: state.source,
+    dismissedVersion: state.dismissedVersion,
   });
 
   function emit(force = true) {
@@ -231,6 +239,7 @@ export function createUpdater(deps = {}) {
         error: state.error,
         offline: state.offline,
         source: state.source,
+        dismissedVersion: state.dismissedVersion,
         currentVersion: appVersion,
       });
     } catch (e) {
@@ -245,17 +254,26 @@ export function createUpdater(deps = {}) {
   }
 
   async function defaultFetchManifest() {
-    const signal = AbortSignal.timeout ? AbortSignal.timeout(10_000) : undefined;
     const validate = (u) => isAllowedUrl(u, { testMode });
-    const [manifestRes, sigRes] = await Promise.all([
-      fetchCapped(manifestUrl, {
-        maxBytes: MANIFEST_MAX_BYTES, timeoutMs: 10_000, signal, validateUrl: validate,
-      }),
-      fetchCapped(sigUrl, {
-        maxBytes: SIGNATURE_MAX_BYTES, timeoutMs: 10_000, signal, validateUrl: validate,
-      }),
-    ]);
-    return { raw: manifestRes.buffer, sig: sigRes.buffer.toString('utf8') };
+    const errors = [];
+    const candidates = testMode ? [manifestUrl] : manifestMirrorUrls(manifestUrl);
+    for (const url of candidates) {
+      try {
+        const signal = AbortSignal.timeout ? AbortSignal.timeout(10_000) : undefined;
+        const [manifestRes, sigRes] = await Promise.all([
+          fetchCapped(url, {
+            maxBytes: MANIFEST_MAX_BYTES, timeoutMs: 10_000, signal, validateUrl: validate,
+          }),
+          fetchCapped(`${url}.sig`, {
+            maxBytes: SIGNATURE_MAX_BYTES, timeoutMs: 10_000, signal, validateUrl: validate,
+          }),
+        ]);
+        return { raw: manifestRes.buffer, sig: sigRes.buffer.toString('utf8') };
+      } catch (e) {
+        errors.push(`${url} → ${e && e.message ? e.message : e}`);
+      }
+    }
+    throw new Error(`更新清单获取失败：${errors.join('；')}`);
   }
 
   function manifestCachePaths(version) {
@@ -459,6 +477,7 @@ export function createUpdater(deps = {}) {
       state.error = String(saved.error || '');
       state.source = typeof saved.source === 'string' ? saved.source : '';
       state.offline = saved.offline && typeof saved.offline === 'object' ? saved.offline : null;
+      state.dismissedVersion = typeof saved.dismissedVersion === 'string' ? saved.dismissedVersion : '';
       const pending = readPending();
       if (pending && !state.offline) {
         state.offline = { version: pending.version, size: pending.size, sha256: pending.sha256 };
@@ -585,7 +604,8 @@ export function createUpdater(deps = {}) {
   }
 
   function startDownload() {
-    if (!enabled || state.phase !== 'available' || !state.latest) return snapshot();
+    if (!enabled || !state.latest) return snapshot();
+    if (state.phase !== 'available' && state.phase !== 'error') return snapshot();
     if (downloadPromise) return snapshot();
     // 在线下载开始后，之前暂存的离线三件套不再有意义；不删已完成的 cache。
     removePending();
@@ -649,6 +669,16 @@ export function createUpdater(deps = {}) {
         downloadCtl = null;
       }
     })();
+    return snapshot();
+  }
+
+  function dismiss(version) {
+    const v = String(version || '').trim();
+    const latest = state.latest && state.latest.version ? String(state.latest.version) : '';
+    if (!v || !latest || v !== latest) throw new Error('没有可隐藏的更新版本');
+    state.dismissedVersion = v;
+    persist();
+    emit(true);
     return snapshot();
   }
 
@@ -752,7 +782,7 @@ export function createUpdater(deps = {}) {
   }
 
   return {
-    snapshot, check, startDownload, cancel, install, start, stop, restore,
+    snapshot, check, startDownload, cancel, install, dismiss, start, stop, restore,
     prepareOffline, completeOffline, clearOffline, offlineUploadPath,
   };
 }

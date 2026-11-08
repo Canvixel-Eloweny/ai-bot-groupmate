@@ -2426,6 +2426,199 @@ try {
     && /9\.9\.9/.test(updCtaUi.label),
     `更新入口只在有新版时出现，按钮与蓝点同源（${updCtaUi?.err || JSON.stringify(updCtaUi)}）`);
 
+  /* ── 更新横幅：圆形 X + 按版本隐藏（2026-11-05）───────────────────────
+     用测试钩子注入 update 状态，验证横幅真实渲染出圆形关闭键；同一版本
+     dismissedVersion 命中时横幅不再出现。设置入口与蓝点由上一段覆盖。 */
+  console.log('\n── 更新横幅：圆形 X 与按版本隐藏 ──');
+  const updBannerUi = await evalJs(`(() => {
+    if (typeof window.__nextUpdateBanner !== 'function') return { err: '缺 __nextUpdateBanner' };
+    const q = () => [...document.querySelectorAll('#banners .banner.info')]
+      .find((x) => /新版本|更新已下载/.test(x.textContent || ''));
+    window.__nextUpdateBanner({ enabled: true, phase: 'available', currentVersion: '0.1.6', latest: { version: '9.9.8' }, dismissedVersion: '' });
+    const shown = q();
+    const close = shown ? shown.querySelector('[data-a="update.dismiss"]') : null;
+    const round = close ? getComputedStyle(close).borderRadius : '';
+    window.__nextUpdateBanner({ enabled: true, phase: 'available', currentVersion: '0.1.6', latest: { version: '9.9.8' }, dismissedVersion: '9.9.8' });
+    const hidden = !q();
+    window.__nextUpdateBanner(null);
+    return { shown: !!shown, close: !!close, round, hidden };
+  })()`);
+  ok(updBannerUi && !updBannerUi.err && updBannerUi.shown && updBannerUi.close
+    && /50%|14px/.test(updBannerUi.round || '') && updBannerUi.hidden,
+    `更新横幅有圆形 X，且同版本已隐藏时不再出现（${updBannerUi?.err || JSON.stringify(updBannerUi)}）`);
+
+  /* ── 横幅「不再提示」（2026-11-07 · §191）───────────────────────────────
+     纯函数夹具证明「六条都挂得上圆钮」—— 不必当场凑出六个真条件（离线和在线互斥，
+     真页面一次只能出现其中一类）。再在真页面证明「点一下真的没了」，并各证一条语义：
+     latch 在故障过去一次后作废（下次再坏还要提醒），permanent 不复位。 */
+  console.log('\n── 横幅「不再提示」：圆钮与两种语义 ──');
+  /* 排障探针（本轮新增，随断言一起留着）：把「条件从哪儿来」这条链上的每个观察点都打出来。
+     之前这里出现过"改了 S.online 但横幅没换脸"的读法分歧，靠猜没意义。 */
+  const bdProbe = await evalJs(`(() => {
+    try {
+      const box = document.getElementById('banners');
+      const before = (box && box.innerHTML) || '';
+      const S = window.__next;
+      const probe = {
+        err: '',
+        hasNext: !!S,
+        onlineBefore: S ? S.online : null,
+        hookKeys: window.__nextBanners ? Object.keys(window.__nextBanners).join(',') : '(缺)',
+        kinds: window.__nextBanners ? window.__nextBanners.kinds().join(',') : '(缺)',
+        bannerHtmlHead: before.slice(0, 90),
+      };
+      if (S) { S.online = false; probe.rendered = (window.__nextBanners.render() || '').slice(0, 90); probe.onlineAfterRead = S.online; S.online = true; window.__nextBanners.render(); }
+      return probe;
+    } catch (e) { return { err: '探针抛错: ' + e.message }; }
+  })()`);
+  console.log(`  · 探针 ${JSON.stringify(bdProbe)}`);
+  const bdSix = await evalJs(`(() => {
+    if (!window.__nextBanners) return { err: '缺 __nextBanners' };
+    const seen = {};
+    const feed = (c) => {
+      const r = window.__nextBanners.collect(c, {});
+      for (const n of r.nodes) {
+        if (!n.kind) continue;
+        seen[n.kind] = /class="banner-x" type="button" data-a="banner\\.dismiss" data-p="[^"]+"/.test(n.html);
+      }
+    };
+    feed({ online: false, shellApi: true, hasToken: true, panelStale: false, memPressure: 0, unofficial: false, update: null });
+    feed({ online: false, shellApi: false, hasToken: true, panelStale: false, memPressure: 0, unofficial: false, update: null });
+    feed({ online: true, shellApi: false, hasToken: false, panelStale: true, memPressure: 95, unofficial: true, unofficialMissing: ['page:run/overview'], update: null });
+    const kinds = window.__nextBanners.kinds();
+    return {
+      err: '',
+      got: kinds.map((k) => k + '=' + (seen[k] ? 1 : 0)).join(','),
+      seenKeys: Object.keys(seen).join(','),
+      nKinds: kinds.length,
+      all: kinds.every((k) => seen[k] === true) && Object.keys(seen).length === kinds.length,
+    };
+  })()`);
+  ok(bdSix && !bdSix.err && bdSix.all, `六类横幅各有一颗关闭圆钮（${bdSix ? JSON.stringify(bdSix) : 'evalJs 无返回值（求值抛错）'}）`);
+
+  const bdClick = await evalJs(`(async () => {
+    if (!window.__nextBanners) return { err: '缺 __nextBanners' };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    window.__nextPauseRefresh(true);
+    const S = window.__next;
+    const box = document.getElementById('banners');
+    const prevOnline = S.online;
+    try {
+      S.online = false;
+      window.__nextBanners.render();
+      const btn = box.querySelector('[data-a="banner.dismiss"][data-p="demo"]');
+      if (!btn) return { err: '离线后没有 demo 圆钮', html: (box.innerHTML || '').slice(0, 200) };
+      const demoShown = /演示模式/.test(box.textContent || '');
+      btn.click();
+      await sleep(30);
+      const gone = !/演示模式/.test(box.innerHTML || '');
+      const store = window.__nextBanners.read();
+      S.online = true;
+      window.__nextBanners.render();
+      const cleared = window.__nextBanners.read();
+      S.online = false;
+      window.__nextBanners.render();
+      const backAgain = /演示模式/.test(box.textContent || '');
+      return { err: '', demoShown, gone, storeDemo: store.demo === 1, clearedHasDemo: 'demo' in cleared, backAgain };
+    } finally {
+      S.online = prevOnline;
+      window.__nextBanners.reset();
+      window.__nextPauseRefresh(false);
+    }
+  })()`);
+  ok(!bdClick.err && bdClick.demoShown && bdClick.gone && bdClick.storeDemo
+    && !bdClick.clearedHasDemo && bdClick.backAgain,
+    `真点圆钮后这条横幅消失，且 latch 项在条件恢复后重弹（${bdClick?.err || JSON.stringify(bdClick)}）`);
+
+  /* 复位入口（设置层 footer 那颗链接）必须真接线：permanent 项（非官方界面）关掉后
+     没有别的入口能回来，这颗按钮是唯一退路 —— 只静态查 id 不足以证明"点了真的清掉并重画"。 */
+  const bdReset = await evalJs(`(async () => {
+    if (!window.__nextBanners) return { err: '缺 __nextBanners' };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    window.__nextPauseRefresh(true);
+    const S = window.__next;
+    const box = document.getElementById('banners');
+    const btn = document.getElementById('setResetBanners');
+    const prev = S.online;
+    try {
+      S.online = false;
+      window.__nextBanners.render();
+      const close = box.querySelector('[data-a="banner.dismiss"][data-p="demo"]');
+      if (!close) return { err: '离线后没有 demo 圆钮（前置条件没凑成）' };
+      close.click();
+      await sleep(30);
+      const muted = !/演示模式/.test(box.textContent || '');
+      if (!btn) return { err: '设置层没有「恢复横幅提示」按钮', muted };
+      btn.click();
+      await sleep(30);
+      return { err: '', muted, store: window.__nextBanners.read(), back: /演示模式/.test(box.textContent || '') };
+    } finally {
+      S.online = prev;
+      window.__nextBanners.reset();
+      window.__nextPauseRefresh(false);
+    }
+  })()`);
+  ok(!bdReset.err && bdReset.muted && !('demo' in (bdReset.store || {})) && bdReset.back,
+    `「恢复横幅提示」真的把记录清掉并当场重画（${bdReset?.err || JSON.stringify(bdReset)}）`);
+
+  const bdPerm = await evalJs(`(async () => {
+    if (!window.__nextBanners) return { err: '缺 __nextBanners' };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    window.__nextPauseRefresh(true);
+    const top = document.querySelector('.topbar');
+    const navrow = document.getElementById('navrow');
+    if (!top || !navrow) return { skip: true };
+    const box = document.getElementById('banners');
+    const shown = () => !!box.querySelector('[data-ui-identity="unofficial"]');
+    const pick = () => box.querySelector('[data-a="banner.dismiss"][data-p="unofficial"]');
+    try {
+      top.remove();
+      window.__uiIdentity.check();
+      const first = { banner: shown(), btn: !!pick() };
+      if (first.btn) { pick().click(); await sleep(30); }
+      const muted = !shown();
+      document.body.insertBefore(top, navrow);
+      window.__uiIdentity.check();
+      const backOfficial = document.documentElement.dataset.uiIdentity || '';
+      top.remove();
+      window.__uiIdentity.check();
+      const stillMuted = !shown();
+      document.body.insertBefore(top, navrow);
+      window.__uiIdentity.check();
+      return { err: '', first, muted, backOfficial, stillMuted };
+    } finally {
+      window.__nextBanners.reset();
+      window.__nextPauseRefresh(false);
+    }
+  })()`);
+  ok(!bdPerm.skip && !bdPerm.err && bdPerm.first.banner && bdPerm.first.btn && bdPerm.muted
+    && bdPerm.backOfficial === 'official' && bdPerm.stillMuted,
+    `非官方界面关掉后不再出现（permanent 语义 · 拆外壳两次都无横幅）（${bdPerm?.err || JSON.stringify(bdPerm)}）`);
+
+  const bdUpd = await evalJs(`(() => {
+    if (!window.__nextBanners || typeof window.__nextUpdateBanner !== 'function') return { err: '缺测试钩子' };
+    window.__nextPauseRefresh(true);
+    try {
+      const box = document.getElementById('banners');
+      window.__nextUpdateBanner({ enabled: true, phase: 'available', currentVersion: '0.1.6', latest: { version: '9.9.6' }, dismissedVersion: '' });
+      const btn = box.querySelector('[data-a="update.dismiss"]');
+      return {
+        err: '',
+        hasBtn: !!btn,
+        action: btn ? btn.getAttribute('data-a') : '',
+        kind: btn ? btn.getAttribute('data-p') : '',
+        kinds: window.__nextBanners.kinds().join(','),
+        bannerDismissCount: box.querySelectorAll('[data-a="banner.dismiss"]').length,
+      };
+    } finally {
+      window.__nextUpdateBanner(null);
+      window.__nextBanners.render();
+    }
+  })()`);
+  ok(!bdUpd.err && bdUpd.hasBtn && bdUpd.action === 'update.dismiss' && bdUpd.kind === '9.9.6'
+    && !/update/.test(bdUpd.kinds) && bdUpd.bannerDismissCount === 0,
+    `升级横幅仍走服务端按版本 dismiss（${bdUpd?.err || JSON.stringify(bdUpd)}）`);
+
   /* ── 设置层：自定义背景服务端化（2026-10-28）──────────────────────────
      不经过文件选择器：DataTransfer 造一个真实 File 塞进 #cbgAnyInput，
      走的就是用户点「添加图片」那条 change 路径。断言图片 URL 是服务端同源地址
@@ -3238,6 +3431,188 @@ try {
   await send('Emulation.clearDeviceMetricsOverride');
   await sleep(200);
 
+  /* ── 控制台排版密度：长板拆两列 + 短输入行内（2026-11-05 · §188 的运行时锚点）──
+     维护者点名"一个玻璃板的大小不应该直接全部到底"。改前实测（1440 视口）：
+     发言→聊天等待是一张 span-12 的板装 8 个控件 = 1168×751，右侧约 1000px 空；
+     模型→用量与花费三张全宽卡竖排 1790px。这里真渲染量四件事：
+       ① 聊天等待两列同排，且整页内容带高度回到一屏内；
+       ② `.f-row` 里标签与输入框**在同一行**（垂直带重叠）—— 静态字面量证明不了这条；
+       ③ 用量页「省电上限 / 抓到的条目」同排，「花费」仍占满整行（它里面是指标格与账本表格）；
+       ④ 窄屏（600）退回竖排：控件不被压成一条缝，且无横向溢出。 */
+  console.log('\n── 控制台排版密度：长板拆两列 · 短输入行内 ──');
+  const densWide = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const go = async (grpRe, subRe) => {
+      if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
+        window.__navAutoHide.reveal(); await sleep(380);
+      }
+      const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => grpRe.test(x.title || x.textContent));
+      if (!g) return { error: '没找到分组 ' + grpRe };
+      g.click(); await sleep(240);
+      if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
+        window.__navAutoHide.reveal(); await sleep(380);
+      }
+      const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => subRe.test(x.title || x.textContent));
+      if (!s) return { error: '没找到子页 ' + subRe };
+      s.click(); await sleep(420);
+      return { ok: true };
+    };
+    const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, b: r.bottom }; };
+    const page = document.getElementById('page');
+    const cs = getComputedStyle(page);
+    const contentL = page.getBoundingClientRect().x + parseFloat(cs.paddingLeft);
+    const contentW = page.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+
+    const w1 = await go(/发言/, /等待/);
+    if (w1.error) return w1;
+    const cw = box(document.getElementById('card-cw'));
+    const cw2 = box(document.getElementById('card-cw2'));
+    const rows = [...document.querySelectorAll('#page .f-row')];
+    const one = rows[0];
+    const rowPair = one ? (() => {
+      const l = one.querySelector('.f-lb'), i = one.querySelector('input, select');
+      if (!l || !i) return { missing: true };
+      const lr = l.getBoundingClientRect(), ir = i.getBoundingClientRect();
+      return { overlap: Math.min(lr.bottom, ir.bottom) - Math.max(lr.top, ir.top), gap: Math.round(ir.left - lr.right) };
+    })() : { missing: true };
+    const stackRows = rows.filter((f) => {
+      const l = f.querySelector('.f-lb'), i = f.querySelector('input, select');
+      return l && i && l.getBoundingClientRect().bottom <= i.getBoundingClientRect().top + 1;
+    }).length;
+
+    const w2 = await go(/模型/, /用量/);
+    if (w2.error) return w2;
+    const ul = box(document.getElementById('card-usageLimits'));
+    const dl = box(document.getElementById('card-deals'));
+    const cost = box(document.getElementById('card-cost'));
+    return {
+      contentL, contentW,
+      cw, cw2, rowPair, stackRows, fRows: rows.length,
+      ul, dl, cost,
+      overflowX: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    };
+  })()`);
+  ok(!densWide.error, `排版密度夹具跑通（${densWide?.error || 'ok'}）`);
+  if (!densWide.error) {
+    const d = densWide;
+    ok(!!d.cw && !!d.cw2, '聊天等待拆成两张卡（#card-cw + #card-cw2）');
+    ok(!!d.cw && !!d.cw2 && Math.abs(d.cw.y - d.cw2.y) <= 2,
+      `两张卡同一排（y ${d.cw?.y.toFixed(0)} / ${d.cw2?.y.toFixed(0)}）`);
+    ok(!!d.cw && !!d.cw2 && d.cw.w > d.contentW * 0.36 && d.cw.w < d.contentW * 0.56,
+      `每张约半栏（${d.cw?.w.toFixed(0)} / 内容宽 ${d.contentW.toFixed(0)}）`);
+    ok(!!d.cw && !!d.cw2 && Math.max(d.cw.b, d.cw2.b) - Math.min(d.cw.y, d.cw2.y) <= 460,
+      `两列总高回到一屏内（${(Math.max(d.cw?.b || 0, d.cw2?.b || 0) - Math.min(d.cw?.y || 0, d.cw2?.y || 0)).toFixed(0)}px，改前单板 751px）`);
+    ok(d.fRows >= 4, `聊天等待 + 用量页至少 4 行走内档（实得 ${d.fRows}）`);
+    ok(!d.rowPair.missing && d.rowPair.overlap > 6,
+      `标签与输入框在同一行（垂直重叠 ${d.rowPair?.overlap?.toFixed(1)}px · 间距 ${d.rowPair?.gap}px）`);
+    ok(d.stackRows === 0, `没有一行还竖排着（错排 ${d.stackRows} 行）`);
+    ok(!!d.ul && !!d.dl && Math.abs(d.ul.y - d.dl.y) <= 2,
+      `省电上限与抓到的条目同排（y ${d.ul?.y.toFixed(0)} / ${d.dl?.y.toFixed(0)}）`);
+    ok(!!d.cost && d.cost.w > d.contentW * 0.9,
+      `花费卡仍占满整行（${d.cost?.w.toFixed(0)} / 内容宽 ${d.contentW.toFixed(0)}）—— 它里面是指标格与账本表格`);
+    ok(d.overflowX === 0, `宽屏无横向溢出（${d.overflowX}px）`);
+  }
+  await send('Emulation.setDeviceMetricsOverride', { width: 600, height: 760, deviceScaleFactor: 1, mobile: false });
+  await sleep(420);
+  const densNarrow = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    await (async () => {
+      if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) { window.__navAutoHide.reveal(); await sleep(380); }
+      const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => /发言/.test(x.title || x.textContent));
+      g && g.click(); await sleep(260);
+      if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) { window.__navAutoHide.reveal(); await sleep(380); }
+      const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /等待/.test(x.title || x.textContent));
+      s && s.click(); await sleep(420);
+    })();
+    const rows = [...document.querySelectorAll('#page .f-row')];
+    const stacked = rows.filter((f) => {
+      const i = f.querySelector('input, select');
+      return i && i.getBoundingClientRect().width > 60;
+    }).length;
+    const tooNarrow = rows.filter((f) => {
+      const i = f.querySelector('input, select');
+      return i && i.getBoundingClientRect().width <= 60;
+    }).length;
+    return {
+      rows: rows.length, stacked, tooNarrow,
+      overflowX: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    };
+  })()`);
+  ok(densNarrow.rows >= 2 && densNarrow.stacked === densNarrow.rows && densNarrow.tooNarrow === 0,
+    `600 窄屏退回竖排且控件不被压扁（${densNarrow.stacked}/${densNarrow.rows} 行控件宽 > 60px · 过窄 ${densNarrow.tooNarrow}）`);
+  ok(densNarrow.overflowX === 0, `600 窄屏无横向溢出（${densNarrow.overflowX}px）`);
+  await send('Emulation.clearDeviceMetricsOverride');
+  await sleep(200);
+
+  /* ── 二级页合并（2026-11-05 · G7 · §189 的运行时锚点）────────────────────
+     删掉的只有那一层导航：「模型→思考与能力」与「维护→配置历史」。
+     真渲染要同时证两件事，缺一半都算没做完：
+       ① 导航里**不再有**这两个页签（否则空玻璃板页还在，只是换了个地方点）；
+       ② 搬过去的卡在新页上**真画得出来** —— 能力开关卡与回滚卡（含那颗撤销按钮）。
+     ⚠️ 「思考模式」卡按设计会在当前大脑没勾「能思考」时整张隐藏，所以这里不断言它在，
+        只断言 `#card-caps` 在 —— 断言一个本来就该消失的东西会造出一条恒红的门。 */
+  console.log('\n── 二级页合并：空页消失 · 卡在新页画得出来 ──');
+  const merged = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const reveal = async () => {
+      if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
+        window.__navAutoHide.reveal(); await sleep(380);
+      }
+    };
+    const click = async (grpRe, subRe) => {
+      await reveal();
+      const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => grpRe.test(x.getAttribute('aria-label') || x.title || x.textContent || ''));
+      if (!g) return { error: '找不到域 ' + grpRe };
+      g.click(); await sleep(300);
+      await reveal();
+      const subs = [...document.querySelectorAll('#nav2 .sub')];
+      const labels = subs.map((x) => (x.textContent || '').trim());
+      const s = subs.find((x) => subRe.test(x.title || x.textContent || ''));
+      if (!s) return { error: '找不到页 ' + subRe, labels };
+      s.click(); await sleep(520);
+      return { labels, subCount: subs.length };
+    };
+    const out = {};
+    const bm = await click(/模型/, /模型与线路/);
+    if (bm.error) return { step: '模型', ...bm };
+    out.brainSubs = bm.labels;
+    out.caps = !!document.getElementById('card-caps');
+    out.capsText = ((document.getElementById('card-caps') || {}).textContent || '').replace(/\\s+/g, '').slice(0, 40);
+    out.thinkIfAny = !!document.getElementById('card-think');
+    const sm = await click(/维护/, /面板维护/);
+    if (sm.error) return { step: '维护', ...sm, brainSubs: out.brainSubs };
+    out.sysSubs = sm.labels;
+    out.sysSubCount = sm.subCount;
+    out.hist = !!document.getElementById('card-hist');
+    out.undoBtn = !!document.querySelector('#card-hist [data-a="config.undo"]');
+    out.histKv = ((document.getElementById('card-hist') || {}).textContent || '').includes('可回滚的版本数');
+    /* 全站扫一遍：这两个页签名字不许在任何域的二级导航里出现 */
+    const seen = [];
+    const groups = [...document.querySelectorAll('#nav1 .grp')];
+    for (let i = 0; i < groups.length; i++) {
+      await reveal();
+      groups[i].click(); await sleep(240);
+      await reveal();
+      seen.push(...[...document.querySelectorAll('#nav2 .sub')].map((x) => (x.textContent || '').trim()));
+    }
+    out.duplicates = seen.filter((t) => /思考与能力|配置历史/.test(t));
+    groups[0].click(); await sleep(200);
+    return out;
+  })()`);
+  ok(!merged.error, `合并夹具跑通（${merged?.error || merged?.step || 'ok'}）`);
+  if (!merged.error) {
+    ok(!merged.brainSubs.some((t) => /思考/.test(t)),
+      `模型域二级导航不再有「思考」（实得 ${JSON.stringify(merged.brainSubs)}）`);
+    ok(merged.caps, `能力开关卡画在模型与线路页上（「${merged.capsText}」）`);
+    ok(!merged.sysSubs.some((t) => /历史/.test(t)) && merged.sysSubCount === 3,
+      `维护域二级导航不再有「历史」且共 3 页（实得 ${JSON.stringify(merged.sysSubs)}）`);
+    ok(merged.hist && merged.histKv && merged.undoBtn,
+      `回滚卡画在面板维护页上，撤销按钮真渲染（卡=${merged.hist} 条数=${merged.histKv} 按钮=${merged.undoBtn}）`);
+    ok(merged.duplicates.length === 0,
+      `全站二级导航都没有这两个页（命中 ${JSON.stringify(merged.duplicates)}）`);
+  }
+
+
   /* ── 吸顶导航：一条 dock，一级在上、二级随内容收缩（2026-10-22 改版）──
      旧版是「二级在左、岛居中」的并排 grid；改版后两级上下叠压，二级宽度按当前域
      的内容收缩/展开。这里真渲染量三件事：
@@ -3340,7 +3715,7 @@ try {
   ok(maint && !maint.error
     && maint.visible === 7 && maint.topbarBtn === false
     && maint.selected === 'true' && maint.hiddenSys === false
-    && maint.nav2 === 4 && /安全红线/.test(maint.first) && /HUD调整/.test(maint.last)
+    && maint.nav2 === 3 && /安全红线/.test(maint.first) && /HUD调整/.test(maint.last)
     && maint.islandSelected === 1 && maint.indOp > 0.9,
     maint?.error || `岛内可见 ${maint?.visible} 域 · 顶栏入口 ${maint?.topbarBtn} · `
       + `维护 tab selected=${maint?.selected} / hidden=${maint?.hiddenSys} · 二级 ${maint?.nav2} 页（首项 ${maint?.first} / 末项 ${maint?.last}） · `
@@ -4360,7 +4735,7 @@ try {
       s.click(); await sleep(700);
       return '';
     };
-    const errModel = await clickSub('模型', '思考与能力');
+    const errModel = await clickSub('模型', '模型与线路');
     const caps = document.getElementById('card-caps');
     const modelFeat = !!document.querySelector('#card-caps [data-feat="vision"]');
     const modelNote = caps ? (caps.textContent || '').includes('识图与发图') : false;
@@ -4693,6 +5068,427 @@ try {
     `文案里的三个数字逐字等于 \`customMeta.sleep\`（连发 ${wakeUi.burstIn} · 临时醒 ${wakeUi.quietIn}）`);
   ok(wakeUi.restoredWords && wakeUi.pokeNote,
     `清空那一格后回落成内置词表（${wakeUi.restoredWords}）· 还写明拍一拍叫不醒（${wakeUi.pokeNote}）`);
+
+  /* ── 接入通道（官方）（2026-11-06 · 2026-11-07 搬到独立二级页 · §190 的运行时锚点）──
+     这一段证五条只有真渲染才看得见的线：
+       ① 总览上**没有** #card-channel —— 维护者要的是"别在每天看一眼的页面上
+          占一整块通栏玻璃板"，只比 schema 数据不够，得证明页面真的没画它；
+       ② 新页「切换协议端」在 总览 与会话日志 之间，且卡片真画在那一页；
+       ③ **点一下官方机器人那一格，页面立刻换成官方通道的控件**（不等 3 秒轮询、
+          更不用去点「启动」）—— 这就是维护者说的那句"切完还得点一次启动才刷新"；
+       ④ AppSecret 那一格必须是 password，且保存后**不回显**
+          （`/api/state` 不鉴权，明文进来过一次就等于外送一次）；
+       ⑤ 运行侧快照补齐后「立即启动生效」自己消失，绑定表按快照出行、
+          撞号被拒、解绑要过确认卡。
+     ⚠️ 夹具只写**临时 USERDATA**，不碰用户真实配置；AppSecret 是明显的假值。
+     ⚠️ 面板的 POST 一律要 `meta[name="panel-token"]` 那份 Bearer。不带不是"报错"而是
+        被拒后卡片什么都不变 —— 于是"撞号被拒"这一条会把**鉴权失败**读成判据生效（假绿）。
+        所以这里所有写操作都走同一个 `postJson`，并把 `error/reason` 带回输出。 */
+  console.log('\n── 接入通道（官方）：独立二级页 · 切换立刻显示 · 凭据不回显 · 绑定闭环 ──');
+  {
+    const APPID_DOM = '1000000001';
+    const SECRET_DOM = 'DOM-FAKE-SECRET-NOT-A-REAL-KEY';
+    const G_A = 'aG1'.padEnd(32, 'x');
+    const G_B = 'bG2'.padEnd(32, 'x');
+    const M_DOM = 'mU1'.padEnd(32, 'y');
+
+    /* 第一段：总览上不该再有那张通栏玻璃板，右侧三块仍然是 运行控制 → Token/花费 → 插件构成。 */
+    const ovClean = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const reveal = async () => {
+        if (document.body.classList.contains('nav-auto-hidden') && window.__navAutoHide) {
+          window.__navAutoHide.reveal(); await sleep(380);
+        }
+      };
+      await reveal();
+      const g = [...document.querySelectorAll('#nav1 .grp')].find((x) => /运行/.test(x.getAttribute('aria-label') || x.title || x.textContent || ''));
+      if (!g) return { error: '找不到运行域' };
+      g.click(); await sleep(340);
+      await reveal();
+      const subs = [...document.querySelectorAll('#nav2 .sub')].map((x) => (x.textContent || '').trim());
+      const ov = [...document.querySelectorAll('#nav2 .sub')].find((x) => /总览/.test(x.title || x.textContent || ''));
+      if (!ov) return { error: '找不到总览页', subs };
+      ov.click(); await sleep(620);
+      const side = document.querySelector('#card-side .ov-side');
+      const panels = side ? [...side.querySelectorAll('.ov-panel-h h3')].map((h) => (h.textContent || '').trim()) : [];
+      return {
+        error: '', subs,
+        channelOnOverview: !!document.getElementById('card-channel'),
+        panels,
+      };
+    })()`);
+    ok(!ovClean.error, `总览夹具跑通（${ovClean?.error || 'ok'}）`);
+    if (!ovClean.error) {
+      ok(ovClean.channelOnOverview === false,
+        `总览上没有 #card-channel —— 那张通栏玻璃板真的搬走了（还在=${ovClean.channelOnOverview}）`);
+      ok(ovClean.subs.slice(0, 3).join('|') === '总览|协议端|会话日志',
+        `运行域二级顺序是 总览 → 协议端 → 会话日志（实得 ${JSON.stringify(ovClean.subs)}）`);
+      ok(ovClean.panels.join('|') === '运行控制|Token / 花费|插件构成',
+        `右侧三块仍是 运行控制 → Token/花费 → 插件构成（实得 ${JSON.stringify(ovClean.panels)}）`);
+    }
+
+    /* 第二段：进新页，先看默认态（NapCat 选中、没有凭据框、没有一键生效）。 */
+    const napcat = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const wait = async (fn, ms) => {
+        const dl = Date.now() + (ms || 9000);
+        while (Date.now() < dl) { if (fn()) return true; await sleep(120); }
+        return fn();
+      };
+      const card = () => document.getElementById('card-channel');
+      const go = async () => {
+        const s = [...document.querySelectorAll('#nav2 .sub')].find((x) => /协议端/.test(x.title || x.textContent || ''));
+        if (!s) return { error: '找不到切换协议端页' };
+        s.click(); await sleep(620);
+        if (!card()) return { error: '切换协议端页上没有 #card-channel' };
+        return { error: '' };
+      };
+      const first = await go();
+      if (first.error) return first;
+      const read = () => {
+        const c = card();
+        const txt = (c.textContent || '');
+        const radios = [...c.querySelectorAll('#card-channel input[type="radio"]')];
+        const on = radios.find((r) => r.checked);
+        return {
+          pwCount: c.querySelectorAll('#card-channel [type="password"]').length,
+          appIdShown: !!c.querySelector('#card-channel input[type="text"]'),
+          selected: on ? on.value : '',
+          missingNote: /还缺 AppID/.test(txt),
+          restartBtn: !!c.querySelector('[data-a="channel.restart"]'),
+          bindBlock: /群与身份绑定/.test(txt),
+          radioCount: radios.length,
+        };
+      };
+      const out = { error: '', defaultState: read() };
+      /* 第三段：真点「QQ 官方机器人」那一格 —— 必须**立刻**换脸，不去点启动、不等轮询。 */
+      const official = [...card().querySelectorAll('#card-channel input[type="radio"]')]
+        .find((r) => r.value === 'official');
+      if (!official) return { ...out, error: '找不到官方机器人那一格' };
+      official.click();
+      const flipped = await wait(() => {
+        const c = card();
+        /* 等到**完整的**官方态（框 + 「还缺 AppID」入口）再读数：乐观重画让框当场出现，
+           但 configured 是后端派生值（前端不重算 channelIsConfigured），要等紧随其后的
+           refresh 校准入口才出现。只等框会在校准前读到 configured=true 的旧值而假红。 */
+        return c && c.querySelector('#card-channel input[type="text"]')
+          && c.querySelector('#card-channel [type="password"]')
+          && /还缺 AppID/.test(c.textContent || '');
+      }, 2200);
+      out.flipped = flipped;
+      out.afterClick = read();
+      return out;
+    })()`);
+    ok(!napcat.error, `新页夹具跑通（${napcat?.error || 'ok'}）`);
+    if (!napcat.error) {
+      const d = napcat.defaultState || {};
+      ok(d.selected === 'napcat' && d.pwCount === 0 && d.appIdShown === false && d.missingNote === false,
+        `默认就是 NapCat：没有凭据框、没有"还缺 AppID"（选中=${d.selected} 密码框=${d.pwCount} AppID=${d.appIdShown} 提示=${d.missingNote}）`);
+      ok(d.restartBtn === false && d.bindBlock === false,
+        `NapCat 态不摆一键生效与绑定表（那些只在官方通道有意义）（按钮=${d.restartBtn} 绑定=${d.bindBlock}）`);
+      ok(napcat.flipped === true,
+        '点「QQ 官方机器人」后 2.2 秒内页面就换成官方控件 —— 没点过任何启动按钮，也没等 3 秒轮询');
+      const a = napcat.afterClick || {};
+      ok(a.selected === 'official' && a.pwCount === 1 && a.appIdShown === true && a.missingNote === true,
+        `官方态齐全：AppID 框 + 唯一一个密码框 + "还缺 AppID"入口（选中=${a.selected} 密码框=${a.pwCount} AppID=${a.appIdShown} 提示=${a.missingNote}）`);
+      ok(a.restartBtn === false,
+        '还没填凭据时不催重启（没什么可加载的，官方态控件已立刻换脸）—— 填好凭据后「立即启动生效」才出现（见第四段）');
+    }
+
+    /* 第三段·补（2026-11-07 维护者点名「切完立刻出现」）：复现真实点击的两个条件 ——
+       ① 点完焦点停在 radio 上（busyTyping 恒真，轮询与保存后的 softPaint 都被挡）；
+       ② 后端保存回执拖住（机器人在跑时 waitEffectiveApplied 最长白等 12 秒）。
+       在这两个条件下，点官方后**不等后端**就必须换脸 —— 否则就是维护者说的
+       「切了之后要去总览点一次启动才出来」。用一道可手动放行的闸把 /api/config 拖住，
+       证明换脸发生在后端返回**之前**（不是靠 3 秒轮询、也不是靠保存回执）。
+       ⚠️ 现有第三段用 `.click()` 不转移焦点、且沙箱机器人没跑（后端秒回），
+          恰好绕开这两个条件，所以它绿而这个缺陷真实存在 —— 这一段就是补这个盲区。 */
+    const optDelay = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const waitRender = async (fn, ms) => { const dl = Date.now() + (ms || 7000); while (Date.now() < dl) { if (fn()) return true; await sleep(100); } return fn(); };
+      const meta = document.querySelector('meta[name="panel-token"]');
+      const postJson = (u, b) => fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(meta && meta.content ? { Authorization: 'Bearer ' + meta.content } : {}) }, body: JSON.stringify(b) }).then((x) => x.json());
+      const card = () => document.getElementById('card-channel');
+      const radio = (v) => { const c = card(); return c ? [...c.querySelectorAll('#card-channel input[type="radio"]')].find((r) => r.value === v) : null; };
+      const isNapcat = () => { const c = card(); return c && !c.querySelector('#card-channel [type="password"]') && radio('napcat') && radio('napcat').checked; };
+      const isOfficial = () => { const c = card(); return c && c.querySelector('#card-channel [type="password"]') && radio('official') && radio('official').checked; };
+      const blur = () => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); };
+      /* 起点必须是**前端真渲染出来的 napcat**（不是只把后端改成 napcat）——
+         上一段把状态留在 official，若不等前端换回 napcat 就点官方，框本来就在，
+         会假绿成「0ms 换脸」。先 blur 让轮询能重画，再等到密码框真的消失。 */
+      blur();
+      await postJson('/api/config', { channel: { mode: 'napcat' } });
+      const napOk = await waitRender(isNapcat);
+      if (!card()) return { error: '无 #card-channel' };
+      if (!napOk) return { error: '前端没回到 napcat 态（起点不干净）' };
+      if (!radio('official')) return { error: '找不到官方单选' };
+      let release; const gate = new Promise((res) => { release = res; });
+      const orig = window.fetch;
+      window.fetch = (u, o) => {
+        const url = String((u && u.url) || u || '');
+        if (url.includes('/api/config') && o && String(o.method || '').toUpperCase() === 'POST') return gate.then(() => orig(u, o));
+        return orig(u, o);
+      };
+      let focused = false; let appeared = false; let ms = 0;
+      try {
+        radio('napcat') && radio('napcat').focus();
+        const r = radio('official'); r.focus(); r.click();
+        focused = document.activeElement === r;
+        const t0 = Date.now();
+        while (Date.now() - t0 < 1500) {
+          const c = card();
+          if (c && c.querySelector('#card-channel input[type="text"]') && c.querySelector('#card-channel [type="password"]')) { appeared = true; break; }
+          await sleep(60);
+        }
+        ms = Date.now() - t0;
+      } finally { window.fetch = orig; }
+      /* 收尾：放行被拖住的保存、blur 焦点、等前端真渲染回 official，
+         把干净的 official 态交还给下一段（否则焦点停在 radio 上会挡掉后续所有轮询重画）。 */
+      release(); blur();
+      await waitRender(isOfficial);
+      return { error: '', focused, appeared, ms };
+    })()`);
+    ok(!optDelay.error, `乐观重画夹具跑通（${optDelay?.error || 'ok'}）`);
+    if (!optDelay.error) {
+      ok(optDelay.appeared === true,
+        `点官方后 ${optDelay.ms}ms 内就换脸（焦点在 radio=${optDelay.focused}、后端回执被拖住）—— 乐观重画不等后端、不等轮询`);
+    }
+
+    /* 第三段·补②：保存失败必须回滚 —— 乐观换脸后若 /api/config 失败，
+       单选要退回 napcat、官方框要消失，绝不「失败伪装成成功」。 */
+    const optRollback = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const waitRender = async (fn, ms) => { const dl = Date.now() + (ms || 7000); while (Date.now() < dl) { if (fn()) return true; await sleep(100); } return fn(); };
+      const meta = document.querySelector('meta[name="panel-token"]');
+      const postJson = (u, b) => fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(meta && meta.content ? { Authorization: 'Bearer ' + meta.content } : {}) }, body: JSON.stringify(b) }).then((x) => x.json());
+      const card = () => document.getElementById('card-channel');
+      const radio = (v) => { const c = card(); return c ? [...c.querySelectorAll('#card-channel input[type="radio"]')].find((r) => r.value === v) : null; };
+      const isNapcat = () => { const c = card(); return c && !c.querySelector('#card-channel [type="password"]') && radio('napcat') && radio('napcat').checked; };
+      const isOfficial = () => { const c = card(); return c && c.querySelector('#card-channel [type="password"]') && radio('official') && radio('official').checked; };
+      const blur = () => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); };
+      blur();
+      await postJson('/api/config', { channel: { mode: 'napcat' } });
+      const napOk = await waitRender(isNapcat);
+      if (!card()) return { error: '无 #card-channel' };
+      if (!napOk) return { error: '前端没回到 napcat 态（起点不干净）' };
+      if (!radio('official')) return { error: '找不到官方单选' };
+      const orig = window.fetch;
+      window.fetch = (u, o) => {
+        const url = String((u && u.url) || u || '');
+        if (url.includes('/api/config') && o && String(o.method || '').toUpperCase() === 'POST') return Promise.resolve(new Response(JSON.stringify({ ok: false, error: '注入失败（DOM 夹具）' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+        return orig(u, o);
+      };
+      let revertedTo = ''; let boxesGone = false;
+      try {
+        const r = radio('official'); r.focus(); r.click();
+        await sleep(1500);
+        const c = card();
+        const on = [...c.querySelectorAll('#card-channel input[type="radio"]')].find((x) => x.checked);
+        revertedTo = on ? on.value : '';
+        boxesGone = !c.querySelector('#card-channel [type="password"]');
+      } finally { window.fetch = orig; }
+      /* 收尾：blur + 真接口写回 official + 等前端渲染，交还给第四段它原本的 official 起点。 */
+      blur();
+      await postJson('/api/config', { channel: { mode: 'official' } });
+      await waitRender(isOfficial);
+      return { error: '', revertedTo, boxesGone };
+    })()`);
+    ok(!optRollback.error, `回滚夹具跑通（${optRollback?.error || 'ok'}）`);
+    if (!optRollback.error) {
+      ok(optRollback.revertedTo === 'napcat' && optRollback.boxesGone === true,
+        `保存失败后单选回滚到 napcat、官方框消失（回滚到=${optRollback.revertedTo} 框消失=${optRollback.boxesGone}）—— 失败不伪装成成功`);
+    }
+
+    /* 第四段：用真接口把凭据写进去（面板自己的写路径），再看卡片怎么变。 */
+    const saved = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const meta = document.querySelector('meta[name="panel-token"]');
+      const postJson = (url, body) => fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(meta && meta.content ? { Authorization: 'Bearer ' + meta.content } : {}) },
+        body: JSON.stringify(body),
+      }).then((x) => x.json()).catch((e) => ({ ok: false, error: String(e) }));
+      const wait = async (fn, ms) => {
+        const dl = Date.now() + (ms || 9000);
+        while (Date.now() < dl) { if (fn()) return true; await sleep(150); }
+        return fn();
+      };
+      const r = await postJson('/api/config', {
+        channel: { official: { appId: ${JSON.stringify(APPID_DOM)}, appSecret: ${JSON.stringify(SECRET_DOM)} } },
+      });
+      const okSave = await wait(() => {
+        const c = document.getElementById('card-channel');
+        return c && /还缺 AppID/.test(c.textContent || '') === false;
+      });
+      const c = document.getElementById('card-channel');
+      const pw = [...(c ? c.querySelectorAll('#card-channel [type="password"]') : [])];
+      const txt = (c ? c.textContent : '') || '';
+      return {
+        error: '', saveOk: r && r.ok !== false, waitOk: okSave,
+        saveErr: (r && (r.error || r.reason || r.msg)) || '',
+        appIdBack: (c && c.querySelector('#card-channel input[type="text"]')) ? c.querySelector('#card-channel input[type="text"]').value : '',
+        pwType: pw.length ? pw[0].type : null,
+        pwValue: pw.length ? pw[0].value : null,
+        restartBtn: !!(c && c.querySelector('[data-a="channel.restart"]')),
+        leak: JSON.stringify((window.__next || {}).state || {}).includes(${JSON.stringify(SECRET_DOM)}),
+      };
+    })()`);
+    ok(saved.saveOk && saved.waitOk,
+      `凭据经 /api/config 保存并反映到卡片（保存=${saved.saveOk} 等到=${saved.waitOk} 原因=${saved.saveErr}）`);
+    ok(saved.appIdBack === APPID_DOM, `AppID 回显成刚存的那个值（实得 ${JSON.stringify(saved.appIdBack)}）`);
+    ok(saved.pwType === 'password' && saved.pwValue === '',
+      `存好之后密码框仍是 password 且**不回显明文**（type=${saved.pwType} value=${JSON.stringify(saved.pwValue)}）`);
+    ok(saved.restartBtn === true,
+      '凭据存了但运行侧还没加载 ⇒ 「立即启动生效」那一格必须留在页面上（不是安静地什么都不说）');
+    ok(saved.leak === false, '整份 /api/state 序列化后仍然找不到那把假 AppSecret');
+
+    /* 第五段：把"机器人已经带着这把凭据跑起来"的快照写进 effective.json
+       （真机里这一份由机器人每 20 秒刷新；沙箱没有机器人进程，所以这里替它写）。 */
+    const effPath = path.join(USERDATA, 'panel', 'effective.json');
+    const eff = JSON.parse(fs.readFileSync(effPath, 'utf8'));
+    const nowMs = Date.now();
+    eff.channel = 'official';
+    eff.onebotHealth = {
+      channel: 'official',
+      configured: true,
+      connected: true,
+      selfId: 'BOTOPENIDDOMVALUE00000000000000000',
+      selfName: '控制台守卫机器人',
+      appId: APPID_DOM,
+      connectedAt: nowMs - 20_000,
+      lastFrameAt: nowMs - 3_000,
+      lastSendAt: 0,
+      lastHeartbeatAt: nowMs - 5_000,
+      heartbeatIntervalMs: 45_000,
+      botOffline: false,
+      gateway: { terminalCode: 0, terminalReason: '', lastDropReason: '', reconnects: 0, watchdogKills: 0 },
+      token: { ok: true, expiresAt: nowMs + 3_000_000, refreshed: 1 },
+      passive: { chats: 1, allocated: 2, exhausted: 0, expired: 0, limits: { group: { windowMs: 300_000, maxReplies: 5 }, private: { windowMs: 3_600_000, maxReplies: 4 } } },
+      // ⚠️ 对象形状：机器人写的是 {群 openid: true}，面板重拼成数组就是那颗 TypeError。
+      recvAll: { [G_A]: true, [G_B]: false },
+      pendingGroups: [{ openid: G_A, name: '', memberCount: 0, lastAt: nowMs }, { openid: G_B, name: '', memberCount: 0, lastAt: nowMs }],
+      pendingMembers: [{ openid: M_DOM, nickname: '小明', lastAt: nowMs }],
+      lastError: '',
+      lastErrorCode: '',
+      stats: { received: 2, emitted: 2, merged: 1, duplicates: 1, ignored: 0 },
+    };
+    fs.writeFileSync(effPath, JSON.stringify(eff, null, 2), 'utf8');
+
+    const live = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const meta = document.querySelector('meta[name="panel-token"]');
+      const postJson = (url, body) => fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(meta && meta.content ? { Authorization: 'Bearer ' + meta.content } : {}) },
+        body: JSON.stringify(body),
+      }).then((x) => x.json()).catch((e) => ({ ok: false, error: String(e) }));
+      const wait = async (fn, ms) => {
+        const dl = Date.now() + (ms || 9000);
+        while (Date.now() < dl) { if (fn()) return true; await sleep(150); }
+        return fn();
+      };
+      const card = () => document.getElementById('card-channel');
+      const sawPending = await wait(() => card() && card().querySelectorAll('[data-cb-pending]').length === 2);
+      const txt0 = (card() ? card().textContent : '') || '';
+      const out = {
+        error: '',
+        sawPending,
+        pendingRows: card() ? card().querySelectorAll('[data-cb-pending]').length : -1,
+        hasInputA: !!(card() && card().querySelector('#cb-' + ${JSON.stringify(G_A)})),
+        connected: /已连接/.test(txt0),
+        selfName: /控制台守卫机器人/.test(txt0),
+        restartBtnGone: !card().querySelector('[data-a="channel.restart"]'),
+      };
+      /* 真点绑定：填群号 → 点「绑定」→ 那一行要从"待绑"变成"已绑"。 */
+      const input = card().querySelector('#cb-' + ${JSON.stringify(G_A)});
+      if (input) { input.value = '123456789'; input.dispatchEvent(new Event('input', { bubbles: true })); }
+      const bindBtn = card().querySelector('[data-cb-pending="' + ${JSON.stringify(G_A)} + '"] [data-a="channel.bind"]');
+      if (bindBtn) bindBtn.click();
+      out.bindRow = await wait(() => card().querySelector('[data-cb-group="' + ${JSON.stringify(G_A)} + '"]'));
+      const rowTxt = (card().querySelector('[data-cb-group="' + ${JSON.stringify(G_A)} + '"]') || {}).textContent || '';
+      out.rowHasGroupId = /123456789/.test(rowTxt);
+      out.rowRecvAll = /全量已开/.test(rowTxt);
+      /* 另一个群抢同一个群号 ⇒ 必须被拒，而且不能落行（撞号=两个群共用一份记忆）。 */
+      const b2 = card().querySelector('[data-cb-pending="' + ${JSON.stringify(G_B)} + '"] [data-a="channel.bind"]');
+      const i2 = card().querySelector('#cb-' + ${JSON.stringify(G_B)});
+      if (i2) { i2.value = '123456789'; i2.dispatchEvent(new Event('input', { bubbles: true })); }
+      const conflict = await postJson('/api/channel/bind', { openid: ${JSON.stringify(G_B)}, groupId: '123456789' });
+      out.conflictRejected = conflict && conflict.ok === false;
+      out.conflictReason = (conflict && (conflict.reason || conflict.error)) || '';
+      if (b2) b2.click();
+      await sleep(900);
+      out.conflictRowAbsent = !card().querySelector('[data-cb-group="' + ${JSON.stringify(G_B)} + '"]');
+      /* 设主人 → 那一行出现；解绑 A → 真按钮点了行要没。 */
+      const owner = await postJson('/api/channel/owner', { openid: ${JSON.stringify(M_DOM)} });
+      out.ownerSet = owner && owner.ok !== false;
+      out.ownerChip = await wait(() => /主人/.test((card().textContent || '')));
+      const unbind = card().querySelector('[data-cb-group="' + ${JSON.stringify(G_A)} + '"] [data-a="channel.unbind"]');
+      if (unbind) unbind.click();
+      /* 解绑带确认卡（这是"删东西"那一族的一致纪律），所以必须真点确认那一颗。 */
+      out.confirmShown = await wait(() => document.querySelector('.toast-btn.primary'), 4000);
+      const cfm = document.querySelector('.toast-btn.primary');
+      if (cfm) cfm.click();
+      out.unbound = await wait(() => !card().querySelector('[data-cb-group="' + ${JSON.stringify(G_A)} + '"]'));
+      return out;
+    })()`);
+    ok(!live.error, `官方通道运行态夹具跑通（${live?.error || 'ok'}）`);
+    if (!live.error) {
+      ok(live.sawPending && live.pendingRows === 2 && live.hasInputA,
+        `待绑定的两个群真从快照画成两行，每行带自己的输入框（等到=${live.sawPending} 行=${live.pendingRows} 输入框=${live.hasInputA}）`);
+      ok(live.connected && live.selfName,
+        `状态格读的是机器人快照（已连接=${live.connected} 机器人名字=${live.selfName}）`);
+      ok(live.restartBtnGone === true,
+        '运行侧 AppID 与配置一致后，「立即启动生效」那一格自己消失（不是永远挂着）');
+      ok(live.bindRow && live.rowHasGroupId && live.rowRecvAll,
+        `点「绑定」真的落行：群号 ${live.rowHasGroupId} · 全量范围读快照 ${live.rowRecvAll}（行=${live.bindRow}）`);
+      ok(live.conflictRejected && live.conflictRowAbsent,
+        `同一个群号绑第二个群被拒且不落行（拒=${live.conflictRejected} 没落行=${live.conflictRowAbsent} 原因=${live.conflictReason}）`);
+      ok(live.ownerSet && live.ownerChip, `设主人走真接口后卡片出现主人那一格（写=${live.ownerSet} 看见=${live.ownerChip}）`);
+      ok(live.unbound,
+        `解绑要先确认再点确认，那一行才真的去掉（确认卡=${live.confirmShown} 已消失=${live.unbound}）—— 点了没反应是这里最容易静默的一种`);
+    }
+
+    /* 第六段（2026-11-07 维护者点名「顶栏那格要不要同法修」）：切到官方通道后，
+       顶栏状态岛 / 运行总览「启动链路」检查表 / 右栏 —— 都不许再按 NapCat 口径喊
+       「协议端没在听 / 点重启协议端 / 拉起协议端 / 扫码 / 重启 QQ 容器」，
+       改讲官方通道自己的健康（事件网关 / 凭据 / 群绑定）。 */
+    console.log('\n── 官方通道的检查表/右栏/状态岛：不再喊 NapCat ──');
+    const officialProtoView = await evalJs(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const wait = async (fn, ms) => { const dl = Date.now() + (ms || 6000); while (Date.now() < dl) { if (fn()) return true; await sleep(120); } return fn(); };
+      if (window.__navAutoHide && window.__navAutoHide.reveal) { try { window.__navAutoHide.reveal(); } catch (e) { /* 无导航收起 */ } }
+      const grp = [...document.querySelectorAll('#nav1 .grp')].find((x) => /运行/.test(x.textContent || ''));
+      if (!grp) return { error: '找不到运行域' };
+      grp.click(); await sleep(300);
+      const sub = [...document.querySelectorAll('#nav2 .sub')].find((x) => /总览/.test(x.title || x.textContent || ''));
+      if (!sub) return { error: '找不到总览页' };
+      sub.click(); await sleep(600);
+      const chainUp = await wait(() => document.querySelectorAll('.ov-chain .stp .stp-tx').length > 0, 6000);
+      const steps = [...document.querySelectorAll('.ov-chain .stp .stp-tx')].map((e) => e.textContent || '');
+      const grid = document.querySelector('#card-side .ov-act-grid');
+      const acts = [...(grid ? grid.querySelectorAll('.ov-btn') : [])].map((b) => b.dataset.a || '');
+      let isle = '';
+      try {
+        if (window.Island && window.Island.open) {
+          window.Island.open(); await sleep(220);
+          const row = document.querySelector('.isle-pop-row[data-isle-id="container"] .isle-pop-val');
+          isle = row ? (row.textContent || '') : '';
+          if (window.Island.close) window.Island.close();
+        }
+      } catch (e) { isle = 'ERR:' + (e && e.message ? e.message : e); }
+      return { error: '', chainUp, steps: steps.join(' | '), acts: acts.join(','), isle };
+    })()`);
+    ok(!officialProtoView.error, `官方态协议视图夹具跑通（${officialProtoView?.error || 'ok'}）`);
+    if (!officialProtoView.error) {
+      ok(/事件网关/.test(officialProtoView.steps) && /官方凭据/.test(officialProtoView.steps) && /官方群绑定/.test(officialProtoView.steps)
+        && !/没在听|点「重启协议端」|重新扫码|协议端没起来/.test(officialProtoView.steps),
+        `官方模式下检查表只讲官方通道（事件网关/凭据/群绑定），没有 NapCat 催法（实得：${officialProtoView.steps.slice(0, 200)}）`);
+      ok(!/protocol\.start|open\.webui|napcat\.restart/.test(officialProtoView.acts) && /channel\.test/.test(officialProtoView.acts),
+        `官方模式下右栏不再有拉起协议端/扫码/重启容器，改出「校验凭据」（实得 ${officialProtoView.acts}）`);
+      ok(/官方/.test(officialProtoView.isle) && !/Docker|没起/.test(officialProtoView.isle),
+        `顶栏状态岛的「协议端」格读官方通道（实得 ${JSON.stringify(officialProtoView.isle)}）`);
+    }
+  }
 } catch (e) {
   fails.push(`守卫自己出错：${e && e.message ? e.message : e}`);
 } finally {
@@ -4711,5 +5507,5 @@ if (fails.length) {
   console.log(`── ${fails.length} 处问题 ──`);
   process.exit(1);
 }
-console.log('\n✓ 前端 DOM 守卫通过：首屏 + 检查表 + 逐页遍历（含零运行时错误 / 无白屏页）+ 工厂三页（三 frame；插件技能工厂内含插件/Skill 模式，二级导航驱动 / 导航浮层可点 / 切帧不重载）+ 插话冷却进度条 + 设置层外观/持久化/窄屏入口 + 二级随内容收缩 + 岛内维护域（7 域，26 页）');
+console.log('\n✓ 前端 DOM 守卫通过：首屏 + 检查表 + 逐页遍历（含零运行时错误 / 无白屏页）+ 工厂三页（三 frame；插件技能工厂内含插件/Skill 模式，二级导航驱动 / 导航浮层可点 / 切帧不重载）+ 插话冷却进度条 + 设置层外观/持久化/窄屏入口 + 二级随内容收缩 + 岛内维护域（7 域，25 页）');
 process.exit(0);

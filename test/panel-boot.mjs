@@ -378,6 +378,14 @@ try {
           } catch { problems.push('POST /api/update/check 不是合法 JSON'); }
         }
       }
+      const udNo = await postJson(`${base}/api/update/dismiss`, { version: '0.0.0' }, '');
+      if (udNo.status !== 401 && udNo.status !== 403) {
+        problems.push(`POST /api/update/dismiss 无 token 应 401/403，实得 ${udNo.status}（写路由绕过鉴权）`);
+      }
+      if (good) {
+        const ud = await postJson(`${base}/api/update/dismiss`, { version: '0.0.0' }, good);
+        if (ud.status !== 200) problems.push(`POST /api/update/dismiss 带 token 返回 ${ud.status}（应 200）`);
+      }
 
       // ⑦c 离线更新（P4）：两条写路由都必须走 token；沙箱/开发模式下 handler 回 ok:false。
       for (const p of ['/api/update/offline/prepare', '/api/update/offline/installer']) {

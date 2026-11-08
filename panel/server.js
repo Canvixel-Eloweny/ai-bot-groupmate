@@ -176,6 +176,10 @@ import { maybeSyncModelCatalog } from './lib/model-sync.js';
 import { makeExportBundle, EXPORT_SCOPES } from './lib/export-bundle.js';
 // 「保存配置」这条路由的逻辑（第 18 轮搬出 · L3）。四个判据由主文件注入，理由见下方接线处。
 import { makeConfigRoute } from './lib/config-route.js';
+// 官方通道的绑定与凭据校验路由（2026-11-06）。
+import { makeChannelRoutes } from './lib/channel-routes.js';
+// 通道值域与"旧配置没写 channel 就算 NapCat"这条判据只有一份（src/channel-mode.js）。
+import { resolveChannelMode } from '../src/channel-mode.js';
 // ── 网络地址判定（B11c · AR-DATADRIVEN）──────────────────────────────────────
 // `providerOf` / `isLocalBase` **不再由 `lib/models.js` 转发**（谁实现谁导出）。
 // 直接引真身：它同时是机器人进程判钱、查询余额判服务商、以及下发给页面的
@@ -262,6 +266,9 @@ const READ_ONLY_POST = new Set([
   // （它是被 `check-wb` 的「写路由必须逐个分类」契约扫出来漏掉的那一个 ——
   //   这就是那条契约存在的意义：新加路由时最容易忘的就是这一行）
   '/api/check',
+  // 官方通道凭据校验（2026-11-06）：与 /api/check 同一形状 ——
+  // 起一次性子进程问一次平台，不写盘、不改状态。
+  '/api/channel/test',
   // D-M3 记忆检索：POST 只是因为要带查询词，**它只读盘、不改任何状态**
   // （`recallForPrompt` 明文保证"检索不算复证、samples 一条不加"）。
   // 放这里而不是 WRITE_ROUTES：那是给"会改变状态"的请求准备的。
@@ -290,6 +297,10 @@ const WRITE_ROUTES = new Set([
   '/api/local-model/start', '/api/local-model/stop',
   '/api/onekey/start', '/api/onekey/stop',
   '/api/stop-all', '/api/protocol/start', '/api/napcat/restart', '/api/panel/restart',
+  // 官方通道的身份绑定（2026-11-06）：它们写的是 owner.qq / allow.groups /
+  // channel.bindings —— 写错一条就是"把权限给错人"，必须与 /api/config 同等待遇
+  // （带 token、Origin 校验、进审计）。漏掉的表现不是报错，而是"看起来能用"。
+  '/api/channel/bind', '/api/channel/unbind', '/api/channel/owner',
   // P11（2026-10-19）：协议端没装时，面板自己去找 / 打开目录 ——
   // 前者会往 userdata\napcat 里**写文件**（复用安装器的放置逻辑），后者会拉起进程。
   '/api/napcat/import-auto', '/api/napcat/open-folder',
@@ -312,8 +323,9 @@ const WRITE_ROUTES = new Set([
   '/api/extensions/install',
   // 扩展卸载（2026-10-31）：删目录 + 清启用名单/设置，是彻底的破坏性写。
   '/api/extensions/remove',
-  // P3 应用内更新：检查/下载/取消/安装都会写状态或启动安装器；全部走 token + 审计。
+  // P3 应用内更新：检查/下载/取消/安装/隐藏提示都会写状态或启动安装器；全部走 token + 审计。
   '/api/update/check', '/api/update/download', '/api/update/cancel', '/api/update/install',
+  '/api/update/dismiss',
   // P4 离线更新：prepare 验签/暂存，installer 收原始 EXE 并校验；都会落盘。
   '/api/update/offline/prepare', '/api/update/offline/installer',
   // 试一句：真起子进程、真调模型、真记用量。2026-11-05 从只读表移到这里。
@@ -501,8 +513,16 @@ const onebotProbePorts = () => onebotEndpointOf(readConfig()?.onebot);
  */
 // 启动偏好只读一次：autoProtocol 决定启动时是否拉起协议端与守护（面板重启后生效）。
 const LAUNCH_PREFS = launchOfConfig(readConfig());
+// 官方通道没有 NapCat 进程可守护（2026-11-06）：判据为真时 probe/launch 一律给 null，
+// 守护整条链停摆 —— 否则它会去探一个根本不存在的 3001，把"官方通道没连上"误报成
+// "协议端进程死了"，然后反复拉起一个抢登录态的第二实例。
+// ⚠️ 这是**函数**不是常量：用户可以在面板开着的时候切通道，
+//    缓存一份就等于"切完通道守护还在按旧通道拉进程"，而那正是抢端口掉登录态的成因。
+function napcatGuardApplicable() {
+  return IS_WIN && nativePresent() && channelModeNow() !== 'official';
+}
 const protocolGuard = createProtocolGuard({
-  probeAlive: IS_WIN && nativePresent()
+  probeAlive: napcatGuardApplicable()
     ? async () => {
       const { wsPort } = onebotProbePorts();
       try {
@@ -514,7 +534,11 @@ const protocolGuard = createProtocolGuard({
     }
     : null,
   launch: IS_WIN && nativePresent()
-    ? async () => startNativeNapcat({ qq: knownLoginQq().qq })
+    ? async () => {
+      // 每次真要拉起之前**再判一次通道**：守护定时器可能比用户切通道活得更久。
+      if (!napcatGuardApplicable()) return { ok: false, msg: '当前是官方通道，没有拉起 NapCat' };
+      return startNativeNapcat({ qq: knownLoginQq().qq });
+    }
     : null,
   readOnebotState: () => (readEffective()?.onebotHealth?.botOffline === true ? 'offline' : ''),
   log: (m) => pushLog(m),
@@ -532,6 +556,8 @@ const UA_MAX_CHARS = 60;
 const DIFF_VALUE_MAX_CHARS = 60;
 /** `docker rm -f` / `docker compose up -d`：后者要重建、可能拉层，是最慢的一条外部命令。 */
 const DOCKER_RM_TIMEOUT_MS = 30000;
+/** 官方通道自检：取 token + 读身份 + 连一次网关，比 docker rm 慢，给 30 秒。 */
+const OFFICIAL_CHECK_TIMEOUT_MS = 30000;
 const DOCKER_COMPOSE_TIMEOUT_MS = 240000;
 /** 干跑（`scripts/dryrun.js`）要起一整个机器人进程再收尾，给得比 docker compose 还要宽。 */
 const DRYRUN_TIMEOUT_MS = 240000;
@@ -2318,7 +2344,47 @@ async function apiConfigUndo(req, res, url) {
 //    搬进去就得留两份实现，后改的那份不生效（ESM 的 import 绑定在外部只读）。
 const apiConfig = makeConfigRoute({ baseUrlReject, sameUrl, bridgeRunning, waitEffectiveApplied });
 
+/**
+ * ── 消息通道（2026-11-06）──────────────────────────────────────────────
+ * **每次现读配置**，不在模块加载时定死：面板进程比机器人活得久，
+ * 而"切通道要重启机器人"并不意味着"面板也要重启"。缓存一份的表现为
+ * 用户切完通道、机器人已经换了出口，页面还在按旧通道显示二维码与端口。
+ */
+function channelModeNow() {
+  return resolveChannelMode({ configured: (readConfig() || {})?.channel?.mode, usedExample: false }).mode;
+}
+const officialChannelActive = () => channelModeNow() === 'official';
+
+const channelRoutes = makeChannelRoutes({
+  // 凭据校验起一次性子进程：面板进程**自己不碰 AppSecret**，
+  // 也把"面板挂了会不会带崩机器人"这条耦合彻底断开（与 /api/check 同一形状）。
+  runOfficialCheck: async () => {
+    const r = await sh(NODE, ['scripts/check-official.js'], OFFICIAL_CHECK_TIMEOUT_MS);
+    return { ok: r.ok, output: (r.stdout + r.stderr).trim() };
+  },
+});
+// ⚠️ 必须是**函数声明**而不是解构常量：路由表与 check-wb §51 都按名字找定义，
+//    解构出来的名字在静态扫描里看不见 ⇒ "表里有、函数没有"会一路带到运行时才炸。
+async function apiChannelBind(req, res, url) { return channelRoutes.apiChannelBind(req, res, url); }
+async function apiChannelUnbind(req, res, url) { return channelRoutes.apiChannelUnbind(req, res, url); }
+async function apiChannelOwner(req, res, url) { return channelRoutes.apiChannelOwner(req, res, url); }
+async function apiChannelTest(req, res, url) { return channelRoutes.apiChannelTest(req, res, url); }
+
 async function apiGroups(req, res, url) {
+  // 官方通道没有"列群"接口（平台压根不给）。能回答的只有**已绑定的那些群**，
+  // 所以这里如实说"未绑定的群要自己去绑定页看"，而不是回一张空表让用户以为没群。
+  if (officialChannelActive()) {
+    const cfg = readConfig() || {};
+    const groups = cfg?.channel?.bindings?.groups || {};
+    return sendJson(res, {
+      ok: true,
+      channel: 'official',
+      groups: Object.entries(groups).map(([openid, v]) => ({
+        id: String(v?.localId || openid), name: String(v?.name || ''), openid,
+      })),
+      note: '官方通道没有群列表接口：这里只列出**已绑定**的群。新群要在群里发一条消息才会出现在「群与身份绑定」。',
+    });
+  }
   const r = await httpGet(onebotProbePorts().httpPort, '/get_group_list', 10000);
   if (!r.ok) return sendJson(res, { ok: false, error: '协议端还没连上', groups: [] });
   try {
@@ -2366,6 +2432,14 @@ async function apiBridgeCommand(req, res, url) {
 }
 
 async function apiCheck(req, res, url) {
+  // 官方通道没有本地端口可探，自检走 `scripts/check-official.js`（凭据/身份/网关三步）。
+  if (officialChannelActive()) {
+    pushLog('… 开始官方通道自检');
+    const r = await sh(NODE, ['scripts/check-official.js'], OFFICIAL_CHECK_TIMEOUT_MS);
+    const out = (r.stdout + r.stderr).trim();
+    pushLog(out);
+    return sendJson(res, { ok: r.ok, output: out });
+  }
   pushLog('… 开始连接自检');
   const r = await sh(NODE, ['scripts/check-onebot.js'], 20000);
   const out = (r.stdout + r.stderr).trim();
@@ -3665,6 +3739,7 @@ function toolFile(name) {
 }
 
 async function apiNapcatImportAuto(req, res, url) {
+  if (officialChannelActive()) return officialChannelBlockedJson(res, '导入协议端');
   if (!IS_WIN) return sendJson(res, { ok: false, msg: '这个功能只在 Windows 安装版上可用' }, 400);
   const tool = toolFile('import-napcat.mjs');
   if (!tool) return sendJson(res, { ok: false, msg: '找不到 import-napcat.mjs（安装件不完整）' }, 500);
@@ -3692,6 +3767,7 @@ async function apiNapcatImportAuto(req, res, url) {
 }
 
 async function apiNapcatOpenFolder(req, res, url) {
+  if (officialChannelActive()) return officialChannelBlockedJson(res, '打开协议端文件夹');
   if (!IS_WIN) return sendJson(res, { ok: false, msg: '这个功能只在 Windows 安装版上可用' }, 400);
   try {
     fs.mkdirSync(NAPCAT_DIR, { recursive: true });
@@ -3708,6 +3784,7 @@ async function apiNapcatOpenFolder(req, res, url) {
  * 「从没起来过 / 冷却中 / 超过上限」，永不越过「账号掉线 / 协议端还活着」。
  */
 async function apiProtocolStart(req, res, url) {
+  if (officialChannelActive()) return officialChannelBlockedJson(res, '拉起协议端');
   try {
     const r = await protocolGuard.runStep({ force: true });
     const launched = r.act === 'spawn' && r.ok !== false;
@@ -3722,6 +3799,7 @@ async function apiProtocolStart(req, res, url) {
 }
 
 async function apiNapcatRestart(req, res, url) {
+  if (officialChannelActive()) return officialChannelBlockedJson(res, '重启协议端');
   // ── 原生协议端优先（2026-10-12 · Windows 便携包）────────────────────────────
   // 便携包里没有 Docker，协议端是 `app\napcat\` 下的原生进程。原来这里一上来就
   // `ensureDocker(150000, …)` ⇒ 用户点「重启协议端」，屏幕要等**两分半**才回一句
@@ -3797,7 +3875,21 @@ async function apiNapcatRestart(req, res, url) {
  *    前端取回的却还是旧图 —— 症状就是"显示已刷新，但二维码切换不了"。
  *    判据本体在 `panelLocalQr()`（napcat-native.js），这里只接线。
  */
+/**
+ * 官方通道下**没有 NapCat 这一层**：这些路由一律如实拒绝，而不是去探一个
+ * 不存在的端口、或起一个会抢登录态的第二个协议端。
+ * 静默返回成功是最坏的写法 —— 用户会以为"点了拉起协议端，它起来了"。
+ */
+function officialChannelBlockedJson(res, what) {
+  return sendJson(res, {
+    ok: false,
+    error: `当前是 QQ 官方机器人通道，${what}不适用（官方通道没有本地协议端，也不需要扫码登录）`,
+    reason: 'official-channel',
+  }, 400);
+}
+
 async function apiQrcode(req, res, url) {
+  if (officialChannelActive()) return officialChannelBlockedJson(res, '二维码登录');
   const local = panelLocalQr(nativePresent());
   if (local) {
     res.writeHead(200, {
@@ -4363,18 +4455,20 @@ const apiUpdateCheck = makeUpdateRoute({ updater: UPDATE, action: 'check' });
 const apiUpdateDownload = makeUpdateRoute({ updater: UPDATE, action: 'download' });
 const apiUpdateInstall = makeUpdateRoute({ updater: UPDATE, action: 'install' });
 const apiUpdateCancel = makeUpdateRoute({ updater: UPDATE, action: 'cancel' });
+const apiUpdateDismiss = makeUpdateRoute({ updater: UPDATE, action: 'dismiss' });
 const apiUpdateOfflinePrepare = makeOfflinePrepareRoute({ updater: UPDATE });
 const apiUpdateOfflineInstaller = makeOfflineInstallerRoute({ updater: UPDATE });
 
 const API_ROUTES = [
   // 安装器/启动器就绪信号（P2）：只读、无鉴权；启动器只认它来判断版本。
   { path: '/api/health', handler: apiHealth },
-  // 应用内更新（P3）：GET state 只读；4 个 POST 在 WRITE_ROUTES。
+  // 应用内更新（P3）：GET state 只读；5 个 POST 在 WRITE_ROUTES。
   { path: '/api/update/state', handler: apiUpdateState },
   { path: '/api/update/check', method: 'POST', handler: apiUpdateCheck },
   { path: '/api/update/download', method: 'POST', handler: apiUpdateDownload },
   { path: '/api/update/install', method: 'POST', handler: apiUpdateInstall },
   { path: '/api/update/cancel', method: 'POST', handler: apiUpdateCancel },
+  { path: '/api/update/dismiss', method: 'POST', handler: apiUpdateDismiss },
   // P4 离线更新：两段式，先清单/签名，再原始 EXE 字节。
   { path: '/api/update/offline/prepare', method: 'POST', handler: apiUpdateOfflinePrepare },
   { path: '/api/update/offline/installer', method: 'POST', handler: apiUpdateOfflineInstaller },
@@ -4392,6 +4486,12 @@ const API_ROUTES = [
   { path: '/api/bridge/stop', method: 'POST', handler: apiBridgeStop },
   { path: '/api/bridge/command', method: 'POST', handler: apiBridgeCommand },
   { path: '/api/check', method: 'POST', handler: apiCheck },
+  // 官方通道（2026-11-06）：绑定是**写身份**（写 owner.qq / allow.groups），
+  // 校验凭据只起一次性子进程、不改任何状态 ⇒ 与 /api/check 同类。
+  { path: '/api/channel/bind', method: 'POST', handler: apiChannelBind },
+  { path: '/api/channel/unbind', method: 'POST', handler: apiChannelUnbind },
+  { path: '/api/channel/owner', method: 'POST', handler: apiChannelOwner },
+  { path: '/api/channel/test', method: 'POST', handler: apiChannelTest },
   { path: '/api/local-model/start', method: 'POST', handler: apiLocalModelStart },
   { path: '/api/local-model/stop', method: 'POST', handler: apiLocalModelStop },
   { path: '/api/switch', method: 'POST', handler: apiSwitch },
@@ -4743,7 +4843,8 @@ server.listen(PORT, '127.0.0.1', async () => {
   // 设置里关掉 autoProtocol 时连守护一起跳过 —— 否则手动启动后进程一死，
   // 守护又会把它拉回来，与「不自动拉起」自相矛盾。
   if (IS_WIN && MODE === 'installed' && !SANDBOX) {
-    if (LAUNCH_PREFS.autoProtocol === false) pushLog('· 协议端自动拉起已关闭（设置里关的）—— 只手动启动，守护也不会自动重启');
+    if (channelModeNow() === 'official') pushLog('· 当前是 QQ 官方机器人通道 —— 没有拉起 NapCat，也不需要扫码');
+    else if (LAUNCH_PREFS.autoProtocol === false) pushLog('· 协议端自动拉起已关闭（设置里关的）—— 只手动启动，守护也不会自动重启');
     else void autoStartNapcatIfInstalled();
   }
   /* 官方模型目录对账（2026-10-17 · 2026-10-19 P10 修）：启动这一下跑一次 —— DeepSeek 之类改了版本/地址，

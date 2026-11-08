@@ -130,6 +130,37 @@ const DEF = {
       get_record: 'unknown',
     },
   },
+  /**
+   * QQ 官方机器人（2026-11-06）。
+   *
+   * ⚠️ 它**不是** OneBot 实现，而是"另一个通道"：只有 `channel.mode === 'official'`
+   *    时才会被选中（见 `src/backend/channel.js`），`onebot.backend` 里选不到它 ——
+   *    因为 `auto` 的识别方式是问 `get_version_info`，而官方 API 根本没有这个动作。
+   *    把两件事混成一个键，就会长出"配置说官方、代码在连 3001"这种两边各自自洽的状态。
+   *
+   * `supports` 里写 `'no'` 的四条是**取证过的没有**，不是"没测"：
+   *   出站没有合并转发、没有历史回查、群成员/群资料接口是内邀白名单（`11253`）。
+   */
+  official: {
+    id: 'official',
+    label: 'QQ 官方机器人',
+    license: 'QQ 开放平台服务条款（合规路线，无第三方协议端）',
+    autoDownload: false,
+    // 官方没有合并转发端点 ⇒ 顺序表为空，`forwardAttemptsFor` 会回"没有可尝试的参数"。
+    forwardOrder: [],
+    // 群与人都是 openid 字符串；`toNum()` 认不出来会原样传，这正好是我们要的行为。
+    messageId: 'openid-string',
+    supports: {
+      send_group_forward_msg: 'no',
+      send_private_forward_msg: 'no',
+      get_forward_msg: 'no',
+      get_group_member_info: 'no',
+      get_version_info: 'no',
+      get_status: 'yes',
+      get_image: 'no',
+      get_record: 'no',
+    },
+  },
 };
 
 const BACKENDS = Object.freeze(
@@ -138,13 +169,24 @@ const BACKENDS = Object.freeze(
 
 const BACKEND_IDS = Object.freeze(Object.keys(BACKENDS));
 
-/** `auto` 是"让运行时按 `get_version_info` 识别"，不是一家后端。 */
-const BACKEND_SELECTIONS = Object.freeze(['auto', ...BACKEND_IDS.filter((x) => x !== 'generic')]);
+/**
+ * `auto` 是"让运行时按 `get_version_info` 识别"，不是一家后端。
+ *
+ * ⚠️ `official` **不在这一张表里**：它不是 OneBot 实现，识别方式也不是 `get_version_info`
+ *    （官方 API 没有这个动作）。它只能由 `channel.mode` 显式选中，
+ *    所以默认只许从"OneBot 家族"里选；`driver.js` 会带着 `allowOfficial` 例外放行，
+ *    那是 index 已经按通道决定完之后传进来的，不是用户能填的第二个入口。
+ */
+const ONEBOT_SELECTIONS = Object.freeze(
+  ['auto', ...BACKEND_IDS.filter((x) => x !== 'generic' && x !== 'official')],
+);
+const ALL_SELECTIONS = Object.freeze([...ONEBOT_SELECTIONS, 'official']);
 
 /** 配置里的值 → 合法选择。不认识的一律回 `auto`（不猜、不抛）。 */
-export function normalizeBackend(value) {
+export function normalizeBackend(value, { allowOfficial = false } = {}) {
   const v = String(value ?? '').trim().toLowerCase();
-  return BACKEND_SELECTIONS.includes(v) ? v : 'auto';
+  const table = allowOfficial ? ALL_SELECTIONS : ONEBOT_SELECTIONS;
+  return table.includes(v) ? v : 'auto';
 }
 
 /**

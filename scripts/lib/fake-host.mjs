@@ -23,6 +23,10 @@ export const FAKE_GROUP = '900000001';
 /** 从任意一份配置改出「这次模拟」的版本：假地址、放行假群、关掉随机与延迟。 */
 export function makeConfig(base, { wsPort, llmPort, group, fakeModel, privateUser, enablePlugins }) {
   const cfg = structuredClone(base);
+  // 这套积木冒充的是 **OneBot v11 协议端**： spawn 出来的真程序必须走 OneBot 连到上面的假 WS。
+  // 真配置里 channel.mode 若是 official（2026-11-06 接入官方通道后可能出现），程序会直奔
+  // api.bot.qq.com 而完全不理假 WS ⇒ 会话层永远等不到 readyState===1。钉死 napcat，与沙箱同口径。
+  cfg.channel = { ...(cfg.channel || {}), mode: 'napcat' };
   cfg.onebot.wsUrl = `ws://127.0.0.1:${wsPort}`;
   cfg.onebot.accessToken = '';
   cfg.onebot.reconnectBackoffMs = [200, 500, 1000];

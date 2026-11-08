@@ -30,6 +30,9 @@ import { isSafeRelPath, stripBom } from './plugin-manifest.js';
 // L3 聚合层：后端选择（auto = 连上后按 get_version_info 识别）。
 // 判据与合法值住 `src/backend/registry.js`，这里只做一次归一化。
 import { normalizeBackend } from './backend/registry.js';
+// 消息通道（官方机器人 / NapCat）的判据（2026-11-06）：默认值、旧配置回落、
+// 环境变量覆盖、"缺凭据算不算没配好"全在 `src/channel-mode.js` 那一份里。
+import { CHANNEL_ENV, resolveChannelMode } from './channel-mode.js';
 
 const log = scoped('config');
 
@@ -259,6 +262,31 @@ export function loadConfig(overridePath) {
   const raw = readJson(file);
   log.info(`加载配置: ${file}`);
 
+  // ── 消息通道：官方机器人 vs NapCat（2026-11-06）───────────────────────────
+  // 判据只有一份（`src/channel-mode.js`），这里只负责**把它算出来并说出来**。
+  // `usedExample` 是这套判据里唯一要紧的输入：默认值只能作用于"照模板起的新装"，
+  // 不能顺手把已经跑着 NapCat 的老用户切到一条他没配过凭据的通道上。
+  const usedExample = path.basename(file) === 'config.example.json';
+  const channelDecision = resolveChannelMode({
+    configured: raw.channel?.mode,
+    usedExample,
+    env: process.env,
+  });
+  if (channelDecision.ignoredEnv) {
+    log.warn(`${CHANNEL_ENV}="${channelDecision.ignoredEnv}" 不是合法通道`
+      + `（只认 official / napcat）—— 已忽略，按${channelDecision.source === 'legacy' ? '旧配置兼容' : '配置'}走 ${channelDecision.mode}`);
+  }
+  if (channelDecision.source === 'legacy') {
+    log.info('这份 config.json 里没有 channel 键 —— 按旧配置兼容模式继续用 NapCat；'
+      + '要用 QQ 官方机器人，在面板「运行 → 切换协议端」里切一次并填 AppID/AppSecret');
+  }
+  const channelOfficial = {
+    appId: String(raw.channel?.official?.appId ?? '').trim(),
+    // 协议端令牌同样是凭据，同样支持 `env:NAME`（B9 · K-ENV 同一套规矩）：
+    // 同一份配置里"有的凭据能走环境变量、有的不能"就是半迁移。
+    appSecret: resolveSecret(raw.channel?.official?.appSecret),
+  };
+
   const allow = {
     private: idList(raw.allow?.private, 'allow.private'),
     groups: idList(raw.allow?.groups, 'allow.groups'),
@@ -380,6 +408,21 @@ export function loadConfig(overridePath) {
   const isLocalLLM = isLocalBase(baseUrl);
 
   const cfg = {
+    /**
+     * 消息通道（2026-11-06）：`mode` 决定机器人起哪条连接，`bindings` 是
+     * 官方 openid ↔ 本地群号/主人的**人工**映射。
+     *
+     * ⚠️ 它**不是** `onebot.backend` 的别名：`onebot.backend` 说的是"哪家 OneBot 实现"
+     * （NapCat / SnowLuma / …），而通道说的是"要不要走 OneBot"。两者混用会让
+     * `auto` 识别去问一个根本没有 `get_version_info` 的官方 API。
+     */
+    channel: {
+      mode: channelDecision.mode,
+      /** 结论出处：env / config / example / legacy —— 排错时第一眼要看的东西。 */
+      source: channelDecision.source,
+      official: channelOfficial,
+      bindings: normalizeChannelBindings(raw.channel?.bindings),
+    },
     onebot: {
       // `auto` = 连上后问一次 get_version_info；显式值优先（用户知道自己在接什么时，
       // 不该被一条自报字符串改掉合并转发的参数顺序）。
@@ -555,6 +598,45 @@ export function loadConfig(overridePath) {
 // 而它们曾经有五个拷贝，并且真的漂过一次（前端那份少了 172.16–31 内网段，
 // 于是"本机免费"被算成"云端计费"）。手工同步不是一个可执行的约定 ——
 // 能执行的是"只留一份，剩下的去 import 它"。
+
+/**
+ * 官方通道的**人工身份映射**归一化（2026-11-06）。
+ *
+ * 形状：
+ *   bindings.groups[群 openid] = { localId: '123456789', name: '读书分享会' }
+ *   bindings.owners = [成员 openid, ...]
+ *
+ * 三条刻意的判据：
+ *   ① `localId` 只接受 5–12 位数字群号 —— 它是**人填的**，填错要当场拒掉，
+ *      不能让它带着脏值进大脑（那会让一个群的记忆挂到另一个群的键上）；
+ *   ② 没绑定的群/人**不生成任何数字 ID** —— 官方只给 openid，
+ *      "哈希截短再加个 9 前缀"看着方便，但它把陌生人放进权限链的碰撞风险也一起放进来了；
+ *   ③ 坏条目**丢掉并说清丢了几条**，不静默：静默丢弃的表现是"我明明绑了，刷新就没了"。
+ */
+function normalizeChannelBindings(rawBindings) {
+  // ⚠️ 这里**只有群绑定**。主人的唯一真值是 `owner.qq`（大脑与叫醒路都读它）——
+  //    再开一份 `bindings.owners` 就是第二个真相源，表现是"面板说设过主人了，
+  //    而它仍然不认你"。
+  const out = { groups: {} };
+  const dropped = [];
+  const src = rawBindings && typeof rawBindings === 'object' && !Array.isArray(rawBindings)
+    ? rawBindings : {};
+  const groups = src.groups && typeof src.groups === 'object' && !Array.isArray(src.groups)
+    ? src.groups : {};
+  for (const [openid, value] of Object.entries(groups)) {
+    const key = String(openid).trim();
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(key)) { dropped.push('群 openid 形状不对'); continue; }
+    const v = value && typeof value === 'object' ? value : {};
+    const localId = String(v.localId ?? '').trim();
+    if (localId && !/^\d{5,12}$/.test(localId)) { dropped.push(`群 ${key.slice(0, 6)}… 的群号不是 5–12 位数字`); continue; }
+    out.groups[key] = { localId, name: String(v.name ?? '').slice(0, 64) };
+  }
+  if (dropped.length) {
+    log.warn(`channel.bindings 里有 ${dropped.length} 条用不了已跳过：${dropped.slice(0, 3).join('；')}`
+      + (dropped.length > 3 ? '…' : ''));
+  }
+  return out;
+}
 
 /**
  * 思考配置归一化。

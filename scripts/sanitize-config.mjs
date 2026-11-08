@@ -95,6 +95,16 @@ export const FAKE_CREDENTIAL_PREFIX = 'SANDBOX-FAKE-';
 const PRIVATE_LISTS = new Set(['groups', 'private', 'users', 'qq']);
 
 /**
+ * 这些**对象**整块属于个人身份映射，example 里只保留空形状（2026-11-06）：
+ *   `channel.bindings` = 官方通道的 openid ↔ 群号/主人 映射。
+ *
+ * 为什么不能只靠 `PRIVATE_LISTS`：那张表判的是**数组**，而 bindings 的群表是
+ * 以 openid 为**键**的对象 —— 逐键清空的写法会把键名（就是 openid 本体）留下。
+ * 键名比值更容易被漏掉，而模板是随仓库发布的文件。
+ */
+const PRIVATE_CONTAINERS = new Set(['bindings']);
+
+/**
  * 已确认的死字段：代码里只写不读（2026-09-17 清理时从 server.js 删掉了写入处）。
  * 真实 config.json 里可能还残留着，生成 example 时在这里剔除 ——
  * 不然每次重新生成又会把垃圾键带回来。
@@ -176,6 +186,9 @@ export function sanitizeConfig(cfg, { blankGroups = false, dropDeadKeys = false,
           out[k] = walk(v, CREDENTIAL_CONTAINER);
         } else if (blankGroups && PRIVATE_LISTS.has(k) && Array.isArray(v)) {
           out[k] = [];
+        } else if (blankGroups && PRIVATE_CONTAINERS.has(k) && isObj(v)) {
+          // 只留空形状：照着模板配得出这个键，但一个真实 openid 都带不出去。
+          out[k] = { groups: {} };
         } else {
           out[k] = walk(v, k);
         }
@@ -205,6 +218,12 @@ export function findLeaks(cfg) {
     if (!isObj(node)) return;
     for (const [k, v] of Object.entries(node)) {
       const here = trail ? `${trail}.${k}` : k;
+      // 身份映射表：键名本身就是 openid，所以这里判的是**非空**而不是值形状。
+      if (PRIVATE_CONTAINERS.has(k) && isObj(v)) {
+        const groups = isObj(v.groups) ? Object.keys(v.groups).length : 0;
+        const owners = Array.isArray(v.owners) ? v.owners.length : 0;
+        if (groups || owners) bad.push(`${here} 仍带 ${groups} 个群绑定 / ${owners} 个主人绑定`);
+      }
       const isCred = isCredentialKey(k, parent);
       if (isCred && !isObj(v) && !Array.isArray(v)) {
         const clean = v === '' || v === null || v === undefined || String(v).startsWith(FAKE_CREDENTIAL_PREFIX);

@@ -89,11 +89,14 @@ export default [
       + 'Windows 用原生 NapCat（那边根本没有容器）⇒ 屏幕上永远"HTTP 断 / WS 断 / 未登录"，'
       + '而机器人其实连着、消息流一直有记录',
     file: 'panel/lib/state-collector.js',
-    anchor: /^      return httpGet\(onebot\.httpPort, '\/get_login_info'\)\.then\(\(r\) => \{$/m,
+    // 2026-11-06 重锚：官方通道接入后，这三条探测被收进一个"官方就不探"的条件块里，
+    // infoProbe 从 IIFE 变成块内 const —— 锚点跟着搬，被变异掉的仍然是同一件事
+    // （把探测重新门在"容器在不在跑"上）。
+    anchor: /^        const infoProbe = httpGet\(onebot\.httpPort, '\/get_login_info'\)\.then\(\(r\) => \{$/m,
     count: 1,
     apply: (s) => s.replace(
-      "      return httpGet(onebot.httpPort, '/get_login_info').then((r) => {",
-      "      return (containerRunning ? httpGet(onebot.httpPort, '/get_login_info') : Promise.resolve({ ok: false })).then((r) => {"
+      "        const infoProbe = httpGet(onebot.httpPort, '/get_login_info').then((r) => {",
+      "        const infoProbe = (containerRunning ? httpGet(onebot.httpPort, '/get_login_info') : Promise.resolve({ ok: false })).then((r) => {"
     ),
     layer: 'check-wb',
     expect: 'BLOCKED',

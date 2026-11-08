@@ -320,6 +320,15 @@ env = dict(os.environ, HOME=fake_home, QQBOT_PANEL_PORT=port, QQBOT_SANDBOX="1",
            #   `check-wb` 第 9 节契约比对。以前只查了 paths.js 一侧，没查这里：
            #   一侧改名、另一侧没跟的表现是"沙箱用回真机端口"，要等真机在跑时才炸。
            QQBOT_LOCAL_MODEL_PORT="18080", QQBOT_QWENCHAT_PORT="18765",
+           # 通道钉成 napcat（2026-11-06 官方通道默认之后必须显式写）：
+           # 沙箱配置来自 config.example.json，而那份的默认已经是 official ——
+           # 不钉的话，"本机有 config.json（无 channel 键 ⇒ 兼容 NapCat）"与
+           # "CI 干净检出（用示例 ⇒ official）"会验到**两条不同的线**，
+           # 而沙箱那 200 多条断言全是对 OneBot 那条写的。
+           # 官方那条的覆盖在 `test/check-official.mjs`（离线 + 假网关）
+           # 与 `test/panel-dom.mjs`「接入通道（官方）」段（真渲染）。
+           # 要反过来验官方：QQBOT_CHANNEL=official bash test/sandbox.sh --run
+           QQBOT_CHANNEL=os.environ.get("QQBOT_CHANNEL", "napcat"),
            # 余额接口走夹具：沙箱不发任何出站请求（见上面 ④ 的说明）
            QQBOT_ZHIPU_PACKAGES_FIXTURE=os.path.join(sb, "zhipu-packages.fixture.json"),
            QQBOT_GITHUB_STAR_FIXTURE=os.path.join(sb, "github-star.fixture.json"),

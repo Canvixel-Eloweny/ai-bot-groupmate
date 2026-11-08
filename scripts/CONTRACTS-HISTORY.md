@@ -2003,3 +2003,149 @@
 //  ④ 段数：MIN 163 → **164**（+1，新增 §187）。配套：
 //     `test/check-preset-context.mjs`（5 条）、`test/check-bootstrap-inputs.mjs`（8 条），
 //     都已进 `check:features`；定向变异 `test/mutations/audit-b5-2026-11-05.mjs`。
+
+// ════════════════════════════════════════════════════════
+//  §188 · 控制台排版密度（2026-11-05 · 维护者点名"玻璃板不该直接全部到底"）
+// ════════════════════════════════════════════════════════
+//  起因是**真渲染实测**（headless Chromium，1440 视口，逐页量每张卡的盒子）：
+//  发言→聊天等待是一张 `span: 12` 的板装 8 个控件 = 1168×751，右侧约 1000px
+//  常年空着；模型→用量与花费三张全宽卡竖排，整页 1790px。根因两条，各设一档门：
+//  ① `panel/next/app.js`：`fieldInput()` 把短输入竖排成「标签 / 130px 输入框 /
+//     说明」三行。新增 `ROW_TYPES`（number/text/password/time/date/select）与
+//     `row` 判定（textarea 与显式 `wide` 不进这一档），命中时输出 `class="f f-row"`，
+//     并且**不再**给 number 写内联 `style="width:130px"`（内联样式会顶掉栅格列）。
+//  ② `panel/next/style.css`：`.f-row` 用 `minmax(0,1fr) clamp(120px,34%,260px)`
+//     两列 —— 控件列按容器宽度百分比夹在 120–260px，所以 span-6 的窄卡与
+//     span-12 的宽卡都贴边，不需要各写一套；说明另起一行占满。
+//     ≤700px 退回单列（两列在手机上会把控件压成一条缝）。
+//  ③ `panel/next/schema.js`：聊天等待 `cw`（拟人停顿）+ 新卡 `cw2`（连发合并 ·
+//     垫话 · 正在输入）各 `span: 6`，控件 id 与 `bind` 一个都没动；
+//     用量的 `usageLimits` / `deals` 改 `span: 6` 并排，`cost` **保持** `span: 12`
+//     （它里面是指标格与账本表格，压半栏会换行成筛子）。
+//  ④ 假 QQ：`.chat-log:has(.chat-empty)` 高度收到 `clamp(180px,26vh,280px)` ——
+//     「还没有对话」下面不再是一整屏空白；真有消息时回到原聊天高度。
+//  ⑤ 段数：MIN 164 → **165**（+1，新增 §188）。配套：
+//     `test/panel-dom.mjs`「控制台排版密度」段（同排 / 半栏 / 一屏内 / 标签与控件
+//     垂直重叠 / 窄屏退回竖排 / 无横向溢出），定向变异
+//     `test/mutations/layout-density-2026-11-05.mjs`。
+
+// ════════════════════════════════════════════════════════
+//  §189 · 二级页合并（2026-11-05 · G7 维护者点名批准）
+// ════════════════════════════════════════════════════════
+//  真渲染取证（headless Chromium 逐页量盒子）确认两个二级页已经空到只剩说明：
+//    · 模型→思考与能力：只剩 `card-caps` 576×135，正文是"识图总开关已移到
+//      发言→识图与发图"；`think` 卡在当前大脑没勾「能思考」时整张隐藏。
+//    · 维护→配置历史：只剩 `card-hist` 576×197（一行条数 + 一个撤销按钮 + 一句说明），
+//      右半整页空。
+//  处理：**删导航那一层，功能一张卡都不减**。骨架从 7 域 26 页 变 7 域 **24** 页。
+//  ① `panel/next/schema.js`：`think` / `caps` 两张卡搬进 `brain/model` 末尾；
+//     `hist` 搬进 `sys/panel` 末尾（原页级 `desc` 降级成卡级 `desc`）。
+//     控件 id、`save`、`bind`、`when`、动作名 `config.undo` 一字未改。
+//  ② `NAV_SHORT` 去掉 `thinking: '思考'` 与 `history: '历史'`（留着就是
+//     一个点了指向不存在页面的页签）。
+//  ③ `panel/ui-identity.json` 由 GROUPS 重新生成并用 p5-formal 私钥**重签**
+//     （`sign-manifest.mjs --force`，指纹 sha256:20a9a6b2… 与 UPDATE-KEY-INFO 一致）；
+//     §171② 的 7 / 26 收紧为 7 / 24。
+//  ④ 判据：① 两域页数 2 / 3 且旧 sub 字面量不残留；② 四样功能落到新页（卡 id 在
+//     新页 cards 里 + 五个控件/动作字面量仍在）；③ NAV_SHORT 不残留；④ 清单不残留；
+//     ⑤ panel-dom 有"卡真画得出来"的真渲染断言。
+//  ⑤ 顺带修掉本轮唯一一处**假绿形状**（verify 侧）：panel/next/verify.mjs 的 goto(group, sub)
+//     与截图用的 shot() 都是按**下标**点二级页签，而且写成 `if(s) s.click()` —— 找不到时
+//     静默停在上一页。删掉「思考」后下标 2 越界，6 条「免费额度情报 / 长列表」断言全在模型页
+//     上量到 0 行，看起来像产品坏了。现在两处都改成**按页签名找**（数字仍可传，调用点全部换成
+//     名字），找不到就 check() 报红；§189⑥ 把这个形状钉住：仓库里再出现
+//     `querySelectorAll('#nav2 .sub')[${sub}]; if(s) s.click()` 直接判红。
+//     顺手发现一处既有越界：maybeShot('03-plugins', 6, 3) 指工厂第 4 页，而工厂只有 3 页 ——
+//     默认不截图所以从来没人看见，现在按名字找「插件技能工厂」。
+//  ⑥ 段数：MIN 165 → **166**（+1，新增 §189）。配套：
+//     `test/panel-dom.mjs`「二级页合并」段（5 条）+ 识图段重锚到「模型与线路」，
+//     岛内维护域二级页数 4 → 3，收尾文案 26 页 → 24 页；
+//     `docs/FRONTEND-V2.md` 五处页引用同步；
+//     定向变异 `test/mutations/nav-merge-2026-11-05.mjs`（N1–N6 + N8 BLOCKED，N7 / N9 对照组 NOT-BLOCKED）。
+
+// 2026-11-06（QQ 官方机器人通道 · P0–P6）：+1 = 第 190 节「官方机器人通道」。**166 → 167**。
+//  ① 背景：QQ 开放平台官方机器人 API 上线（账号会被打上"机器人"标签）。产品决定是新装默认
+//     走官方通道、NapCat 作为既有那条路原样保留；两条通道**二选一**，出口在启动时一次性决定
+//     （不做热插拔）。这一段防的不是"多一个后端"，而是**默认出口变了**这件事被改回顺手的样子。
+//  ② 九条判据各自对着一个具体的失效模式（不是行号堆砌）：
+//     ① 默认只作用新装 + 旧配置回落 NapCat + 五档来源（env/config/example/legacy）齐 —— 少一档
+//        就是"老用户升级完它不说话了"或"没人知道出口是怎么定的"；
+//     ② 被动回复 5 分钟 5 次 / 60 分钟 4 次是平台规则，且窗口起点必须是**本机到达时刻**
+//        （端到端实测：用平台 timestamp 时本机时钟快 5 分钟 ⇒ 每条群回复都算超窗 ⇒ 全落到
+//        要群主单独开的主动消息，症状是"通道显示在线却不回话"）；
+//     ③ 入站必须过翻译层 + 合并窗口（AT 与全量同一 id）+ 持久去重（跨重启/续传补发），
+//        且 `emit('message')` 只有一处 —— 裸投平台事件 = 大脑不认 = 不回 ack = 无限重投；
+//     ④ 平台没给的能力（合并转发 / 好友表 / 按消息号回查 / 输入中气泡）必须**明确失败**，
+//        伪成功的表现是面板说已发送而用户什么都没收到；
+//     ⑤ 凭据外送闸：REST 原点与 WS 地址都不许做成可配置（identify 帧带 access_token），
+//        面板只下发"有没有配过"，AppSecret 输入框必须是 password 且留空=不改；
+//     ⑥ 身份只有 openid：不伪造数字号，群绑定是人工一对一且双向查重，
+//        主人只写 `owner.qq` 一份真值（另开 `bindings.owners` = 面板说设过而它不认你）；
+//     ⑦ 面板接线（卡 / 新控件类型 channelBind / 四个动作 / 四条路由 / 三条进 WRITE_ROUTES）
+//        + 通道投影必须是同一个纯函数 `officialPanelView`，且"要重启"要比到运行侧 AppID；
+//     ⑧ 两条启动链按通道决定是否拉 Docker / NapCat；
+//     ⑨ 官方回归进 verify + panel-dom 有官方态真渲染（否则"全绿"只覆盖 NapCat）。
+//  ③ 本轮这一节**抓到三条真缺陷**（都在门禁写完之后才现形，正是补这段的理由）：
+//     · `#emitMerged(prev.entry, …)` 读一个不存在的字段 ⇒ 每个 AT+FULL 合并必抛 TypeError，
+//       合并这条链从来没跑通过（纯函数单测看不见接缝形状）；
+//     · 面板 `state.channel` 用 `Object.fromEntries(health.recvAll)`，而机器人写的是**对象**
+//       ⇒ 官方通道真在跑时整次状态采集 TypeError，在面板上的表象是"机器人没在跑"。
+//       修法是把投影从 state-collector 的内联对象提成 `src/official-liveness.js` 的
+//       `officialPanelView`，两边喂进同一个纯函数（判据 ⑦ + 变异 M13）；
+//     · 被动窗口起点用平台时间戳（见 ②）。
+//  ④ 配套：`MIN_CONTRACTS` 166 → 167；`HEAVY_SUB_MIN` 新增桶 `['官方通道', 9]`；
+//     `npm run verify` 链新增 `test/check-official.mjs`（离线纯函数 + 本机假官方网关，
+//     判据下限 80，本轮实测 199 条）；`scripts/mutate.mjs` 新增 `official` 层
+//     （跑一次约 3 秒 ⇒ 行为变异不必再付一遍 smoke 的 3 分钟）；
+//     定向变异 `test/mutations/official-channel-2026-11-06.mjs` M1–M17 + 对照组 C1（NOT-BLOCKED）；
+//     `test/panel-dom.mjs` 新增「接入通道（官方）」段；`docs/OFFICIAL-CHANNEL.md` 新建（M-09 上限 18 → 19）。
+
+// 2026-11-06/07（官方通道 · 维护者改口：默认回 NapCat + 独立二级页 + 切换即刷新）：**段数不变（仍 167）**，
+//  只修订 §190 内判据与 §171⑩ 自证，不新增段。上一条（P0–P6）记录的"新装默认官方"已被本条取代，旧表述保留作历史。
+//  ① 默认改回 **NapCat**（维护者 2026-11-06 同日改口）：`DEFAULT_CHANNEL_MODE` 与 `LEGACY_CHANNEL_MODE`
+//     同值 'napcat'（两者同值不是冗余 —— 一个管新装、一个管旧配置回落，语义不同，将来可分叉）；
+//     `config.example.json` 的 `channel.mode` 改 'napcat'。理由：官方通道要 AppID/AppSecret，设成默认会让
+//     新装第一眼停在"缺凭据、不说话"，而 NapCat 协议端一登录就能聊。§190① 改钉 DEFAULT/LEGACY='napcat' + example。
+//  ② 新增运行域二级页 **「切换协议端」**（id `channel`），插在 `overview` 与 `sessions` 之间；「接入通道」卡
+//     从总览整块搬入该页（总览不再有它）；`NAV_SHORT.run.subs.channel='协议端'`。live schema 24 → **25 页**
+//     （§171 签名核心仍是 24 页，新页属"加项放行"，不重签）；`panel/next/README.md` 与 panel-dom 收尾文案同步 25。
+//     §190⑦ 改钉 run.subs 顺序 overview/channel/sessions + 卡在 channel 不在 overview + 短标签 + 五个动作。
+//  ③ **切换即刷新**：新增 `channel.restart` 动作（在跑则容忍 stop→start，没在跑直接 start），通用字段保存路径
+//     本就 `refresh(true)` ⇒ 点二选一立刻重绘出官方态，不必再点一次「启动」。panel-dom 断言：真点 radio 后
+//     ≤2200ms 翻面、官方控件齐、重启按钮出现，全程不点启动。§190⑦ 把第五个动作 `channel.restart` 钉进去。
+//  ④ 启动链兜底跟着默认走：`launcher.sh` 无配置回落与 legacy 规则都改 'napcat'，兜底真赋值 `CHANNEL="napcat"`，
+//     "非 napcat 就跳过容器"的分支保留；改后**重签 .app**（`codesign --force --sign - --identifier local.qqbot.panel`）。
+//     `packaging/windows/tools/start.mjs` 动态 import `src/channel-mode.js`，自动跟随新默认。§190⑧ 改钉
+//     `CHANNEL="napcat"` + `if [ "$CHANNEL" != "napcat" ]` 分支（只认真赋值/真分支，不认注释）。
+//  ⑤ §171⑩ 自证修复：插入非核心页后，原来"重排前两页"会落到非核心页上 ⇒ 自证在真空里恒绿。改成按**签名核心页
+//     索引**互换（coreIds 过滤后的前两个），核心页不足 2 个时显式报"真空"。判据本身没放松。
+//  ⑥ 变异同步：M1/M2 翻 napcat→official（默认/回落）；M15 兜底翻 official；M17 重锚到 console.log 新后缀
+//     「：独立二级页」；M18 互换 channel/sessions 页 id、M19 删 NAV_SHORT.channel、M20 改名 channel.restart。
+//     文档面：README.md / docs/README.zh-CN.md / docs/OFFICIAL-CHANNEL.md 文案改 NapCat 默认 + 新页路径
+//     「运行 → 切换协议端」。本轮 check-wb 167 · mutate-lint 172 份 / 1456 条 / 失效 0 / 惰性 0。
+
+// 2026-11-08（横幅「不再提示」· §191 新增）：**段数 167 → 168**（`MIN_CONTRACTS` 同步 168）。
+//  ① 需求（维护者）：每条横幅右上角一颗圆形关闭钮，点了这条不再弹。升级横幅那套已有
+//     （`.banner-x` + `update.dismiss` + 服务端 `dismissedVersion`，§154④），本轮是把它**推广**到其余六条。
+//  ② 语义分两种，维护者逐条拍板：
+//     · **latch**（demo / no-backend / no-token / panel-stale / memory）—— 关掉只静音这一次，
+//       **条件恢复正常一次记录就作废**，下次真坏还会提醒。理由：这类横幅说的是"此刻坏了"，
+//       永久静音等于把报警器拆掉，而真出事的那次往往正是被静音的那次。
+//     · **permanent**（unofficial）—— 关掉到底。安全警告可被静音是有代价的，
+//       所以设置层 footer 补了「恢复横幅提示」按钮当唯一退路（`setResetBanners`）。
+//  ③ 存本机 `localStorage['next-banner-dismiss-v1']`，不落服务端：状态类横幅出现的当下
+//     后端往往不可达（离线 / 后端无响应），服务端根本写不进去。升级横幅不进这张表（kind:null 直出）。
+//  ④ 施工面：`renderBanners` 拆成 `collectBanners(cond, dismissed)` 纯函数（条件 → 节点）+
+//     薄渲染层；新增 `banner.dismiss` 动作（未知 kind fail-closed，不写记录）、`bannerClose()`、
+//     `readBannerDismiss/writeBannerDismiss/resetBannerLatches`，以及 `window.__nextBanners` 观察孔。
+//     `renderBanners` 的"html 没变就别重建 DOM"守卫保留（第 59 轮为"点了没反应"立的）。
+//  ⑤ §191 的八条子判据：六类都走 `add()` · latch/permanent 语义钉死 · 复位排在 DOM 守卫之前且只清 latch ·
+//     动作 fail-closed 且静音项仍进 live · 本机键只在 app.js 写一次（settings 不许自拼）·
+//     圆钮三件套与可及性 · 升级横幅未被并进来 · 复位按钮 + panel-dom 五条真渲染断言在位。
+//  ⑥ 变异同步：新增 `test/mutations/banner-dismiss-2026-11-08.mjs` M1–M11（11/11 BLOCKED，
+//     输入基数 168 段）。**三处旧锚点被搬动打断，同批重锚**：
+//     `desktop-p3-ipc-1024.mjs` IPC16（`if (shellApi())` → `if (c.shellApi)`；
+//     §156④ 同批改判 `c.shellApi` 并补 `shellApi: !!shellApi()` 接线）、
+//     `sec-s12e-1005.mjs` N3（`const upd = …` → cond 里的 `update:` 行；**不要写 `^…$`**，
+//     `hitsOf` 只补 g 不补 m）、§171⑤ 补钉 `unofficial: UI_IDENTITY.state === 'unofficial'` 这一行
+//     （只查模板会变成"画不出来的死模板照样绿"）。定点复跑 IPC16 / N3 均仍 BLOCKED。

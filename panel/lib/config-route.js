@@ -29,6 +29,9 @@ import { providerOf } from '../../src/net-rules.js';
 // **写侧（这里）与读侧（state-collector / 三个启动器）共用同一份判定**，
 // 不许在这里再手写一遍 ['browser','window']（两份值域必然漂移）。
 import { validateLaunch } from '../../src/launch-mode.js';
+// 消息通道的值域（2026-11-06）：与机器人侧 `src/config.js` 共用同一份枚举，
+// 面板不许自己再写一遍 ['official','napcat']。零 import 叶子，满足 §82 准入判据。
+import { CHANNEL_MODES, normalizeChannelMode } from '../../src/channel-mode.js';
 import { setAutostart } from '../../src/desktop/autostart.js';
 import { applySettingsPatch } from '../../src/plugin-settings.js';
 import { pushLog, state } from './runtime-state.js';
@@ -281,6 +284,60 @@ export function makeConfigRoute(deps) {
       cfg.reply.splitToken = body.splitToken.trim();
     }
 
+    // ── 消息通道（official / napcat · 2026-11-06）──
+    // 值域只从 `src/channel-mode.js` 取，不在这里手写第二份 ['official','napcat']
+    // （与上面 launch 那段同一个纪律：两份值域必然漂移）。
+    let channelRestart = false;
+    if (body.channel !== undefined) {
+      const patch = body.channel;
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+        return sendJson(res, { ok: false, error: 'channel 必须是对象', reason: 'bad-channel' }, 400);
+      }
+      cfg.channel = cfg.channel && typeof cfg.channel === 'object' && !Array.isArray(cfg.channel)
+        ? cfg.channel : {};
+      if (patch.mode !== undefined) {
+        const mode = normalizeChannelMode(patch.mode);
+        if (!mode) {
+          pushLog(`✗ 通道没有保存：${String(patch.mode).slice(0, 40)} 不是合法通道`);
+          return sendJson(res, {
+            ok: false, reason: 'bad-channel-mode',
+            error: `channel.mode 只接受 ${CHANNEL_MODES.join(' / ')}`,
+          }, 400);
+        }
+        if (cfg.channel.mode !== mode) { cfg.channel.mode = mode; channelRestart = true; }
+      }
+      if (patch.official !== undefined) {
+        const off = patch.official;
+        if (!off || typeof off !== 'object' || Array.isArray(off)) {
+          return sendJson(res, { ok: false, error: 'channel.official 必须是对象', reason: 'bad-channel' }, 400);
+        }
+        cfg.channel.official = cfg.channel.official && typeof cfg.channel.official === 'object'
+          && !Array.isArray(cfg.channel.official) ? cfg.channel.official : {};
+        if (typeof off.appId === 'string') {
+          const appId = off.appId.trim();
+          if (appId.length > 64) {
+            return sendJson(res, { ok: false, error: 'AppID 太长了（上限 64 个字符）', reason: 'bad-appid' }, 400);
+          }
+          if (cfg.channel.official.appId !== appId) { cfg.channel.official.appId = appId; channelRestart = true; }
+        }
+        // 空串 = **不改**已保存的那把（与 apiKey 同一套规矩：面板读不到明文，
+        // 把输入框留空保存绝不能把凭据清成空 —— 用户会以为是自己点坏的）。
+        if (typeof off.appSecret === 'string') {
+          const secret = off.appSecret.trim();
+          if (secret) {
+            if (secret.length > 256) {
+              return sendJson(res, { ok: false, error: 'AppSecret 太长了（上限 256 个字符）', reason: 'bad-appsecret' }, 400);
+            }
+            if (cfg.channel.official.appSecret !== secret) {
+              cfg.channel.official.appSecret = secret;
+              channelRestart = true;
+            }
+          }
+        }
+      }
+      if (channelRestart) pushLog('ℹ 通道改动要重启机器人才生效（出口在启动时一次性决定，不做热插拔）');
+    }
+
     // ── 桌面端「启动方式」（launch · 2026-10-16）──
     // 它决定启动器（Windows 快捷方式 / Mac 图标 / CLI）把控制台开成
     // 浏览器标签页还是独立窗口。保存成功后，桌面壳会在下一次启动时按新值执行；
@@ -433,7 +490,10 @@ export function makeConfigRoute(deps) {
     // 如果保存完立刻返回，前端紧接着刷新会读到旧状态，
     // 把用户刚点选的按钮又戳回去 —— 表现就是「要点两三下才切过去」。
     const running = bridgeRunning();
-    const applied = await waitEffectiveApplied(cfg);
+    // 通道改动不参与这次热重载对账：waitEffectiveApplied 比的是 baseUrl/model/thinking，
+    // 出口在启动时一次性决定，通道改了它照样秒回 true，再说一句「已用上新配置（不用重启）」
+    // 就和下面「通道要重启」自相矛盾。通道改动直接跳过白等，按「要重启」如实说（见 baseMsg）。
+    const applied = channelRestart ? false : await waitEffectiveApplied(cfg);
     // 「换模型时自动关掉了哪些能力」要如实回报 —— 静默改动用户配置是不行的，
     // 他会以为那个开关坏了。接口把原因一起给出去，前端照着弹一句。
     const offNames = autoDisabled.map((k) => FEATURE_LABEL[k]).filter(Boolean);
@@ -454,16 +514,23 @@ export function makeConfigRoute(deps) {
     if (envOverrided) {
       pushLog(`⚠ 配置里还设着 llm.apiKeyEnv=${envVar}，它的优先级更高 —— 刚填的这把不会被使用`);
     }
-    const baseMsg = !running
-      ? '已保存（机器人没在运行，下次启动后生效）'
-      : applied
-        ? '已保存，机器人已用上新配置（不用重启）'
-        : '已保存，但机器人还没确认，请稍等几秒再看';
+    const baseMsg = channelRestart
+      ? '已保存'
+      : !running
+        ? '已保存（机器人没在运行，下次启动后生效）'
+        : applied
+          ? '已保存，机器人已用上新配置（不用重启）'
+          : '已保存，但机器人还没确认，请稍等几秒再看';
     return sendJson(res, {
       ok: true,
       bridgeRunning: running,
       applied,
       autoDisabled,
+      // 通道改动是**唯一**需要重启的配置项：出口在启动时一次性决定。
+      // 不把它说出来的表现是"我切了通道、页面也变了、群里却没反应"，
+      // 而用户会去怀疑刚填的 AppID —— 那是最难查的一类方向错误。
+      restartRequired: channelRestart,
+      channelMode: cfg.channel?.mode || '',
       autoDisabledMsg: offNames.length
         ? `已自动关闭 ${offNames.join('、')}：当前模型「${cfg.llm.model}」不支持，留着会让每个请求被服务端拒掉。`
         : '',
@@ -477,6 +544,7 @@ export function makeConfigRoute(deps) {
         : null,
       msg:
         baseMsg +
+        (channelRestart ? '　⚠ 通道改动要重启机器人才会生效 —— 本页「立即重启生效」一键完成（没在跑则是「立即启动生效」）。' : '') +
         (envOverrided
           ? `　⚠ 配置里还设着 llm.apiKeyEnv=${envVar}，它的优先级更高，刚填的这把不会被使用。` +
             '想用刚填的这把，请先删掉 config.json 里的 llm.apiKeyEnv。'

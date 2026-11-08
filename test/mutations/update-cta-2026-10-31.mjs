@@ -7,6 +7,7 @@
  */
 const JS = 'panel/next/settings.js';
 const HTML = 'panel/next/index.html';
+const APP = 'panel/next/app.js';
 
 export default [
   {
@@ -58,6 +59,26 @@ export default [
       /id="setGearDot" aria-hidden="true" hidden/,
       'id="setGearDot" aria-hidden="true"',
     ),
+    layer: 'check-wb',
+    expect: 'BLOCKED',
+  },
+  {
+    id: 'M5',
+    note: '横幅不再看 updDismissed（删了通知还会弹）—— §154④ 必须变红。预期 BLOCKED',
+    file: APP,
+    anchor: /&& !updDismissed/,
+    count: 1,
+    apply: (s) => s.replace(/&& !updDismissed/, ''),
+    layer: 'check-wb',
+    expect: 'BLOCKED',
+  },
+  {
+    id: 'M6',
+    note: '关闭按钮不再走 update.dismiss（点了变成查看更新）—— §154④ 必须变红。预期 BLOCKED',
+    file: APP,
+    anchor: /data-a="update\.dismiss"/,
+    count: 1,
+    apply: (s) => s.replace(/data-a="update\.dismiss"/, 'data-a="update.goto"'),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

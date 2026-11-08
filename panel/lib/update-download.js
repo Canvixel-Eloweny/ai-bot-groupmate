@@ -15,6 +15,9 @@ import { createHash } from 'node:crypto';
 import { stripBom } from '../../src/plugin-manifest.js';
 
 export const IDLE_TIMEOUT_MS = 30_000;
+/** 连续 15 秒低于 15 KB/s 就换源；残留 .part 由下一轮续传。 */
+export const LOW_SPEED_MS = 15_000;
+export const LOW_SPEED_BYTES_SEC = 15_000;
 
 export function sha256File(file) {
   return new Promise((resolve, reject) => {
@@ -41,6 +44,12 @@ function displayUrl(raw) {
   } catch {
     return String(raw);
   }
+}
+
+function errorText(e) {
+  const msg = e && e.message ? e.message : String(e);
+  const cause = e && e.cause ? (e.cause.code || e.cause.message) : '';
+  return cause && !String(msg).includes(String(cause)) ? `${msg} (${cause})` : msg;
 }
 
 /**
@@ -207,6 +216,9 @@ export async function downloadWithProgress({
     try { fs.rmSync(partMeta, { force: true }); } catch { /* ignore */ }
   };
 
+  /* 两轮：第一轮按顺序试完所有源；全部失败后隔 1 秒再试一轮，
+     .part 保留，第二轮用 Range 续传（同源重试）。 */
+  for (let pass = 0; pass < 2; pass += 1) {
   for (const url of urls) {
     for (let round = 0; round < 2; round += 1) {
       if (round === 1) {
@@ -263,6 +275,8 @@ export async function downloadWithProgress({
 
         const out = fs.createWriteStream(part, start > 0 ? { flags: 'a' } : { flags: 'w' });
         let got = start;
+        let speedAt = Date.now();
+        let speedGot = start;
         const t0 = Date.now();
         try {
           for await (const chunk of res.body) {
@@ -270,6 +284,16 @@ export async function downloadWithProgress({
             idle = setTimeout(() => ctl.abort(new Error('空闲超时')), IDLE_TIMEOUT_MS);
             if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
             got += chunk.length;
+            const nowTs = Date.now();
+            if (nowTs - speedAt >= LOW_SPEED_MS) {
+              const bps = (got - speedGot) / ((nowTs - speedAt) / 1000);
+              if (bps < LOW_SPEED_BYTES_SEC) {
+                ctl.abort(new Error('速度过低'));
+                throw new Error(`速度过低（${Math.max(0, Math.round(bps / 1024))} KB/s）`);
+              }
+              speedAt = nowTs;
+              speedGot = got;
+            }
             if (expectedSize && got > expectedSize) {
               ctl.abort(new Error('超过预期大小'));
               break;
@@ -309,13 +333,15 @@ export async function downloadWithProgress({
           dropPart();
           throw abortError(signal?.reason, '下载已取消');
         }
-        errors.push(`${displayUrl(url)} → ${e && e.message ? e.message : e}`);
-        break; // 网络层错误：换下一个源
+        errors.push(`${displayUrl(url)} → ${errorText(e)}`);
+        break; // 网络层错误：换下一个源；全部失败后还有第二轮续传
       } finally {
         clearTimeout(idle);
         if (signal) signal.removeEventListener('abort', onAbort);
       }
     }
+  }
+    if (pass === 0) await new Promise((r) => setTimeout(r, 1000));
   }
   throw new Error(`所有下载源都失败了：\n  - ${errors.join('\n  - ')}`);
 }

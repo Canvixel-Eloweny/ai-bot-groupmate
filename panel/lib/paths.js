@@ -323,6 +323,9 @@ export const BACKEND_SOURCES = [
   // 进表的理由同 trace-io.js —— 改了它必须重启面板才生效；
   // 而它**读的那份 config.json** 由 `config-io.js` 管，不在本表。
   'panel/lib/config-route.js',
+  // 官方通道的绑定与凭据校验路由（2026-11-06）：不登记的话，它在 stale 自检
+  // 与静态契约里**双双隐身** —— 而它写的正是 owner/白名单这类身份数据。
+  'panel/lib/channel-routes.js',
   // 导出配置 / 面板状态聚合（第 19 轮 · H-10 第二半收尾）。进表理由同上：
   // 改了它们得重启面板才生效；它们**读**的那几个文件**不进表**
   // （auto-memory.jsonl / memory-records.json 一直在变，进来会让 stale 常年误报）。

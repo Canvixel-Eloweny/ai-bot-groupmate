@@ -44,7 +44,7 @@
  *  ══════════════════════════════════════════════════════════════════════════
  *  用法
  *  ══════════════════════════════════════════════════════════════════════════
- *    node scripts/mutate.mjs <plan.mjs> [--layer check-wb|backend|smoke|sandbox|panel|none]
+ *    node scripts/mutate.mjs <plan.mjs> [--layer check-wb|backend|smoke|sandbox|panel|official|none]
  *                                     [--only M1,M3] [--timeout 600] [--json]
  *    node scripts/mutate.mjs --restore          # 从 pristine 复原所有文件
  *    node scripts/mutate.mjs --selftest         # 自证：一条必被拦住 + 一条必不被拦住
@@ -140,6 +140,12 @@ const LAYERS = {
   smoke: { cmd: 'node', args: ['test/smoke.js'], why: '动态层' },
   sandbox: { cmd: 'bash', args: ['test/sandbox.sh', '--run'], why: '沙箱全量（presets + panel）' },
   panel: { cmd: 'bash', args: ['test/sandbox.sh', '--run'], why: '沙箱（只看面板那一行）' },
+  // 官方机器人通道（2026-11-06）：纯函数 + 本机假网关（真 WS、真 HTTP）。
+  // 加这一层的理由：§190 里"合并窗口 / 持久去重 / 被动 seq"这类**接缝行为**，
+  // check-wb 只能钉住代码形状，钉不住那条线通不通 —— 而 2026-11-06 端到端首跑
+  // 抓到的第一条真缺陷（`prev.entry` undefined）正是只有跑起来才看得见的形状。
+  // 它一次约 3 秒，所以行为变异不必付一遍 smoke 的 3 分钟。
+  official: { cmd: 'node', args: ['test/check-official.mjs'], why: '官方通道端到端' },
   none: null,
 };
 
@@ -171,6 +177,15 @@ function judge(layer, code, out) {
       blocked: bad.length > 0,
       why: bad.length ? bad.map((p) => `${p.name} ${p.fail} 失败`).join(' · ') : wanted.map((p) => `${p.name} ${p.pass} 通过`).join(' · '),
     };
+  }
+  if (layer === 'official') {
+    // 这一层的判据行是 `OFFICIAL_CHECKS=n`（成功）/ `OFFICIAL_CHECKS=n FAILED=m`（失败）。
+    // ⚠️ 跑挂（未捕获异常）时**两行都没有**、只有 exit≠0 —— 那同样算拦住：
+    //    2026-11-06 端到端首跑抓到的 `prev.entry` TypeError 就是这个形状。
+    const failed = Number((out.match(/FAILED=(\d+)/) || [])[1] || 0);
+    const ran = Number((out.match(/OFFICIAL_CHECKS=(\d+)/) || [])[1] || 0);
+    if (!ran && code !== 0) return { blocked: true, why: `exit=${code}（没跑完，中途抛错）` };
+    return { blocked: code !== 0 || failed > 0, why: failed ? `${failed} 条判据失败` : `exit=${code}` };
   }
   return { blocked: false, why: '未指定层' };
 }
@@ -214,6 +229,11 @@ function cardinality(layer, out) {
     const nums = [...out.matchAll(/(?:结果|面板验证)：(\d+) 通过/g)].map((m) => Number(m[1]));
     const value = nums.length ? Math.max(...nums) : 0;
     return { value, min: 1, label: '沙箱用例数' };
+  }
+  if (layer === 'official') {
+    // 下限 80 与 `test/check-official.mjs` 自己的输入基数判据同源（那里红先于这里红）。
+    const m = out.match(/OFFICIAL_CHECKS=(\d+)/);
+    return { value: Number(m?.[1] || 0), min: 80, label: '官方通道判据数' };
   }
   return { value: 0, min: 0, label: '' };
 }

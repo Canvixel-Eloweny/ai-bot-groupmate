@@ -23,6 +23,10 @@ import { VISION_MAX_IMAGES, VISION_FETCH_ATTEMPTS, VISION_INLINE_MAX_BYTES } fro
 // 面板只转述它算好的那份 —— 页面里写死「10 秒 / 3 条 / 起床醒醒」就是第二份真相。
 import { wakeRouteMetaOf } from '../../src/sleep.js';
 import { livenessVerdictOf } from '../../src/onebot-liveness.js';
+// 官方通道的存活阶梯与通道值域（2026-11-06）：两个零 import 叶子，
+// 面板只转述结论；在这里再写一份"什么算在线"就是第二份真相。
+import { officialPanelView, officialVerdictOf } from '../../src/official-liveness.js';
+import { resolveChannelMode } from '../../src/channel-mode.js';
 // L3 聚合层（2026-10-20）：面板只转述"识别到的后端"，不自己再写一份名字映射。
 import { backendOfSelfReport, backendLabel } from '../../src/backend/registry.js';
 import { classifyOneBotReply, selfReportTrustOf } from '../../src/backend/normalize.js';
@@ -251,6 +255,19 @@ function readFriendRequestsOf() {
   }
 }
 
+/**
+ * 主人身份里的**官方 openid** 那几条（2026-11-06）。
+ *
+ * 为什么这样筛而不是另开一张 `bindings.owners`：主人的真值只有一份，就是 `owner.qq`
+ * （`isOwner` 与叫醒路都读它）。openid 与 QQ 号混在同一份里，用"是不是纯数字"分开，
+ * 是为了让面板能各说各的话 —— 而不是让"绑过的主人"在两个地方各自增长。
+ */
+function ownerOpenidsOf(cfg) {
+  return (Array.isArray(cfg?.owner?.qq) ? cfg.owner.qq : [])
+    .map((x) => String(x ?? '').trim())
+    .filter((x) => x && !/^\d+$/.test(x));
+}
+
 export function makeStateCollector(deps) {
   const {
     IMPORTABLE_KEYS, bridgeRunning, countBridgeInstances, memoryRecordsOf,
@@ -260,10 +277,21 @@ export function makeStateCollector(deps) {
 
   return async function collectState() {
     const cfg = readConfig();
+    // ── 消息通道（2026-11-06）──────────────────────────────────────────────
+    // 这一格决定下面**整块 NapCat / Docker 观测要不要跑**。判据只有一份
+    // （`src/channel-mode.js`）：面板不许在这里再写一遍"没有 channel 就算 NapCat"，
+    // 否则升级上来的老配置会在这里被判成官方、而机器人其实连着 3001。
+    const channelMode = resolveChannelMode({ configured: cfg?.channel?.mode, usedExample: false }).mode;
+    const isOfficialChannel = channelMode === 'official';
+    // 机器人运行态快照要在这里就取：官方通道的"机器人是谁""连没连上"只有这份数据里有，
+    // 而下面几段（账号、登录提示、存活结论）都要用它。
+    let eff = readEffective();
 
     // daemon 不在就别白等 docker 命令超时了，直接判定容器没跑
-    const daemonUp = await cachedDockerUp();
-    const containerLine = await cachedDockerPs();
+    // ⚠️ 官方通道**根本不经过容器这条路**：跑一次 docker 命令就是白等一次超时，
+    //    而它每 3 秒被轮询一次。
+    const daemonUp = isOfficialChannel ? false : await cachedDockerUp();
+    const containerLine = isOfficialChannel ? '' : await cachedDockerPs();
     const containerRunning = /Up/i.test(containerLine);
     // 这台机器上「容器」这条部署路线适不适用（第 53 轮 · B2）。
     // ⚠️ 判据**不是平台**，而是"有没有在走这条路"：
@@ -288,23 +316,37 @@ export function makeStateCollector(deps) {
     // 顺带量一次 `/get_login_info` 的往返耗时（总览「网络延迟」用）。
     // 只量这一条 HTTP，不和 wsProbe 的等待取最大值 —— 否则延迟会被 WS 探活时间污染。
     let onebotLatencyMs = null;
-    const infoProbe = (() => {
-      const t0 = Date.now();
-      return httpGet(onebot.httpPort, '/get_login_info').then((r) => {
-        if (r.ok) onebotLatencyMs = Date.now() - t0;
-        return r;
-      });
-    })();
-    const [infoRes, verRes, statRes, wsRes, p6099] = await Promise.all([
-      infoProbe,
-      httpGet(onebot.httpPort, '/get_version_info'),
-      httpGet(onebot.httpPort, '/get_status'),
-      wsProbe(onebot.wsPort),
-      portOpen(NAPCAT_WEBUI_PORT),
-    ]);
+    const notProbed = { ok: false, body: '' };
+    // 官方通道没有本地端口可以问：一条都不探。探了的后果不是报错，而是屏幕上
+    // 「协议端端口」永远断、「登录账号」永远未登录 —— 那正是第 53 轮 B2 修过的
+    // 同一类假故障，只是换了个触发条件。
+    const [infoRes, verRes, statRes, wsRes, p6099] = isOfficialChannel
+      ? [notProbed, notProbed, notProbed, notProbed, false]
+      : await (async () => {
+        const t0 = Date.now();
+        const infoProbe = httpGet(onebot.httpPort, '/get_login_info').then((r) => {
+          if (r.ok) onebotLatencyMs = Date.now() - t0;
+          return r;
+        });
+        return Promise.all([
+          infoProbe,
+          httpGet(onebot.httpPort, '/get_version_info'),
+          httpGet(onebot.httpPort, '/get_status'),
+          wsProbe(onebot.wsPort),
+          portOpen(NAPCAT_WEBUI_PORT),
+        ]);
+      })();
 
     let account = null;
-    if (infoRes.ok) {
+    // 官方通道的"账号"来自**机器人自己写出的快照**（它连着网关，才知道机器人叫什么）。
+    // 面板不去现取：现取就要在面板进程里持有 AppSecret，而 `/api/state` 是不鉴权的只读口。
+    if (isOfficialChannel && eff?.onebotHealth?.channel === 'official') {
+      const oh = eff.onebotHealth;
+      if (oh.selfId || oh.selfName) {
+        account = { userId: String(oh.selfId || ''), nickname: String(oh.selfName || '官方机器人') };
+      }
+    }
+    if (!account && infoRes.ok) {
       try {
         const rep = classifyOneBotReply(JSON.parse(infoRes.body));
         if (rep.businessOk) {
@@ -329,8 +371,18 @@ export function makeStateCollector(deps) {
     let loggedIn = false;
     let loginHint = '';
     let qrDecodeUrl = '';
+    /* 官方通道的存活结论（判据在 `src/official-liveness.js`，面板只转述）：
+       它同时喂给"登录提示"与 `state.onebot`，两处不许各算一次。 */
+    const officialVerdict = isOfficialChannel
+      ? officialVerdictOf({ health: eff?.onebotHealth || null })
+      : null;
 
-    if (account) {
+    if (officialVerdict) {
+      loggedIn = officialVerdict.code === 'online';
+      loginHint = loggedIn
+        ? `官方机器人在线：${account?.nickname || '(没取到名字)'}`
+        : `官方通道：${officialVerdict.detail}`;
+    } else if (account) {
       loggedIn = true;
       loginHint = `已登录：${account.nickname}（${account.userId}）`;
     } else if (infoRes.ok) {
@@ -380,9 +432,7 @@ export function makeStateCollector(deps) {
       ? localKeyOf(localModelIds[0]) || (liveChannel === state.localChannel ? state.localModelKey : '') || ''
       : '';
 
-    let eff = readEffective();
-    // 兜底：快照文件可能丢失（比如退出的孤儿实例清掉过它），
-    // 但只要机器人进程还活着，就用配置文件的值顶上 —— 总比面板显示一片空白强。
+    // `eff` 在函数开头就读了（官方通道那段要用），这里只做"快照丢了"的兜底替换。
     if (!eff?.alive && bridgeRunning()) {
       eff = {
         pid: state.bridge?.pid || state.bridgePid || null,
@@ -497,12 +547,26 @@ export function makeStateCollector(deps) {
       // 协议端存活结论（B3）：端口通 ≠ 事件流活。判据住 src/onebot-liveness.js，
       // 面板只转述 code；页面按 code 决定颜色与文案（不在前端重算阶梯）。
       onebot: {
-        ...livenessVerdictOf({
+        ...(officialVerdict || livenessVerdictOf({
           health: eff?.onebotHealth || null,
           ports: { http: infoRes.ok, ws: wsRes.ok },
-        }),
+        })),
         transports: { http: infoRes.ok, ws: wsRes.ok, webui: p6099 },
+        channel: channelMode,
       },
+      /* 通道那一格（2026-11-06）：面板的「接入通道」卡只读这里，不许自己再拼。
+         ⚠️ 投影本身住在 `src/official-liveness.js` 的 `officialPanelView` ——
+         形状对不上（机器人写对象、面板当数组）会让**整次采集**抛 TypeError，
+         而那种抛在面板上的表现是"机器人没在跑"，不是"这里写错了"。
+         现在面板只传三个来源进去（模式 / 运行侧快照 / 配置那一块），
+         判据与接缝形状一起进 `test/check-official.mjs` 第 ⑬ 节。 */
+      channel: officialPanelView({
+        mode: channelMode,
+        health: eff?.onebotHealth || null,
+        effChannel: eff?.channel || '',
+        cfgChannel: cfg?.channel || null,
+        ownerIds: ownerOpenidsOf(cfg),
+      }),
       account,
       localModel: {
         // 这一整套（MLX 模型 + 两条通道 + 启动命令）**在这个平台上成不成立**（第 53 轮 · B6）。

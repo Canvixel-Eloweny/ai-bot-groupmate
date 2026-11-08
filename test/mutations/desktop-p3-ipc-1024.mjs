@@ -209,9 +209,10 @@ export default [
     id: 'IPC16',
     note: '壳内离线退回演示模式 —— §156④ 必须变红（半死状态没有明确表达）',
     file: APP,
-    anchor: /if \(shellApi\(\)\) \{/g,
+    // ⚠️ 2026-11-08 §191：离线分支搬进 collectBanners，壳的判据来自 cond.shellApi。
+    anchor: /if \(c\.shellApi\) \{/,
     count: 1,
-    apply: (s) => s.replace('if (shellApi()) {', 'if (false) {'),
+    apply: (s) => s.replace('if (c.shellApi) {', 'if (false) {'),
     layer: 'check-wb',
     expect: 'BLOCKED',
   },

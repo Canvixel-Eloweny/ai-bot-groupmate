@@ -8,7 +8,7 @@
 > dev 形态默认 `http://127.0.0.1:8788`，沙箱/CI 用 `QQBOT_PANEL_PORT` 显式固定。
 > 响应统一为 JSON（`sendJson`），二进制接口单独标注。错误统一返回 `{ error }` 或 `{ ok:false, ... }`。
 > 路由总数：**2 个页面（`/` 与 `/next/`）+ 63 个 API**（以 `panel/server.js` 的
-> `API_ROUTES` 为准；2026-10-22 在 §41 补齐 24 条此前没有字段级契约的路由 ——
+> `API_ROUTES` 为准；2026-10-22 在 §41 补齐 24 条此前没有字段级契约的路由（2026-11-05 增至 25 条）——
 > 其中 19 条此前连独立小节都没有）。
 >
 > 2026-10-21（Win-v0.1.2 移植）新增 5 条：`POST /api/persona/adopt`
@@ -689,9 +689,9 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 
 ## 41. 补充路由契约（2026-10-22）
 
-> 71 条 API 中，46 条已在 §1–§40 有独立字段章节；剩下的 **24 条**在本节补字段级契约
+> 71 条 API 中，46 条已在 §1–§40 有独立字段章节；剩下的 **25 条**在本节补字段级契约
 > （其中 19 条此前连独立小节都没有，另外 5 条此前只在表格/导语里出现过）。
-> 2026-10-28 的 7 条新路由放在 §42–§48（都有独立编号章节，不占这 24 条字段契约）；
+> 2026-10-28 的 7 条新路由放在 §42–§48（都有独立编号章节，不占这 25 条字段契约）；
 > 2026-11-01 新增 1 条只读 POST `/api/extensions/prompt`（§50）。
 > 2026-11-05 `/api/try`（§22）从只读 POST 移入写路由：它会真起子进程、真调模型，
 > 必须带 token + 同源 Origin，并加单飞闸（额满 429）。
@@ -712,6 +712,7 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 | POST | `/api/update/download` |
 | POST | `/api/update/install` |
 | POST | `/api/update/cancel` |
+| POST | `/api/update/dismiss` |
 | POST | `/api/update/offline/prepare` |
 | POST | `/api/update/offline/installer` |
 | GET | `/api/state` |
@@ -728,6 +729,10 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 | POST | `/api/bridge/stop` |
 | POST | `/api/bridge/command` |
 | POST | `/api/check` |
+| POST | `/api/channel/bind` |
+| POST | `/api/channel/unbind` |
+| POST | `/api/channel/owner` |
+| POST | `/api/channel/test` |
 | POST | `/api/local-model/start` |
 | POST | `/api/local-model/stop` |
 | POST | `/api/switch` |
@@ -885,7 +890,7 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 - **副作用**：无（纯字符串拼装；apiVersion / 钩子点 / 标签归一化都从宿主常量取）。
 - **幂等**：是（同输入同输出）。**只读 POST**（`READ_ONLY_POST`，不要求 token、不进写路由审计）。
 
-### 41.2 字段契约（24 条）
+### 41.2 字段契约（25 条）
 
 #### 41.2.1 GET `/api/health`
 
@@ -1078,5 +1083,13 @@ trace 是有界窗口、反映最近活动；存档是机器人退出时补写�
 - **出参**：认领脚本 JSON（`{ok, fields, wrote[]}`，或 `{ok:false, error, detail?}`）；失败 500。
 - **副作用**：花一次模型调用；**不直接改配置**，结果只回预览，写回仍走 `/api/config`。
 - **幂等**：否；每次都会重新调用模型。
+
+#### 41.2.25 POST `/api/update/dismiss`
+
+<!-- api-fields: POST /api/update/dismiss -->
+- **入参**：`{version}` —— 必须是当前 `latest.version`。
+- **出参**：`{ok, ...snapshot}`；版本不匹配时 HTTP 200 + `ok:false`。
+- **副作用**：把 `dismissedVersion` 写入 `update/state.json`；只隐藏该版本的横幅，不改下载/安装状态。
+- **幂等**：是；同一版本重复提交结果一致。
 
 ---

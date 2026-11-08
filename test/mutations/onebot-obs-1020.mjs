@@ -132,11 +132,16 @@ export default [
   {
     id: 'M10',
     note: '20 秒快照只写配置、不刷新 onebotHealth —— 快照永远停在启动那一刻（connected=false）。'
-      + '预期 BLOCKED（smoke T397）',
+      + '预期 BLOCKED（smoke T397）\n'
+      + '      （2026-11-06 重锚：官方通道接入后定时那一拍里多了一行 channelSnap 赋值，'
+      + '两行不再相邻 ⇒ 锚点改锚"setInterval 开起来的第一行就是刷快照"，被变异掉的仍是同一件事）',
     file: IDX,
-    anchor: /    onebotHealthSnap = bot\.healthSnapshot\(\);\n    writeEffective\(cfg\);/,
+    anchor: /  setInterval\(\(\) => \{\n    onebotHealthSnap = bot\.healthSnapshot\(\);/,
     count: 1,
-    apply: (s) => s.replace('    onebotHealthSnap = bot.healthSnapshot();\n    writeEffective(cfg);', '    writeEffective(cfg);'),
+    apply: (s) => s.replace(
+      '  setInterval(() => {\n    onebotHealthSnap = bot.healthSnapshot();',
+      '  setInterval(() => {',
+    ),
     layer: 'smoke',
     expect: 'BLOCKED',
   },

@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from './config.js';
 import { CONFIG_FILE, USER_ROOT, PANEL_STATE_DIR, DATA_DIR, panelFile, ensureUserDirs } from './user-root.js';
-import { OneBotClient, flattenMessage, textSegment, atSegment, replySegment, imageSegment, triggerTextOf } from './onebot.js';
+import { flattenMessage, textSegment, atSegment, replySegment, imageSegment, triggerTextOf } from './onebot.js';
+// 出口工厂（2026-11-06）：OneBotClient 不再在这里直接 new —— 通道的选择在工厂里一次决定。
+import { createChannelClient } from './backend/channel.js';
 // L3 聚合适配层：主链路不再直接问"这家协议端长什么样" ——
 // 后端识别与合并转发参数顺序都收进 `src/backend/`（2026-10-20）。
 import { createOneBotDriver } from './backend/driver.js';
@@ -374,11 +376,23 @@ function writeEffective(cfg) {
       // 协议端连接健康（B4）：面板把它与自己的 HTTP 探测**并排**显示 —— 两个观测面、两个时刻。
       // 与 extSnapshot 同一条理由：只在 main() 里产生、只被 writeEffective 消费。
       onebotHealth: onebotHealthSnap,
+      // 通道结论（2026-11-06）：面板**不许自己再判一次**该显示 NapCat 还是官方。
+      // 走模块级快照而不是直接引 main() 里的局部变量 —— 那会让这里抛 ReferenceError，
+      // 而下面的 catch 会把它吞成"写不出来也无所谓"，表现是面板永远读不到运行态。
+      channel: channelSnap,
     });
-  } catch {
-    /* 写不出来也不影响机器人跑 */
+  } catch (err) {
+    // 写不出来不影响聊天，但**不能彻底无声**：本轮接入官方通道时就在这里踩过一次
+    // ReferenceError（writeEffective 引用了 main() 的局部变量），被这个 catch 吞掉后
+    // 表现是"面板永远读不到运行态"，而机器人日志一切正常。
+    // 只说第一次，避免磁盘真出问题时的日志洪水。
+    if (effectiveFailures === 0) log.warn(`运行时快照写不出来：${err?.message || err}`);
+    effectiveFailures += 1;
   }
 }
+
+/** 运行时快照连续写失败的次数（只用于"第一条要说、后面不再刷"）。 */
+let effectiveFailures = 0;
 
 // 注：这里原来有个 clearEffective()，退出时把 effective.json 删掉。
 // 已移除 —— 面板判断"机器人还在不在"靠的是文件里的 pid 是否存活，
@@ -404,6 +418,14 @@ let extSnapshot = null;
  * 与"连上了但没心跳"是两件不同的事（面板按 null 不显示，而不是显示成"断"）。
  */
 let onebotHealthSnap = null;
+
+/**
+ * 运行态真正在用的通道（2026-11-06）。
+ * 与 `onebotHealthSnap` 同一族、同一条理由：只在 main() 里产生、只被 writeEffective 消费，
+ * 而后者有三个调用点（启动 / 热重载 / 定时刷），传参要改三处签名。
+ * 初值 null = "还没决定"，与"决定用 napcat"是两件事 —— 面板按 null 不显示，而不是显示成 NapCat。
+ */
+let channelSnap = null;
 
 /**
  * 已加载扩展包声明的**提示词指引**（清单 `prompt.sections`），收集成 `src/brain.js` 认的形状。
@@ -481,6 +503,9 @@ function armRuntimeSecrets(cfg) {
     cfg.llm?.apiKey,
     ...Object.values(cfg.llm?.keys ?? {}),
     cfg.onebot?.accessToken,
+    // 官方机器人的 AppSecret 与上面几个是同一类东西：一旦进了日志就是凭据泄露，
+    // 而它**不能重置**（官方 FAQ），所以这条不是可选的收尾，是唯一的止损点。
+    cfg.channel?.official?.appSecret,
   ]);
 }
 
@@ -594,7 +619,25 @@ async function main() {
   const store = new SessionStore(cfg);
   const brain = new Brain(cfg, store);
   const llm = new LlmClient(cfg.llm);
-  const bot = new OneBotClient(cfg.onebot);
+  // 出口由通道工厂决定（2026-11-06）：官方机器人 / NapCat 同一时间只跑一条，
+  // 切换要重启 —— 所以这里是一次性构造，运行期不再换。
+  const channel = createChannelClient(cfg, { getCfg: () => cfg });
+  const bot = channel.client;
+  const channelId = channel.id;
+  const isOfficialChannel = channelId === 'official';
+  /**
+   * 官方通道做不到的事，**每处只说一次**（与"静默 catch"是两种东西）：
+   * 记一条明确的"这一项在官方通道不可用"，而不是把异常吞掉让用户以为它还在跑。
+   */
+  const officialSkipped = new Set();
+  function skipOnOfficial(feature, reason) {
+    if (!isOfficialChannel) return false;
+    if (!officialSkipped.has(feature)) {
+      officialSkipped.add(feature);
+      log.info(`官方通道：${feature} 不可用（${reason}）—— 已跳过，其余链路照常跑`);
+    }
+    return true;
+  }
   // 每条真正发出去的消息记一笔（面板「今日发言」的唯一来源）。
   // 挂在这里而不是主回复循环：主动出站、工具发图、插件 sender 也都走 sendMsg。
   {
@@ -609,9 +652,14 @@ async function main() {
       recordSent: recordSentRound,
     });
   }
-  // ⚠️ 驱动只包 `call` 与后端表，不接管连接/心跳 —— 那两件事仍归 OneBotClient，
-  // 面板读到的 healthSnapshot 也仍来自同一个客户端（不产生第二个真相源）。
-  const onebot = createOneBotDriver({ client: bot, backend: cfg.onebot.backend });
+  // ⚠️ 驱动只包 `call` 与后端表，不接管连接/心跳 —— 那两件事仍归客户端自己，
+  // 面板读到的 healthSnapshot 也仍来自同一个对象（不产生第二个真相源）。
+  // 官方通道不走 `auto` 识别：它没有 get_version_info，后端身份只由 channel.mode 决定。
+  const onebot = createOneBotDriver({
+    client: bot,
+    backend: isOfficialChannel ? 'official' : cfg.onebot.backend,
+  });
+  channelSnap = { id: channelId, label: channel.label, backend: onebot.backend };
   // ⚠️ 必须是 let：globalConcurrency 改了之后 reload() 会重建信号量（见下方 reload）。
   //    旧实现只在启动时建一次，改并发数要重启才生效，面板还不提示。
   let gate = createSemaphore(cfg.throttle.globalConcurrency);
@@ -629,6 +677,8 @@ async function main() {
   const friendsCache = { at: 0, ids: new Set() };
   let friendsFetching = null;
   async function refreshFriends() {
+    // 官方通道没有好友表接口：不跳过的话，每次 ready 都会白打一次并留一条误导性的 warn。
+    if (skipOnOfficial('好友表（好友私聊按群友接待）', '官方通道没有 get_friend_list')) return;
     if (friendsFetching) return friendsFetching;
     friendsFetching = (async () => {
       try {
@@ -771,6 +821,7 @@ async function main() {
 
   /** 从一条消息里取图片段给的地址（`get_msg` 的 data.url / data.file）。只读，不下载。 */
   async function imageUrlFromMessage(messageId) {
+    if (skipOnOfficial('按消息号回查图片', '官方通道没有 get_msg')) return '';
     const r = await bot.call('get_msg', { message_id: Number(messageId) }, 10000);
     const segs = Array.isArray(r?.message) ? r.message : [];
     for (const seg of segs) {
@@ -924,6 +975,21 @@ async function main() {
   const sendGuard = createSendGuard({ bus: hookBus, log });
 
   /**
+   * 目标 id 的形态（2026-11-06）：**数字号转数字，openid 保持字符串**。
+   *
+   * 原来两个 sender 方法都写死 `Number(rawId)`，在 NapCat 上是对的（群号/QQ 号都是数字）。
+   * 官方通道的群与人都是 32 位十六进制串，`Number()` 直接变 `NaN` ——
+   * 而 `NaN` 进了请求体不会报错，只会让平台回一句"参数不对"，
+   * 表现成"扩展包在官方通道一发就全废"。判据只在这里做一次，调用点不许各写一遍。
+   */
+  function targetIdArg(rawId) {
+    const s = String(rawId ?? '').trim();
+    if (!s) return s;
+    const n = Number(s);
+    return Number.isFinite(n) && /^\d+$/.test(s) ? n : s;
+  }
+
+  /**
    * 扩展包用的 sender 适配器（第 47 轮 B12e-3）。
    * 「合并转发发送」优先走 `ctx.sender.sendSegments(target, segments)`
    * （参考实现 orchestrator.js:897 同形状）；没有适配器时它会退回 `ctx.onebot.call`，
@@ -940,7 +1006,7 @@ async function main() {
       }
       const action = kind === 'private' ? 'send_private_forward_msg' : 'send_group_forward_msg';
       const key = kind === 'private' ? 'user_id' : 'group_id';
-      return onebot.call(action, { [key]: Number(rawId), messages: fwd.data });
+      return onebot.call(action, { [key]: targetIdArg(rawId), messages: fwd.data });
     },
     /**
      * 发一张图（2026-10-15 修 · 对应「小鱼发不出图片」/ Issue #5 同族）。
@@ -966,7 +1032,7 @@ async function main() {
       if (!rawId || !file) throw new Error('sendImage 需要 target 与图片地址');
       const action = kind === 'private' ? 'send_private_msg' : 'send_group_msg';
       const key = kind === 'private' ? 'user_id' : 'group_id';
-      return onebot.call(action, { [key]: Number(rawId), message: [imageSegment(file)] });
+      return onebot.call(action, { [key]: targetIdArg(rawId), message: [imageSegment(file)] });
     },
   };
 
@@ -1301,6 +1367,9 @@ async function main() {
   function startTyping(scene, id) {
     const tuning = waitTuningOf(cfg.custom);
     if (!tuning.enabled || !tuning.typing || scene !== 'private') return () => {};
+    // 官方的"输入中"要单独占一次消息名额（msg_type 6），每 5 秒一次会把被动配额吃光，
+    // 而气泡只是视觉效果 —— 本批明确不接，而不是接了之后靠配额报错才发现。
+    if (skipOnOfficial('正在输入气泡', '官方的输入中状态要占一次消息名额')) return () => {};
     const userId = Number(id);
     if (!Number.isFinite(userId)) return () => {};
     let stopped = false;
@@ -3686,6 +3755,9 @@ async function main() {
   // B4：协议端健康与配置快照同一拍落盘 —— 面板拿到的两个时刻因此不会差出整整一轮。
   setInterval(() => {
     onebotHealthSnap = bot.healthSnapshot();
+    // 后端识别是异步的（auto 要连上才问得到），所以这里跟着刷一次，
+    // 面板才能把"我想要哪家"与"实际连上的那家"分开显示。
+    channelSnap = { id: channelId, label: channel.label, backend: onebot.backend };
     writeEffective(cfg);
   }, EFFECTIVE_INTERVAL_MS);
 

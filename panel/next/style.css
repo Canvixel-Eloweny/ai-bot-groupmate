@@ -910,6 +910,19 @@ a:hover { text-decoration: underline; }
 .banner b { flex: none; }
 .banner .spacer { flex: 1; }
 .banner .btn { flex: none; }
+.banner-x {
+  flex: none; align-self: flex-start;
+  display: grid; place-items: center;
+  width: 28px; height: 28px; margin: 0 -6px 0 0; padding: 0;
+  border: 0; border-radius: 50%;
+  background: transparent; color: var(--c-text-3);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.banner-x:hover { background: color-mix(in srgb, currentColor 12%, transparent); color: var(--c-text-1); }
+.banner-x:active { background: color-mix(in srgb, currentColor 20%, transparent); }
+.banner-x:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+.banner-x svg { width: 14px; height: 14px; }
 
 /* ══ 吸顶导航 · 连续肩线（2026-10-22）══════════════════════════════════
    一条玻璃：一级 48px 胶囊在上，二级 30px 窄条在下；中间用 42 × 11.5 的三次
@@ -1407,6 +1420,26 @@ body.is-frame-page .foot { display: none; }
 .f-lb .spacer { flex: 1; }
 .f-inline { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; min-width: 0; }
 .f-inline > .grow { flex: 1; min-width: 140px; }
+/* 设置行（2026-11-05 排版）：数字 / 单行文本 / 时间 / 下拉这类**短输入**不再
+   「标签一行 + 控件一行 + 说明一行」竖排 —— 那样在 1168px 宽的卡里，一个 130px
+   的输入框右边会空出约 1000px，整页被拉得比内容长得多。
+   这里改成标签在左、控件贴右、说明另起一行；控件列用百分比夹在 120–260px 之间，
+   所以 span-6 的窄卡和 span-12 的宽卡都贴边，不需要各写一套。
+   ⚠️ textarea 与 `wide` 输入**不进**这一档（由 `fieldInput()` 的 `row` 判定），
+      它们的值本来就长，压进右列会看不清。
+   ⚠️ ≤700px 退回竖排：两列在手机上会把控件压成一条缝。 */
+.f-row {
+  grid-template-columns: minmax(0, 1fr) clamp(120px, 34%, 260px);
+  align-items: center; column-gap: var(--s3);
+}
+.f-row > .f-lb { grid-column: 1; grid-row: 1; }
+.f-row > input, .f-row > select { grid-column: 2; grid-row: 1; width: 100%; }
+.f-row > .hint { grid-column: 1 / -1; grid-row: 2; }
+@media (max-width: 700px) {
+  .f-row { grid-template-columns: minmax(0, 1fr); }
+  .f-row > input, .f-row > select { grid-column: 1; grid-row: 2; }
+  .f-row > .hint { grid-column: 1; grid-row: 3; }
+}
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
 .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); }
 @media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: minmax(0, 1fr); } }
@@ -3326,6 +3359,9 @@ html[data-theme="dark"] .fx-wipe {
   display: grid; place-items: center; gap: 6px; min-height: 240px;
   text-align: center; color: var(--c-text-3); font-size: var(--t-sm);
 }
+/* 排版（2026-11-05）：会话还没启动时不摆 48vh 的空板 —— 空态收到 26vh，
+   一旦真有消息就回到上面的聊天高度（那条 `height` 仍生效）。 */
+.chat-log:has(.chat-empty) { height: clamp(180px, 26vh, 280px); }
 .chat-empty b { color: var(--c-text-2); font-weight: 500; }
 .chat-msg { display: flex; margin: 0 0 var(--s3); }
 .chat-msg.user { justify-content: flex-end; }

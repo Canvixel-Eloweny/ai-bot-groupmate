@@ -540,7 +540,8 @@ html[data-theme="dark"] .set-rail-hp {
 }
 .set-foot {
   position: relative; z-index: 1;
-  flex: none; display: flex; align-items: center; gap: 10px;
+  /* 2026-11-08：footer 现在有一颗复位链接（§191「恢复横幅提示」）+ 一颗恢复外观，窄宽度下必须允许换行。 */
+  flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
   padding: 10px 18px;
   border-top: 1px solid var(--c-line-soft);
   background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);

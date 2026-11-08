@@ -24,7 +24,9 @@ export function createOneBotDriver({ client, backend = 'auto' } = {}) {
   if (!client || typeof client.call !== 'function') {
     throw new Error('createOneBotDriver 需要一个有 call() 的 client');
   }
-  const configured = normalizeBackend(backend);
+  // `allowOfficial` 只在这里开：driver 拿到的是 index **按 channel.mode 决定之后**
+  // 传进来的值，而 `config.js` 里那一次归一化不开这个口子（见 registry.js 的注释）。
+  const configured = normalizeBackend(backend, { allowOfficial: true });
   let resolved = configured === 'auto' ? 'generic' : configured;
   let detection = null;
 

@@ -251,12 +251,19 @@
   }
 
   /* ── 数据项：全部来自真实 /api/state ─────────────────────────────── */
+  function officialInfoOf(code) {
+    return (window.OfficialStatus && window.OfficialStatus.codeInfo(code)) || { zh: String(code || '未知'), tone: 'idle', ok: false };
+  }
+
   function valueOfItem(id) {
     var s = state.data;
     var online = state.online && !!s;
     if (!s) {
       return { label: (ITEM[id] || ITEM.usage).title, context: '', primary: '读取中', unit: '', rightLabel: '', right: '', suffix: '', ratio: null, tone: 'idle', primaryText: true };
     }
+    /* 当前通道（2026-11-07）：官方模式下 NapCat/Docker 那几项要换口径 ——
+       读 channel.mode；演示态没有时回落 napcat，行为不变。 */
+    var chMode = j(s, ['channel', 'mode'], 'napcat');
     if (id === 'usage') {
       var u = s.usage || {};
       var t = u.today || {};
@@ -377,6 +384,25 @@
       };
     }
     if (id === 'container') {
+      if (chMode === 'official') {
+        /* 官方模式没有 Docker/容器这一格；改读官方通道健康（网关/凭据/群绑定）。 */
+        var ocC = (s.channel && s.channel.official) ? s.channel.official : {};
+        var infoC = officialInfoOf(j(s, ['onebot', 'code'], 'no-snapshot'));
+        var cfgC = j(s, ['channel', 'configured'], false) === true;
+        var boundC = Number(ocC.groupsBound) || 0;
+        return {
+          label: '协议端',
+          context: '官方通道' + (boundC ? ' · 群绑定 ' + boundC : ''),
+          primary: cfgC ? infoC.zh : '待配置',
+          unit: '',
+          rightLabel: '群绑定',
+          right: boundC + ' 个',
+          suffix: '',
+          ratio: cfgC ? (infoC.ok ? 1 : (j(s, ['onebot', 'code'], '') === 'connecting' ? .4 : 0)) : .15,
+          tone: cfgC ? infoC.tone : 'warn',
+          primaryText: true
+        };
+      }
       var c = s.container || {};
       if (c.applicable === false) {
         return { label: '协议端', context: '原生 NapCat', primary: '已登录', unit: '', rightLabel: '运行', right: 'OK', suffix: '', ratio: 1, tone: 'ok', primaryText: true };
@@ -406,6 +432,23 @@
       };
     }
     if (id === 'link') {
+      if (chMode === 'official') {
+        /* 官方模式没有 WS/HTTP 本地端口可看；读事件网关状态 + 凭据是否配好。 */
+        var infoL = officialInfoOf(j(s, ['onebot', 'code'], 'no-snapshot'));
+        var cfgL = j(s, ['channel', 'configured'], false) === true;
+        return {
+          label: '连接',
+          context: '官方通道',
+          primary: infoL.zh,
+          unit: '',
+          rightLabel: '凭据',
+          right: cfgL ? '已配' : '未配',
+          suffix: '',
+          ratio: infoL.ok ? 1 : .15,
+          tone: infoL.tone,
+          primaryText: true
+        };
+      }
       var o = s.onebot || {};
       var ok = o.code === 'ok';
       var ports = s.ports || {};
@@ -455,6 +498,24 @@
         suffix: '',
         ratio: connected ? (stale ? .2 : 1) : 0,
         tone: !connected ? 'warn' : (stale ? 'warn' : 'ok'),
+        primaryText: true
+      };
+    }
+    if (chMode === 'official') {
+      /* 官方模式的身份来自机器人自报的快照，不是 NapCat 的「OneBot v11 扫码登录」。 */
+      var aO = s.account || {};
+      var ocA = (s.channel && s.channel.official) ? s.channel.official : {};
+      var infoA = officialInfoOf(j(s, ['onebot', 'code'], 'no-snapshot'));
+      return {
+        label: '在线账号',
+        context: '官方机器人',
+        primary: ocA.selfName || aO.nickname || '未取到',
+        unit: '',
+        rightLabel: '状态',
+        right: infoA.zh,
+        suffix: '',
+        ratio: infoA.ok ? 1 : 0,
+        tone: infoA.tone,
         primaryText: true
       };
     }

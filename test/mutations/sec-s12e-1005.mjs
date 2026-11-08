@@ -67,13 +67,15 @@ const N2 = {
 const N3 = {
   id: 'N3',
   note: '把 `[\'bridge\', \'lock\', \'pid\']` 的读法接回 app.js —— 已退役的实例锁告警会重新出现。预期 BLOCKED（§43 反向）',
-  anchor: /  const upd = UPD\.state \|\| j\(s, \['update'\], null\);/,
+  // ⚠️ 2026-11-08 §191：横幅条件从 renderBanners 的 `const upd = ...` 搬进了 cond 对象，
+  //    锚点跟着换到 cond 里的 `update:` 那一行；注入形状也换成同层的对象成员（不再是 out.push）。
+  //    ⚠️ 别用 `^…$`：hitsOf 只补 g 不补 m，行首行尾锚会变成"整文件首尾"，命中数必为 0。
+  anchor: / {4}update: UPD\.state \|\| j\(s, \['update'\], null\),/,
   count: 1,
   file: APP,
   apply: (s) => s.replace(
-    "  const upd = UPD.state || j(s, ['update'], null);",
-    "  if (j(s, ['bridge', 'lock'])) out.push('<div class=\"banner\">lock</div>');\n"
-      + "  const upd = UPD.state || j(s, ['update'], null);"),
+    "    update: UPD.state || j(s, ['update'], null),",
+    "    lock: j(s, ['bridge', 'lock', 'pid'], null),\n    update: UPD.state || j(s, ['update'], null),"),
   layer: 'check-wb',
   expect: 'BLOCKED',
 };

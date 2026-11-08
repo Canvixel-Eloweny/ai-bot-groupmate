@@ -28,6 +28,9 @@ import { budgetOf } from '../src/context-budget.js';
 import { DEFAULT_LAUNCH } from '../src/launch-mode.js';
 // L3 聚合层：后端选择的默认值只从唯一注册表取，不在这里手写 'auto'。
 import { normalizeBackend } from '../src/backend/registry.js';
+// 消息通道的默认值同样只从唯一判据取（2026-11-06）：模板里手写 'official' 的话，
+// 改默认值的人只会改 src/channel-mode.js，而模板留在旧值上 —— 那正是本脚本存在的理由。
+import { DEFAULT_CHANNEL_MODE } from '../src/channel-mode.js';
 // 移植 Win-v0.1.2：新自定义段的默认值只从 `readCustom` 取，不在这里手写数字。
 import { readCustom } from '../src/custom-config.js';
 
@@ -53,6 +56,21 @@ const tuning = interjectTuningOf({});
 // 否则"照着模板配不出后端选择"（与下面 m-4 那批漏键同一个形态）。
 example.onebot = example.onebot || {};
 example.onebot = { backend: normalizeBackend(undefined), ...example.onebot };
+
+// ── 消息通道（2026-11-06）───────────────────────────────────────────────
+// 真实 config.json 里没有 channel 键 = 老配置，**不能**因此让模板也没有这一节：
+// 全新安装读的是模板，而 `loadConfig` 正是靠"读的是模板"来判定这是新装并默认官方。
+// 模板里缺这一节，新装就会被判成 legacy 走 NapCat —— 默认值形同没落地。
+example.channel = {
+  mode: DEFAULT_CHANNEL_MODE,
+  official: { appId: '', appSecret: '' },
+  bindings: { groups: {} },
+  ...(isPlainObject(example.channel) ? example.channel : {}),
+};
+example.channel.official = { appId: '', appSecret: '', ...(isPlainObject(example.channel.official) ? example.channel.official : {}) };
+example.channel.bindings = { groups: {}, ...(isPlainObject(example.channel.bindings) ? example.channel.bindings : {}) };
+
+function isPlainObject(v) { return v && typeof v === 'object' && !Array.isArray(v); }
 
 example.trigger = example.trigger || {};
 // 注意方向：**输入键名**是 `interjectXxx`（`config.js` 把归一化后的结果摊平进 cfg.trigger，

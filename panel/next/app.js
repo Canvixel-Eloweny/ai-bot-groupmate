@@ -783,6 +783,18 @@ const ACTIONS = {
       toast('已取消下载', 'warn');
     } catch (e) { toast(`取消失败：${e.message}`, 'bad'); }
   },
+  'update.dismiss': async (version) => {
+    const v = String(version || '');
+    if (!v) { toast('没有可隐藏的更新版本', 'warn'); return; }
+    try {
+      const r = await post('/api/update/dismiss', { version: v });
+      if (!r.ok) { toast(r.error || '隐藏更新提示失败', 'bad'); return; }
+      UPD.state = r;
+      paintUpdateBox();
+      renderBanners();
+      toast('已隐藏此版本提示；可在设置里随时更新', 'ok');
+    } catch (e) { toast(`隐藏更新提示失败：${e.message}`, 'bad'); }
+  },
   'update.install': async () => {
     if (!(await confirmToast('应用将关闭，安装完成后重新打开。', { title: '现在安装？', tone: 'warn', okLabel: '现在安装' }))) return;
     try {
@@ -828,6 +840,15 @@ const ACTIONS = {
     } finally {
       busy(false);
     }
+  },
+  /* 横幅的「不再提示」（§191）。升级横幅不在这里 —— 它走上面的 update.dismiss。 */
+  'banner.dismiss': async (kind) => {
+    const k = String(kind || '');
+    if (!dismissBanner(k)) { toast('未知提示项，未记录', 'warn'); return; }
+    renderBanners();
+    toast(BANNER_KINDS[k] === 'latch'
+      ? '已隐藏这条提示；它再次出现时还会提醒（设置 → 恢复横幅提示）'
+      : '已不再提示这条（设置 → 恢复横幅提示）', 'ok');
   },
   'protocol.start': async () => { busy(true, '拉起协议端…'); try { const r = await post('/api/protocol/start'); toast(r.msg || '已发起', r.ok ? 'ok' : 'bad'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'napcat.restart': async () => { busy(true, '重启容器…'); try { const r = await post('/api/napcat/restart'); toast(r.output || '已重启', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
@@ -910,6 +931,68 @@ const ACTIONS = {
       toast('已全部恢复显示', 'ok');
       await refresh(true);
     } catch (e) { toast(`失败：${e.message}`, 'bad'); }
+  },
+  /* ── 官方通道：绑定与凭据校验（2026-11-06）────────────────────────────
+     三条写路由都要**刷新后再说话**：绑定改的是 allow.groups / owner.qq，
+     机器人热重载要一两秒，先弹"已绑定"再刷新会读到旧状态（与保存设置那族同一个坑）。 */
+  'channel.bind': async (openid) => {
+    const groupId = String($id(`cb-${openid}`)?.value || '').trim();
+    if (!/^\d{5,12}$/.test(groupId)) return toast('群号要填 5–12 位纯数字（就是 QQ 群里那个群号）', 'warn');
+    try {
+      const r = await post('/api/channel/bind', { openid, groupId });
+      if (r && r.ok === false) return toast(r.error || '没绑上', 'bad');
+      toast(r?.addedToAllow ? `已绑定到群 ${groupId}，并加进了群白名单` : `已绑定到群 ${groupId}（白名单没动）`, 'ok');
+      await refresh(true);
+    } catch (e) { toast(`失败：${e.message}`, 'bad'); }
+  },
+  'channel.unbind': async (openid) => {
+    if (!(await confirmToast('解绑这个群？历史数据与白名单都不会被删，之后它的消息会按 openid 独立处理。'))) return;
+    try {
+      const r = await post('/api/channel/unbind', { openid });
+      if (r && r.ok === false) return toast(r.error || '没解成', 'bad');
+      toast(r?.msg || '已解绑', 'ok');
+      await refresh(true);
+    } catch (e) { toast(`失败：${e.message}`, 'bad'); }
+  },
+  'channel.owner': async (p) => {
+    const [openid, action] = String(p).split('|');
+    if (!openid) return toast('这条没有 openid，刷新一下页面再看', 'warn');
+    try {
+      const r = await post('/api/channel/owner', { openid, remove: action === 'remove' });
+      if (r && r.ok === false) return toast(r.error || '没改成', 'bad');
+      toast(r?.msg || (action === 'remove' ? '已撤销' : '已设为主人'), 'ok');
+      await refresh(true);
+    } catch (e) { toast(`失败：${e.message}`, 'bad'); }
+  },
+  'channel.test': async () => {
+    busy(true, '正在问官方接口…');
+    try {
+      const r = await post('/api/channel/test', {});
+      // 结果只在这屏说一句，全过程写进控制台日志页 —— 那里才有每一步的原文可抄去提问。
+      toast(r?.ok ? '官方通道四步都通（细节在「日志」页）' : `自检没过：${(r?.output || '').split('\n').find((l) => l.startsWith('✗')) || '看「日志」页'}`,
+        r?.ok ? 'ok' : 'bad');
+    } catch (e) { toast(`自检没跑起来：${e.message}`, 'bad'); } finally { busy(false); }
+  },
+  /* 通道切换后的一键生效（2026-11-06 维护者点名要"切完立刻显示"）。
+     出口在启动时一次性决定，所以"生效"只能是重启 —— 走的是既有的
+     `/api/bridge/stop` + `/api/bridge/start` 这条受支持链，不裸杀进程。
+     ⚠️ 停的那一步失败**不能挡住启动**：机器人本来就没在跑时 stop 会回失败，
+     那时候用户要的就是"直接起"，卡在这里就变成"点了没反应"。 */
+  'channel.restart': async () => {
+    const running = Boolean(j(S.state || DEMO, ['bridge', 'running'], false));
+    if (running && !(await confirmToast('重启机器人才会加载新通道？会中断当前会话几十秒。', { okLabel: '重启' }))) return;
+    busy(true, running ? '重启机器人…' : '启动机器人…');
+    try {
+      if (running) {
+        try { await post('/api/bridge/stop'); } catch { /* 没在跑或已经停了：继续启动 */ }
+      }
+      const r = await post('/api/bridge/start');
+      toastResult(r, running ? '已重启，新通道已加载' : '已启动，新通道已加载');
+      await refresh(true);
+    } catch (e) {
+      toast(`启动失败：${e.message}`, 'bad');
+      await refresh(true);
+    } finally { busy(false); }
   },
   'mem.auto.clear': async () => { if (!(await confirmToast('清空历史存量？手动记忆与结构化记忆不受影响。', { okLabel: '清空' }))) return; try { const r = await post('/api/custom/memory/clear'); toastResult(r, '已清空'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
   'mem.auto.del': async (id) => { try { const r = await post('/api/custom/memory/delete', { id }); toastResult(r, '已删除'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } },
@@ -1943,49 +2026,134 @@ function paintTop() {
  */
 let bannersHtml = '';
 
+/* ══ 横幅「不再提示」（2026-11-07 · §191）════════════════════════════════════
+   两种语义，都只影响横幅，不拦任何功能：
+     · latch     关掉只静音这一次；条件恢复正常一次，记录就作废 ⇒ 下次再坏还会提醒。
+                 这类横幅说的是"此刻坏了"，永久静音等于把报警器拆掉。
+     · permanent 关掉到底（非官方界面）。
+   记本机 localStorage：状态类横幅出现的当下后端往往不可达（离线 / 后端无响应），
+   服务端写不进去。升级横幅是另一套 —— 按版本记在服务端 update/state.json（§154④），这里不碰。 */
+const BANNER_DISMISS_KEY = 'next-banner-dismiss-v1';
+const BANNER_KINDS = Object.freeze({
+  demo: 'latch',
+  'no-backend': 'latch',
+  'no-token': 'latch',
+  'panel-stale': 'latch',
+  memory: 'latch',
+  unofficial: 'permanent',
+});
+
+function readBannerDismiss() {
+  try {
+    const o = JSON.parse(localStorage.getItem(BANNER_DISMISS_KEY) || '{}');
+    return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+  } catch { return {}; }
+}
+function writeBannerDismiss(map) {
+  try { localStorage.setItem(BANNER_DISMISS_KEY, JSON.stringify(map)); } catch { /* 隐私模式：只记这一轮 */ }
+}
+/** 未知 kind 一律不记 —— 拼错的键会在 localStorage 里躺一辈子，而且谁也看不见它。 */
+function dismissBanner(kind) {
+  if (!Object.prototype.hasOwnProperty.call(BANNER_KINDS, kind)) return false;
+  const m = readBannerDismiss();
+  m[kind] = 1;
+  writeBannerDismiss(m);
+  return true;
+}
+function resetBannerDismissAll() {
+  try { localStorage.removeItem(BANNER_DISMISS_KEY); } catch { /* 隐私模式 */ }
+}
+/** 条件已经过去的 latch 项，记录一律作废；permanent 项不动。 */
+function resetBannerLatches(liveKinds) {
+  const m = readBannerDismiss();
+  let changed = false;
+  for (const k of Object.keys(m)) {
+    if (BANNER_KINDS[k] !== 'latch' || liveKinds.has(k)) continue;
+    delete m[k];
+    changed = true;
+  }
+  if (changed) writeBannerDismiss(m);
+}
+function bannerClose(kind) {
+  const label = BANNER_KINDS[kind] === 'latch'
+    ? '不再提示（这个问题再次出现时还会提醒）'
+    : '不再提示';
+  return `<button class="banner-x" type="button" data-a="banner.dismiss" data-p="${esc(kind)}" aria-label="${label}" title="${label}">${TOAST_CLOSE}</button>`;
+}
+
+/**
+ * 横幅的唯一实现：条件 → 节点。`renderBanners` 从真实状态推导条件，自检（panel-dom）
+ * 直接传夹具跑这个纯函数 —— "六条都挂得上圆钮"因此不依赖当场凑出六个条件。
+ * 返回的 `live` 是**条件成立**的 kind（含已静音的），latch 复位只看它。
+ */
+function collectBanners(c, dismissed) {
+  const nodes = [];
+  const live = [];
+  const add = (kind, html) => {
+    live.push(kind);
+    if (dismissed[kind]) return;
+    nodes.push({ kind, html: `${html}${bannerClose(kind)}</div>` });
+  };
+  if (!c.online) {
+    if (c.shellApi) {
+      add('no-backend', `<div class="banner bad"><b>控制台后端没有响应</b><span class="spacer"></span>
+        <span>窗口还在，但面板进程已经退出。可以直接重新拉起，不用关掉窗口；机器人不受影响。</span>
+        <button class="btn btn-sm" data-a="panel.restart">重启面板</button>
+        <button class="btn btn-sm" data-a="panel.quit">退出控制台</button>`);
+    } else {
+      add('demo', `<div class="banner info"><b>演示模式</b><span class="spacer"></span>
+        <span>这一页没有连上后端。要看真实数据：在项目根目录跑 <code>node tools/serve-next.mjs</code>，然后打开它给出的地址。</span>`);
+    }
+  }
+  if (c.online && !c.hasToken) {
+    add('no-token', `<div class="banner"><b>没拿到面板 token</b><span class="spacer"></span>
+      <span>读正常，写会被拒。用控制台图标重开一次（服务端会把 token 注入页面）。</span>`);
+  }
+  if (c.online && c.panelStale) {
+    add('panel-stale', `<div class="banner"><b>面板服务端是旧代码</b><span class="spacer"></span>
+      <span>磁盘上的 <code>panel/server.js</code> 或 <code>panel/lib/</code> 比正在跑的进程新，新接口还没生效（表现为某些按钮点了没反应）。</span>
+      <button class="btn btn-sm" data-a="panel.restart">重启面板</button>`);
+  }
+  if (c.memPressure >= 90) {
+    add('memory', `<div class="banner"><b>内存很紧</b><span class="spacer"></span>
+      <span>占用 ${c.memPressure}%。再挤下去 Docker 会被系统悄悄杀掉（表现为"容器凭空消失"）—— 建议先停本机模型。</span>`);
+  }
+  /* 升级横幅保持原样：kind:null ⇒ 不进本机记录，关闭钮仍走服务端按版本 dismiss。 */
+  const upd = c.update;
+  const updVer = upd && upd.latest && upd.latest.version ? String(upd.latest.version) : '';
+  const updDismissed = updVer && upd.dismissedVersion && String(upd.dismissedVersion) === updVer;
+  if (upd && upd.enabled && (upd.phase === 'available' || upd.phase === 'ready') && !updDismissed) {
+    const latest = upd.latest && upd.latest.version ? ` ${upd.latest.version}` : '';
+    nodes.push({ kind: null, html: `<div class="banner info"><b>${upd.phase === 'ready' ? '更新已下载' : `新版本${esc(latest)} 可用`}</b><span class="spacer"></span>
+      <span>${upd.phase === 'ready' ? '已校验通过，等你点「立即安装」；不会自动安装。' : '在「系统 → 面板维护」里下载并安装；不会自动安装。'}</span>
+      <button class="btn btn-sm" data-a="update.goto">查看更新</button>
+      ${updVer ? `<button class="banner-x" type="button" data-a="update.dismiss" data-p="${esc(updVer)}" aria-label="不再提示这个版本" title="不再提示这个版本">${TOAST_CLOSE}</button>` : ''}</div>`});
+  }
+  if (c.unofficial) {
+    const detail = c.unofficialMissing && c.unofficialMissing.length
+      ? `缺少 ${c.unofficialMissing.slice(0, 3).join('、')}`
+      : '核心界面骨架与官方签名不一致';
+    add('unofficial', `<div class="banner bad" data-ui-identity="unofficial"><b>检测到非官方界面</b><span class="spacer"></span>
+      <span>${esc(detail)}；功能可能仍正常，但这不是官方发布的界面。</span>`);
+  }
+  return { nodes, live };
+}
+
 function renderBanners() {
   const box = $id('banners');
   const s = S.state || DEMO;
-  const out = [];
-  if (!S.online) {
-    if (shellApi()) {
-      out.push(`<div class="banner bad"><b>控制台后端没有响应</b><span class="spacer"></span>
-        <span>窗口还在，但面板进程已经退出。可以直接重新拉起，不用关掉窗口；机器人不受影响。</span>
-        <button class="btn btn-sm" data-a="panel.restart">重启面板</button>
-        <button class="btn btn-sm" data-a="panel.quit">退出控制台</button></div>`);
-    } else {
-      out.push(`<div class="banner info"><b>演示模式</b><span class="spacer"></span>
-        <span>这一页没有连上后端。要看真实数据：在项目根目录跑 <code>node tools/serve-next.mjs</code>，然后打开它给出的地址。</span></div>`);
-    }
-  }
-  if (S.online && !HAS_TOKEN) {
-    out.push(`<div class="banner"><b>没拿到面板 token</b><span class="spacer"></span>
-      <span>读正常，写会被拒。用控制台图标重开一次（服务端会把 token 注入页面）。</span></div>`);
-  }
-  if (S.online && j(s, ['panel', 'stale'])) {
-    out.push(`<div class="banner"><b>面板服务端是旧代码</b><span class="spacer"></span>
-      <span>磁盘上的 <code>panel/server.js</code> 或 <code>panel/lib/</code> 比正在跑的进程新，新接口还没生效（表现为某些按钮点了没反应）。</span>
-      <button class="btn btn-sm" data-a="panel.restart">重启面板</button></div>`);
-  }
-  if (j(s, ['memory', 'pressure'], 0) >= 90) {
-    out.push(`<div class="banner"><b>内存很紧</b><span class="spacer"></span>
-      <span>占用 ${j(s, ['memory', 'pressure'])}%。再挤下去 Docker 会被系统悄悄杀掉（表现为"容器凭空消失"）—— 建议先停本机模型。</span></div>`);
-  }
-  const upd = UPD.state || j(s, ['update'], null);
-  if (upd && upd.enabled && (upd.phase === 'available' || upd.phase === 'ready')) {
-    const latest = upd.latest && upd.latest.version ? ` ${upd.latest.version}` : '';
-    out.push(`<div class="banner info"><b>${upd.phase === 'ready' ? '更新已下载' : `新版本${esc(latest)} 可用`}</b><span class="spacer"></span>
-      <span>${upd.phase === 'ready' ? '已校验通过，等你点「立即安装」；不会自动安装。' : '在「系统 → 面板维护」里下载并安装；不会自动安装。'}</span>
-      <button class="btn btn-sm" data-a="update.goto">查看更新</button></div>`);
-  }
-  if (UI_IDENTITY.state === 'unofficial') {
-    const detail = UI_IDENTITY.missing && UI_IDENTITY.missing.length
-      ? `缺少 ${UI_IDENTITY.missing.slice(0, 3).join('、')}`
-      : '核心界面骨架与官方签名不一致';
-    out.push(`<div class="banner bad" data-ui-identity="unofficial"><b>检测到非官方界面</b><span class="spacer"></span>
-      <span>${esc(detail)}；功能可能仍正常，但这不是官方发布的界面。</span></div>`);
-  }
-  const html = out.join('');
+  const { nodes, live } = collectBanners({
+    online: S.online,
+    shellApi: !!shellApi(),
+    hasToken: HAS_TOKEN,
+    panelStale: !!j(s, ['panel', 'stale']),
+    memPressure: j(s, ['memory', 'pressure'], 0),
+    unofficial: UI_IDENTITY.state === 'unofficial',
+    unofficialMissing: UI_IDENTITY.missing || [],
+    update: UPD.state || j(s, ['update'], null),
+  }, readBannerDismiss());
+  resetBannerLatches(new Set(live));
+  const html = nodes.map((x) => x.html).join('');
   if (html === bannersHtml) return; // 没变就别重建 —— 那颗「重启面板」会被整块换掉（见上方注释）
   bannersHtml = html;
   box.innerHTML = html;
@@ -2127,7 +2295,7 @@ function updateHtml() {
     case 'installing':
       return '<div class="upd-row"><span>正在启动安装器…应用即将关闭。</span></div>';
     case 'error':
-      return `<div class="upd-row"><span class="bad">${esc(u.error || '更新失败')}</span><span class="spacer"></span>${btn('重试', 'update.check')}</div>${tail}`;
+      return `<div class="upd-row"><span class="bad">${esc(u.error || '更新失败')}</span><span class="spacer"></span>${u.latest ? btn('继续下载', 'update.download', 'btn-primary') : btn('重试', 'update.check')}</div>${tail}`;
     default:
       return `<div class="upd-row"><span>当前版本 <b>${cur}</b></span><span class="spacer"></span>${btn('检查更新', 'update.check')}</div>${tail}`;
   }
@@ -3211,7 +3379,24 @@ function capChips(items, chipFn) {
  * 渲染时把**第一个 `ok: false`** 标成 `data-cur="1"`（复用 `.stp` 现成样式：实心点 + 强调环），
  * 视线自然落到"最该先处理的那一件"上 —— 本项目一贯的"把判断交给视觉，别让人读字符串"。
  */
+function officialCodeInfo(code) {
+  return ({
+    online:            { zh: '已连接',            tone: 'ok',   ok: true  },
+    connecting:        { zh: '连接中',            tone: 'warn', ok: false },
+    'no-snapshot':     { zh: '机器人没在跑',      tone: 'idle', ok: false },
+    unconfigured:      { zh: '缺 AppID / AppSecret', tone: 'warn', ok: false },
+    'auth-failed':     { zh: '凭据校验没过',      tone: 'bad',  ok: false },
+    terminal:          { zh: '被平台停用',        tone: 'bad',  ok: false },
+    'account-offline': { zh: '账号不在线',        tone: 'warn', ok: false },
+    stalled:           { zh: '事件流停摆',        tone: 'warn', ok: false },
+  })[code] || { zh: String(code || '未知'), tone: 'idle', ok: false };
+}
+/* 官方通道 code → 中文 / 色调 / 是否就绪的**唯一**词表（2026-11-07）：顶栏状态岛（island.js）也读它，
+   避免「官方 code」在两处各写一份后漂开。只是转述，不重算阶梯（值域见 src/official-liveness.js）。 */
+window.OfficialStatus = { codeInfo: officialCodeInfo };
+
 function readyChecklist(s) {
+  const officialMode = j(s, ['channel', 'mode'], 'napcat') === 'official';
   const wsOk = j(s, ['ports', 'onebotWs']) === true;
   const httpOk = j(s, ['ports', 'onebotHttp']) === true;
   const wsNo = j(s, ['ports', 'onebot', 'ws'], '');
@@ -3261,12 +3446,44 @@ function readyChecklist(s) {
       : qqOnline === false
         ? 'QQ 账号：自报离线 —— 等它重登或重新扫码'
         : 'QQ 账号：状态未知（协议端没自报）';
-  const out = [
-    { ok: qqOk, group: 'qq', txt: qqText },
-    { ok, group: 'proto',
+  const out = [];
+  if (officialMode) {
+    /* 官方通道（2026-11-07）：只讲官方健康 —— 事件网关 / 凭据 / 绑定 / 身份，
+       不再出现 Docker / 扫码 / 重启协议端 / 协议端没起来 这些 NapCat 专用催法。 */
+    const ocRaw = j(s, ['channel', 'official'], null);
+    const oc = (ocRaw && typeof ocRaw === 'object') ? ocRaw : {};
+    const configured = j(s, ['channel', 'configured'], false) === true;
+    const code = j(s, ['onebot', 'code'], 'no-snapshot');
+    const detail = j(s, ['onebot', 'detail'], '');
+    const info = officialCodeInfo(code);
+    const selfName = String(oc.selfName || '');
+    const selfId = String(oc.selfId || '');
+    const groupsBound = Number(oc.groupsBound) || 0;
+    const ownersBound = Number(oc.ownersBound) || 0;
+    const pendingN = Array.isArray(oc.pendingGroups) ? oc.pendingGroups.length : 0;
+    const tokenMs = Number((oc.token || {}).msLeft) || 0;
+    out.push({ ok: info.ok && !!selfId, group: 'qq',
+      txt: `官方机器人：${selfName || '还没取到名称'}${selfId ? ' · openid ' + selfId.slice(0, 12) + '…' : ''}`
+        + (info.ok ? '' : `（${info.zh}${detail ? ' —— ' + detail : ''}）`) });
+    out.push({ ok: info.ok, group: 'proto', txt: `事件网关：${info.zh}${!info.ok && detail ? ' —— ' + detail : ''}` });
+    out.push({ ok: configured, group: 'proto',
+      txt: `官方凭据：AppID ${oc.appId ? '已填' : '还没填'} · AppSecret ${oc.hasSecret ? '已保存' : '还没填'}`
+        + (tokenMs > 0 ? ` · 访问令牌约 ${Math.round(tokenMs / 60000)} 分钟后到期（自动续期）` : '')
+        + (configured ? '' : ' —— 去「运行 → 切换协议端」填上') });
+    out.push({ ok: groupsBound > 0, group: 'proto',
+      txt: `官方群绑定：${groupsBound} 个${pendingN ? ' · 另有 ' + pendingN + ' 个群等着绑定' : ''}`
+        + (groupsBound > 0 ? '' : ' —— 未绑定的群按 openid 独立工作，去「运行 → 切换协议端」绑') });
+    out.push({ ok: ownersBound > 0, group: 'proto',
+      txt: `主人绑定：${ownersBound} 个${ownersBound > 0 ? '' : ' —— 私聊与叫醒只认绑过的人，去「运行 → 切换协议端」设一个'}` });
+    if (j(s, ['channel', 'restartRequired'], false) === true) {
+      out.push({ ok: false, group: 'app', txt: '新通道或凭据还没加载 —— 点「重启加载新通道」生效（在「运行 → 切换协议端」页）' });
+    }
+  } else {
+    out.push({ ok: qqOk, group: 'qq', txt: qqText });
+    out.push({ ok, group: 'proto',
       txt: `协议端：WS ${wsNo || '—'} ${wsOk ? '在听' : '没在听'} · HTTP ${httpNo || '—'} ${httpOk ? '通' : '不通'}`
-        + (ok ? '' : ' —— 点「重启协议端」把协议端拉起来（首次要扫码）') },
-    { ...liveInfo, group: 'proto' },
+        + (ok ? '' : ' —— 点「重启协议端」把协议端拉起来（首次要扫码）') });
+    out.push({ ...liveInfo, group: 'proto' });
     /* 协议端**自报**的身份与版本（2026-10-20 补，数据来自同一处探测：
        `panel/lib/state-collector.js` 的 `/get_version_info` + `/get_status`）。
        上一行只说"有没有人答 HTTP"，这一行说"答的是谁、报的哪一版"——
@@ -3274,7 +3491,7 @@ function readyChecklist(s) {
        ⚠️ 这一行**恒绿**（只摆事实）：有的家没实现这两条动作（LLBot 未取证、官方群侧无此端点），
           把"它没答"报成故障等于把"这家没实现"说成"我方坏了"；而 `online/good` 是自报值，
           有的家写死 true，不能拿来当健康判据。 */
-    { ok: true, group: 'proto',
+    out.push({ ok: true, group: 'proto',
       txt: agent && agent.answered
         ? `协议端自报：${agent.appName || '未报名称'} ${agent.appVersion || '—'}`
           + ` · OneBot ${agent.protocolVersion || '—'}`
@@ -3282,13 +3499,13 @@ function readyChecklist(s) {
             ? ` · 自报 online=${agent.selfOnline ? 'yes' : 'no'} good=${agent.selfGood ? 'yes' : 'no'}（自报值，不作健康判据）`
             : '')
         : '协议端自报：这一家没有回答 get_version_info（NapCat / SnowLuma / Lagrange 有实现，'
-          + 'LLBot 未取证、官方群侧没有这个端点）—— 不影响使用' },
+          + 'LLBot 未取证、官方群侧没有这个端点）—— 不影响使用' });
     /* 机器人侧看到的协议端连接（B6 · 双时刻）：与上一行**并排**，不合并 ——
        上一行是"面板此刻问到了什么"，这一行是"机器人守着的 WS / 心跳 / 超时"。
        两个来源的采样周期不同（面板 3 秒轮询、机器人 20 秒刷快照），合成一句会让人
        以为它们是同一时刻的事实。⚠️ 恒绿：机器人没在跑 / 还没到第一次快照都只是
        "没有数据"，不是故障。 */
-    { ok: true, group: 'app',
+    out.push({ ok: true, group: 'app',
       txt: botHealth
         ? `机器人心跳：${botHealth.connected ? 'WS 已连' : 'WS 未连'}`
           + ` · 最后心跳 ${hhmmss(botHealth.lastHeartbeatAt)}`
@@ -3299,9 +3516,9 @@ function readyChecklist(s) {
             : botHealth.lastStatusOk === false ? '失败' : '还没问过'}`
           + ` · 动作超时 ${Number(botHealth.timeouts) || 0} 次`
           + ` · 面板探测 ${hhmmss(agent?.probedAt)}`
-        : `机器人心跳：机器人未在跑或还没到第一次快照（面板探测 ${hhmmss(agent?.probedAt)}）` },
-    { ok: true, group: 'app', txt: `控制台：pid ${j(s, ['panel', 'pid'], '—')} 运行中` },
-  ];
+        : `机器人心跳：机器人未在跑或还没到第一次快照（面板探测 ${hhmmss(agent?.probedAt)}）` });
+  }
+  out.push({ ok: true, group: 'app', txt: `控制台：pid ${j(s, ['panel', 'pid'], '—')} 运行中` });
   /* Key 只有**云端大脑**才需要（`keyNotNeeded` 是本机模型那一路）——
      本机模型下不摆这一行，免得说一句不适用的话。 */
   if (keyNeeded) {
@@ -3863,23 +4080,35 @@ function ovSideHtml(s) {
   const httpUp = j(s, ['ports', 'onebotHttp']) === true;
   const wsUp = j(s, ['ports', 'onebotWs']) === true;
   const nickname = String(j(s, ['account', 'nickname'], '') || '');
+  /* 官方通道（2026-11-07）：右栏也只讲官方健康 —— 不摆「拉起协议端 / 打开 QQ 登录 / 重启 QQ 容器」
+     这些 NapCat 专用操作；官方模式下要重启的是「通道」，对应 channel.restart。 */
+  const officialSide = j(s, ['channel', 'mode'], 'napcat') === 'official';
+  const officialInfo = officialCodeInfo(j(s, ['onebot', 'code'], 'no-snapshot'));
+  const officialName = String(j(s, ['channel', 'official', 'selfName'], '') || '');
+  const restartRequired = j(s, ['channel', 'restartRequired'], false) === true;
   const primary = running
     ? ''
     : ovActionButton('一键启动', 'onekey.start', 'ov-btn-primary', 'play');
   const stop = running
     ? ovActionButton('结束本次运行', 'onekey.stop', 'ov-btn-ghost', 'stop')
     : '';
+  const protoOk = officialSide ? officialInfo.ok : (wsUp && httpUp);
+  const protoHtml = officialSide
+    ? `<b>官方通道</b><span>${esc(officialInfo.zh + (officialName ? ' · ' + officialName : ''))}</span>`
+    : `<b>协议端</b><span>HTTP ${esc(j(s, ['ports', 'onebot', 'http'], '—'))} · WS ${esc(j(s, ['ports', 'onebot', 'ws'], '—'))} ${wsUp && httpUp ? '通' : '断'}</span>`;
   return `<div class="ov ov-side">
     <section class="card ov-panel ov-actions">
       <div class="ov-panel-h"><div><h3>运行控制</h3><p>右上角主操作 · 与顶栏同一组动作</p></div><span class="pill ${running ? 'ok' : 'bad'}"><span class="dot"></span>${running ? '在跑' : '未启动'}</span></div>
       <div class="ov-runline ${running ? '' : 'bad'}"><span class="dot"></span><b>机器人</b><span>${running ? `pid ${esc(j(s, ['bridge', 'pid'], '—'))} · ${esc(fmtDur(ovN(j(s, ['bridge', 'uptimeMs'], 0))))}` : '没在跑'}</span></div>
-      <div class="ov-runline ${wsUp ? '' : 'bad'}"><span class="dot"></span><b>协议端</b><span>HTTP ${esc(j(s, ['ports', 'onebot', 'http'], '—'))} · WS ${esc(j(s, ['ports', 'onebot', 'ws'], '—'))} ${wsUp && httpUp ? '通' : '断'}</span></div>
+      <div class="ov-runline ${protoOk ? '' : 'bad'}"><span class="dot"></span>${protoHtml}</div>
       <div class="ov-runline ${nickname ? '' : 'bad'}"><span class="dot"></span><b>QQ</b><span>${nickname ? esc(nickname) : '未登录'}</span></div>
       <div class="ov-act-grid">${primary}
-        ${ovActionButton('拉起协议端', 'protocol.start', 'ov-btn-ghost', 'network')}
+        ${officialSide ? '' : ovActionButton('拉起协议端', 'protocol.start', 'ov-btn-ghost', 'network')}
+        ${officialSide ? ovActionButton('校验凭据', 'channel.test', 'ov-btn-ghost', 'search') : ''}
         ${stop}
-        ${ovActionButton('打开 QQ 登录', 'open.webui', 'ov-btn-ghost', 'key')}
-        ${ovActionButton('重启 QQ 容器', 'napcat.restart', 'ov-btn-danger', 'reload')}
+        ${officialSide ? '' : ovActionButton('打开 QQ 登录', 'open.webui', 'ov-btn-ghost', 'key')}
+        ${officialSide ? '' : ovActionButton('重启 QQ 容器', 'napcat.restart', 'ov-btn-danger', 'reload')}
+        ${officialSide && restartRequired ? ovActionButton('重启加载新通道', 'channel.restart', 'ov-btn-primary', 'reload') : ''}
       </div>
     </section>
     ${ovLineHtml(s)}
@@ -5086,6 +5315,54 @@ const RENDER = {
      所以点完立即生效、不需要再按保存条。
      ⚠️ 最后一个还看得见的域**不给隐藏** —— 把控制台弄成零入口比留着它更坏，
         而且那种状态下用户连回到这里的路都没有。 */
+  /* ── 官方通道的群与身份绑定（2026-11-06）───────────────────────────────
+     为什么必须有这一屏：官方 API **没有"列群"接口**，也不给 QQ 号。
+     我们唯一能知道"有个新群把机器人拉进去了"的途径，是那条群里的消息推过来。
+     所以这张表是**事件驱动**的：出现 → 人工确认群号 → 绑定。
+     ⚠️ 绝不按昵称猜群、猜人 —— 名字会改、也能由陌生人自己填；
+        判据（形状、双向冲突）全在 `src/channel-binding.js`，这里只摆样子与发请求。 */
+  channelBind: () => {
+    const s = S.state || DEMO;
+    const ch = j(s, ['channel', 'official'], {}) || {};
+    const groups = j(s, ['channel', 'bindings', 'groups'], {}) || {};
+    const pending = ch.pendingGroups || [];
+    const members = ch.pendingMembers || [];
+    const ownerIds = j(s, ['channel', 'bindings', 'ownerIds'], []) || [];
+    const recv = ch.recvAll || {};
+    const short = (x) => String(x || '').slice(0, 10);
+    const rows = Object.entries(groups).map(([openid, v]) => {
+      const localId = String(v?.localId || '');
+      const state = recv[openid];
+      const recvTag = state === true ? '全量已开' : state === false ? '仅 @（群主关了）' : '收消息范围未知';
+      return `<div class="mem-filters" data-cb-group="${esc(openid)}">
+        <span class="mem-sub">群 ${esc(short(openid))}…</span>
+        <span class="mem-filter on">${esc(localId || '未绑群号')}</span>
+        <span class="mem-sub">${esc(v?.name || '')} · ${esc(recvTag)}</span>
+        <button class="btn btn-xs btn-ghost" data-a="channel.unbind" data-p="${esc(openid)}">解绑</button>
+      </div>`;
+    }).join('');
+    const todo = pending.map((g) => `<div class="mem-filters" data-cb-pending="${esc(g.openid)}">
+        <span class="mem-sub">${esc(short(g.openid))}…</span>
+        <span class="mem-sub">${esc(g.name || '群名要绑定后才查得到')}</span>
+        <input type="text" id="cb-${esc(g.openid)}" placeholder="这个群的群号" inputmode="numeric" />
+        <button class="btn btn-xs" data-a="channel.bind" data-p="${esc(g.openid)}">绑定</button>
+      </div>`).join('');
+    const owners = ownerIds.map((x) => `<span class="mem-filter on">主人 ${esc(short(x))}…
+        <button class="btn btn-xs btn-ghost" data-a="channel.owner" data-p="${esc(x)}|remove">撤销</button></span>`).join('');
+    const candidates = members.slice(0, 8).map((m) => `<span class="mem-filter">${esc(m.nickname || '(没昵称)')}
+        <button class="btn btn-xs btn-ghost" data-a="channel.owner" data-p="${esc(m.memberOpenid || m.member_openid || '')}">设为主人</button></span>`).join('');
+    return `<div class="mem-basis">
+      <summary>群与身份绑定（官方通道只给 openid，要人工确认一次）</summary>
+      <div class="mem-sub">已绑定 ${Object.keys(groups).length} 个群${pending.length ? ` · 待绑定 ${pending.length} 个` : ''}。
+        绑定后这个群沿用旧的会话键（人格 / 记忆 / 白名单接得上）；没绑定的群按 openid 独立工作。</div>
+      ${rows || '<div class="mem-sub">还没有绑定任何群。</div>'}
+      ${todo ? `<div class="mem-sub">待绑定的群（机器人在群里收到第一条消息后才会出现）：</div>${todo}` : ''}
+      <div class="mem-filters">${owners || '<span class="mem-sub">还没设过官方通道的主人</span>'}</div>
+      ${candidates ? `<div class="mem-sub">最近在这些群里说过话的人（点「设为主人」把你自己的那条绑上）：</div><div class="mem-filters">${candidates}</div>` : ''}
+      <div class="mem-sub">注意：群主要在手机 QQ 的群设置里打开「接收所有消息」，机器人才收得到不 @ 它的普通发言；
+        这一项没有可查询的接口，所以只能从事件里看出来（上面每行标的就是当前观察结果）。</div>
+    </div>`;
+  },
   panelTrim: () => {
     const hs = hiddenSets();
     /* 刻意复用记忆页那套 `mem-filter` / `mem-filters` / `mem-sub` 类：
@@ -7593,6 +7870,10 @@ function pluginSettingHtml(extId, f, kind = 'plugin') {
 }
 
 /* 通用输入控件 */
+/* 设置行（2026-11-05 排版）：短输入控件不再竖排成「标签一行 / 130px 输入框一行 /
+   说明一行」—— 在 1168px 宽的卡里那样右侧会空出约 1000px，整页被拉得比内容长。
+   改成标签在左、控件在右、说明另起一行。textarea 与显式 `wide` 的长输入仍占整行。 */
+const ROW_TYPES = new Set(['number', 'text', 'password', 'time', 'date', 'select']);
 function fieldInput(x, type) {
   S.reg.set(x.id, x);
   const v = valueOf(x);
@@ -7600,18 +7881,19 @@ function fieldInput(x, type) {
   const a = x.save || x.bind || x.bindSys ? `data-a="field"` : `data-a="field-local"`;
   const common = `${did(x)} ${a}${ref}`;
   const wide = x.wide ? 'class="grow"' : '';
+  const row = type !== 'textarea' && !x.wide && ROW_TYPES.has(type);
   let node;
   if (type === 'textarea') node = `<textarea rows="${x.rows || 2}" ${common} placeholder="${esc(x.ph || '')}">${esc(v ?? '')}</textarea>`;
   else if (type === 'select') {
     const opts = typeof x.options === 'function' ? x.options(S.state || DEMO) : x.options;
     node = `<select ${common} ${wide}>${(opts || []).map((o) => `<option value="${esc(o.v)}" ${String(o.v) === String(v) ? 'selected' : ''}>${esc(o.l)}</option>`).join('')}</select>`;
   } else if (type === 'number') {
-    node = `<input type="number" ${common} value="${esc(v ?? '')}" ${x.min != null ? `min="${x.min}"` : ''} ${x.max != null ? `max="${x.max}"` : ''} step="${x.step || 1}" ${x.readonly ? 'readonly' : ''} style="width:${x.wide ? '100%' : '130px'}" />`;
+    node = `<input type="number" ${common} value="${esc(v ?? '')}" ${x.min != null ? `min="${x.min}"` : ''} ${x.max != null ? `max="${x.max}"` : ''} step="${x.step || 1}" ${x.readonly ? 'readonly' : ''}${row ? '' : ` style="width:${x.wide ? '100%' : '130px'}"`} />`;
   } else {
     node = `<input type="${type}" ${common} value="${esc(v ?? '')}" placeholder="${esc(x.ph || '')}" ${x.readonly ? 'readonly' : ''} ${wide} autocomplete="off" />`;
   }
   const bounds = x.bounds ? boundHint(x.bounds) : '';
-  return `<div class="f">${lb(x, bounds)}${node}${hintOf(x)}</div>`;
+  return `<div class="f${row ? ' f-row' : ''}">${lb(x, bounds)}${node}${hintOf(x)}</div>`;
 }
 function boundHint(key) {
   const b = j(S.state, ['customMeta', 'fieldMeta', 'bounds', key], null);
@@ -8712,16 +8994,34 @@ document.addEventListener('change', async (ev) => {
     if (x.t === 'tags') v = String(v).split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
     if (a === 'field-local' || (!x.save && !x.bind && !x.bindSys)) { S.volatile[x.id] = v; paintPage(false); return; }
     if (x.save) {
+      let undo = null;
       try {
         const req = x.save(v, S.state || DEMO);
         if (!req) return;
+        /* 乐观重画（2026-11-07 维护者点名「切的时候就要有反馈」）：控件声明了
+           optimistic 就先把新值写进内存态并**直接** paintPage —— 不走 softPaint。
+           点完单选焦点正停在 radio 上，busyTyping() 恒真，softPaint 会被它挡掉
+           （这正是「切了通道要去总览点一次启动，框才出来」的根因）。单选点击没有在
+           输入的文字，重建页面不会吞光标；且 paintPage 会把那颗 radio 一起重建、
+           焦点落到 body，紧随其后的 refresh 就能正常重画派生值。
+           失败由 undo 戳回原值 —— 回滚的是内存态，盘上后端没写就是没写。 */
+        if (x.optimistic && S.state) {
+          undo = x.optimistic(v, S.state) || null;
+          if (undo) paintPage(false);
+        }
         await post(req.url, req.body);
+        await refresh(true);
         // ⚠️ 提示语可由控件声明（`savedMsg`）覆盖 —— "下次启动生效"这类设置上，
         //    通用文案「已生效」是句**假话**（保存成功 ≠ 立刻换了形态），
         //    而它会直接误导用户去刷新找变化。没声明的照旧用「已生效」。
-        toast(x.savedMsg || '已生效', 'ok');
+        //    savedMsg 可以是函数：放在 refresh **之后**读新状态（通道切完 configured
+        //    才是准的），否则会拿着旧值说一句不合时宜的话。
+        toast(typeof x.savedMsg === 'function' ? x.savedMsg(S.state || DEMO) : (x.savedMsg || '已生效'), 'ok');
+      } catch (e) {
+        if (undo) { undo(); paintPage(false); }
+        toast(`失败：${e.message}`, 'bad');
         await refresh(true);
-      } catch (e) { toast(`失败：${e.message}`, 'bad'); await refresh(true); }
+      }
       return;
     }
     setValue(x, v);
@@ -9154,6 +9454,9 @@ window.addEventListener('resize', () => {
     setAccent,
     setFontStyle,
     exportSelected: doExportSelected,
+    /* 设置层的「恢复横幅提示」（§191）：清空本机记录后立刻重画，符合条件的条子当场回来。
+       键名与读写只在上面实现一份，设置模块不自己拼 localStorage 键。 */
+    resetBannerDismiss: () => { resetBannerDismissAll(); renderBanners(); },
   });
 
   /* 弹层里的「HUD 调整」：跳到「维护 → HUD调整」。事件由 island.js 派发，
@@ -9170,6 +9473,20 @@ window.addEventListener('resize', () => {
      服务端数据覆盖回去（`refresh()` 会整个换掉 `S.state`）。
      ⚠️ 业务代码不许用它 —— 要重画就调 `paintPage` / `softPaint`。 */
   window.__nextRepaint = () => paintPage(false);
+  /* 测试专用：注入更新状态并立即重画横幅。面板 QA 在同一个事件循环里验
+     「圆形 X / 同版本隐藏」；业务代码不许调它。 */
+  window.__nextUpdateBanner = (u) => { UPD.state = u; renderBanners(); };
+  /* 观察孔（§191）：横幅的纯函数与本机记录，只给自检脚本用，业务代码不要依赖。
+     `collect` 直接传条件夹具 —— 六条挂圆钮这件事不必当场凑出六个真条件才能证明。 */
+  window.__nextBanners = {
+    collect: (c, d) => collectBanners(c, d || readBannerDismiss()),
+    render: () => { renderBanners(); return $id('banners').innerHTML; },
+    read: readBannerDismiss,
+    dismiss: dismissBanner,
+    reset: () => { resetBannerDismissAll(); renderBanners(); },
+    kinds: () => Object.keys(BANNER_KINDS),
+    mode: (k) => BANNER_KINDS[k] || '',
+  };
 
   paintPage(true);
   refresh();

@@ -2,7 +2,7 @@
   "schema": 1,
   "kind": "ui-identity",
   "appId": "com.estrellabot.windows",
-  "signedAt": "2026-11-01T16:52:26.626Z",
+  "signedAt": "2026-11-05T15:42:41Z",
   "domains": [
     {
       "id": "run",
@@ -101,10 +101,6 @@
           "label": "模型与线路"
         },
         {
-          "id": "thinking",
-          "label": "思考与能力"
-        },
-        {
           "id": "usage",
           "label": "用量与花费"
         }
@@ -117,10 +113,6 @@
         {
           "id": "safety",
           "label": "安全红线"
-        },
-        {
-          "id": "history",
-          "label": "配置历史"
         },
         {
           "id": "panel",

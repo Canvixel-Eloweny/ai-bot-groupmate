@@ -28,7 +28,7 @@ OneBot v11 · NapCat · 本机模型或 DeepSeek / 智谱 / 通义 · 零构建�
 
 <p>
   <a href="#4-接口插件与-skill"><img alt="AI" src="https://img.shields.io/badge/AI-OpenAI--compatible-6f42c1?style=for-the-badge"></a>
-  <a href="./release/CHANGELOG.md"><img alt="版本" src="https://img.shields.io/badge/release-v0.1.8-e05d44?style=for-the-badge"></a>
+  <a href="./release/CHANGELOG.md"><img alt="版本" src="https://img.shields.io/badge/release-v0.1.9-e05d44?style=for-the-badge"></a>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="最后提交" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -70,7 +70,9 @@ Estrella Bot 是一个 **OneBot v11 桥接器**：把一个 QQ 小号接到任�
 - **真正的控制台** —— 启停机器人、切换模型、编辑人设、管理记忆与扩展、看日志与用量，全部在本地浏览器里完成。
 - **小而自包含** —— 机器人单进程，运行时只依赖一个 `ws`，没有构建步骤，没有中心服务。
 
-你需要准备三样东西：一个 **QQ 小号**、一个 **OneBot v11 协议端**（实际用 NapCatQQ）、一个**模型**（本机接口或 API Key）。源码运行需要 Node.js ≥22.13；Windows 安装器自带运行时。
+你需要准备三样东西：一个 **QQ 账号**、一条**通道**（走 OneBot v11 的 NapCat —— 默认那条；或 QQ 官方机器人 API，不需要协议端）、一个**模型**（本机接口或 API Key）。源码运行需要 Node.js ≥22.13；Windows 安装器自带运行时。
+
+两条通道**二选一**，出口在启动时一次性决定 —— 切换要重启。默认是 NapCat，因为协议端一登录它就能说话；官方通道在您填好 AppID + AppSecret 之前不会出声。官方通道是合规那条：账号会被打上「机器人」标签，换来的是没有任何第三方客户端碰它的登录态。它同时带着平台的硬限制（群内被动回复 5 分钟内、同一条消息最多 5 次；没有合并转发；没有历史消息查询；身份只有不透明的 `openid`），逐条写在 [`docs/OFFICIAL-CHANNEL.md`](./OFFICIAL-CHANNEL.md)。**新装与已经在跑的安装都从 NapCat 起步**；拿到凭据后在控制台「运行 → 切换协议端」里切到官方。
 
 > **关于名字。** Estrella Bot 是这个软件的名字。项目最初叫 `qq-bot`，此后改过两次名，GitHub slug 保持 `ai-bot-groupmate` 不变，好让已有链接与搜索结果仍然落到这里。完整沿革见 [`CHANGELOG.md`](./release/CHANGELOG.md)。
 
@@ -94,7 +96,7 @@ Estrella Bot 是一个 **OneBot v11 桥接器**：把一个 QQ 小号接到任�
 | 项 | 说明 |
 |---|---|
 | 一个 QQ 小号 | 建议用小号；第三方协议端存在账号被限制的风险 |
-| 一个 OneBot v11 协议端 | 实际使用 NapCatQQ。它**不随本包分发** —— 其许可不允许再分发 |
+| 一条通道 | **走 OneBot v11 的 NapCatQQ**（默认），或 **QQ 官方机器人 API**（需要开放平台控制台里的 AppID + AppSecret）。NapCat **不随本包分发** —— 其许可不允许再分发 |
 | 一个模型 | 本机 OpenAI 兼容接口，或 DeepSeek / 智谱 / 通义的 API Key |
 | Node.js ≥22.13 | 仅源码运行需要；Windows 安装器自带运行时 |
 | Docker Desktop | 仅 macOS / Linux 的容器路线需要；Windows 安装器不需要 Docker |

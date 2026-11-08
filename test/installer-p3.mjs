@@ -26,7 +26,7 @@ import {
 } from '../panel/lib/update-signature.js';
 import { fetchCapped, downloadWithProgress, diskBudgetOk } from '../panel/lib/update-download.js';
 import { readBodyBuffer, readBodyToFile } from '../panel/lib/http-io.js';
-import { createUpdater, canTransition, PHASES, sweepUpdateCache } from '../panel/lib/update.js';
+import { createUpdater, canTransition, PHASES, sweepUpdateCache, manifestMirrorUrls } from '../panel/lib/update.js';
 import { compareVersions as installerCompare } from '../packaging/windows/tools/lib/install-layout.mjs';
 
 const APP_ID = 'com.estrellabot.windows';
@@ -591,6 +591,74 @@ async function main() {
     });
     await restored.restore();
     assert.equal(restored.snapshot().phase, 'ready');
+  });
+
+  await ckA('清单镜像回退：官方 + gh-proxy + ghproxy', async () => {
+    const primary = 'https://github.com/x/y/releases/latest/download/latest.json';
+    assert.deepEqual(manifestMirrorUrls(primary), [
+      primary,
+      `https://gh-proxy.com/${primary}`,
+      `https://ghproxy.net/${primary}`,
+    ]);
+    assert.deepEqual(manifestMirrorUrls(''), []);
+  });
+
+  await ckA('下载失败后可从 error 继续，.part 续传入口不被锁住', async () => {
+    let calls = 0;
+    const u = createUpdater({
+      mode: 'installed',
+      sandbox: false,
+      appVersion: '0.1.3',
+      appId: APP_ID,
+      updateDir: path.join(userRoot, 'update-resume'),
+      installRoot,
+      programRoot,
+      env,
+      publicKeyFile: path.join(installRoot, 'resources', 'update-pubkey.pem'),
+      download: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('模拟断线');
+        return { url: 'mock', bytes: 1, sha256: '' };
+      },
+      spawnInstaller: async () => {},
+      logger: () => {},
+    });
+    const checked = await u.check({ manual: true });
+    assert.equal(checked.phase, 'available');
+    u.startDownload();
+    for (let i = 0; i < 100 && u.snapshot().phase !== 'error'; i += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.equal(u.snapshot().phase, 'error');
+    u.startDownload();
+    for (let i = 0; i < 100 && u.snapshot().phase !== 'ready'; i += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.equal(u.snapshot().phase, 'ready');
+    assert.equal(calls, 2);
+  });
+
+  await ckA('dismiss 按版本持久化；错误版本拒绝；重启后仍记住', async () => {
+    const before = updater.snapshot();
+    assert.equal(before.phase, 'ready');
+    const s = updater.dismiss(fixture.version);
+    assert.equal(s.dismissedVersion, fixture.version);
+    assert.throws(() => updater.dismiss('9.9.9'), /没有可隐藏/);
+    const restored = createUpdater({
+      mode: 'installed',
+      sandbox: false,
+      appVersion: '0.1.3',
+      appId: APP_ID,
+      updateDir: path.join(userRoot, 'update'),
+      installRoot,
+      programRoot,
+      env,
+      publicKeyFile: path.join(installRoot, 'resources', 'update-pubkey.pem'),
+      spawnInstaller: async () => {},
+      logger: () => {},
+    });
+    await restored.restore();
+    assert.equal(restored.snapshot().dismissedVersion, fixture.version);
   });
 
   await ckA('install 只在 ready 且显式调用时 spawn；调用后 installing', async () => {

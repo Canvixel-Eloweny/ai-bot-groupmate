@@ -1503,8 +1503,15 @@ const overlay = await evalJs(`return [...document.querySelectorAll('body *')]
 check('截图前没有全屏遮罩（负层号的背景装饰不算）', (overlay || []).length === 0, (overlay || []).join(' | ') || '干净');
 
 async function shot(name, group, sub, full = false) {
-  await evalJs(`document.querySelectorAll('#nav1 .grp')[${group}].click();
-    const s=document.querySelectorAll('#nav2 .sub')[${sub}]; if(s) s.click(); return 1;`);
+  /* 与 `goto()` 同一条纪律（2026-11-05 二级页合并踩到）：**按页签名找，不按第几页找**。
+     旧写法 `querySelectorAll('#nav2 .sub')[5].click()` 在前面的页被删掉后会指到别的页，
+     而 `if(s) s.click()` 找不到就静默什么都不做 —— 截出来的图是另一页，看着却"很正常"。 */
+  const pick = typeof sub === 'number'
+    ? `document.querySelectorAll('#nav2 .sub')[${sub}]`
+    : `[...document.querySelectorAll('#nav2 .sub')].find((x) => ((x.title || x.textContent || '').includes(${JSON.stringify(sub)})))`;
+  const landed = await evalJs(`document.querySelectorAll('#nav1 .grp')[${group}].click();
+    const s=${pick}; if(!s) return 0; s.click(); return 1;`);
+  if (!landed) return `（导航落点找不到：域 ${group} / 页 ${sub}，跳过 ${name}）`;
   await sleep(500);
   /* ⚠️⚠️ `Page.captureScreenshot` 在本机 headless（软件光栅化 `--disable-gpu`）上
      **会挂起**：流体层真渲染之后它不再返回，报 `Detected unsettled top-level await`。
@@ -1769,7 +1776,7 @@ check('反复切页重挂后无 rAF 泄漏（Motion 活跃动画归零、排序�
  *   · 带输入控件的卡片也被挂上 → 点击坐标随倾斜偏移（表单卡上代价很高）。
  * ⚠️ 一律用**合成 PointerEvent** 走真实引擎：直接给元素加 class 只证明"class 能加"。
  * ⚠️ `relatedTarget` 必须给 —— 它是"卡内移动不回落"那条逻辑的唯一输入。 */
-await goto(0, 0);
+await goto(0, '总览');
 await sleep(420);
 const tilt = await evalJs(`
   /* ⚠️⚠️ 每次都**重新取节点**：整页每 3 秒 innerHTML 重建一次，
@@ -1982,10 +1989,10 @@ const WITH_SHOT = process.argv.includes('--shot');
 const maybeShot = (name, g, s, full = false) =>
   (WITH_SHOT ? shot(name, g, s, full) : Promise.resolve(`（未截图 · 加 --shot 打开）`));
 
-const shot1 = await maybeShot('01-run-overview', 0, 0);
-await maybeShot('04-persona-overview', 3, 0);   // 人设域六页：总览
+const shot1 = await maybeShot('01-run-overview', 0, '总览');
+await maybeShot('04-persona-overview', 3, '总览');   // 人设域六页：总览
 // 2026-10-28：假 QQ 移到 speak 首位、等待拆成两页 ⇒ 主动与免打扰现在是第 6 个子页。
-await maybeShot('05-sleep', 1, 5);
+await maybeShot('05-sleep', 1, '主动与免打扰');
 
 /* ── ④ 真实交互：草稿机制 ─────────────────────────────────────────────── */
 await evalJs(`document.querySelectorAll('#nav1 .grp')[3].click(); return 1;`); // 人格
@@ -2122,16 +2129,26 @@ check('页面上没有指向已删除旧页面的残留入口', (legacyLink || [
 /* ── ⑧ "添加+优化"那一批的落点（2026-10-02 第二批）──────────────────────
    这一批把三张骨架页换成了真数据，并把两处"存不住"的红标撤掉换成真控件。
    断言只盯**页面有没有真的显示出数字/条目**，不盯具体数值 —— 数值会随机器人的
-   心情和抓取结果变，写死它就成了"用户一改配置测试就假失败"。 */
+   心情和抓取结果变，写死它就成了"用户一改配置测试就假失败"。
+   ⚠️ 落点**按页签名找，不按第几页找**（2026-11-05 二级页合并踩到）：旧写法是
+      `querySelectorAll('#nav2 .sub')[2].click()`，删掉一个二级页后下标整体前移，
+      而 `if(s) s.click()` 在找不到时**静默什么都不做** —— 于是断言跑在上一页上，
+      量到 0 行还看不出自己走错了门。下标会随导航重排漂，页签名不会。 */
 async function goto(group, sub) {
   await evalJs(`document.querySelectorAll('#nav1 .grp')[${group}].click(); return 1;`);
   await sleep(120);
-  await evalJs(`const s=document.querySelectorAll('#nav2 .sub')[${sub}]; if(s) s.click(); return 1;`);
+  const pick = typeof sub === 'number'
+    ? `document.querySelectorAll('#nav2 .sub')[${sub}]`
+    : `[...document.querySelectorAll('#nav2 .sub')].find((x) => ((x.title || x.textContent || '').includes(${JSON.stringify(sub)})))`;
+  const landed = await evalJs(`const s=${pick}; if(!s) return 0; s.click(); return 1;`);
   await sleep(320);
+  check(`导航落点找得到（域 ${group} / 页 ${sub}）`, landed === 1,
+    landed ? '' : '这个页签不存在 —— 别把"停在上一页"当成"页面坏了"');
+  return landed;
 }
 const newPages = {};
 // 人设总览（人格 · 第 1 页）：四层卡都在；心情卡没有插件时也要给诚实的空态
-await goto(3, 0);
+await goto(3, '总览');
 newPages.emotion = await evalJs(`return {
   title: (document.querySelector('#page h1')||{}).textContent || '',
   cards: [...document.querySelectorAll('#page .psn .layer-card')].map(c => (c.textContent||'').replace(/\\s+/g,' ').trim()).filter(Boolean),
@@ -2156,7 +2173,7 @@ check('分段渲染的总览图在 3 秒内真的落位（不是永远空槽）'
 // 用量与花费（模型 · 第 3 页）：额度情报并到这一页，应当有条目。
 // ⚠️ 真实 `data/api-deals.json` 取决于用户装没装额度插件；这里注入 1 条夹具，
 //    验的是“有数据时渲染得出来”，不再把“没装插件”当产品坏。
-await goto(4, 2);
+await goto(4, '用量与花费');
 newPages.deals = await evalJs(`
   const S = window.__next, repaint = window.__nextRepaint;
   if (!S || !repaint) return { err: '拿不到页面状态或重绘钩子' };
@@ -2178,7 +2195,7 @@ newPages.deals = await evalJs(`
   return out;
 `);
 // 定时消息 → 节假日表：那一格**必须可编辑**了（此前是 disabled）
-await goto(1, 2);
+await goto(1, '定时消息');
 newPages.holidays = await evalJs(`
   const btn = [...document.querySelectorAll('#page button')].find(b=>b.textContent.trim()==='添加');
   const dateInp = document.getElementById('holiDate');
@@ -2212,7 +2229,7 @@ const LIST_CAP_EXPECTED = 15;   // 与 `app.js` 的 `LIST_CAP` 同源 —— 改
 // 2026-10-21：注入夹具与断言之间**不许**被 3 秒轮询插进来（它会用服务端数据覆盖
 // S.state.apiDeals，症状就是"展开到 40 条后突然变回 2 条"）。暂停到 keepA 结束。
 await evalJs('window.__nextPauseRefresh?.(true); return 1;');
-await goto(4, 2);
+await goto(4, '用量与花费');
 const cap = await evalJs(`
   const S = window.__next, repaint = window.__nextRepaint;
   if (!S || !repaint) return { err: '拿不到页面状态或重绘钩子' };
@@ -2292,7 +2309,7 @@ check('容器滚动位置真的守得住（不是"滚一半被拉回去"）',
   keepA?.err || `可滚余量 ${keepA?.scrollable}px · 滚到 ${keepA?.scrolled} → 重绘后 ${keepA?.scAfter}`);
 await evalJs('window.__nextPauseRefresh?.(false); return 1;');
 
-await goto(3, 3);   // 人格 → 增强项
+await goto(3, '增强项');
 const keepD = await evalJs(`
   const repaint = window.__nextRepaint;
   if (!repaint) return { err: '没有重绘钩子' };
@@ -3019,8 +3036,8 @@ check('交互后没有残留遮罩 / 脏草稿 / 弹窗',
 const realErrors = errors.filter((e) => !/Not implemented|favicon|net::ERR/i.test(e));
 check('页面无运行时异常', realErrors.length === 0, realErrors.slice(0, 3).join(' | '));
 
-const shot2 = await maybeShot('02-persona-enhance', 3, 3);
-const shot3 = await maybeShot('03-plugins', 6, 3);
+const shot2 = await maybeShot('02-persona-enhance', 3, '增强项');
+const shot3 = await maybeShot('03-plugins', 6, '插件技能工厂');   // 旧下标 3 越界（工厂只有 3 页），静默截到别的页
 
 /* ── 背景模式清理：别把测试实例留在流光档 ───────────────────────────── */
 await evalJs(`try {

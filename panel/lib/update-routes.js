@@ -1,5 +1,5 @@
 /**
- * 更新 API 的 5 个 handler 工厂（P3 · 2026-10-18）。
+ * 更新 API 的 6 个 handler 工厂（P3 · 2026-10-18）。
  *
  * 约定：业务失败也回 HTTP 200 + `ok:false`（与项目里「原因可读、不谎报成功」一致）；
  * 只有未知动作/真正的服务端异常才用非 2xx。POST 的鉴权与审计由 server.js 的
@@ -25,6 +25,11 @@ export function makeUpdateRoute({ updater, action }) {
       }
       if (action === 'cancel') {
         const s = await updater.cancel();
+        return sendJson(res, { ok: true, ...s });
+      }
+      if (action === 'dismiss') {
+        const body = await readBody(req);
+        const s = updater.dismiss(body && body.version);
         return sendJson(res, { ok: true, ...s });
       }
       if (action === 'install') {

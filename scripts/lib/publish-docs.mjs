@@ -27,6 +27,7 @@ export const DOCS_KEEP = [
   'docs/MOTION-BRIEF.md',        // 动效委托模板
   'docs/MOTION-METHODOLOGY.md',  // 动效方法论与踩坑（面板 README 反复引用它）
   'docs/SKILLS.md',              // 插件 / Skill 两型的写法、配置与安装契约（README 引用它）
+  'docs/OFFICIAL-CHANNEL.md',    // QQ 官方机器人通道：开通步骤、能力矩阵、排错顺序（面板「接入通道」卡引用它）
   'docs/legal/NOTICE',           // Apache §4(d) 署名通知；再分发时必须随附（README 指向它）
   'docs/legal/THIRD-PARTY-NOTICES.md', // 第三方来源与许可登记处（README/PR 模板引用）
   'docs/release/CHANGELOG.md',   // 对外版本沿革；README 徽章与发布说明引用

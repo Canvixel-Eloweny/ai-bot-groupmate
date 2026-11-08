@@ -92,7 +92,7 @@ console.log = (first, ...rest) => {
  *       提交门 `pre-commit.sh` 正是因此才把 `node_modules` **软链**进闸门用的临时 worktree。
  *       记在这里是为了下次有人量到 17 时**别以为闸门坏了**。
  */
-const MIN_CONTRACTS = 164;
+const MIN_CONTRACTS = 168;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -1199,7 +1199,9 @@ const walkInto = (dir, out, { skip = () => false, keep = () => true } = {}) => {
   const dom = [
     [entry3g, /<meta name="panel-token" content="__QQBOT_PANEL_TOKEN__"\s*\/>/, '入口页没有 <meta name="panel-token"> 占位符'],
     [app3g, /HAS_TOKEN\) opt\.headers\['Authorization'\] = `Bearer \$\{TOKEN\}`/, "api() 没有把 token 放进 Authorization —— 页面发不了写请求"],
-    [app3g, /S\.online && !HAS_TOKEN/, '没有「没拿到 token」的提示 —— 失败时会表现为看不懂的 401'],
+    // ⚠️ 2026-11-07 §191：横幅搬进 collectBanners 后条件来自 cond（hasToken 由 renderBanners 从 HAS_TOKEN 推导）；
+    //    两条都要钉住 —— 只钉分支会变成"cond 里没人赋值也照样绿"的空判据。
+    [app3g, /(?=[\s\S]*if \(c\.online && !c\.hasToken\) \{)(?=[\s\S]*hasToken: HAS_TOKEN,)/, '没有「没拿到 token」的提示 —— 失败时会表现为看不懂的 401'],
   ];
   for (const [src, re, msg] of dom) if (!re.test(src)) { bad++; n++; console.log(`✗ ${msg}`); }
 
@@ -2007,6 +2009,14 @@ const LIB_SRC_ALLOW = [
   // 2026-10-21（Win-v0.1.2 移植）：角色卡十维分级。零依赖叶子（闭包 = 1），
   // 面板只渲染分数、不抄门槛表；自然不触达 llm / brain / onebot / index / config / logger。
   'persona-grade.js',
+  // 2026-11-06（官方通道）：消息通道的值域与默认值。零 import 叶子（闭包 = 1 个模块），
+  // 面板写侧要校验 `channel.mode`，机器人读侧要同一个结论 —— 在这里手写第二份
+  // ['official','napcat'] 就是 §82 注释里那条"两份值域必然漂移"的教科书形态。
+  'channel-mode.js',
+  // 2026-11-06（官方通道）：openid ↔ 本地群号 的绑定判据。零 import 叶子（闭包 = 1 个模块）。
+  // 机器人入站/出站与面板写侧**必须读同一份**：这张表判错的后果不是报错，
+  // 是两个官方群共用同一份记忆（串群）或陌生人撞进权限链。
+  'channel-binding.js',
   // 2026-11-03（上下文预算回显）：`context` 三个整数的默认值与夹取。
   // 面板要下发**运行时真正在用的那份**（以前读 presets 归档快照 ⇒ 保存后显示旧值），
   // 而夹取与默认值不许在面板侧抄第二遍；§82 又不许引 `src/config.js` 本体，
@@ -2060,6 +2070,10 @@ const LIB_SRC_ALLOW = [
   // B3（2026-10-21）：协议端存活阶梯（纯函数，零依赖）。面板只转述 code，
   // 阶梯必须只有一份 —— 前端再写一遍就会与机器人侧的阈值漂。
   'onebot-liveness.js',
+  // 2026-11-06（官方通道）：官方通道的存活阶梯。零 import 叶子（闭包 = 1 个模块），
+  // 与 onebot-liveness 是**两套观测面**（一条看端口+帧停摆，一条看网关+鉴权），
+  // 但"面板只转述 code、不自己判健康"这条纪律完全相同。
+  'official-liveness.js',
   // D21 新增：扩展包清单的**路径安全判据**（`isSafeRelPath` / `normalizeManifest`）。
   // 它自己零依赖（`importsOf` 为空），是"解压出来的路径能不能落盘"的唯一判据 ——
   // 面板侧再写一份 `..` 判据，就会出现"面板放行、机器人不认"或反之。
@@ -2317,6 +2331,9 @@ const LIB_SRC_ALLOW = [
       //    （`bridgeRunning` 另有 7 处），搬进来就得留两份实现、后改的那份不生效。
       //    所以走 `makeConfigRoute(deps)` 注入 —— 与 `ext-install.js` 的 `io` 入参同形。
       'panel/lib/config-route.js': 3,
+      // 官方通道的绑定与凭据校验路由（2026-11-06）。依赖 L0 的 http-io / runtime-state、
+      // L1 的 config-io 与两个 src 零依赖叶子 ⇒ **L2**（比 config-route 浅，它不碰模型段）。
+      'panel/lib/channel-routes.js': 2,
       // 「导出配置」的实现（第 19 轮 · H-10 第二半）。依赖 L0 的 paths.js /
       // trace-io.js + src 的纯判据与**纯读**的 memory-store.js ⇒ L2。
       // 它**零注入面**：没有任何 server.js 顶层判据。
@@ -13715,8 +13732,12 @@ const LIB_SRC_ALLOW = [
     //       配置契约，被 README / ARCHITECTURE 引用，已进 DOCS_KEEP）。同样是现行文档，不是交付件。
     //       这条计数的作用是拦"一次性计划/诊断/预览件又堆到顶层"，把一份现行文档塞进子目录
     //       只是为了绕过计数器 —— 那是把门当摆设。所以按用途放宽一格，理由写在这里。
-    if (top.length > 18) {
-      problems.push(`docs/ 顶层有 ${top.length} 个被跟踪文件（应 ≤18）—— 历史交付件又开始堆了（M-09）`);
+    //    ⚠️ 2026-11-06 上限 17 → **18 → 19**：新增 `docs/OFFICIAL-CHANNEL.md`
+    //       （QQ 官方机器人通道的用户配置指南 + 能力矩阵 + 排错顺序）。它是**现行文档**：
+    //       被面板「接入通道」卡的引导文案与 README 引用，且已进 DOCS_KEEP 随公开拷贝发布。
+    //       同一条纪律：按用途放宽一格、理由写在这里，而不是把它藏进子目录绕过计数。
+    if (top.length > 19) {
+      problems.push(`docs/ 顶层有 ${top.length} 个被跟踪文件（应 ≤19）—— 历史交付件又开始堆了（M-09）`);
     }
     // ⚠️ 第 22 轮（发布副本感知）：`ARCHIVE.md` / `DEEP-IMPROVE.md` 是**内部台账**
     //    （归档索引 / 内部增量计划），按设计不随拷贝出去。
@@ -15170,11 +15191,11 @@ const LIB_SRC_ALLOW = [
     }
     // B3（2026-10-21）：`onebot` 是 `/api/state` 新增的存活结论（端口通 ≠ 事件流活）。
     // 它与 `ports` 并排，不合并 —— 两个观测面、两个采样周期。
-    const ALLOWED = new Set(['ports', 'onebot', 'panel', 'bridge', 'config']);
+    const ALLOWED = new Set(['ports', 'onebot', 'panel', 'bridge', 'config', 'channel']);
     const stray = [...new Set(keys)].filter((k) => !ALLOWED.has(k));
     if (stray.length) {
       problems.push(`readyChecklist 读了不该读的字段：${stray.join('、')} —— 它只许读 /api/state 里`
-        + '已有的 ports / panel / bridge / config 四组；其余状态要么没下发、要么属于别的层');
+        + '已有的 ports / onebot / panel / bridge / config / channel 六组；其余状态要么没下发、要么属于别的层');
     }
     // ③b 群聊白名单：**事实**许摆，**结论**不许下（2026-10-14 维护者要求把这一项摆出来）。
     //    「白名单为空 ⇒ 拒绝启动」那条判据住在 src/config.js，而且它还依赖 `allowAllWhenEmpty`
@@ -15206,11 +15227,19 @@ const LIB_SRC_ALLOW = [
   }
   subHit('启动链路检查表');
 
+  // ③c 官方通道分流（2026-11-07）：readyChecklist 必须按 channel.mode 切到官方口径，
+  //    否则切到官方机器人后仍会喊「重启协议端 / 扫码」这类 NapCat 催法（官方根本不需要 Docker）。
+  if (!/officialMode = j\(s, \['channel', 'mode'\], 'napcat'\) === 'official'/.test(appSrc)) {
+    problems.push('readyChecklist 没有按 channel.mode 分流到官方通道 —— '
+      + '切到官方机器人后仍会喊「重启协议端 / 扫码」这类 NapCat 催法');
+  }
+  subHit('启动链路检查表');
+
   if (problems.length) { bad++; for (const p of problems) console.log(`✗ ${p}`); }
   else {
     console.log('✓ 面板「启动链路」空态 = 只读检查表（2026-10-14 · P5，同日加到 5 行，2026-10-20 加到 6 行）：'
       + '旧占位 .steps-empty 在代码与样式里都已摘除 · '
-      + 'readyChecklist 在位且**只读** ports/onebot/panel/bridge/config 五组 · '
+      + 'readyChecklist 在位且**只读** ports/onebot/panel/bridge/config/channel 六组（官方模式按 channel.mode 分流） · '
       + '「放行的群聊」那行在位（维护者要求的）——只摆"填没填"、不许下启动结论 · '
       + '返回项带 ok/txt · 按「第一个未就绪」点亮一行而不是写死第 1 行 · '
       + `子判据 ${subCountOf('启动链路检查表')} 条（§51 核下限）`);
@@ -15975,19 +16004,28 @@ let gDistBad = bad;
   }
 
   // ⑥ 路由与写分类
-  if ((server.match(/\{ path: '\/api\/update\//g) || []).length !== 7) {
-    problems.push('server.js 的 /api/update 路由不是 7 条（P3 五条 + P4 离线两条）');
+  if ((server.match(/\{ path: '\/api\/update\//g) || []).length !== 8) {
+    problems.push('server.js 的 /api/update 路由不是 8 条（P3 六条 + P4 离线两条）');
   }
   const wrStart = server.indexOf('const WRITE_ROUTES');
   const wrEnd = wrStart >= 0 ? server.indexOf(']);', wrStart) : -1;
   const wr = wrStart >= 0 && wrEnd > wrStart ? server.slice(wrStart, wrEnd) : '';
   for (const p of [
     '/api/update/check', '/api/update/download', '/api/update/cancel', '/api/update/install',
-    '/api/update/offline/prepare', '/api/update/offline/installer',
+    '/api/update/dismiss', '/api/update/offline/prepare', '/api/update/offline/installer',
   ]) {
     if (!wr.includes(`'${p}'`)) problems.push(`${p} 没进 WRITE_ROUTES`);
   }
   if (wr.includes("'/api/update/state'")) problems.push('/api/update/state 是只读 GET，不许进 WRITE_ROUTES');
+  if (!/manifestMirrorUrls/.test(upd) || !/gh-proxy\.com/.test(upd) || !/ghproxy\.net/.test(upd)) {
+    problems.push('§109：更新清单获取没有 gh-proxy / ghproxy.net 镜像回退');
+  }
+  if (!/state\.phase !== 'available' && state\.phase !== 'error'/.test(upd)) {
+    problems.push('§109：下载失败后不能从 error 继续下载（.part 续传入口被锁住）');
+  }
+  if (!/继续下载/.test(app) || !/u\.latest \? btn\('继续下载'/.test(app)) {
+    problems.push('§109：更新卡 error 态没有「继续下载」（只剩重新检查）');
+  }
   if (!/event: update/.test(server)) problems.push('server.js 没有 SSE update 帧');
   if (!/UPDATE\.start\(\)/.test(server) || !/UPDATE\.stop\(\)/.test(server)) {
     problems.push('server.js 没有在启动/退出时启停 updater');
@@ -16273,6 +16311,8 @@ let gDistBad = bad;
   const perSource = numOf(tools, 'PER_SOURCE_BUDGET_MS');
   const total = numOf(tools, 'TOTAL_BUDGET_MS');
   const panelIdle = numOf(panel, 'IDLE_TIMEOUT_MS');
+  const panelLowMs = numOf(panel, 'LOW_SPEED_MS');
+  const panelLowBps = numOf(panel, 'LOW_SPEED_BYTES_SEC');
   if (!(conn >= 5000 && conn <= 20000)) problems.push(`CONNECT_TIMEOUT_MS 不在 5–20 秒区间（${conn}）`);
   if (!(stall >= 10000 && stall <= 60000)) problems.push(`STALL_TIMEOUT_MS 不在 10–60 秒区间（${stall}）`);
   if (!(alive >= 1000 && alive <= 100000)) problems.push(`MIN_ALIVE_BYTES_SEC 不在 1–100 KB/s 区间（${alive}）`);
@@ -16280,6 +16320,12 @@ let gDistBad = bad;
   if (!(total >= 60000 && total <= 900000)) problems.push(`TOTAL_BUDGET_MS 不在 1–15 分钟区间（${total}）`);
   if (!(total >= perSource)) problems.push('总预算必须 ≥ 单源预算，否则第一个源都跑不完一轮');
   if (!(panelIdle >= 10000 && panelIdle <= 60000)) problems.push(`面板口 IDLE_TIMEOUT_MS 不在 10–60 秒区间（${panelIdle}）`);
+  // 面板口另有两道轻量上限：空闲（首字节/断流）+ 低速切换；总预算仍只在安装工具侧。
+  if (!(panelLowMs >= 10000 && panelLowMs <= 60000)) problems.push(`面板口 LOW_SPEED_MS 不在 10–60 秒区间（${panelLowMs}）`);
+  if (!(panelLowBps >= 1000 && panelLowBps <= 100000)) problems.push(`面板口 LOW_SPEED_BYTES_SEC 不在 1–100 KB/s 区间（${panelLowBps}）`);
+  if (panelDl && !/for \(let pass = 0; pass < 2; pass \+= 1\)/.test(panelDl)) {
+    problems.push('面板下载器没有两轮续传（全部源失败后不再重试）');
+  }
 
   // ② 每个网络口都挂着 signal；且同一个函数里不许再开第二个裸调用。
   //    ⚠️ 2026-11-05：面板下载改走 `fetchCheckedRedirects()`（手动逐跳校验），
@@ -18060,7 +18106,7 @@ if (bad === gPortBad) console.log('✓ Win-v0.1.2 移植（合并 §125–§130�
   //     但字段细节仍以 handler 为准；另有 5 条路由连独立小节都没有。文档腐烂时
   //     四层全绿，因为**没有人读文档**。这一节把文档变成可机读的契约：
   //       ① 路由总表（api-inventory 标记）与 API_ROUTES 双向集合相等（数量只作读数，下限 20）；
-  //       ② 24 条此前没有字段级章节的路由（api-fields 标记）各恰好四行；
+  //       ② 25 条此前没有字段级章节的路由（api-fields 标记）各恰好四行；
   //       ③ 编号章节 ∪ 字段标记 = 70，且两类不重叠；
   //       ④ 标记/字段缺失时 fail-closed（读不到 docs 就直接红，不在真空里变绿）。
   //     ⚠️ 必须读**原始 Markdown**：`stripComments` 会把 HTML 注释标记整段剥掉。
@@ -18107,8 +18153,8 @@ if (bad === gPortBad) console.log('✓ Win-v0.1.2 移植（合并 §125–§130�
     const fMatches135 = [...doc135.matchAll(/<!-- api-fields: (GET|POST) (\/api\/[^ ]+) -->/g)];
     const fieldKeys135 = fMatches135.map((m) => `${m[1]} ${m[2]}`);
     const fieldSet135 = new Set(fieldKeys135);
-    if (fieldKeys135.length !== 24 || fieldSet135.size !== 24) {
-      problems135.push(`§135③：字段标记应恰好 24 条且不重复（现 ${fieldKeys135.length} / 唯一 ${fieldSet135.size}）`);
+    if (fieldKeys135.length !== 25 || fieldSet135.size !== 25) {
+      problems135.push(`§135③：字段标记应恰好 25 条且不重复（现 ${fieldKeys135.length} / 唯一 ${fieldSet135.size}）`);
     }
     for (const k of fieldKeys135) {
       if (!invSet135.has(k)) problems135.push(`§135③：字段标记 ${k} 不在路由总表里`);
@@ -18664,9 +18710,9 @@ if (bad === gPortBad) console.log('✓ Win-v0.1.2 移植（合并 §125–§130�
 //       同样取精确值 —— 本桶只由这一段贡献，删任一处都该红。
 //    ⚠️ **已删**：`['表情表', 3]`（§99）随 2026-10-17 表情能力整体下线整段移除 ——
 //       这是「被断言的对象真被删了」那条例外，`MIN_CONTRACTS` 同轮下调。
-//    ⚠️ **2026-10-14 新增** `['启动链路检查表', 1]`：§100 一段里恰一处 subHit（段入口 ——
-//       段内那几条判据都挂在 `problems` 上，没有各自的 subHit）。
-//       取**精确值** 1（同 `表情表` 的先例）：本桶只由这一段贡献，整段被跳过即红。
+//    ⚠️ `['启动链路检查表', 2]`（2026-10-14 立，2026-11-07 由 1 上调：§100 加了 ③c 官方通道
+//       分流，单独一条 subHit）：段入口 + 官方分流两条 subHit；其余判据挂在 `problems` 上。
+//       取**精确值** 2（同 `表情表` 的先例）：本桶只由这一段贡献，任一条被删即红。
 //       ⚠️ 如实登记的弱点：1 条 subHit 只能说"这一段的入口执行过了"，
 //          它**拦不住"段内某一条判据被删"**（那要靠 `problems` 里的判据本身）。
 //          留 1 而不是不留，是因为不留它就完全不在表里 —— 而"整段消失"是本项目反复踩的那一类。
@@ -19212,6 +19258,15 @@ let gSetBad = bad;
   if (!/const show = u\.enabled === true && UPDATE_CTA_PHASES\.has\(String\(u\.phase \|\| ''\)\)/.test(setJs)) {
     p.push('§154④：更新入口的 show 判据不是 enabled + phase 集合（蓝点可能常亮/常灭）');
   }
+  if (!/dismissedVersion/.test(app) || !/data-a="update\.dismiss"/.test(app) || !/class="banner-x"/.test(app)) {
+    p.push('§154④：更新横幅缺按版本隐藏（dismissedVersion / banner-x / update.dismiss）');
+  }
+  if (!/&&\s*!updDismissed/.test(app)) {
+    p.push('§154④：横幅没有真正按 updDismissed 隐藏（删了通知还会弹）');
+  }
+  if (!/\.banner-x\s*\{[\s\S]{0,160}border-radius:\s*50%/.test(style)) {
+    p.push('§154④：更新横幅关闭按钮不是圆形（.banner-x border-radius:50%）');
+  }
   if (!/btn\.hidden = !show/.test(setJs) || !/dot\.hidden = !show/.test(setJs)) {
     p.push('§154④：更新按钮与蓝点的 hidden 没有绑到同一个 show（会出现只亮一处）');
   }
@@ -19523,9 +19578,11 @@ let gSetBad = bad;
     || !/后端未连接 —— 窗口还在/.test(app)) {
     p.push('§156④：app.js 缺壳内离线横幅/重启/退出/副标题');
   }
-  const offlineAt = app.indexOf('if (!S.online) {');
+  // ⚠️ 2026-11-07 §191：离线分支搬进 collectBanners（cond 由 renderBanners 从 shellApi() 推导）。
+  const offlineAt = app.indexOf('if (!c.online) {');
   const offlineBranch = offlineAt >= 0 ? app.slice(offlineAt, offlineAt + 1200) : '';
-  if (!/if \(shellApi\(\)\)/.test(offlineBranch) || !/控制台后端没有响应/.test(offlineBranch)) {
+  if (!/if \(c\.shellApi\) \{/.test(offlineBranch) || !/控制台后端没有响应/.test(offlineBranch)
+    || !/shellApi: !!shellApi\(\)/.test(app)) {
     p.push('§156④：离线分支没有按「有没有壳」分流 —— 壳内会退回演示模式文案');
   }
   const demoBlock = app.slice(app.indexOf('const DEMO_BLOCK'), app.indexOf('const DEMO_BLOCK') + 400);
@@ -21054,7 +21111,9 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
   if (bad === gSplashBad) console.log('✓ 开屏 / 光效 / 接口收尾（合并 §168 + §169 + §170）：光标 · 接口 · 首屏缓存');
 
   // ══ §171 · 界面身份签名与锚点（2026-10-29 新增）══════════════════════════
-  //  用户要求：允许改代码、加功能、加插件；不允许把 7 域 / 26 页的骨架整体换掉。
+  //  用户要求：允许改代码、加功能、加插件；不允许把 7 域 / 24 页的骨架整体换掉。
+  //  （2026-11-05 G7：原 26 页里的「思考与能力」「配置历史」两张卡并入同域相邻页，
+  //    页删掉、功能一个没少 —— 骨架数随之从 26 走 24。加项仍然放行，减项要重签。）
   //  这里只认签名清单里的核心锚点；多出来的域/页/选择器/渲染入口一律放行。
   {
     const p171 = [];
@@ -21091,7 +21150,7 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
       }
       const domains = Array.isArray(manifest.domains) ? manifest.domains : [];
       const pages = domains.reduce((n, d) => n + (Array.isArray(d.pages) ? d.pages.length : 0), 0);
-      if (domains.length !== 7 || pages !== 26) p171.push(`§171②：核心域/页数量不对（域 ${domains.length} / 页 ${pages}，应 7 / 26）`);
+      if (domains.length !== 7 || pages !== 24) p171.push(`§171②：核心域/页数量不对（域 ${domains.length} / 页 ${pages}，应 7 / 24）`);
       if (!Array.isArray(manifest.selectors) || manifest.selectors.length !== 9) p171.push('§171②：核心外壳选择器应 9 条');
       if (!Array.isArray(manifest.renderers) || manifest.renderers.length !== 4) p171.push('§171②：渲染入口应 4 条');
     }
@@ -21123,10 +21182,17 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
         if (!selectorPresent(htmlF, sel)) p171.push(`§171④：index.html 缺外壳 ${sel}`);
       }
       const refreshBody = fnSlice(appF, 'async function refresh');
-      const bannerBody = fnSlice(appF, 'function renderBanners');
+      // ⚠️ 2026-11-07 §191：非官方横幅分支搬到 collectBanners（renderBanners 只推导条件）。
+      const bannerBody = fnSlice(appF, 'function collectBanners');
       if (!refreshBody || !refreshBody.includes('runUiIdentityCheck(')) p171.push('§171⑤：refresh() 没有调用 runUiIdentityCheck');
       else if (refreshBody.indexOf('runUiIdentityCheck(') > refreshBody.indexOf('renderBanners()')) p171.push('§171⑤：身份检查必须在 renderBanners() 之前');
-      if (!bannerBody || !bannerBody.includes('data-ui-identity="unofficial"')) p171.push('§171⑤：renderBanners 没有非官方横幅分支');
+      if (!bannerBody || !bannerBody.includes('data-ui-identity="unofficial"')) p171.push('§171⑤：collectBanners 没有非官方横幅分支');
+      // ⚠️ 模板在位不代表会画：条件从 UI_IDENTITY 接到 cond 的那一行同样是契约面。
+      //    （2026-11-07 §191 搬动后，变异 M3 就是把这一行改成恒假 —— 只查模板会打不红。）
+      const renderBody171 = fnSlice(appF, 'function renderBanners');
+      if (!renderBody171 || !/unofficial: UI_IDENTITY\.state === 'unofficial'/.test(renderBody171)) {
+        p171.push('§171⑤：renderBanners 没有把 UI_IDENTITY.state 接成非官方横幅的条件 —— 横幅分支成了画不出来的死模板');
+      }
       if (!appF.includes('document.documentElement.dataset.uiIdentity')) p171.push('§171⑤：没有写 html[data-ui-identity]');
     } catch (e) {
       p171.push(`§171③：核心锚点比对跑不起来（${e && e.message ? e.message : e}）`);
@@ -21186,8 +21252,21 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
         if (evaluateIdentity(manifest, noPage).ok) p171.push('§171⑩：删核心页应判红，却通过了');
         const reorder = structuredClone(snapshot);
         const d0 = reorder.domains[0];
-        if (d0 && d0.pages.length > 1) { [d0.pages[0], d0.pages[1]] = [d0.pages[1], d0.pages[0]]; }
-        if (evaluateIdentity(manifest, reorder).ok) p171.push('§171⑩：重排核心页应判红，却通过了');
+        // ⚠️ 原来这里直接交换 `pages[0]` 与 `pages[1]`，隐含假设"前两个现役页都是核心页"。
+        //    2026-11-06 在 总览 与会话日志 之间插入「切换协议端」（**加项本来就放行**）之后，
+        //    pages[1] 成了非核心页，交换它不影响核心顺序 ⇒ 这条自证变成**空转的假绿**。
+        //    改成按清单里的核心 id 找下标再交换：加多少个新页都打不穿它。
+        const coreIds0 = ((manifest.domains[0] || {}).pages || []).map((p) => p.id);
+        const coreIdx = d0 && Array.isArray(d0.pages)
+          ? d0.pages.map((p, i) => (coreIds0.includes(p.id) ? i : -1)).filter((i) => i >= 0) : [];
+        if (coreIdx.length > 1) {
+          const [ci, ck] = coreIdx;
+          [d0.pages[ci], d0.pages[ck]] = [d0.pages[ck], d0.pages[ci]];
+          if (evaluateIdentity(manifest, reorder).ok) p171.push('§171⑩：重排核心页应判红，却通过了');
+        } else {
+          // 核心页少于 2 个时这条自证跑不起来 —— 必须说破，不能让它静默算通过。
+          p171.push(`§171⑩：核心页只有 ${coreIdx.length} 个，重排自证在真空里（这条判据没跑到）`);
+        }
         const relabel = structuredClone(snapshot);
         if (relabel.domains[0]) relabel.domains[0].label = `${relabel.domains[0].label}x`;
         if (evaluateIdentity(manifest, relabel).ok) p171.push('§171⑩：改核心域标签应判红，却通过了');
@@ -21207,7 +21286,7 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
     subHit('界面身份');
 
     if (p171.length) { bad++; for (const x of p171) console.log('✗ ' + x); }
-    else console.log('✓ 界面身份（§171）：签名/公钥指纹 · 7 域 26 页顺序 · 外壳 · 渲染入口 · 运行时接线 · 加项放行');
+    else console.log('✓ 界面身份（§171）：签名/公钥指纹 · 7 域 24 页顺序 · 外壳 · 渲染入口 · 运行时接线 · 加项放行');
   }
 
   // ══ §172 · 开屏标题入场与背景接管（2026-10-30 新增）══════════════════════
@@ -22393,6 +22472,460 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
     else console.log('✓ B5 首次启动（§187）：假 QQ 只在配置存在时注入且可回退示例 · 预设只回存两个上下文键 · Docker 回退四样输入集中检查 + 可移植 fsize · 两条回归进 check:features');
   }
 
+  // 188) 控制台排版密度（2026-11-05 · 维护者点名"玻璃板不该直接全部到底"）
+  //      起因（真渲染实测，1440 视口）：发言→聊天等待是一张 span-12 的长板装 8 个控件
+  //      = 1168×751，右侧约 1000px 常年空着；模型→用量与花费三张全宽卡竖排 1790px 高。
+  //      根因有两条，都要有门：① `fieldInput()` 把短输入竖排成三行；② schema 里
+  //      该并排的卡写成 `span: 12`。只改一处，另一处会被下一个人改回去。
+  {
+    const p188 = [];
+    const appSrc188 = read('../panel/next/app.js');
+    const cssSrc188 = read('../panel/next/style.css');
+    const schemaSrc188 = read('../panel/next/schema.js');
+    const domSrc188 = read('../test/panel-dom.mjs');
+
+    // ① 设置行：短输入走「标签左 / 控件右 / 说明另起一行」，textarea 与 `wide` 不进这一档。
+    if (!/const ROW_TYPES = new Set\(\['number', 'text', 'password', 'time', 'date', 'select'\]\);/.test(appSrc188)
+      || !/const row = type !== 'textarea' && !x\.wide && ROW_TYPES\.has\(type\);/.test(appSrc188)
+      || !/class="f\$\{row \? ' f-row' : ''\}"/.test(appSrc188)
+      /* number 的内联宽度只能在**非行内**时写：写死 `style="width:130px"` 会把栅格列顶掉。 */
+      || !/row \? '' : ` style="width:\$\{x\.wide \? '100%' : '130px'\}"`/.test(appSrc188)) {
+      p188.push('§188①：fieldInput 的行内设置档不完整 —— 短输入又变回三行竖排，宽卡右侧继续空一大条');
+    }
+    subHit('排版密度');
+
+    // ② CSS 两档都在：行内栅格 + ≤700px 退回竖排（窄屏两列会把控件压成一条缝）。
+    if (!/\.f-row \{[\s\S]{0,200}grid-template-columns: minmax\(0, 1fr\) clamp\(120px, 34%, 260px\);/.test(cssSrc188)
+      || !/\.f-row > \.hint \{ grid-column: 1 \/ -1; grid-row: 2; \}/.test(cssSrc188)
+      || !/@media \(max-width: 700px\) \{[\s\S]{0,220}\.f-row \{ grid-template-columns: minmax\(0, 1fr\); \}/.test(cssSrc188)) {
+      p188.push('§188②：.f-row 栅格或它的窄屏退路缺失 —— 排版只在宽屏成立，手机档会被挤成一团');
+    }
+    subHit('排版密度');
+
+    // ③ 两张全宽长板已经拆成两列，且**没有**退回 span 12。
+    if (!/id: 'cw', title: '拟人停顿', span: 6,/.test(schemaSrc188)
+      || !/id: 'cw2', title: '连发合并 · 垫话 · 正在输入', span: 6,/.test(schemaSrc188)
+      || /id: 'cw', title: '聊天等待', span: 12,/.test(schemaSrc188)
+      || !/id: 'usageLimits', title: '省电上限', span: 6,/.test(schemaSrc188)
+      || !/id: 'deals', title: '抓到的条目', span: 6,/.test(schemaSrc188)
+      /* 花费卡是**该全宽**的：里面是指标格与账本表格，压成半栏会换行成筛子。 */
+      || !/id: 'cost', title: '花费', span: 12,/.test(schemaSrc188)) {
+      p188.push('§188③：聊天等待 / 用量与花费的卡片宽度不是「两列 + 一条该全宽」—— 空玻璃板会回来');
+    }
+    subHit('排版密度');
+
+    // ④ 假 QQ 的空会话不摆空板（有消息时仍按原高度）。
+    if (!/\.chat-log:has\(\.chat-empty\) \{ height: clamp\(180px, 26vh, 280px\); \}/.test(cssSrc188)) {
+      p188.push('§188④：假 QQ 会话区没有空态高度上限 —— 「还没有对话」下面又是一整屏空白');
+    }
+    subHit('排版密度');
+
+    // ⑤ 真渲染门：静态字面量证明不了"标签与控件真的在同一行"，必须有一道跑在浏览器里的断言。
+    if (!/f-row/.test(domSrc188) || !/标签与输入框在同一行/.test(domSrc188)) {
+      p188.push('§188⑤：panel-dom 没有这一档的真渲染断言 —— CSS 被改名或选择器写错时，静态扫描照样绿');
+    }
+    subHit('排版密度');
+
+    if (p188.length) { bad++; for (const x of p188) console.log('✗ ' + x); }
+    else console.log('✓ 控制台排版密度（§188）：短输入行内档 · 栅格与窄屏退路 · 长板拆两列 · 空态高度上限 · panel-dom 真渲染');
+  }
+
+  // 189) 二级页合并（2026-11-05 · G7 点名批准）
+  //      「模型→思考与能力」真渲染只剩一张 576×135 的说明卡（思考模式卡在当前大脑
+  //      没勾「能思考」时整张隐藏），「维护→配置历史」只剩一张 576×197 的卡。
+  //      删的是那一层导航，功能一个不许少 —— 这一段就是"少一个"必须变红的那道门。
+  {
+    const p189 = [];
+    const schemaSrc189 = read('../panel/next/schema.js');
+    const idSrc189 = read('../panel/ui-identity.json');
+    const domSrc189 = read('../test/panel-dom.mjs');
+    const { GROUPS: G189 } = await import('../panel/next/schema.js');
+    const byId189 = (gid) => G189.find((g) => g.id === gid);
+    const brainSubs189 = byId189('brain')?.subs || [];
+    const sysSubs189 = byId189('sys')?.subs || [];
+
+    // ① 两个二级页确实没了，且域内页数就是 2 / 3（不是"某一段被跳过"造成的假没）。
+    if (brainSubs189.some((s) => s.id === 'thinking') || sysSubs189.some((s) => s.id === 'history')
+      || brainSubs189.length !== 2 || sysSubs189.length !== 3
+      || /id: 'thinking', label: '思考与能力'/.test(schemaSrc189)
+      || /id: 'history', label: '配置历史'/.test(schemaSrc189)) {
+      p189.push('§189①：模型域仍是 ' + brainSubs189.length + ' 页 / 维护域仍是 ' + sysSubs189.length
+        + ' 页，或旧二级页还在 —— 合并没落地，空玻璃板页会回来');
+    }
+    subHit('二级页合并');
+
+    // ② 搬过去的四样仍在**新页**上：卡在同一张 cards 数组里，控件字面量仍在 schema.js。
+    const modelCards189 = (brainSubs189.find((s) => s.id === 'model')?.cards || []).map((c) => c.id);
+    const panelCards189 = (sysSubs189.find((s) => s.id === 'panel')?.cards || []).map((c) => c.id);
+    if (!['think', 'caps'].every((id) => modelCards189.includes(id))
+      || !panelCards189.includes('hist')
+      || !/id: 'cfg\.thinkMode'/.test(schemaSrc189) || !/id: 'cfg\.thinkLevel'/.test(schemaSrc189)
+      || !/feat: 'webSearch'/.test(schemaSrc189)
+      || !/'config\.undo'/.test(schemaSrc189) || !/\['configHistory'\]/.test(schemaSrc189)) {
+      p189.push('§189②：思考模式 / 能力开关 / 回滚没有全部落到新页上 —— 删页顺带把功能删了');
+    }
+    subHit('二级页合并');
+
+    // ③ 短标签表里不能再登记这两个页：那会在 dock 里留一个点了不存在的页签的入口。
+    if (/subs: \{ model: '模型', thinking: '思考', usage: '用量' \}/.test(schemaSrc189)
+      || /subs: \{ safety: '安全', history: '历史', panel: '维护' \}/.test(schemaSrc189)) {
+      p189.push('§189③：NAV_SHORT 仍登记 thinking / history —— 短标签指向已不存在的页');
+    }
+    subHit('二级页合并');
+
+    // ④ 签名清单与 schema 同源：清单里不许再列这两个页。
+    if (/"id": "thinking"/.test(idSrc189) || /"id": "history"/.test(idSrc189)) {
+      p189.push('§189④：panel/ui-identity.json 仍列 thinking / history —— 清单没跟着重生成，'
+        + '§171③ 的核心锚点比对会指着一个不存在的页');
+    }
+    subHit('二级页合并');
+
+    // ⑤ 真渲染门：模型页要真画得出 #card-caps、维护页要真画得出 #card-hist，
+    //    并且二级导航里不再有「思考」「历史」两个页签。
+    //    ⚠️ 判据必须钉到**完整选择器与取值调用**：早先写成裸 `/card-hist/`，
+    //       变异把标识符整体改名成 `card-histz` 之后子串照样命中 ⇒ 门假绿（N6 实测抓到）。
+    if (!/getElementById\('card-hist'\)/.test(domSrc189)
+      || !/#card-hist \[data-a="config\.undo"\]/.test(domSrc189)
+      || !/#card-caps/.test(domSrc189)
+      || !/二级导航不再有「历史」/.test(domSrc189)) {
+      p189.push('§189⑤：panel-dom 没有"合并后的卡真画得出来"的断言 —— 静态字面量在，页面却可能是空的');
+    }
+    subHit('二级页合并');
+
+    // ⑥ `panel/next/verify.mjs` 的落点必须**按页签名**找，且找不到要报红。
+    //    本轮实测的假绿形状：旧 helper 是 `querySelectorAll('#nav2 .sub')[2].click()`
+    //    加 `if(s) s.click()` —— 删掉一个二级页后下标整体前移，找不到就**静默停在上一页**，
+    //    于是 6 条"免费额度 / 长列表"断言全在模型页上量到 0 行，看起来像产品坏了。
+    const verifySrc189 = read('../panel/next/verify.mjs');
+    if (/querySelectorAll\('#nav2 \.sub'\)\[\$\{sub\}\]; if\(s\) s\.click\(\)/.test(verifySrc189)
+      || !/导航落点找得到/.test(verifySrc189)
+      || !/goto\(4, '用量与花费'\)/.test(verifySrc189)) {
+      p189.push('§189⑥：verify 又回到按下标点页签，或找不到不报错 —— 再删一个二级页就会让断言跑在上一页上');
+    }
+    subHit('二级页合并');
+
+    if (p189.length) { bad++; for (const x of p189) console.log('✗ ' + x); }
+    else console.log('✓ 二级页合并（§189）：两个空页已消失 · 四样功能落到新页 · 短标签不残留 · 身份清单同源 · panel-dom 真渲染 · verify 按名落点');
+  }
+
+  // 190) QQ 官方机器人通道（2026-11-06）
+  //      这一段的理由不是"又多了一个后端"，而是它**改了默认出口**：
+  //      新装用户第一条消息走的是官方通道，而官方通道的规则跟 NapCat 完全相反
+  //      （被动回复 5 分钟 5 次、身份只有 openid、一半能力平台根本没给端点）。
+  //      这类"形状不同"的通道最容易被改回顺手的样子 —— 每一处顺手都会变成
+  //      真机上"看着在线其实不回话"，所以每条判据都指向一个具体的失效模式。
+  {
+    const p190 = [];
+    const modeSrc190 = read('../src/channel-mode.js');
+    const cfgSrc190 = read('../src/config.js');
+    const constSrc190 = read('../src/backend/official/constants.js');
+    const passiveSrc190 = read('../src/backend/official/passive.js');
+    const clientSrc190 = read('../src/backend/official/client.js');
+    const httpSrc190 = read('../src/backend/official/http.js');
+    const bindSrc190 = read('../src/channel-binding.js');
+    const liveSrc190 = read('../src/official-liveness.js');
+    const idxSrc190 = read('../src/index.js');
+    const regSrc190 = read('../src/backend/registry.js');
+    const srvSrc190 = read('../panel/server.js');
+    const cfgRouteSrc190 = read('../panel/lib/config-route.js');
+    const chRouteSrc190 = read('../panel/lib/channel-routes.js');
+    const stateSrc190 = read('../panel/lib/state-collector.js');
+    const schemaSrc190 = read('../panel/next/schema.js');
+    const appSrc190 = read('../panel/next/app.js');
+    const islandSrc190 = read('../panel/next/island.js');
+    const domSrc190 = read('../test/panel-dom.mjs');
+    const pkgSrc190 = read('../package.json');
+    const exampleSrc190 = read('../config.example.json');
+    const launcherSrc190 = read('../Estrella-Bot.app/Contents/Resources/launcher.sh');
+    const winStartSrc190 = read('../packaging/windows/tools/start.mjs');
+
+    // ① 默认值与旧配置迁移：**默认 NapCat**（维护者 2026-11-06 先定官方、同日改口）。
+    //    改口的理由写进 `src/channel-mode.js` 的注释：官方通道要 AppID/AppSecret，
+    //    把它设成默认，新装第一眼就是"缺凭据、不说话"。
+    //    两档默认值同值不是冗余 —— 一档说新装、一档说已装升级，任一被单独改动都要红。
+    //    五档来源也必须齐（少一档就没人知道出口是怎么定的）。
+    if (!/export const DEFAULT_CHANNEL_MODE = 'napcat';/.test(modeSrc190)
+      || !/export const LEGACY_CHANNEL_MODE = 'napcat';/.test(modeSrc190)
+      || !/export const CHANNEL_ENV = 'QQBOT_CHANNEL';/.test(modeSrc190)
+      || !/source: 'env'/.test(modeSrc190) || !/source: 'config'/.test(modeSrc190)
+      || !/source: usedExample \? 'example' : 'legacy'/.test(modeSrc190)
+      || !/resolveChannelMode\(/.test(cfgSrc190)
+      || !/"mode": "napcat"/.test(exampleSrc190)) {
+      p190.push('§190①：默认通道或迁移来源被改动 —— 新装第一眼变成"缺凭据不说话"，'
+        + '或老用户被静默换出口');
+    }
+    subHit('官方通道');
+
+    // ② 被动回复凭据：5 分钟 5 次 / 60 分钟 4 次是**平台规则**，不是可调参数。
+    //    分配即消耗（发送失败也不回退 seq，回退正好撞平台自己的去重失败）。
+    //    ⚠️ 窗口起点必须是"本机收到的时刻"：用平台 timestamp 时，本机时钟快 5 分钟以上
+    //    会让每一条群回复都算超窗 ⇒ 全落到主动消息（还要群主单独开），
+    //    症状是"通道显示在线却不回话"。这一条是端到端回归实测出来的形状。
+    if (!/group: \{ windowMs: 5 \* 60_000, maxReplies: 5 \},/.test(constSrc190)
+      || !/private: \{ windowMs: 60 \* 60_000, maxReplies: 4 \},/.test(constSrc190)
+      || !/slot\.seq >= limit\.maxReplies/.test(passiveSrc190)
+      || !/slot\.seq \+= 1;/.test(passiveSrc190)
+      || !/receivedAt: Date\.now\(\),/.test(clientSrc190)) {
+      p190.push('§190②：被动凭据上限被放宽，或窗口起点回到平台时间戳 —— 刷屏或被平台掐掉，且后者会静默');
+    }
+    subHit('官方通道');
+
+    // ③ 入站必须过翻译层，且**两级**重复都要挡：
+    //    合并窗口（AT + 全量同一 id）与持久去重（重连/续传补发的旧事件）。
+    //    裸投平台事件 = 大脑不认 = 不回 ack = 平台无限重投（教程里那条真机事故）。
+    //    去重表必须落盘，否则"重启一次它把昨天的话又回一遍"。
+    if (!/translateInbound\(dispatch/.test(clientSrc190)
+      || !/this\.mergePending\.has\(key\)/.test(clientSrc190)
+      || !/this\.seen\.has\(key\)/.test(clientSrc190)
+      || !/createSeenStore\(/.test(clientSrc190) || !/this\.seen\.load\(\);/.test(clientSrc190)
+      || !/official-seen\.json/.test(clientSrc190)
+      || (clientSrc190.match(/this\.emit\('message', event\)/g) || []).length !== 1) {
+      p190.push('§190③：入站翻译/合并/持久去重任一缺失，或消息出口不止一条 —— 重投与刷屏都会回来');
+    }
+    subHit('官方通道');
+
+    // ④ 平台没给的能力必须**明确失败**。假装成功的最坏形状不是报错，
+    //    而是面板显示"已发送"、用户那边什么都没收到。
+    if (!/if \(plan\.unsupported\.includes\('forward'\)\) \{\n      throw officialError\(OFFICIAL_CODE\.unsupportedForward,/.test(clientSrc190)
+      || !/throw officialError\(OFFICIAL_CODE\.unsupportedSegment,/.test(clientSrc190)
+      || !/forwardOrder: \[\],/.test(regSrc190)
+      || !/send_group_forward_msg: 'no'/.test(regSrc190)
+      || !/if \(skipOnOfficial\('好友表/.test(idxSrc190)
+      || !/if \(skipOnOfficial\('按消息号回查图片/.test(idxSrc190)
+      || !/if \(skipOnOfficial\('正在输入气泡/.test(idxSrc190)) {
+      p190.push('§190④：合并转发/好友表/历史回查/输入状态又回到"静默当成功" —— 用户看到的是没回音');
+    }
+    subHit('官方通道');
+
+    // ⑤ 凭据外送闸：AppSecret 只许进 `getAppAccessToken` 那一条请求。
+    //    所以 REST 原点与 WS 地址都**不许做成可配置**：能改地址就能改收凭据的人。
+    //    面板侧只回显"有没有配过"，绝不回显明文；留空保存绝不能把凭据清空。
+    if (!/assertOfficialBase\(base\)/.test(httpSrc190)
+      || !/assertOfficialWsUrl\(options\.wsUrl/.test(clientSrc190)
+      || /export const OFFICIAL_HOST/.test(constSrc190)
+      || !/hasSecret: Boolean\(/.test(liveSrc190)
+      || /state\.channel[^}]*appSecret/.test(stateSrc190)
+      || !/if \(typeof off\.appSecret === 'string'\)/.test(cfgRouteSrc190)
+      || !/if \(secret\) \{/.test(cfgRouteSrc190)
+      || !/t: 'password', id: 'channel.appSecret'/.test(schemaSrc190)) {
+      p190.push('§190⑤：官方接口地址可被改写，或 AppSecret 出现在面板状态里，或留空保存会清掉凭据');
+    }
+    subHit('官方通道');
+
+    // ⑥ 身份只有 openid：不许伪造数字号（哈希截短看着方便，实际是把陌生人放进权限链）；
+    //    群绑定是**人工**的一对一映射且双向查重（一号绑两群 / 一群绑两号都得拒）；
+    //    主人只写 `owner.qq` 一份真值，绝不另开 `bindings.owners`（第二真相源=面板说设过而它不认你）。
+    if (!/OPENID_SHAPE|A-Za-z0-9_-\]\{8,128\}/.test(bindSrc190)
+      || !/export function bindingConflict/.test(bindSrc190)
+      || !/\{ groups: \{\} \}/.test(cfgSrc190)
+      || !/cfg\.owner\.qq = next;/.test(chRouteSrc190)
+      || /out\.owners\s*=/.test(cfgSrc190)) {
+      p190.push('§190⑥：群/主人绑定形状被改 —— 出现第二份主人真值或不查重，绑定就会挂在错误的键上');
+    }
+    subHit('官方通道');
+
+    // ⑦ 面板接线必须齐全：通道卡在**独立二级页「切换协议端」**上（2026-11-06 维护者改口：
+    //    总览是每天看一眼的地方，切换通道是一次性的决定，不该占一整块通栏玻璃板），
+    //    位置必须在 总览 之后、会话日志 之前；绑定表是**新的控件类型**；
+    //    五个动作（含一键生效）、四条路由，且 bind/unbind/owner 在 WRITE_ROUTES 里
+    //   （漏一条=演示模式照样能改配置）。
+    const { GROUPS: G190 } = await import('../panel/next/schema.js');
+    const run190 = G190.find((g) => g.id === 'run') || { subs: [] };
+    const chSub190 = run190.subs.find((s) => s.id === 'channel') || null;
+    if (!/id: 'channel', title: '接入通道'/.test(schemaSrc190)
+      || !/'channelBind',/.test(schemaSrc190)
+      || !chSub190 || chSub190.label !== '切换协议端'
+      || run190.subs[0]?.id !== 'overview' || run190.subs[1]?.id !== 'channel'
+      || run190.subs[2]?.id !== 'sessions'
+      || !(chSub190.cards || []).some((c) => c.id === 'channel')
+      || (run190.subs[0].cards || []).some((c) => c.id === 'channel')
+      || !/channel: '协议端'/.test(schemaSrc190)
+      || !/channelBind: \(\) => \{/.test(appSrc190)
+      || !['channel.bind', 'channel.unbind', 'channel.owner', 'channel.test', 'channel.restart']
+        .every((a) => appSrc190.includes(`'${a}'`))
+      || !/path: '\/api\/channel\/bind'/.test(srvSrc190)
+      || !/'\/api\/channel\/unbind', '\/api\/channel\/owner',/.test(srvSrc190)
+      || !/'\/api\/channel\/test',/.test(srvSrc190)
+      // 通道投影必须是**同一个纯函数**（机器人写出的形状不许面板再重拼），
+      // 且「改了要重启」要比到运行侧的 AppID —— 只比通道种类的话，
+      // 存好凭据不重启的用户看到的是一片安静。
+      || !/channel: officialPanelView\(\{/.test(stateSrc190)
+      || !/recvAll: health\?\.recvAll \|\| \{\}/.test(liveSrc190)
+      || !/String\(health\?\.appId \?\? ''\) !== appId/.test(liveSrc190)
+      // 切完立刻换脸（2026-11-07 维护者点名）：乐观重画 + 失败回滚 + savedMsg 读新态，
+      // 三件缺一不可。少了乐观重画＝回到「切了要去总览点启动框才出来」；少了回滚＝
+      // 失败伪装成成功；savedMsg 不在 refresh 之后读＝拿着旧 configured 说不合时宜的话。
+      || !/optimistic: \(v, s\) => \{/.test(schemaSrc190)
+      || !/savedMsg: \(s\) =>/.test(schemaSrc190)
+      || !/if \(x\.optimistic && S\.state\)/.test(appSrc190)
+      || !/if \(undo\) \{ undo\(\); paintPage\(false\); \}/.test(appSrc190)
+      || !/typeof x\.savedMsg === 'function'/.test(appSrc190)) {
+      p190.push('§190⑦：通道卡不在「切换协议端」那一页（或顺序/短标签/动作/路由/写分类/乐观重画回滚任一缺失）'
+        + ' —— 用户没有入口、切完没有一键生效、切完不立刻换脸，或写操作绕过分类');
+    }
+    subHit('官方通道');
+
+    // ⑧ 出口在启动时一次性决定（二选一，切换要重启）：两条启动链都必须先读通道再决定
+    //    要不要拉 Docker / NapCat，否则官方模式下会白等 90 秒容器超时。
+    //    ⚠️ 判据只认 launcher.sh 里那条真赋值与那条真分支，不认注释。默认 NapCat
+    //    （2026-11-06 维护者指定）：兜底必须是 napcat，且"非 napcat 就跳过容器"的分支必须在。
+    if (!/CHANNEL="napcat"/.test(launcherSrc190)
+      || !/if \[ "\$CHANNEL" != "napcat" \]/.test(launcherSrc190)
+      || !/readChannelMode\(\) === 'official'/.test(winStartSrc190)
+      || !/restartRequired/.test(cfgRouteSrc190)
+      // 通道改动跳过热重载白等（waitEffectiveApplied 比的是 LLM 值，不是通道），
+      // 且 baseMsg 走 channelRestart 分支 —— 否则一边「已用上新配置（不用重启）」
+      // 一边「通道要重启」自相矛盾（2026-11-07）。
+      || !/channelRestart \? false : await waitEffectiveApplied\(cfg\)/.test(cfgRouteSrc190)
+      || !/const baseMsg = channelRestart/.test(cfgRouteSrc190)) {
+      p190.push('§190⑧：启动链不再按通道决定协议端（兜底/分支缺失），或面板不提示重启 —— 官方模式下会白等容器/连不上');
+    }
+    subHit('官方通道');
+
+    // ⑨ 回归门真的在跑（静态判据钉不住接缝，端到端才钉得住）：
+    //    check-official 必须进 verify 链、必须带输入基数下限、必须有假网关；
+    //    panel-dom 必须真渲染过官方态（否则卡片被改名、密码框退成明文框照样绿）。
+    if (!/test\/check-official\.mjs/.test(pkgSrc190)
+      || !fs.existsSync(new URL('../test/mock-official-gateway.mjs', import.meta.url))
+      || !/checks < 80/.test(read('../test/check-official.mjs'))
+      || !/console\.log\('\\n── 接入通道（官方）/.test(domSrc190)
+      || !/#card-channel \[type="password"\]/.test(domSrc190)
+      // 乐观重画与失败回滚的真渲染断言必须在（2026-11-07）：焦点停在 radio + 拖住后端
+      // 回执这两个真实条件，少一个这道缺陷就又是无人守的盲区。
+      || !/乐观重画夹具跑通/.test(domSrc190)
+      || !/保存失败后单选回滚到 napcat/.test(domSrc190)) {
+      p190.push('§190⑨：官方通道回归没进 verify，或 panel-dom 没有官方态真渲染 —— "全绿"将只覆盖 NapCat');
+    }
+    subHit('官方通道');
+    // ⑩ 顶栏状态岛 / 启动链路 / 运行总览右栏必须认通道（2026-11-07 维护者点名「顶栏那格同法修」）：
+    //    官方模式下不许再出现 Docker / 扫码 / 重启协议端 / 重启 QQ 容器 这些 NapCat 专用催法，
+    //    否则用户会去排查一个官方通道根本不存在（也不需要）的容器。
+    if (!/var chMode = j\(s, \['channel', 'mode'\], 'napcat'\)/.test(islandSrc190)
+      || !/chMode === 'official'/.test(islandSrc190)
+      || !/官方通道/.test(islandSrc190)
+      || !/officialSide \? '' : ovActionButton\('拉起协议端'/.test(appSrc190)
+      || !/officialSide \? '' : ovActionButton\('打开 QQ 登录'/.test(appSrc190)
+      || !/officialSide \? '' : ovActionButton\('重启 QQ 容器'/.test(appSrc190)
+      || !/官方通道的检查表\/右栏\/状态岛/.test(domSrc190)) {
+      p190.push('§190⑩：官方模式下顶栏状态岛 / 启动链路 / 总览右栏仍按 NapCat 口径说话'
+        + '（或 panel-dom 没有官方态真渲染）—— 用户会去查一个根本不存在（也不需要）的容器');
+    }
+    subHit('官方通道');
+
+    if (p190.length) { bad++; for (const x of p190) console.log('✗ ' + x); }
+    else console.log('✓ 官方机器人通道（§190）：默认只作用新装且五档来源齐 · 被动 5/4 与本机到达起算 · '
+      + '翻译+合并+持久去重且消息出口唯一 · 不支持能力明确失败 · 地址钉死与凭据不回显 · '
+      + 'openid 与人工绑定单一真值 · 面板卡/动作/路由/写分类齐 · 启动链按通道 · 顶栏/检查表/右栏认通道 · 回归在 verify 里');
+  }
+
+  // ══ §191 · 横幅「不再提示」（2026-11-07 新增）═══════════════════════════════
+  // 维护者的要求：每条横幅右上角都要一颗圆形关闭钮，点了以后这条不再弹。
+  // 但横幅分两种性质 —— 「此刻坏了」（离线 / 后端无响应 / 旧代码 / 内存紧）和「一次提示」
+  // （非官方界面）。前者永久静音等于把报警器拆掉：真坏的那一次正好是被静音的那一次。
+  // 所以 latch 语义 = 条件过去一次记录作废。两个最危险的失效形态是**圆钮被摘**（没法关）
+  // 和 **latch 被写成 permanent**（真坏第二次不吭声）—— 这两种都必须让这段变红。
+  {
+    const p191 = [];
+    const app191 = read('../panel/next/app.js');
+    const set191 = read('../panel/next/settings.js');
+    const entry191 = read('../panel/next/index.html');
+    const css191 = read('../panel/next/style.css');
+    const dom191 = read('../test/panel-dom.mjs');
+
+    // ① 六类 kind 都必须走 add()（add 是唯一挂圆钮的出口；漏一类 = 那条横幅关不掉）。
+    const kinds191 = ['demo', 'no-backend', 'no-token', 'panel-stale', 'memory', 'unofficial'];
+    if (!/const BANNER_KINDS = Object\.freeze\(\{/.test(app191)) {
+      p191.push('§191①：BANNER_KINDS 不在了 —— 「不再提示」失去单一真值表');
+    }
+    for (const k of kinds191) {
+      if (!new RegExp(`add\\('${k}',`).test(app191)) p191.push(`§191①：横幅 ${k} 不再走 add() —— 它右上角没有关闭圆钮了`);
+    }
+    if (!/const \{ nodes, live \} = collectBanners\(/.test(app191)) {
+      p191.push('§191①：renderBanners 不再从 collectBanners 取节点 —— 条件与横幅分家，纯函数自证会空转');
+    }
+    subHit('横幅不再提示');
+
+    // ② 语义钉住：状态类 latch、非官方界面 permanent（维护者 2026-11-07 点名永久关）。
+    const latch191 = ['demo', 'no-backend', 'no-token', 'panel-stale', 'memory'];
+    for (const k of latch191) {
+      const re = new RegExp(`(?:^|\\s)'?${k}'?: 'latch'`, 'm');
+      if (!re.test(app191)) p191.push(`§191②：${k} 不是 latch —— 这条横幅会被永久静音，下次同样的故障不再提醒`);
+    }
+    if (!/unofficial: 'permanent'/.test(app191)) p191.push('§191②：unofficial 不是 permanent（维护者点名可彻底关闭）');
+    subHit('横幅不再提示');
+
+    // ③ latch 复位必须在**渲染守卫之前**跑，且只清 latch。
+    //    顺序写反的后果：记录清掉了但 DOM 因 html 相同不重画 ⇒「改了没反应」。
+    if (!/resetBannerLatches\(new Set\(live\)\)/.test(app191)) {
+      p191.push('§191③：没有按 live 复位 latch 记录 —— 静音状态会永远挂着');
+    }
+    if (!/BANNER_KINDS\[k\] !== 'latch' \|\| liveKinds\.has\(k\)/.test(app191)) {
+      p191.push('§191③：复位不再区分 latch/permanent —— permanent 项会被顺手清掉，或 latch 项清不掉');
+    }
+    const atReset191 = app191.indexOf('resetBannerLatches(new Set(live))');
+    const atGuard191 = app191.indexOf('if (html === bannersHtml) return;');
+    if (atReset191 < 0 || atGuard191 < 0 || atReset191 > atGuard191) {
+      p191.push('§191③：latch 复位没有排在 DOM 守卫之前 —— 记录作废了但横幅还挂在页面上');
+    }
+    subHit('横幅不再提示');
+
+    // ④ 动作注册 + fail-closed：未知 kind 不写记录（拼错的键会在本机躺一辈子且没人看得见）。
+    if (!/'banner\.dismiss': async \(kind\)/.test(app191)) p191.push('§191④：banner.dismiss 动作不在 —— 圆钮点了没反应');
+    if (!/if \(!dismissBanner\(k\)\)/.test(app191)) p191.push('§191④：动作没有看 dismissBanner 的返回值（失败也当成功）');
+    if (!/hasOwnProperty\.call\(BANNER_KINDS, kind\)/.test(app191)) p191.push('§191④：dismissBanner 不再拒绝未知 kind');
+    if (!/live\.push\(kind\);\s*\n\s*if \(dismissed\[kind\]\) return;/.test(app191)) {
+      p191.push('§191④：静音的项没有先进 live 再跳过 —— 条件成立但被隐藏的横幅会让别的记录误作废');
+    }
+    subHit('横幅不再提示');
+
+    // ⑤ 本机键单一真值：只在 app.js 写一次；设置层与自检都经 app.js 的口。
+    const nKey191 = (app191.match(/'next-banner-dismiss-v1'/g) || []).length;
+    if (nKey191 !== 1) p191.push(`§191⑤：本机键在 app.js 里有 ${nKey191} 处字面量（应恰 1 处）`);
+    if (/next-banner-dismiss-v1/.test(set191)) p191.push('§191⑤：settings.js 自己拼了本机键 —— 第二真相源，复位会漏项');
+    if (!/resetBannerDismiss: \(\) => \{ resetBannerDismissAll\(\); renderBanners\(\); \}/.test(app191)
+      || !/deps\.resetBannerDismiss/.test(set191)) {
+      p191.push('§191⑤：复位入口没有接到设置层（或接了但不清记录/不重画）');
+    }
+    subHit('横幅不再提示');
+
+    // ⑥ 圆钮形状与可及性（沿用 §154④ 那颗 .banner-x 的样式族，不新造控件）。
+    if (!/class="banner-x" type="button" data-a="banner\.dismiss" data-p="\$\{esc\(kind\)\}"/.test(app191)) {
+      p191.push('§191⑥：关闭钮不再是 banner-x + banner.dismiss + data-p 三件套');
+    }
+    if (!/aria-label="\$\{label\}" title="\$\{label\}"/.test(app191)) p191.push('§191⑥：关闭钮没有 aria-label/title');
+    if (!/\.banner-x\s*\{[\s\S]{0,160}border-radius:\s*50%/.test(css191)) p191.push('§191⑥：.banner-x 不是圆形');
+    subHit('横幅不再提示');
+
+    // ⑦ 升级横幅不许被并进来：它按版本记在服务端（§154④），改成 permanent 或本机记录都是越权。
+    if (/update: 'latch'|update: 'permanent'/.test(app191)) p191.push('§191⑦：升级横幅被并进本机 kind 表');
+    if (!/&& !updDismissed/.test(app191) || !/data-a="update\.dismiss"/.test(app191)) {
+      p191.push('§191⑦：升级横幅的按版本 dismiss 被摘掉（§154④ 会跟着失守）');
+    }
+    if (!/nodes\.push\(\{ kind: null, html:/.test(app191)) p191.push('§191⑦：升级横幅不再是 kind:null 直出（它不该吃本机记录）');
+    subHit('横幅不再提示');
+
+    // ⑧ 复位入口在页面上（否则 permanent 项一旦静音就再也回不来）。
+    if (!/id="setResetBanners"/.test(entry191)) p191.push('§191⑧：设置层没有「恢复横幅提示」按钮');
+    subHit('横幅不再提示');
+
+    // ⑨ 真渲染断言必须在（静态扫描证明不了"点一下真的没了"）。
+    for (const needle of [
+      '六类横幅各有一颗关闭圆钮',
+      '真点圆钮后这条横幅消失',
+      'latch 项在条件恢复后重弹',
+      '非官方界面关掉后不再出现',
+      '升级横幅仍走服务端按版本 dismiss',
+      '「恢复横幅提示」真的把记录清掉并当场重画',
+    ]) {
+      if (!dom191.includes(needle)) p191.push(`§191⑨：panel-dom 缺「${needle}」断言`);
+    }
+    subHit('横幅不再提示');
+
+    if (p191.length) { bad++; for (const x of p191) console.log('✗ ' + x); }
+    else console.log('✓ 横幅不再提示（§191）：六类都有圆钮 · latch/permanent 语义钉住 · 复位排在 DOM 守卫前 · '
+      + '动作 fail-closed · 本机键单一真值 · 升级横幅未被并进来 · 复位入口与真渲染断言在位');
+  }
+
   // ① 契约块数下限。`ran + 1` 里那个 +1 就是**本段自己**（本段也走 console.log、也被计入），
   //    于是这里比的是"算上本段一共多少段"，与 `process.on('exit')` 的口径完全一致。
   //    ⚠️ 放在 §148 之后：桌面壳三段与其它契约块一样必须先计入，再比下限。
@@ -22400,7 +22933,7 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
     problems.push(`只跑了 ${ran + 1} 段契约（下限 ${MIN_CONTRACTS}）—— 有人删了断言，或某一段被提前 return 掉了`);
   }
 
-const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 1], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8], ['扩展卸载', 5], ['安装中文路径', 5], ['常规页安全内缩', 10], ['假QQ对话', 3], ['记忆降噪', 3], ['识图加固', 10], ['P1封堵', 8], ['B2守卫', 5], ['B3管线', 4], ['B4复核', 4], ['B5首次启动', 4]];
+const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 2], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8], ['扩展卸载', 5], ['安装中文路径', 5], ['常规页安全内缩', 10], ['假QQ对话', 3], ['记忆降噪', 3], ['识图加固', 10], ['P1封堵', 8], ['B2守卫', 5], ['B3管线', 4], ['B4复核', 4], ['B5首次启动', 4], ['排版密度', 5], ['二级页合并', 6], ['官方通道', 10], ['横幅不再提示', 9]];
   for (const [bucket, min] of HEAVY_SUB_MIN) {
     const c = subCountOf(bucket);
     if (c < min) {

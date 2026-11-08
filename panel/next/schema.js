@@ -240,6 +240,130 @@ export const GROUPS = [
         ],
       },
       {
+        id: 'channel', label: '切换协议端', title: '切换协议端',
+        desc: '两条通道二选一，切换要重启才生效。官方机器人不需要 Docker / NapCat，也不会碰你 QQ 号的登录态；代价是平台的一堆硬限制（被动回复 5 分钟 5 次、没有合并转发、身份只有 openid）。',
+        cards: [
+          /* ── 接入通道（2026-11-06 · 2026-11-07 搬到独立二级页）─────────────
+             维护者 2026-11-06 改口：默认仍是 NapCat，官方机器人要用户自己到
+             「运行 → 切换协议端」里选。所以这张卡不再占总览最上面那一整块玻璃板 ——
+             总览是每天看一眼的地方，切换通道是一次性的决定。
+             ⚠️ 加页要重算的计数：`panel/ui-identity.json` 只钉**核心锚点**，
+                加项放行（§171③），不用重签；但 README 页面数、panel-dom 收尾文案同批改。 */
+          {
+            id: 'channel', title: '接入通道', span: 12,
+            desc: '机器人用哪张嘴收发，二选一：QQ 官方机器人（合规、无需协议端，账号会带「机器人」标签）或 NapCat（OneBot v11，要扫码登录）。出口在启动时一次性决定 —— 选完用下面那颗「立即重启生效」，不用回总览找启动。',
+            ctrls: [
+              {
+                t: 'seg', id: 'channel.mode', label: '消息通道',
+                hint: '官方通道不需要 Docker / NapCat，也不会给 QQ 号打登录态；NapCat 是既有的那条路，行为与以前一致。',
+                options: [
+                  { v: 'official', l: 'QQ 官方机器人' },
+                  { v: 'napcat', l: 'NapCat' },
+                ],
+                read: (s) => j(s, ['channel', 'mode'], 'napcat'),
+                save: (v) => ({ url: '/api/config', body: { channel: { mode: v } } }),
+                /* 切完立刻换脸（2026-11-07 维护者点名「切的时候就要有反馈」）：
+                   只改内存里 state.channel.mode，那些 when:mode==='official' 的凭据框 /
+                   绑定表 / 状态格当场就出现，不等后端回执、也不等 3 秒轮询。
+                   configured / official 这些派生值交给紧随其后的 refresh 校准 ——
+                   前端不重算 channelIsConfigured（那是第二份会漂的规则）。
+                   返回 undo：保存失败时 app.js 把这一格戳回去，绝不「失败伪装成成功」。 */
+                optimistic: (v, s) => {
+                  if (!s || !s.channel) return null;
+                  const prev = s.channel.mode;
+                  s.channel.mode = v;
+                  return () => { s.channel.mode = prev; };
+                },
+                savedMsg: (s) => (j(s, ['channel', 'mode'], 'napcat') === 'official'
+                  ? '已切到 QQ 官方机器人 · 填好 AppID / AppSecret，再重启机器人加载'
+                  : '已切到 NapCat · 重启机器人后加载新通道'),
+              },
+              {
+                /* 为什么要有这一颗：出口在启动时一次性决定（不做热插拔），
+                   以前改完通道得自己去总览「运行控制」那一格里点启动 —— 表现就是
+                   维护者说的那句"切了之后要点一次启动才刷新"。现在同一页一键生效，
+                   而且按机器人此刻在不在跑给两个不同的说法（在跑=重启，没跑=启动）。 */
+                t: 'buttons', label: '',
+                items: [
+                  { ...act('立即重启生效', 'channel.restart', 'btn-primary',
+                    '停止再启动机器人：新通道在启动那一刻被加载（会中断当前会话几十秒）', 'reload'),
+                    when: (s) => j(s, ['channel', 'restartRequired'], false) === true && !!j(s, ['bridge', 'running'], false) },
+                  { ...act('立即启动生效', 'channel.restart', 'btn-primary',
+                    '启动机器人：新通道在启动那一刻被加载（现在还没在跑，直接起就行）', 'play'),
+                    when: (s) => j(s, ['channel', 'restartRequired'], false) === true && !j(s, ['bridge', 'running'], false) },
+                ],
+              },
+              /* 待配置那一格是**入口**，不是报错：缺凭据时它必须自己说下一步去哪。 */
+              { t: 'note', when: (s) => j(s, ['channel', 'mode']) === 'official' && j(s, ['channel', 'configured'], true) === false,
+                text: '官方通道还缺 AppID / AppSecret：到 QQ 开放平台（q.qq.com）建机器人应用，把两个值填在下面，点「校验凭据」，再重启机器人。' },
+              { t: 'note', when: (s) => j(s, ['channel', 'mode']) === 'official' && j(s, ['channel', 'restartRequired'], false) === true,
+                text: '通道或凭据改了，但机器人还在用启动时那一份 —— 到下面「进程」里停止再启动，或重启一次机器人。' },
+              {
+                t: 'text', id: 'channel.appId', label: 'AppID', wide: true,
+                when: (s) => j(s, ['channel', 'mode']) === 'official',
+                read: (s) => j(s, ['channel', 'official', 'appId'], ''),
+                save: (v) => ({ url: '/api/config', body: { channel: { official: { appId: v } } } }),
+              },
+              {
+                /* 留空 = 不改已保存的那把（面板读不到明文，回显也只能是空）。
+                   这一条与模型 Key 完全同形，所以照抄同一套措辞，不再发明第二种。 */
+                t: 'password', id: 'channel.appSecret', label: 'AppSecret',
+                when: (s) => j(s, ['channel', 'mode']) === 'official',
+                ph: '留空则不修改已保存的 AppSecret',
+                read: () => '',
+                save: (v) => (v ? { url: '/api/config', body: { channel: { official: { appSecret: v } } } } : null),
+              },
+              {
+                t: 'buttons', label: '', when: (s) => j(s, ['channel', 'mode']) === 'official',
+                items: [
+                  act('校验凭据', 'channel.test', 'btn-primary', '取一次 token、读一次机器人身份、连一次事件网关（只读，不改任何状态）', 'search'),
+                ],
+              },
+              { t: 'note', when: (s) => j(s, ['channel', 'mode']) === 'official',
+                text: '能力边界与排错顺序写在仓库文档 `docs/OFFICIAL-CHANNEL.md`（官方通道没有 @ 段、没有合并转发、没有历史消息查询）。' },
+              { t: 'channelBind', id: 'channel.bind', when: (s) => j(s, ['channel', 'mode']) === 'official' },
+              /* 官方通道的状态格：读的全是 `state.channel.official`（机器人自己写出的快照），
+                 面板不另开一条探测 —— 官方通道根本没有本地端口可探。 */
+              {
+                t: 'statusGrid', label: '官方通道状态',
+                when: (s) => j(s, ['channel', 'mode']) === 'official',
+                items: [
+                  { ico: 'layers', label: '事件网关', go: 'run/channel',
+                    value: (s) => ({ online: '已连接', connecting: '连接中', 'auth-failed': '鉴权失败', unconfigured: '待配置', terminal: '已被平台停用', stalled: '事件流停摆', 'account-offline': '账号不在线', 'no-snapshot': '机器人没在跑' }[j(s, ['onebot', 'code'], '')] || j(s, ['onebot', 'code'], '—')),
+                    sub: (s) => j(s, ['onebot', 'detail'], '') || '机器人自己看到的连接状态',
+                    st: (s) => (j(s, ['onebot', 'code']) === 'online' ? 'ok'
+                      : (j(s, ['onebot', 'code']) === 'connecting' ? 'warn' : 'bad')) },
+                  { ico: 'user', label: '机器人身份', go: 'run/channel',
+                    value: (s) => j(s, ['channel', 'official', 'selfName'], '') || '未取到',
+                    sub: (s) => (j(s, ['channel', 'official', 'selfId'], '')
+                      ? `id ${String(j(s, ['channel', 'official', 'selfId'], '')).slice(0, 12)}…`
+                      : '官方机器人没有"扫码登录"这一步'),
+                    st: (s) => (j(s, ['channel', 'official', 'selfId'], '') ? 'ok' : 'warn') },
+                  { ico: 'clock', label: '凭据有效期', go: 'run/channel',
+                    value: (s) => {
+                      const ms = Number(j(s, ['channel', 'official', 'token', 'msLeft'], 0));
+                      return ms > 0 ? `约 ${Math.round(ms / 60000)} 分钟` : '—';
+                    },
+                    sub: () => '到期前 2 分钟自动续期，不用重启',
+                    st: (s) => (Number(j(s, ['channel', 'official', 'token', 'msLeft'], 0)) > 0 ? 'ok' : 'warn') },
+                  { ico: 'list', label: '群绑定', go: 'run/channel',
+                    value: (s) => `${Number(j(s, ['channel', 'official', 'groupsBound'], 0))} 个`,
+                    sub: (s) => {
+                      const pend = (j(s, ['channel', 'official', 'pendingGroups'], []) || []).length;
+                      return pend ? `另有 ${pend} 个群等着绑定` : '未绑定的群按 openid 独立工作';
+                    },
+                    st: (s) => (Number(j(s, ['channel', 'official', 'groupsBound'], 0)) > 0 ? 'ok' : 'warn') },
+                  { ico: 'key', label: '主人绑定', go: 'run/channel',
+                    value: (s) => `${Number(j(s, ['channel', 'official', 'ownersBound'], 0))} 个`,
+                    sub: () => '叫醒与私聊只认明确绑过的那几条',
+                    st: (s) => (Number(j(s, ['channel', 'official', 'ownersBound'], 0)) > 0 ? 'ok' : 'warn') },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
         id: 'sessions', label: '会话与日志', title: '会话与日志',
         desc: '数据源是 <code>local-trace.jsonl</code>（有界窗口，反映最近活动）与退出 / 定时归档的<b>消息存档</b>（只读）；日志是面板内存里的环形缓冲（封顶 600 行），审计是 <code>audit.jsonl</code>（谁在什么时候改了什么）。两套会话数据源分开读，不做合并写入 —— 合并会在截断时静默丢数据。',
         cards: [
@@ -462,13 +586,21 @@ export const GROUPS = [
         draft: true,
         cards: [
           {
-            id: 'cw', title: '聊天等待', span: 12,
+            id: 'cw', title: '拟人停顿', span: 6,
             ctrls: [
               { t: 'switch', id: 'cw.on', label: '回之前先停一会儿（拟人停顿）', bind: 'wait.enabled',
                 hint: '关掉 = 判定一过立刻调模型（改造前的行为）。下面几个数都只在它开着时生效。' },
               { t: 'number', id: 'cw.min', label: '最短停顿（毫秒）', bind: 'wait.minMs', min: 0, max: 10000, step: 100, hint: '默认 400。' },
               { t: 'number', id: 'cw.max', label: '最长停顿（毫秒）', bind: 'wait.maxMs', min: 0, max: 20000, step: 100, hint: '默认 2500。长消息会按字数往上加，但不会超过这个值。' },
               { t: 'number', id: 'cw.per', label: '每多一个字再多停（毫秒）', bind: 'wait.perCharMs', min: 0, max: 200, step: 5, hint: '默认 15。' },
+            ],
+          },
+          /* 排版（2026-11-05）：这一页原来是一张 span-12 的长板装 8 个控件，
+             实测 1168×751 —— 半屏以上都是它，右侧还空一大条。按"停顿"与
+             "攒一轮 / 垫话"两组语义拆成两列；控件 id 与 bind 一个都没动。 */
+          {
+            id: 'cw2', title: '连发合并 · 垫话 · 正在输入', span: 6,
+            ctrls: [
               { t: 'number', id: 'cw.merge', label: '连发合并：安静这么多毫秒才回（0 = 不合并）', bind: 'wait.mergeMs', min: 0, max: 30000, step: 100,
                 hint: '默认 1200。<b>只合并群聊</b>里同一个人连着发的几条；私聊不合并（紧急唤醒要按连发计数）。被合并掉的几句会进背景段，不会丢。' },
               { t: 'number', id: 'cw.hold', label: '模型慢时先垫一句：超过多少毫秒（0 = 不垫）', bind: 'wait.holdMs', min: 0, max: 120000, step: 500, hint: '默认 6000。' },
@@ -492,7 +624,7 @@ export const GROUPS = [
                 hint: '多一个 send_image 工具；改完重启机器人生效。' },
               { t: 'switch', id: 'img.view', label: '允许它按需看图', bind: 'image.view',
                 hint: '多一个 view_image 工具；当前模型必须支持 vision。' },
-              { t: 'text', id: 'img.root', label: '本机图片目录', bind: 'image.root', ph: '默认 images-out（相对 data/）',
+              { t: 'text', id: 'img.root', label: '本机图片目录', bind: 'image.root', ph: '默认 images-out（相对 data/）', wide: true,
                 hint: '只允许这个目录内的文件（realpath 防逃逸）；留空 = 禁用本机路径。' },
               { t: 'note', kind: 'warn', text: '内网地址、私网 IP、超过 8MB 的图发不出去，原因写进日志。' },
             ],
@@ -880,11 +1012,10 @@ export const GROUPS = [
               { t: 'note', text: '这两格是<b>全局生效值</b>（机器人当前真正带的条数）。切换大脑时服务端 <code>stashCurrentPreset</code> 会把它们各自归档一份，切回来按那一套继续。' },
             ],
           },
-        ],
-      },
-      {
-        id: 'thinking', label: '思考与能力', title: '思考模式与能力开关',
-        cards: [
+          /* 二级页合并（2026-11-05 · G7）：原「思考与能力」页真渲染只剩一张 576×135 的
+             说明卡 —— 思考模式卡在当前大脑没勾「能思考」时整张隐藏，点进去像空页。
+             两张卡原样搬进本页末尾（与「条数与背景」同排起），控件 id、save、bind、when
+             一字未改；删的是那一层导航，不是功能。 */
           {
             id: 'think', title: '思考模式', span: 6,
             // 自定义大脑**没勾**"能思考" ⇒ 整张卡不显示（勾了才有得开）。
@@ -904,13 +1035,13 @@ export const GROUPS = [
           },
           {
             id: 'caps', title: '能力开关', span: 6,
-            desc: '上面两格是<b>模型能力</b>：当前大脑做不到的会灰掉并写明原因（摆在页面上能点却不生效更糟）。',
+            desc: '「思考模式」那两格是<b>模型能力</b>：当前大脑做不到的会灰掉并写明原因（摆在页面上能点却不生效更糟）。',
             ctrls: [
               // 自定义大脑：**只显示勾过的那几项**（下发的 `customVisibleFeatures` 是结论）。
               // 没勾的连开关都不摆 —— 摆出来又关不掉，正是"点了没用"那一类。
               { t: 'featSwitch', feat: 'webSearch', label: '联网查询', hint: '遇到不懂的梗、新闻、人物时让它上网查，每条多花 2–8 秒',
                 when: (s) => customFeatureVisible(s, 'webSearch') },
-              { t: 'note', text: '识图总开关已移到 <b>发言 → 识图与发图</b>（与模型能力表同源）。这一页只留联网查询，不做两份副本。' },
+              { t: 'note', text: '识图总开关已移到 <b>发言 → 识图与发图</b>（与模型能力表同源）。这里只留联网查询，不做两份副本。' },
             ],
           },
         ],
@@ -926,7 +1057,7 @@ export const GROUPS = [
             // 「她今天突然变笨 / 半夜不接话」，而没有任何地方能调。
             // 默认值与回落规则唯一住在 `src/usage.js` 的 `usageLimitsOf()`，
             // 这里显示的是**生效值**（后端下发），页面不自存数字。
-            id: 'usageLimits', title: '省电上限', span: 12,
+            id: 'usageLimits', title: '省电上限', span: 6,
             ctrls: [
               { t: 'number', id: 'u.daily', label: '每日 token 上限', bind: 'usage.dailyTokens', step: 10000, volatile: true,
                 read: (s) => j(s, ['customMeta', 'usageLimits', 'dailyTokens'], 600000),
@@ -939,6 +1070,12 @@ export const GROUPS = [
                 hint: '0 到 1 之间的小数（0.85 = 用到 85% 开始省）。填超出这个范围的值会回落到默认。' },
               { t: 'note', text: '这里显示的是<b>生效值</b>（后端算好下发：没填的就是默认）。上限不是"花钱上限"——本机线路与免费档同样要挡用量与限流。' },
             ],
+          },
+          /* 排版（2026-11-05）：「抓到的条目」上移，与「省电上限」并排成两列。
+             原来三张卡全宽竖排，实测整页 1790px 高、右半屏常年空着。 */
+          {
+            id: 'deals', title: '抓到的条目', span: 6,
+            ctrls: [{ t: 'apiDeals' }],
           },
           {
             id: 'cost', title: '花费', span: 12,
@@ -965,10 +1102,6 @@ export const GROUPS = [
                 act('清零统计', 'usage.reset', 'btn-danger', '清掉 panel/ 下**所有** usage*.jsonl（账本按月切分，只删当月那份按下去看着没反应）'),
               ] },
             ],
-          },
-          {
-            id: 'deals', title: '抓到的条目', span: 12,
-            ctrls: [{ t: 'apiDeals' }],
           },
         ],
       },
@@ -1015,20 +1148,6 @@ export const GROUPS = [
             ],
           },
         ],
-      },
-      {
-        id: 'history', label: '配置历史', title: '配置历史与回滚',
-        desc: '<code>config.json</code> 被 gitignore，没有版本历史 —— 点错一次保存就无从回去。',
-        cards: [{
-          id: 'hist', title: '回滚', span: 6,
-          ctrls: [
-            { t: 'kv', rows: (s) => [kv('可回滚的版本数', () => `${j(s, ['configHistory'], 0)} 步`)] },
-            { t: 'buttons', label: '', items: [
-              act('撤销上一次保存', 'config.undo', 'btn-ghost', '把配置整份退回那一版；撤销自己不进历史（否则再撤同样步数会跳回刚离开的那一版）'),
-            ] },
-            { t: 'note', text: '<code>panel/config-history.jsonl</code> 里是完整的 config.json（含 API Key），所以 <code>/api/state</code> <b>只下发条数</b>，不下发内容。' },
-          ],
-        }],
       },
       {
         id: 'panel', label: '面板维护', title: '面板自身',
@@ -1102,6 +1221,20 @@ export const GROUPS = [
                 ];
               } },
               { t: 'note', text: '打开方式、开机自启、启动时自动拉起协议端与<b>关闭窗口行为</b>都在左下角 <b>设置 → 启动</b>。打开方式可以立即切换；其余启动项存进 <code>config.json</code> 的 <code>launch</code> 段，由启动器 / 桌面壳在下次启动时读取。每次启动的实际形态仍记在 <code>panel/launch-log.jsonl</code>，上面那行就是最近一条。' },
+            ],
+          },
+          /* 二级页合并（2026-11-05 · G7）：原「配置历史」页真渲染只剩一张 576×197 的卡
+             （一行条数 + 一个撤销按钮 + 一句说明），右半整页空着。卡原样搬进本页，
+             动作名 `config.undo` 与读数 `['configHistory']` 两个字面量仍在本文件里。 */
+          {
+            id: 'hist', title: '回滚', span: 6,
+            desc: '<code>config.json</code> 被 gitignore，没有版本历史 —— 点错一次保存就无从回去。',
+            ctrls: [
+              { t: 'kv', rows: (s) => [kv('可回滚的版本数', () => `${j(s, ['configHistory'], 0)} 步`)] },
+              { t: 'buttons', label: '', items: [
+                act('撤销上一次保存', 'config.undo', 'btn-ghost', '把配置整份退回那一版；撤销自己不进历史（否则再撤同样步数会跳回刚离开的那一版）'),
+              ] },
+              { t: 'note', text: '<code>panel/config-history.jsonl</code> 里是完整的 config.json（含 API Key），所以 <code>/api/state</code> <b>只下发条数</b>，不下发内容。' },
             ],
           },
         ],
@@ -1283,7 +1416,7 @@ export const GROUPS = [
 const NAV_SHORT = {
   run: {
     group: '运行',
-    subs: { overview: '总览', sessions: '会话日志' },
+    subs: { overview: '总览', channel: '协议端', sessions: '会话日志' },
   },
   speak: {
     group: '发言',
@@ -1293,7 +1426,7 @@ const NAV_SHORT = {
   // 与桌面原型一致；其他域继续用短标签。
   brain: {
     group: '模型',
-    subs: { model: '模型', thinking: '思考', usage: '用量' },
+    subs: { model: '模型', usage: '用量' },
   },
   know: {
     group: '记忆',
@@ -1301,7 +1434,7 @@ const NAV_SHORT = {
   },
   sys: {
     group: '维护',
-    subs: { safety: '安全', history: '历史', panel: '维护' },
+    subs: { safety: '安全', panel: '维护' },
   },
   factory: {
     group: '工厂',
@@ -1497,6 +1630,10 @@ export const CTRL_KINDS = [
   /* `statusGrid` / `ports`：运行总览页重排加的（2026-10-02）——
      把等权 kv 行换成有状态色的卡片，坏的那格自己会变红。 */
   'statusGrid', 'ports',
+  /* `channelBind`（2026-11-06）：官方通道的群与身份绑定表。
+     官方只给 openid、不给群列表接口 ⇒ 绑定只能**从事件里学 + 人工确认**，
+     这一屏就是那条人工确认的落点（判据本体在 `src/channel-binding.js`）。 */
+  'channelBind',
   /* 运行总览三栏（2026-10-27）：中间仪表盘与右栏操作/图表是自包含区域。 */
   'overviewDash', 'overviewSide',
   'text', 'password', 'number', 'time', 'select', 'seg', 'tags',

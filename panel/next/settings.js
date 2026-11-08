@@ -1000,6 +1000,17 @@ export function initSettings(deps) {
     });
   }
 
+  /* ── 恢复横幅提示（§191）────────────────────────────────────────────────
+     键名与读写都在 app.js 那一处；这里只按按钮。permanent 项（非官方界面）
+     关掉就没有别的入口能回来，所以这个按钮是它唯一的退路。 */
+  const resetBanners = $('setResetBanners');
+  if (resetBanners) {
+    resetBanners.addEventListener('click', () => {
+      deps.resetBannerDismiss();
+      deps.toast('横幅提示已恢复：仍然成立的提示会当场重新出现', 'ok');
+    });
+  }
+
   /* ── 齿轮 / 开合 ─────────────────────────────────────────────────── */
   function currentRotation(el) {
     const t = getComputedStyle(el).transform;

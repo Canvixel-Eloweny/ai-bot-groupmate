@@ -28,7 +28,7 @@ OneBot v11 · NapCat · a local model or DeepSeek / Zhipu / Qwen · a zero-build
 
 <p>
   <a href="./README.md#4-interfaces-plugins-and-skills"><img alt="AI" src="https://img.shields.io/badge/AI-OpenAI--compatible-6f42c1?style=for-the-badge"></a>
-  <a href="./docs/release/CHANGELOG.md"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.8-e05d44?style=for-the-badge"></a>
+  <a href="./docs/release/CHANGELOG.md"><img alt="Release" src="https://img.shields.io/badge/release-v0.1.9-e05d44?style=for-the-badge"></a>
   <a href="https://github.com/Canvixel-Eloweny/ai-bot-groupmate/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/Canvixel-Eloweny/ai-bot-groupmate?logo=git&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -69,7 +69,9 @@ At a glance:
 - **A real control room** — start/stop the bot, switch models, edit the persona, manage memory and extensions, watch logs and usage, all from a local browser UI.
 - **Small and self-contained** — a single-process bot, one runtime dependency (`ws`), no build step, no central service.
 
-You supply three things: a **spare QQ account**, an **OneBot v11 implementation** (NapCatQQ in practice), and a **model** (a local endpoint or an API key). Source runs need Node.js ≥22.13; the Windows installer bundles its own runtime.
+You supply three things: a **QQ account**, a **channel** (NapCat over OneBot v11, which is the default, or the official QQ bot API which needs no protocol side), and a **model** (a local endpoint or an API key). Source runs need Node.js ≥22.13; the Windows installer bundles its own runtime.
+
+The two channels are **mutually exclusive** and the choice is made once at startup — switching needs a restart. NapCat is the default because it talks as soon as the protocol side is logged in; the official channel stays silent until you supply an AppID + AppSecret. The official channel is the compliant route: your account gets a "机器人" label, and in exchange no third-party client touches its login state. It also has hard platform limits (passive replies within 5 minutes / 5 per message in groups, no merge-forward, no message history lookup, identities are opaque `openid`s), all listed in [`docs/OFFICIAL-CHANNEL.md`](./docs/OFFICIAL-CHANNEL.md). New and existing installs both start on NapCat; switch in the console under **运行 → 切换协议端** once you have credentials.
 
 > **The name.** Estrella Bot is the software name. The project began as `qq-bot`, was renamed twice, and keeps the GitHub slug `ai-bot-groupmate` on purpose so existing links and search results still land here. The full history is in [`CHANGELOG.md`](./docs/release/CHANGELOG.md).
 
@@ -93,7 +95,7 @@ Every route ends at the same local console. Pick the one that matches your OS.
 | Piece | Notes |
 |---|---|
 | A spare QQ account | Use an alt account; third-party protocol implementations carry a risk of account restrictions |
-| OneBot v11 implementation | NapCatQQ in practice. It is **not bundled** — its license does not allow redistribution |
+| A channel | **NapCatQQ over OneBot v11** (default), or the **QQ official bot API** (needs an AppID + AppSecret from the open-platform console). NapCat is **not bundled** — its license does not allow redistribution |
 | A model | A local OpenAI-compatible endpoint, or an API key for DeepSeek / Zhipu / Qwen |
 | Node.js ≥22.13 | Source runs only. The Windows installer embeds its runtime |
 | Docker Desktop | macOS / Linux container route only. The Windows installer needs no Docker |

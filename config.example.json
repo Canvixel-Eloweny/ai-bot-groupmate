@@ -1,4 +1,14 @@
 {
+  "channel": {
+    "mode": "napcat",
+    "official": {
+      "appId": "",
+      "appSecret": ""
+    },
+    "bindings": {
+      "groups": {}
+    }
+  },
   "onebot": {
     "backend": "auto",
     "wsUrl": "ws://127.0.0.1:3001",

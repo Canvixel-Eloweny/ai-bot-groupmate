@@ -16,7 +16,7 @@
 
 | 文件 | 作用 | 什么时候要改它 |
 |---|---|---|
-| `schema.js` | **整页的唯一声明处**：7 个功能域 / 30 个页面（以 schema 为准）全是数据 | 加页面、加卡片、加控件、改文案 —— **只改这里** |
+| `schema.js` | **整页的唯一声明处**：7 个功能域 / 25 个页面（以 schema 为准）全是数据 | 加页面、加卡片、加控件、改文案 —— **只改这里** |
 | `visual-factory.html` | 工厂 → 视觉工厂的整页工具（独立单文件，二级导航承载） | 改工厂源后 rebuild 覆盖；见「工厂域」 |
 | `persona-factory.html` | 工厂 → 人设工厂的整页工具（独立单文件，二级导航承载） | 改 `persona-studio/` 源后跑 `scripts/build-persona-factory.mjs` |
 | `persona-entry.css` | 工厂三帧的定位与 0.22s 切换入场 | 只动 `.factory-pane`，不要重写 `.factory-host` |

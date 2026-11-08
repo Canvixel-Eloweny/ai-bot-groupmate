@@ -27,6 +27,14 @@ export const DEMO = {
     procs: { bridgeMB: 168, localModelMB: 0, dockerMB: 742, panelMB: 96 } },
   ports: { onebotHttp: true, onebotWs: true, webui: false },
   account: { userId: '', nickname: '（演示数据）' },
+  // 通道那一格（2026-11-06）：演示态默认 NapCat —— 官方通道要的是"填了凭据才有的那些字段"，
+  // 演示数据里编一个假 AppID 会让页面显示"已连接"，而那正是演示页骗人的开始。
+  onebot: { code: 'ok', detail: '', transports: { http: true, ws: true, webui: false } },
+  channel: {
+    mode: 'napcat', label: 'NapCat（OneBot v11）', configured: true,
+    restartRequired: false, runningChannel: 'napcat', official: null,
+    bindings: { groups: {}, ownerIds: [] },
+  },
   localModel: { running: false, channel: 'mlx', wantChannel: 'mlx', ids: ['4b'],
     channels: [{ key: 'mlx', label: 'MLX 服务', port: 8080, up: false }, { key: 'qwenchat', label: 'QwenChat', port: 8765, up: false }],
     ports: { mlx: 8080, qwenchat: 8765 }, starting: false, available: true },

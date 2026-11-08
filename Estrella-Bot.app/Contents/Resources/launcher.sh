@@ -276,6 +276,38 @@ open_panel
 rmdir "$LOCK" 2>/dev/null
 trap - EXIT
 
+# ---------- 3.5 消息通道（2026-11-06）----------
+# 官方机器人通道**不经过 Docker / NapCat**：它是机器人进程自己出站到 api.bot.qq.com
+# 的 WebSocket + REST。官方模式下还去拉 Docker 的后果不是"多等几秒"，而是：
+#   · 屏幕上多一个永远用不上的容器和一次没人要的 QQ 登录态；
+#   · 哪天 3001 被这个容器占着，切回 NapCat 时会被判成「协议端已经在运行」而不再拉起。
+# 判据与机器人/面板同一份：`channel.mode`。**默认 NapCat**（2026-11-06 维护者指定，
+# 与 src/channel-mode.js 的 DEFAULT/LEGACY 同值）：读不出通道时按 NapCat 回落 —— 老用户
+# 升级后不会被迫切到没有凭据的官方通道而"一条都收不到"。
+[ -n "${NODE:-}" ] || NODE="$(find_node)"
+CHANNEL=""
+if [ -n "$NODE" ]; then
+  CHANNEL="$("$NODE" -e '
+    const fs = require("node:fs"), path = require("node:path");
+    const pick = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8").replace(/^﻿/, "")); } catch { return null; } };
+    const cfg = pick(path.join(process.argv[1], "config.json"))
+      || pick(path.join(process.argv[1], "config.example.json")) || {};
+    const envv = String(process.env.QQBOT_CHANNEL || "").trim().toLowerCase();
+    const fromCfg = String((cfg.channel && cfg.channel.mode) || "").trim().toLowerCase();
+    const mode = (envv === "official" || envv === "napcat") ? envv
+      : (fromCfg === "official" || fromCfg === "napcat") ? fromCfg
+        : "napcat";
+    process.stdout.write(mode);
+  ' "$DIR" 2>/dev/null)" || CHANNEL=""
+fi
+# 读不出来就按 NapCat 走（默认通道；最坏后果只是"多拉一次容器"，而不是把老用户切成哑的官方通道）。
+[ -n "$CHANNEL" ] || CHANNEL="napcat"
+
+if [ "$CHANNEL" != "napcat" ]; then
+  # 控制台已经起来了、页面也开了，剩下的只有容器那一套 —— 官方通道不需要，直接收工。
+  exit 0
+fi
+
 # ---------- 4. Docker Desktop ----------
 if ! docker_ready; then
   notify "正在启动 Docker Desktop，约需 30 秒…"

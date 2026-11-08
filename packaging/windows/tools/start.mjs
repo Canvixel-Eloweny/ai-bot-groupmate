@@ -14,9 +14,29 @@
  *     起控制台 ≠ 让机器人开口，那由用户在页面里点「一键启动」决定。
  */
 
-import { CONFIG_JSON, say, ok, warn, bad, title, dim, exists, isMain, portOpen } from './lib/common.mjs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { CONFIG_JSON, APP, readJson, say, ok, warn, bad, title, dim, exists, isMain, portOpen } from './lib/common.mjs';
 import { ensureConsole } from './lib/console.mjs';
 import { startNapcat } from './start-napcat.mjs';
+
+/**
+ * 现在该按哪条通道起（2026-11-06）。
+ *
+ * ⚠️ 判据**不在这里写**：动态 import 机器人侧那份 `src/channel-mode.js`
+ *    （与 `launcher.mjs` 取 `src/launch-mode.js` 同一个形状）。在这里手写一遍
+ *    "cfg.channel?.mode === 'official'" 就是第二份真相 —— 而默认值那条
+ *    "旧配置没写就算 NapCat" 的规则恰恰最容易只在一份里被更新。
+ * 读不出来时回落 `napcat`（老行为）：多拉一次协议端只是浪费，
+ * 而少拉一次的表现是"机器人连不上 QQ"，方向必须朝能用的那边倒。
+ */
+async function readChannelMode() {
+  try {
+    const m = await import(pathToFileURL(path.join(APP, 'src', 'channel-mode.js')).href);
+    const cfg = readJson(CONFIG_JSON) || {};
+    return m.resolveChannelMode({ configured: cfg?.channel?.mode, usedExample: false }).mode;
+  } catch { return 'napcat'; }
+}
 
 const PROTOCOL_PORT = 3001;
 
@@ -48,6 +68,12 @@ async function main() {
   say('  机器人不会自己开口 —— 到页面里点右上角「一键启动」。');
 
   // ② 协议端：没在跑就后台拉起，**不阻塞**（页面上的灯自己会变）
+  // 官方机器人通道不出站本地端口、也不扫码（2026-11-06）：这一步对它没有意义，
+  // 拉了只会多一个抢 3001 的进程，把后面切回 NapCat 时的"已经在运行"判断带歪。
+  if (await readChannelMode() === 'official') {
+    dim('  当前是 QQ 官方机器人通道 —— 没有拉起协议端（它不需要 NapCat，也不需要扫码）。');
+    return;
+  }
   if (await portOpen(PROTOCOL_PORT)) {
     ok(`协议端已在运行（${PROTOCOL_PORT}）`);
     return;

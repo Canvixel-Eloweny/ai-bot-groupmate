@@ -109,9 +109,9 @@ export default [
     anchor: /识图总开关已移到 <b>发言 → 识图与发图<\/b>/g,
     count: 1,
     apply: (s) => s.replace(
-      "{ t: 'note', text: '识图总开关已移到 <b>发言 → 识图与发图</b>（与模型能力表同源）。这一页只留联网查询，不做两份副本。' },",
+      "{ t: 'note', text: '识图总开关已移到 <b>发言 → 识图与发图</b>（与模型能力表同源）。这里只留联网查询，不做两份副本。' },",
       "{ t: 'featSwitch', feat: 'vision', label: '识图', hint: '重复开关', when: (s) => customFeatureVisible(s, 'vision') },\n"
-        + "              { t: 'note', text: '识图总开关已移到 <b>发言 → 识图与发图</b>（与模型能力表同源）。这一页只留联网查询，不做两份副本。' },",
+        + "              { t: 'note', text: '识图总开关已移到 <b>发言 → 识图与发图</b>（与模型能力表同源）。这里只留联网查询，不做两份副本。' },",
     ),
     layer: 'check-wb',
     expect: 'BLOCKED',

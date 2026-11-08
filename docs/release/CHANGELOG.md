@@ -3,6 +3,22 @@
 本项目在 `main` 上持续迭代，每个对外可见的版本打一个 tag。以下按**批次**记录对外可见的变化。
 内部批次台账（含未交付项与裁决记录）是**内部件，不随公开仓库发布**。
 
+## 0.1.9 — 2026-11-08
+
+**Official QQ bot channel.** The bot can now connect through the official QQ bot API as an
+in-process second channel, alongside the existing NapCat path. The console gains a channel card
+with one-to-one identity binding, a dedicated protocol-switch page with instant switching and
+rollback on failure, and channel-aware status everywhere (header island, startup checklist,
+overview). NapCat remains the default; in official mode the launch chain no longer starts
+Docker or NapCat.
+
+**Updates and console polish.** Update downloads resume after failure and fall back across
+multiple sources; the update banner can be dismissed per version. Six kinds of console banners
+now support "don't show again" with a settings-level reset. Layout density improvements: short
+inputs inline, wide boards split into two columns, empty conversations no longer fill the screen;
+two empty pages were merged, leaving the console at 7 domains and 24 pages. The Windows installer
+remains unsigned.
+
 ## 0.1.8 — 2026-11-05
 
 **Startup crash fix and update-download fallback.** Fixes the desktop shell crash introduced in
