@@ -2149,3 +2149,37 @@
 //     `sec-s12e-1005.mjs` N3（`const upd = …` → cond 里的 `update:` 行；**不要写 `^…$`**，
 //     `hitsOf` 只补 g 不补 m）、§171⑤ 补钉 `unofficial: UI_IDENTITY.state === 'unofficial'` 这一行
 //     （只查模板会变成"画不出来的死模板照样绿"）。定点复跑 IPC16 / N3 均仍 BLOCKED。
+
+// 2026-11-08（视觉工厂三栏到 1000px · §192 新增）：**段数 168 → 169**（`MIN_CONTRACTS` 同步 169）。
+//  ① 需求（维护者 Windows 实测反馈）：工厂→视觉工厂只显示中间块，左配方/右参数被挤到底下。
+//  ② 根因：内页旧断点「≤1360 收单列」恰好等于桌面壳 DEFAULT_WIDTH 1360
+//     （src/desktop/window-bounds.js:14）；Windows 原生窗框吃像素、125% 缩放把 1536 屏
+//     workArea 钳到约 1231 DIP（defaultBounds 的 Math.min）⇒ 默认新窗口即触发堆叠。
+//  ③ 修复：visual-factory.html 加 1360/1180 两个中间档（216/316 与 196/288 收窄但保持
+//     三列 grid），单列堆叠阈值 1360 → 1000。
+//  ④ §192 三条子判据：中间档必须三列 grid · 堆叠只在 ≤1000 档 · panel-dom 真渲染断言在位
+//     （1440/1231 三栏同排、990 单列，量 iframe 内真实几何）。新桶「视觉工厂三栏」下限 3。
+//  ⑤ 变异同步：新增 test/mutations/visual-factory-layout-2026-11-08.mjs M1–M5。
+
+// 2026-11-08（导航上移/小屏缩放 + 加载动画深色 · §193 新增）：**段数 169 → 170**（`MIN_CONTRACTS` 同步 170）。
+//  ① 需求（维护者）：导航太靠下、小屏里显大；软件内「处理中」加载动画（.busy 转环，
+//     不是开屏双球格栅）只用夜晚版。
+//  ② 施工：--nav-top-gap 36→16px（≤720 32→14px）；navBurst 三球行程 -26px→-12px
+//     收进跑道（球顶到按钮顶边上方 12+3px，16px 跑道内完整露出）；新增 ≤900 档
+//     （--h-nav1 42 / item 33 / shoulder 36 / rise 11），≤720 档 48/36→40/30；
+//     --h-nav2 不动（灵动岛高度取自它）。.busy 深色令牌无条件化 + 暗纱幕
+//     rgba(8,12,26,.55)，删 html[data-theme="dark"] .busy 主题分支。
+//  ③ §193 四条子判据：跑道/回弹咬合 · 两档缩小 · 深色常驻（浅色板不许复活）·
+//     panel-dom 真渲染断言在位。新桶「导航与加载深色」下限 4。
+//  ④ 变异同步：新增 test/mutations/nav-gap-busy-dark-2026-11-08.mjs M1–M6。
+
+// 2026-11-08（平台内容隔离 · §194 新增）：**段数 170 → 171**（`MIN_CONTRACTS` 同步 171）。
+//  ① 需求（维护者）：Windows 没有 Docker；苹果的给苹果、Windows 的给 Windows。
+//  ② 权威来源：/api/state 的 appMeta.platform（服务端 process.platform），不读 navigator。
+//     新增 schema.js `isWinState` 并经 `$` 工具包共享（app.js 从同一处解构，不各写一份）。
+//  ③ 按平台分支的六处：进程守护「不适用」提示 · 排查运维「重启协议端/重启 QQ 容器」·
+//     危险区「一键全停」提示 · Docker 内存格（Windows 隐藏）· 总览右栏重启按钮 ·
+//     内存横幅文案 · 重启动作的 busy 文案。渲染器同步支持函数 label/hint 与 metrics.when。
+//  ④ 后端 stopall 早已按 IS_WIN 分流（panel/server.js 的 Windows 分支），无需改。
+//  ⑤ §190⑩ 同批重锚：右栏重启按钮从写死 '重启 QQ 容器' 改为平台三元。
+//  ⑥ 变异同步：新增 test/mutations/platform-isolation-2026-11-08.mjs M1–M8（含状态卡标签）。

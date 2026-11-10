@@ -834,8 +834,8 @@ check('导航最终版（深色）：粉蓝胶囊/冷蓝托盘/蓝调二级墨�
   navColorDark ? JSON.stringify(navColorDark) : '取不到');
 await evalJs(`document.documentElement.dataset.theme = 'light'; return 1;`);
 await sleep(360);
-check('导航最终版：顶部跑道 ≥32px（三球完整）且浮层阴影有效',
-  !!navStatic && !navStatic.err && navStatic.gap >= 32
+check('导航最终版：顶部跑道 16px（三球行程 12px 收进跑道）且浮层阴影有效',
+  !!navStatic && !navStatic.err && navStatic.gap >= 16
     && Math.abs(navStatic.pad - navStatic.gap) < 0.6
     && Math.abs(navStatic.rowH - (navStatic.gap + navStatic.h1 + navStatic.h2)) < 1.2
     && navStatic.gapPx >= navStatic.gap - 1

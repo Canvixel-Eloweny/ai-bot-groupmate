@@ -92,7 +92,7 @@ console.log = (first, ...rest) => {
  *       提交门 `pre-commit.sh` 正是因此才把 `node_modules` **软链**进闸门用的临时 worktree。
  *       记在这里是为了下次有人量到 17 时**别以为闸门坏了**。
  */
-const MIN_CONTRACTS = 168;
+const MIN_CONTRACTS = 171;
 
 /**
  * 「用例数不为 0」这条闸门必须挂在**所有退出路径**上，所以用 `process.on('exit')`
@@ -22805,7 +22805,7 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
       || !/官方通道/.test(islandSrc190)
       || !/officialSide \? '' : ovActionButton\('拉起协议端'/.test(appSrc190)
       || !/officialSide \? '' : ovActionButton\('打开 QQ 登录'/.test(appSrc190)
-      || !/officialSide \? '' : ovActionButton\('重启 QQ 容器'/.test(appSrc190)
+      || !/officialSide \? '' : ovActionButton\(isWinState\(s\) \? '重启协议端' : '重启 QQ 容器'/.test(appSrc190)
       || !/官方通道的检查表\/右栏\/状态岛/.test(domSrc190)) {
       p190.push('§190⑩：官方模式下顶栏状态岛 / 启动链路 / 总览右栏仍按 NapCat 口径说话'
         + '（或 panel-dom 没有官方态真渲染）—— 用户会去查一个根本不存在（也不需要）的容器');
@@ -22926,6 +22926,170 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
       + '动作 fail-closed · 本机键单一真值 · 升级横幅未被并进来 · 复位入口与真渲染断言在位');
   }
 
+  // ══ §192 · 视觉工厂三栏到 1000px（2026-11-08 · Windows 布局反馈）══════════
+  //     背景：内页旧断点「≤1360 收单列」恰好等于桌面壳默认窗口宽 1360
+  //     （src/desktop/window-bounds.js DEFAULT_WIDTH）；Windows 窗框吃像素、
+  //     125% 缩放把 1536 屏钳到约 1231 DIP ⇒ 默认新窗口左右栏就堆到底下。
+  //     判据：1360/1180 中间档必须仍是三列 grid；单列堆叠只许在 ≤1000 档；
+  //     panel-dom 必须有 1440/1231 三栏并存与 990 单列的真渲染断言。
+  {
+    const { readNextAsset: readVF } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
+    const vf = stripComments(readVF('visual-factory.html').raw, 'html');
+    const domVF = read('../test/panel-dom.mjs');
+    const pVF = [];
+    const mediaBlock = (w) => {
+      const head = `@media (max-width: ${w}px)`;
+      /* 用 lastIndexOf：文件前部旧两栏 CSS 还有同名断点（1180 共 3 处），
+         三栏定义在样式末尾，取第一处会抓到被覆盖的旧块。 */
+      const i = vf.lastIndexOf(head);
+      if (i < 0) return '';
+      const b = vf.indexOf('{', i);
+      return b < 0 ? '' : braceAt(vf, b);
+    };
+    const mid1360 = mediaBlock(1360);
+    const mid1180 = mediaBlock(1180);
+    const stack1000 = mediaBlock(1000);
+
+    // ① 两个中间档必须保持三列 grid（收窄可以，堆叠不行）。
+    //    display:grid 必须显式写：文件前部旧 ≤1180 堆叠块的 display:flex 仍在，
+    //    只改列宽不复位 display，旧块就会把三栏重新压成单列。
+    if (!/grid-template-columns:\s*216px minmax\(0, 1fr\) 316px/.test(mid1360)
+      || !/display:\s*grid/.test(mid1360)
+      || /flex-direction:\s*column/.test(mid1360)
+      || !/grid-template-columns:\s*196px minmax\(0, 1fr\) 288px/.test(mid1180)
+      || !/display:\s*grid/.test(mid1180)
+      || /flex-direction:\s*column/.test(mid1180)) {
+      pVF.push('§192①：1360/1180 中间档不是三列 grid —— Windows 默认窗口/125% 缩放会把左右栏堆到底下');
+    }
+    subHit('视觉工厂三栏');
+
+    // ② 单列堆叠只许出现在 ≤1000 档；1360 档不许再带堆叠语义。
+    if (!stack1000 || !/display:\s*flex;\s*flex-direction:\s*column/.test(stack1000)
+      || !/\.stage-col\s*\{\s*order:\s*1/.test(stack1000)
+      || /flex-direction:\s*column/.test(mid1360)) {
+      pVF.push('§192②：单列堆叠不在 ≤1000 档（或 1360 档仍堆叠）—— 堆叠阈值回到默认窗口宽就是本次缺陷复发');
+    }
+    subHit('视觉工厂三栏');
+
+    // ③ 真渲染断言在位（静态扫描证明不了「1231 宽真的三栏同排」）。
+    for (const needle of ['视觉工厂三栏并存', '视觉工厂窄屏单列', 'layoutProbe']) {
+      if (!domVF.includes(needle)) pVF.push(`§192③：panel-dom 缺「${needle}」断言`);
+    }
+    subHit('视觉工厂三栏');
+
+    if (pVF.length) { bad++; for (const x of pVF) console.log('✗ ' + x); }
+    else console.log('✓ 视觉工厂三栏到 1000px（§192）：1360/1180 中间档三列 grid · 堆叠只在 ≤1000 · 真渲染断言在位');
+  }
+
+  // ══ §193 · 导航上移/小屏缩放 + 加载动画深色常驻（2026-11-08）═════════════
+  //     背景：维护者反馈导航太靠下、小屏里显大；软件内「处理中」加载动画
+  //     （.busy，Uiverse 转环）只要夜晚版。跑道 36→16px，三球回弹行程同步
+  //     26→12px 收进跑道；900/720 两档缩小导航令牌；.busy 深色令牌无条件化。
+  {
+    const { readNextAsset: readN193 } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
+    const css193 = stripComments(readN193('style.css').raw, 'css');
+    const dom193 = read('../test/panel-dom.mjs');
+    const p193 = [];
+    const busyBlock = (() => {
+      const i = css193.indexOf('.busy {');
+      if (i < 0) return '';
+      const b = css193.indexOf('{', i);
+      return b < 0 ? '' : braceAt(css193, b);
+    })();
+    const mq900 = (() => {
+      /* lastIndexOf：文件前部还有一条同断点的 .grid2/.grid3 旧块，导航档在后面。 */
+      const i = css193.lastIndexOf('@media (max-width: 900px)');
+      if (i < 0) return '';
+      const b = css193.indexOf('{', i);
+      return b < 0 ? '' : braceAt(css193, b);
+    })();
+
+    // ① 跑道与回弹行程咬合：16px 跑道 + 14px 窄屏档 + 三球只升 12px。
+    if (!/--nav-top-gap:\s*16px/.test(css193) || !/--nav-top-gap:\s*14px/.test(css193)
+      || !/calc\(-50% - 12px\)/.test(css193) || /calc\(-50% - 26px\)/.test(css193)) {
+      p193.push('§193①：跑道不是 16/14px 或三球回弹行程没同步收进 12px —— 球会顶进顶栏玻璃');
+    }
+    subHit('导航与加载深色');
+
+    // ② 小屏两档真的缩：900 档 42/33，720 档 40/30（旧 48/36 几乎没缩）。
+    if (!mq900 || !/--h-nav1:\s*42px/.test(mq900) || !/--h-nav-item:\s*33px/.test(mq900)
+      || !/--h-nav1:\s*40px/.test(css193) || !/--h-nav-item:\s*30px/.test(css193)) {
+      p193.push('§193②：缺 ≤900 缩放档或 ≤720 档没缩到 40/30 —— 小屏导航依旧显大');
+    }
+    subHit('导航与加载深色');
+
+    // ③ .busy 深色常驻：近白字板 + 暗纱幕；「跟随主题的两套色板」已退役。
+    if (!busyBlock || !/--ld-ink:\s*#f2f7ff/.test(busyBlock)
+      || !/background:\s*rgba\(8, 12, 26, \.55\)/.test(busyBlock)
+      || /html\[data-theme="dark"\]\s*\.busy\s*\{/.test(css193)
+      || /--ld-ink:\s*#31446c/.test(css193)) {
+      p193.push('§193③：加载动画不是深色常驻（浅色板复活 / 暗纱幕没了 / 又挂回主题选择器）');
+    }
+    subHit('导航与加载深色');
+
+    // ④ 真渲染断言在位。
+    for (const needle of ['导航跑道上移 16px', '小屏导航缩一档', '加载动画深色常驻']) {
+      if (!dom193.includes(needle)) p193.push(`§193④：panel-dom 缺「${needle}」断言`);
+    }
+    subHit('导航与加载深色');
+
+    if (p193.length) { bad++; for (const x of p193) console.log('✗ ' + x); }
+    else console.log('✓ 导航上移/小屏缩放 + 加载动画深色（§193）：跑道 16/14 与回弹 12px 咬合 · 900/720 两档缩小 · .busy 深色常驻 · 真渲染断言在位');
+  }
+
+  // ══ §194 · 平台内容隔离（2026-11-08 · Windows 没有 Docker）═══════════════
+  //     维护者：把苹果的给苹果、Windows 的给 Windows。Windows 上不许出现
+  //     Docker 专属文案/控件，Mac 上也不许出现 Windows 原生安装指路。
+  //     权威平台来源 = /api/state 的 appMeta.platform（服务端 OS），
+  //     不读浏览器 navigator（Mac 本地跑面板也可能用别的浏览器访问）。
+  {
+    const { readNextAsset: readN194 } = await import(new URL('../panel/lib/next-page.js', import.meta.url));
+    const schema194 = stripComments(readN194('schema.js').raw, 'js');
+    const app194 = stripComments(readN194('app.js').raw, 'js');
+    const dom194 = read('../test/panel-dom.mjs');
+    const p194 = [];
+
+    // ① 单一平台判据从服务端字段推导，并经 $ 工具包共享（前端各文件不各写一份）。
+    if (!/const isWinState = \(s\) => j\(s, \['appMeta', 'platform'\], ''\) === 'win32';/.test(schema194)
+      || !/export const \$ = \{ j, isWinState,/.test(schema194)
+      || !/const \{ j, isWinState, fmtDur, fmtNum, capsOf \} = \$;/.test(app194)) {
+      p194.push('§194①：平台判据不是「appMeta.platform === win32」单一实现（或被各文件各写一份）');
+    }
+    subHit('平台隔离');
+
+    // ② 四处 Docker 专属文案/控件必须按平台分支：守护提示 / 重启容器 / 全停提示 /
+    //    Docker 内存格；总览右栏与内存横幅同理。
+    if (!/isWinState\(s\)\s*\n?\s*\? '协议端进程守护：不适用（未装原生协议端）。'/.test(schema194)
+      || !/act\(\(s\) => \(isWinState\(s\) \? '重启协议端' : '重启 QQ 容器'\)/.test(schema194)
+      || !/act\('一键全停', 'stopall', 'btn-danger', \(s\) => \(isWinState\(s\)/.test(schema194)
+      || !/when: \(s\) => !isWinState\(s\)/.test(schema194)
+      || !/ovActionButton\(isWinState\(s\) \? '重启协议端' : '重启 QQ 容器'/.test(app194)
+      || !/winPlatform: isWinState\(s\)/.test(app194)
+      || !/isWinState\(S\.state \|\| DEMO\) \? '重启协议端…' : '重启容器…'/.test(app194)
+      || !/label: \(s\) => \(j\(s, \['container', 'applicable'\]\) === false \? '协议端' : '容器'\)/.test(schema194)) {
+      p194.push('§194②：Docker 专属文案/控件仍有无条件分支 —— Windows 用户会看到不存在的容器');
+    }
+    subHit('平台隔离');
+
+    // ③ 渲染器必须真的消费分支（label/hint 函数、metrics 的 when 过滤、状态卡标签）。
+    if (!/typeof x\.label === 'function'/.test(app194)
+      || !/typeof x\.hint === 'function'/.test(app194)
+      || !/const label = typeof it\.label === 'function' \? it\.label\(s\) : it\.label;/.test(app194)
+      || !/x\.items\.filter\(\(m\) => !m\.when \|\| m\.when\(S\.state \|\| DEMO\)\)/.test(app194)) {
+      p194.push('§194③：RENDER 不支持函数 label/hint 或 metrics 的 when 过滤 —— 平台分支根本画不出来');
+    }
+    subHit('平台隔离');
+
+    // ④ 真渲染断言在位（面板在 Mac 上跑，Windows 分支靠夹具状态直调真实函数）。
+    for (const needle of ['Windows 上不再出现 Docker 专用控件', '内存横幅按平台说协议端/容器', '重启容器按钮按平台改名']) {
+      if (!dom194.includes(needle)) p194.push(`§194④：panel-dom 缺「${needle}」断言`);
+    }
+    subHit('平台隔离');
+
+    if (p194.length) { bad++; for (const x of p194) console.log('✗ ' + x); }
+    else console.log('✓ 平台内容隔离（§194）：appMeta.platform 单一判据 · 守护/重启/全停/Docker 格/右栏/横幅按平台分支 · 渲染器真消费 · 真渲染断言在位');
+  }
+
   // ① 契约块数下限。`ran + 1` 里那个 +1 就是**本段自己**（本段也走 console.log、也被计入），
   //    于是这里比的是"算上本段一共多少段"，与 `process.on('exit')` 的口径完全一致。
   //    ⚠️ 放在 §148 之后：桌面壳三段与其它契约块一样必须先计入，再比下限。
@@ -22933,7 +23097,7 @@ if (bad === gSetBad) console.log('✓ 设置 / HUD / 人设（合并 §154 + §1
     problems.push(`只跑了 ${ran + 1} 段契约（下限 ${MIN_CONTRACTS}）—— 有人删了断言，或某一段被提前 return 掉了`);
   }
 
-const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 2], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8], ['扩展卸载', 5], ['安装中文路径', 5], ['常规页安全内缩', 10], ['假QQ对话', 3], ['记忆降噪', 3], ['识图加固', 10], ['P1封堵', 8], ['B2守卫', 5], ['B3管线', 4], ['B4复核', 4], ['B5首次启动', 4], ['排版密度', 5], ['二级页合并', 6], ['官方通道', 10], ['横幅不再提示', 9]];
+const HEAVY_SUB_MIN = [['D31缺陷批', 10], ['D23-2', 6], ['D18', 4], ['退出补写', 6], ['新版页面', 6], ['新版背景', 20], ['提醒三件套', 3], ['扩展数据', 5], ['模型线路排序', 18], ['卡片倾斜', 20], ['内部标记', 6], ['L系列收口', 17], ['H11收敛', 3], ['docs 归档', 4], ['H10路由表', 4], ['lib白名单', 5], ['配置路由搬家', 5], ['H10收尾', 5], ['插件板', 6], ['提交门有牙', 6], ['跨平台分支', 13], ['子进程窗口', 4], ['配置模板可运行', 5], ['NapCat获取', 1], ['外部私有协议面', 3], ['启动链路检查表', 2], ['写操作回报', 1], ['ApiContractDoc', 4], ['玻璃制作站', 7], ['桌面壳进程退出', 1], ['桌面壳安全', 1], ['桌面壳窗口托盘', 1], ['桌面壳载荷', 1], ['桌面壳停止链', 1], ['桌面壳退出时序', 1], ['桌面壳更新不变量', 1], ['桌面壳崩溃诊断', 1], ['设置层', 3], ['端口发现', 4], ['IPC收敛', 6], ['启动静默', 4], ['差分评估', 5], ['公开拷贝', 5], ['CI 构建', 5], ['HUD 设置', 6], ['人设原型', 30], ['等高线背景', 8], ['发言账本', 5], ['工厂二级导航', 5], ['工厂导航自动上收', 5], ['Skill扩展', 1], ['光标跟随', 7], ['界面身份', 8], ['扩展卸载', 5], ['安装中文路径', 5], ['常规页安全内缩', 10], ['假QQ对话', 3], ['记忆降噪', 3], ['识图加固', 10], ['P1封堵', 8], ['B2守卫', 5], ['B3管线', 4], ['B4复核', 4], ['B5首次启动', 4], ['排版密度', 5], ['二级页合并', 6], ['官方通道', 10], ['横幅不再提示', 9], ['视觉工厂三栏', 3], ['导航与加载深色', 4], ['平台隔离', 4]];
   for (const [bucket, min] of HEAVY_SUB_MIN) {
     const c = subCountOf(bucket);
     if (c < min) {

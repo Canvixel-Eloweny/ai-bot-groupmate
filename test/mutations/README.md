@@ -409,3 +409,28 @@ NODE_OPTIONS= node scripts/mutate.mjs --restore     # 万一进程被杀，用�
 - 同轮重锚：`extensions-skill-2026-10-28.mjs` M5（Skill 模式）、`interfaces-2026-10-28.mjs` M10（folder 导入）、`plugin-limits-1023.mjs` P14（超上限标签）、`sec-s12d-1005.mjs` M6（开关只提交 enabled 数组）。
 - `r20-1010.mjs` 的 P1–P5/P8 随旧插件板（`.pgrid`/`.pcard`）下线退役，文件保留 P6/P7/P9/P10（10→4）。
 
+
+## 视觉工厂三栏布局（2026-11-08）
+
+| 文件 | 变异 | 覆盖 | 结果 |
+|---|---|---|---|
+| `visual-factory-layout-2026-11-08.mjs` | M1–M5 | §192 三栏到 1000px | 待跑 |
+
+- 背景：旧断点 ≤1360 收单列 == 桌面壳默认窗口宽，Windows 窗框/125% 缩放即触发左右栏堆底。
+- 真渲染面：`test/panel-dom.mjs` 工厂段 `layoutProbe`（1440/1231 三栏同排、990 单列）。
+
+## 导航上移 / 加载动画深色（2026-11-08）
+
+| 文件 | 变异 | 覆盖 | 结果 |
+|---|---|---|---|
+| `nav-gap-busy-dark-2026-11-08.mjs` | M1–M6 | §193 跑道/缩放/深色常驻 | 待跑 |
+
+- 跑道 36→16px、三球行程 26→12px、≤900/≤720 两档缩小、.busy 深色常驻（暗纱幕承托）。
+
+## 平台内容隔离（2026-11-08）
+
+| 文件 | 变异 | 覆盖 | 结果 |
+|---|---|---|---|
+| `platform-isolation-2026-11-08.mjs` | M1–M8 | §194 平台分支/渲染器消费 | 待跑 |
+
+- Windows 无 Docker：守护提示 / 重启按钮 / 全停提示 / Docker 内存格 / 右栏 / 内存横幅按 `appMeta.platform` 分支。

@@ -43,6 +43,11 @@
    0. 常用小工具（只在本文件内用）
    ──────────────────────────────────────────────────────────────────────── */
 const j = (s, p, d) => p.reduce((o, k) => (o == null ? undefined : o[k]), s) ?? d;
+/* 平台分支（2026-11-08 维护者点名「Windows 没有 Docker」）：服务端在
+   /api/state 下发 appMeta.platform（process.platform，不是浏览器 UA——
+   Mac 本地跑面板时也可能用别的浏览器打开）。Windows 上一切 Docker 专属
+   文案/控件都不许出现，Mac/Linux 反向同理（不显示 Windows 原生安装指路）。 */
+const isWinState = (s) => j(s, ['appMeta', 'platform'], '') === 'win32';
 const activePreset = (s) => j(s, ['config', 'activePreset'], 'zhipu');
 const metric = (label, calc, hi = false) => ({ n: calc, l: label, hi });
 const kv = (k, calc) => [k, calc];
@@ -147,7 +152,7 @@ export const GROUPS = [
                   value: (s) => `${j(s, ['bridge', 'instances'], 0)} 个`,
                   sub: () => '面板只认自己的入口进程',
                   st: (s) => (j(s, ['bridge', 'instances'], 0) > 1 ? 'warn' : 'ok') },
-                { ico: 'container', label: '容器', go: 'run/overview',
+                { ico: 'container', label: (s) => (j(s, ['container', 'applicable']) === false ? '协议端' : '容器'), go: 'run/overview',
                   value: (s) => {
                     if (j(s, ['container', 'applicable']) !== false) return j(s, ['container', 'line'], '') || '—';
                     return j(s, ['napcat', 'present']) === false ? '协议端未安装' : '原生 NapCat';
@@ -173,7 +178,9 @@ export const GROUPS = [
               /* 协议端进程级守护：连接看门狗只重连，进程没了它管不了。 */
               { t: 'note', text: (s) => {
                 const g = j(s, ['protocolGuard'], {});
-                if (!g.configured) return '协议端进程守护：不适用（macOS / 未装原生协议端）。';
+                if (!g.configured) return isWinState(s)
+                  ? '协议端进程守护：不适用（未装原生协议端）。'
+                  : '协议端进程守护：不适用（macOS / 未装原生协议端）。';
                 if (g.gaveUp) return `协议端进程守护：已停手（${g.lastError || '连续拉起失败'}）。`;
                 if (g.lastError) return `协议端进程守护：${g.lastError}。`;
                 const left = g.nextRetryAt ? Math.max(0, Math.ceil((Number(g.nextRetryAt) - Date.now()) / 1000)) : 0;
@@ -213,21 +220,23 @@ export const GROUPS = [
                 act('读取群列表', 'groups.load', '', '', 'list'),
                 act('打开 QQ 登录页', 'open.webui', '', '', 'network'),
                 act('拉起协议端', 'protocol.start', '', '进程没了或冷却结束后手动拉起一次（账号掉线时不会拉）', 'play'),
-                act('重启 QQ 容器', 'napcat.restart', '', '', 'reload'),
+                act((s) => (isWinState(s) ? '重启协议端' : '重启 QQ 容器'), 'napcat.restart', '', '', 'reload'),
               ] },
               { t: 'switch', id: 'dbg.log', label: '详细日志',
                 hint: '打开后，每条被忽略的消息都会写清是被什么规则挡掉的。',
                 read: (s) => !!s.debugLog,
                 save: (v) => ({ url: '/api/debug', body: { on: v } }) },
               { t: 'buttons', label: '危险', items: [
-                act('一键全停', 'stopall', 'btn-danger', '机器人 + 本机模型 + QQ 容器一起停（Docker Desktop 保留）'),
+                act('一键全停', 'stopall', 'btn-danger', (s) => (isWinState(s)
+                  ? '机器人 + 本机模型 + 协议端一起停，控制台也会关闭'
+                  : '机器人 + 本机模型 + QQ 容器一起停（Docker Desktop 保留）')),
               ] },
               { t: 'metrics', items: [
                 memCell('内存占用率', ['memory', 'pressure'], '%', true),
                 memCell('空闲内存', ['memory', 'freeGB'], ' GB'),
                 memCell('机器人进程', ['memory', 'procs', 'bridgeMB'], ' MB'),
                 memCell('本机模型', ['memory', 'procs', 'localModelMB'], ' MB'),
-                memCell('Docker', ['memory', 'procs', 'dockerMB'], ' MB'),
+                { ...memCell('Docker', ['memory', 'procs', 'dockerMB'], ' MB'), when: (s) => !isWinState(s) },
                 memCell('面板自身', ['memory', 'procs', 'panelMB'], ' MB'),
               ] },
               { t: 'kv', rows: (s) => [
@@ -1617,7 +1626,7 @@ function fmtDur(ms) {
 }
 
 /** 给外部（app.js / 文档）用的只读工具，避免两处各写一份 */
-export const $ = { j, activePreset, capsOf, fmtNum, fmtDur };
+export const $ = { j, isWinState, activePreset, capsOf, fmtNum, fmtDur };
 
 /* ────────────────────────────────────────────────────────────────────────
    3. 控件类型清单（给改动者看的索引；app.js 的 RENDER 表是它的实现）

@@ -1161,6 +1161,159 @@ try {
     `重进工厂落视觉工厂、同一 iframe 不重载，且再次上收后可呼出（${JSON.stringify({ re: fx.re, reHidden: fx.reHidden })}）`);
   }
 
+  /* ── 视觉工厂三栏布局（2026-11-08 · Windows 默认窗口/125% 缩放反馈）─────
+     旧断点「≤1360 收单列」== 桌面壳默认窗口宽，Windows 窗框吃像素/125% 缩放
+     （1536 屏 workArea≈1231 DIP）即把左右栏堆到底下。这里量 iframe 内真实几何：
+     1440 与 1231 必须三栏同排，990 才许单列。上一段 fx 收尾正停在视觉工厂。 */
+  console.log('\n── 视觉工厂三栏布局 ──');
+  /* fx 收尾已点回第一个域（工厂层收起），这里真点回「工厂 → 视觉工厂」再量。 */
+  const enterErr = await evalJs(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const grp = [...document.querySelectorAll('#nav1 .grp')].find((b) => (b.title || b.textContent || '').includes('工厂'));
+    if (!grp) return '找不到工厂域';
+    grp.click(); await sleep(650);
+    const sub = [...document.querySelectorAll('#nav2 .sub')].find((b) => (b.title || b.textContent || '').includes('视觉工厂'));
+    if (!sub) return '找不到视觉工厂页';
+    sub.click();
+    for (let i = 0; i < 120; i++) {
+      if (document.body.classList.contains('factory-frame-ready')
+        && document.getElementById('factoryHost').getAttribute('aria-hidden') === 'false') return '';
+      await sleep(100);
+    }
+    return '视觉工厂帧 12s 内未就绪';
+  })()`);
+  ok(!enterErr, `三栏探针先进入视觉工厂（${enterErr || 'ok'}）`);
+  const layoutProbe = async (w) => {
+    await send('Emulation.setDeviceMetricsOverride', { width: w, height: 1000, deviceScaleFactor: 1, mobile: false });
+    let r = null;
+    for (let i = 0; i < 25; i++) {
+      r = await evalJs(`(() => {
+        const f = document.querySelector('#factoryHost iframe[data-frame="visual-factory.html"]');
+        const d = f && f.contentDocument;
+        if (!d || !d.querySelector('.workspace')) return null;
+        const q = (sel) => { const el = d.querySelector(sel); if (!el) return null;
+          const b = el.getBoundingClientRect(); return { l: Math.round(b.left), t: Math.round(b.top), w: Math.round(b.width) }; };
+        return { lib: q('.library'), stage: q('.stage-col'), insp: q('.inspector'),
+          display: d.defaultView.getComputedStyle(d.querySelector('.workspace')).display };
+      })()`);
+      if (r && r.lib && r.stage && r.insp) break;
+      await sleep(100);
+    }
+    return r;
+  };
+  for (const w of [1440, 1231, 990]) {
+    const r = await layoutProbe(w);
+    if (!r) { ok(false, `视觉工厂三栏：${w}px 探针未取到几何（轮询上限 2.5s）`); continue; }
+    if (w > 1000) {
+      ok(r.display === 'grid' && r.lib.l < r.stage.l && r.stage.l < r.insp.l
+        && Math.abs(r.lib.t - r.stage.t) <= 2 && Math.abs(r.stage.t - r.insp.t) <= 2
+        && r.lib.w > 100 && r.insp.w > 100,
+        `视觉工厂三栏并存（${w}px：display=${r.display} lib=${r.lib.l}/${r.lib.t} stage=${r.stage.l}/${r.stage.t} insp=${r.insp.l}/${r.insp.t}）`);
+    } else {
+      ok(r.display === 'flex' && r.stage.t < r.lib.t && r.lib.t < r.insp.t,
+        `视觉工厂窄屏单列（${w}px：display=${r.display} stage=${r.stage.t} lib=${r.lib.t} insp=${r.insp.t}）`);
+    }
+  }
+  await send('Emulation.clearDeviceMetricsOverride');
+  await sleep(300);
+
+  /* ── 导航上移/小屏缩放 + 加载动画深色常驻（2026-11-08）─────────────────
+     跑道 36→16px（≤720 14px）、900/720 两档缩小令牌、.busy 只用夜晚版。
+     量 computed 值与真实几何，不是文本扫描。 */
+  console.log('\n── 导航跑道与加载动画深色 ──');
+  const navGap1440 = await evalJs(`(() => {
+    const row = document.getElementById('navrow');
+    const dock = document.getElementById('navDockWrap') || document.getElementById('navDock');
+    const cs = getComputedStyle(row);
+    return { pad: cs.paddingTop, rise: getComputedStyle(document.documentElement).getPropertyValue('--nav-top-gap').trim(),
+      dockTop: dock ? Math.round(dock.getBoundingClientRect().top - row.getBoundingClientRect().top) : -1 };
+  })()`);
+  ok(navGap1440 && navGap1440.pad === '16px' && navGap1440.dockTop === 16,
+    `导航跑道上移 16px（padding=${navGap1440?.pad} · dock 距 navrow 顶=${navGap1440?.dockTop}）`);
+  await send('Emulation.setDeviceMetricsOverride', { width: 700, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await sleep(300);
+  const navSmall = await evalJs(`(() => {
+    const cs = getComputedStyle(document.documentElement);
+    const tok = (n) => cs.getPropertyValue(n).trim();
+    return { pad: getComputedStyle(document.getElementById('navrow')).paddingTop,
+      h1: tok('--h-nav1'), item: tok('--h-nav-item'), gap: tok('--nav-top-gap') };
+  })()`);
+  ok(navSmall && navSmall.pad === '14px' && navSmall.h1 === '40px' && navSmall.item === '30px',
+    `小屏导航缩一档（700px：pad=${navSmall?.pad} · h1=${navSmall?.h1} · item=${navSmall?.item}）`);
+  await send('Emulation.clearDeviceMetricsOverride');
+  await sleep(300);
+  const busyDark = await evalJs(`(() => {
+    const b = document.getElementById('busy');
+    const was = b.hidden;
+    b.hidden = false;
+    const cs = getComputedStyle(b);
+    const r = { ink: cs.getPropertyValue('--ld-ink').trim(), bg: cs.backgroundColor,
+      ring: cs.getPropertyValue('--ld-ring-1').trim() };
+    b.hidden = was;
+    return r;
+  })()`);
+  ok(busyDark && busyDark.ink === '#f2f7ff' && busyDark.bg === 'rgba(8, 12, 26, 0.55)'
+    && busyDark.ring.replace(/\s+/g, '') === 'rgba(255,255,255,.95)',
+    `加载动画深色常驻（ink=${busyDark?.ink} · bg=${busyDark?.bg} · ring=${busyDark?.ring}）`);
+
+  /* ── 平台内容隔离（2026-11-08 · Windows 没有 Docker）───────────────────
+     面板本机跑在 Mac 上（appMeta.platform=darwin），Windows 分支用夹具状态
+     直调真实 schema / 渲染函数：判据是"那几处代码真的按平台分支"，不是文本扫描。 */
+  console.log('\n── 平台内容隔离 ──');
+  const plat = await evalJs(`(async () => {
+    const m = await import('./schema.js');
+    const { isWinState } = m.$;
+    const win = { appMeta: { platform: 'win32' } };
+    const mac = { appMeta: { platform: 'darwin' } };
+    const walk = (node, out) => {
+      if (!node || typeof node !== 'object') return out;
+      if (Array.isArray(node)) { for (const x of node) walk(x, out); return out; }
+      out.push(node);
+      for (const k of Object.keys(node)) if (node[k] && typeof node[k] === 'object') walk(node[k], out);
+      return out;
+    };
+    const nodes = walk(m.GROUPS, []);
+    const restart = nodes.find((x) => x.action === 'napcat.restart' && typeof x.label === 'function');
+    const stopall = nodes.find((x) => x.action === 'stopall' && typeof x.hint === 'function');
+    const metrics = nodes.find((x) => x.t === 'metrics' && (x.items || []).some((it) => it.l === 'Docker'));
+    const dockerCell = metrics && metrics.items.find((it) => it.l === 'Docker');
+    const guard = nodes.find((x) => x.t === 'note' && typeof x.text === 'function'
+      && /协议端进程守护/.test(String(x.text)));
+    const sg = nodes.find((x) => x.t === 'statusGrid' && Array.isArray(x.items)
+      && x.items.some((it) => it.ico === 'container'));
+    const sgItem = sg && sg.items.find((it) => it.ico === 'container');
+    const banner = window.__nextBanners;
+    const base = { online: true, shellApi: false, hasToken: true, panelStale: false,
+      memPressure: 95, unofficial: false, unofficialMissing: [], update: null };
+    const html = (c) => banner ? banner.collect(c, {}).nodes.map((n) => n.html).join('') : '';
+    const memWin = html({ ...base, winPlatform: true });
+    const memMac = html({ ...base, winPlatform: false });
+    return {
+      isWin: [isWinState(win), isWinState(mac)],
+      restartLabel: restart ? [restart.label(win), restart.label(mac)] : null,
+      stopHint: stopall ? [stopall.hint(win), stopall.hint(mac)] : null,
+      dockerWhen: dockerCell && typeof dockerCell.when === 'function' ? [dockerCell.when(win), dockerCell.when(mac)] : null,
+      guardNote: guard ? [guard.text(win), guard.text(mac)] : null,
+      statusLabel: sgItem && typeof sgItem.label === 'function'
+        ? [sgItem.label({ container: { applicable: false }, napcat: { present: true } }),
+           sgItem.label({ container: { applicable: true, line: 'Up 2h' }, napcat: {} })]
+        : null,
+      memWinDocker: /Docker 会被系统/.test(memWin), memWinProto: /协议端会被系统/.test(memWin),
+      memMacDocker: /Docker 会被系统/.test(memMac), memMacProto: /协议端会被系统/.test(memMac),
+    };
+  })()`);
+  ok(plat && plat.isWin[0] === true && plat.isWin[1] === false,
+    `平台判据读 appMeta.platform（win32→${plat?.isWin?.[0]} · darwin→${plat?.isWin?.[1]}）`);
+  ok(plat && plat.dockerWhen && plat.dockerWhen[0] === false && plat.dockerWhen[1] === true
+    && plat.guardNote && !/macOS/.test(plat.guardNote[0]) && /macOS/.test(plat.guardNote[1])
+    && plat.stopHint && !/Docker Desktop/.test(plat.stopHint[0]) && /Docker Desktop/.test(plat.stopHint[1])
+    && plat.statusLabel && plat.statusLabel[0] === '协议端' && plat.statusLabel[1] === '容器',
+    `Windows 上不再出现 Docker 专用控件（dockerWhen=${JSON.stringify(plat?.dockerWhen)} · guard=${JSON.stringify(plat?.guardNote)} · statusLabel=${JSON.stringify(plat?.statusLabel)}）`);
+  ok(plat && plat.restartLabel && plat.restartLabel[0] === '重启协议端' && plat.restartLabel[1] === '重启 QQ 容器',
+    `重启容器按钮按平台改名（${JSON.stringify(plat?.restartLabel)}）`);
+  ok(plat && plat.memWinProto && !plat.memWinDocker && plat.memMacDocker && !plat.memMacProto,
+    `内存横幅按平台说协议端/容器（win: docker=${plat?.memWinDocker} proto=${plat?.memWinProto} · mac: docker=${plat?.memMacDocker} proto=${plat?.memMacProto}）`);
+
   /* ── 人设域六页 + MBTI 四轴滑块（2026-10-25）──────────────────────────
      回复设置页已按维护者决定移出六页 IA（后续重做），所以这里不再钉 `.tkx`。
      改钉两件**改坏了不会报错**的事：

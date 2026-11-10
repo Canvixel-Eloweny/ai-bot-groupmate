@@ -2212,8 +2212,41 @@ html[data-theme="dark"] .swatch[data-mtype="flat"] .sw-glass {
   }
 }
 
-/* 舞台优先：窄于 1360 时三列收成单列，参数在舞台之后 */
+/* 中间档（2026-11-08）：Windows 默认窗口 1360 会被窗框/125% 缩放吃到 1360 以下，
+   旧断点恰好 1360 ⇒ 默认新窗口就把左右栏堆到底下。这里收窄两栏但保持三栏，
+   单列堆叠推迟到 1000px（真窄屏才堆）。
+   ⚠️ 文件前部还留着旧两栏时代的 ≤1280/≤1180 堆叠块（display:flex/order/overflow），
+   它们在窄屏仍然生效 —— 本档必须把那些属性**逐条复位**，只改列宽不够。 */
 @media (max-width: 1360px) {
+  body { overflow: hidden; }
+  .app { height: 100vh; height: 100dvh; min-height: 0; }
+  .appbar { position: relative; top: auto; }
+  .workspace {
+    display: grid; flex-direction: row;
+    grid-template-columns: 216px minmax(0, 1fr) 316px;
+    height: auto; max-width: none; width: auto; margin: 0;
+    gap: 10px; padding: 12px;
+  }
+  .stage-col { order: 0; min-height: 0; flex: initial; width: auto; }
+  .library { order: 0; flex: initial; width: auto; max-height: 100%; }
+  .inspector { order: 0; flex: initial; width: auto; overflow: hidden; }
+  .apply-dock { order: 0; flex: initial; width: auto; }
+  .style-scroll { max-height: none; }
+  .param-scroll { overflow: visible; max-height: none; }
+  .inspector-scroll { flex: 1; overflow: auto; }
+  .inspector .param-tabs { position: sticky; top: 0; }
+}
+
+@media (max-width: 1180px) {
+  .workspace {
+    display: grid;
+    grid-template-columns: 196px minmax(0, 1fr) 288px;
+    gap: 8px; padding: 10px;
+  }
+}
+
+/* 舞台优先：窄于 1000 时三列收成单列，参数在舞台之后 */
+@media (max-width: 1000px) {
   body { overflow: auto; }
   .app { height: auto; min-height: 100dvh; }
   .appbar { position: sticky; top: 0; }

@@ -20,7 +20,7 @@ import { initSettings, factoryWipeOn } from './settings.js';
 // 只靠 esc 挡不住。行为判据在 smoke（那个模块是零依赖叶子，能直接 import）。
 import { safeHref } from './url-safe.js';
 
-const { j, fmtDur, fmtNum, capsOf } = $;
+const { j, isWinState, fmtDur, fmtNum, capsOf } = $;
 
 /* ════════════════════════════════════════════════ 1. 全局状态 ═══ */
 const S = {
@@ -851,7 +851,7 @@ const ACTIONS = {
       : '已不再提示这条（设置 → 恢复横幅提示）', 'ok');
   },
   'protocol.start': async () => { busy(true, '拉起协议端…'); try { const r = await post('/api/protocol/start'); toast(r.msg || '已发起', r.ok ? 'ok' : 'bad'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
-  'napcat.restart': async () => { busy(true, '重启容器…'); try { const r = await post('/api/napcat/restart'); toast(r.output || '已重启', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
+  'napcat.restart': async () => { busy(true, isWinState(S.state || DEMO) ? '重启协议端…' : '重启容器…'); try { const r = await post('/api/napcat/restart'); toast(r.output || '已重启', 'ok'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'qrcode.refresh': async () => { await doQrRefresh(); },
   'stopall': async () => { if (!(await confirmToast('一键全停：机器人 + 本机模型 + 协议端？', { okLabel: '全部停止' }))) return; busy(true, '全停中…'); try { const r = await post('/api/stop-all'); toastResult(r, '已全停'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
   'local.start': async () => { busy(true, '拉起本机模型…'); try { const r = await post('/api/local-model/start'); toastResult(r, '已启动'); await refresh(true); } catch (e) { toast(`失败：${e.message}`, 'bad'); } finally { busy(false); } },
@@ -2115,8 +2115,11 @@ function collectBanners(c, dismissed) {
       <button class="btn btn-sm" data-a="panel.restart">重启面板</button>`);
   }
   if (c.memPressure >= 90) {
+    /* 平台分支（2026-11-08）：Windows 没有 Docker，别让「容器凭空消失」吓 Windows 用户。 */
     add('memory', `<div class="banner"><b>内存很紧</b><span class="spacer"></span>
-      <span>占用 ${c.memPressure}%。再挤下去 Docker 会被系统悄悄杀掉（表现为"容器凭空消失"）—— 建议先停本机模型。</span>`);
+      <span>占用 ${c.memPressure}%。${c.winPlatform
+        ? '再挤下去协议端会被系统悄悄杀掉（表现为"协议端凭空消失"）'
+        : '再挤下去 Docker 会被系统悄悄杀掉（表现为"容器凭空消失"）'} —— 建议先停本机模型。</span>`);
   }
   /* 升级横幅保持原样：kind:null ⇒ 不进本机记录，关闭钮仍走服务端按版本 dismiss。 */
   const upd = c.update;
@@ -2148,6 +2151,7 @@ function renderBanners() {
     hasToken: HAS_TOKEN,
     panelStale: !!j(s, ['panel', 'stale']),
     memPressure: j(s, ['memory', 'pressure'], 0),
+    winPlatform: isWinState(s),
     unofficial: UI_IDENTITY.state === 'unofficial',
     unofficialMissing: UI_IDENTITY.missing || [],
     update: UPD.state || j(s, ['update'], null),
@@ -4107,7 +4111,7 @@ function ovSideHtml(s) {
         ${officialSide ? ovActionButton('校验凭据', 'channel.test', 'ov-btn-ghost', 'search') : ''}
         ${stop}
         ${officialSide ? '' : ovActionButton('打开 QQ 登录', 'open.webui', 'ov-btn-ghost', 'key')}
-        ${officialSide ? '' : ovActionButton('重启 QQ 容器', 'napcat.restart', 'ov-btn-danger', 'reload')}
+        ${officialSide ? '' : ovActionButton(isWinState(s) ? '重启协议端' : '重启 QQ 容器', 'napcat.restart', 'ov-btn-danger', 'reload')}
         ${officialSide && restartRequired ? ovActionButton('重启加载新通道', 'channel.restart', 'ov-btn-primary', 'reload') : ''}
       </div>
     </section>
@@ -4514,7 +4518,7 @@ const RENDER = {
     let val; try { val = typeof v === 'function' ? v(S.state || DEMO) : v; } catch (e) { val = `（算不出来：${e.message}）`; }
     return `<dt>${esc(k)}</dt><dd>${esc(val)}</dd>`;
   }).join('')}</dl>`,
-  metrics: (x) => `<div class="metrics">${x.items.map((m) => {
+  metrics: (x) => `<div class="metrics">${x.items.filter((m) => !m.when || m.when(S.state || DEMO)).map((m) => {
     let v; try { v = m.n(S.state || DEMO); } catch { v = null; }
     /* ⚠️ `null` / `undefined` = 「**这项采不到**」，与"值是 0"是两件事
        （2026-10-09 · 第 53 轮 B2）。Windows 上内存那几项后端如实返回 null，
@@ -4636,6 +4640,9 @@ const RENDER = {
          **必须先问"它到运行时还是不是那个类型"**。 */
       if (typeof it.st === 'function') { try { st = it.st(s); } catch { st = 'off'; } }
       else st = it.st || 'off';
+      /* label 允许是函数（2026-11-08）：没有容器的平台（Windows 原生 NapCat）这一格
+         说的是「协议端」，不是「容器」—— 标签写死会让 Windows 用户去找不存在的容器。 */
+      const label = typeof it.label === 'function' ? it.label(s) : it.label;
       /* 状态只许来自闭集 —— 拼错一个字符串会得到"没有颜色的状态"，
          而那与"状态正常"在页面上长得一样。 */
       if (['ok', 'warn', 'bad', 'off'].indexOf(st) < 0) st = 'off';
@@ -4643,7 +4650,7 @@ const RENDER = {
       return `<div class="sg-cell" data-st="${st}"${goAttr}>
         <div class="sg-ico">${Icons.icon(it.ico, { size: 20 })}</div>
         <div class="sg-body">
-          <div class="sg-label">${esc(it.label)}</div>
+          <div class="sg-label">${esc(label)}</div>
           <div class="sg-value">${esc(v)}</div>
           ${sub ? `<div class="sg-sub">${esc(sub)}</div>` : ''}
         </div>
@@ -4692,6 +4699,10 @@ const RENDER = {
   button: (x) => {
     const ico = x.ico || '';
     const icoTo = typeof x.icoTo === 'function' ? x.icoTo(S.state || DEMO) : (x.icoTo || '');
+    /* label / hint 允许是函数（2026-11-08 平台分支）：与 note / hintOf 同款，
+       读实时状态算「重启协议端 / 重启 QQ 容器」这类平台专属文案。 */
+    const label = typeof x.label === 'function' ? x.label(S.state || DEMO) : x.label;
+    const hint = typeof x.hint === 'function' ? x.hint(S.state || DEMO) : (x.hint || '');
     let attrs = '';
     if (ico) {
       attrs += ` data-ico="${esc(ico)}"`;
@@ -4700,7 +4711,7 @@ const RENDER = {
     }
     const icoEl = ico ? Icons.icon(ico, { size: 16, cls: 'btn-ico' }) : '';
     return `<button class="btn ${x.style || 'btn-ghost'}" data-a="${esc(x.action)}"${
-      attrs} title="${esc(plain(x.hint || ''))}">${icoEl}${esc(x.label)}</button>`;
+      attrs} title="${esc(plain(hint))}">${icoEl}${esc(label)}</button>`;
   },
   buttons: (x) => `<div class="f">${x.label ? lb(x) : ''}
       ${x.hint ? `<span class="hint">${mdBold(x.hint)}</span>` : ''}

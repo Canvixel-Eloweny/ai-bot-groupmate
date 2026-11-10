@@ -165,7 +165,6 @@
   --c-shadow-3:      rgba(15, 20, 25, .14);
   --c-shadow-4:      rgba(15, 20, 25, .22);
   --c-scrim:         rgba(15, 20, 25, .42);
-  --c-scrim-soft:    rgba(247, 249, 250, .66);
 
   /* 常驻浮层（保存条）自带一套反色，否则它在两种主题下都得靠 `!important` 救 */
   --c-bar-bg:        #20262d;
@@ -447,9 +446,10 @@
   --nav-r2: 13px;
   --nav-seam-depth: 22px;
   --nav-hover-lift: -1px;
-  /* 一级上方留出的跑道：三球从按钮顶边升起 26px + 辉光，36px 能完整露出；
-     窄屏在文件末尾降到 32px。 */
-  --nav-top-gap: 36px;
+  /* 一级上方留出的跑道（2026-11-08 上移）：维护者反馈导航太靠下，36→16px。
+     三球回弹同步收进行程（navBurst 关键帧 -26px→-12px），16px 内完整露出；
+     窄屏在文件末尾降到 14px。 */
+  --nav-top-gap: 16px;
   /* 有效的中等浮层阴影：drop-shadow 不接受第四段 spread，旧写法的 -14/-26 会被整条丢弃。 */
   --nav-float-shadow:
     drop-shadow(0 10px 20px color-mix(in srgb, var(--c-nav-shadow) 85%, transparent))
@@ -541,7 +541,6 @@ html[data-theme="dark"] {
   --c-shadow-3:      rgba(0, 0, 0, .52);
   --c-shadow-4:      rgba(0, 0, 0, .66);
   --c-scrim:         rgba(0, 0, 0, .58);
-  --c-scrim-soft:    rgba(8, 9, 11, .66);
 
   /* 保存条在深色下翻成**浅**色条（沿用原来的反相逻辑，只把底色接到级1 深底上） */
   --c-bar-bg:        #e8eaed;
@@ -1295,7 +1294,7 @@ body.eg-on .nav2wrap::before {
   55% { opacity: .85; }
   100% {
     opacity: 0;
-    transform: translate(calc(-50% + var(--dx2, var(--dx, 0px))), calc(-50% - 26px)) scale(.55);
+    transform: translate(calc(-50% + var(--dx2, var(--dx, 0px))), calc(-50% - 12px)) scale(.55);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -2259,27 +2258,16 @@ details.det pre { margin: 0; }
 .busy {
   position: fixed; inset: 0; z-index: 70; display: grid; place-items: center;
   padding: var(--s4);
-  background: var(--c-scrim-soft); backdrop-filter: blur(3px);
+  /* 深色常驻（2026-11-08 维护者点名：加载动画只用夜晚版）：
+     纱幕本身压暗，白字/白光晕在深浅主题下都成立，不再跟随面板主题换色板。 */
+  background: rgba(8, 12, 26, .55); backdrop-filter: blur(3px);
   font-size: var(--t-md); color: var(--c-text-1);
 
   /* ── 处理中加载动画的**本地色板**（2026-10-23）──────────────────────────
      动效取自 Uiverse.io · dexter-st/popular-puma-86（旋转光晕环 + 逐字呼吸 + 星点），
-     原件是深底白字；这里把颜色拆成本地令牌，浅色/深色各一套：
-     · 浅色：墨蓝字 + 蓝调光晕（白字压在白纱上等于没字）
-     · 深色：近白字 + 冷白光晕（贴近原件）
+     原件是深底白字；这里把颜色拆成本地令牌。2026-11-08 起只保留深色一套
+     （近白字 + 冷白光晕，贴近原件）；浅色主题下由上面的暗纱幕承托。
      ⚠️ 只在本组件内生效，不往全站加令牌：这套色只为这一个动画服务。 */
-  --ld-ink: #31446c;
-  --ld-ink-shadow: rgba(47, 80, 155, .35);
-  --ld-glint: rgba(255, 255, 255, .95);
-  --ld-halo: rgba(47, 80, 155, .06);
-  --ld-halo-glow: rgba(47, 80, 155, .18);
-  --ld-ring-1: rgba(255, 255, 255, .55);
-  --ld-ring-2: rgba(120, 170, 245, .75);
-  --ld-ring-3: rgba(47, 80, 155, .35);
-  --ld-star: #31446c;
-  --ld-star-glow: rgba(47, 80, 155, .45);
-}
-html[data-theme="dark"] .busy {
   --ld-ink: #f2f7ff;
   --ld-ink-shadow: rgba(0, 0, 0, .55);
   --ld-glint: rgba(255, 255, 255, .95);
@@ -2559,12 +2547,22 @@ html[data-theme="dark"] .busy {
   .bgpick-cap { display: none; }
 }
 
+/* 小屏缩放（2026-11-08 · 维护者反馈「小屏幕里导航非常大」）：
+   900px 起整档缩小行高/项高/肩线/字号，dock 宽度由 layoutNavDock 按内容自适应。
+   --h-nav2 不动（灵动岛高度取自它，岛内两行读数按 34px 排布）。 */
+@media (max-width: 900px) {
+  :root { --h-nav1: 42px; --h-nav-item: 33px; --nav-shoulder: 36px; --nav-rise: 11px; --nav-r2: 11px; }
+  .grp { padding: 0 var(--s3); font-size: 12px; }
+  .sub { height: 26px; }
+  .nav2-ind { height: 26px; top: 4px; }
+}
+
 @media (max-width: 720px) {
   /* ⚠️ B39：这一档 `--h-nav2` 改成 **48px = `--h-nav1`**（原 44px）。
      B39 起两层是**同一行**，"齐平"靠的就是这两个令牌相等 ——
      不等时灵动岛比二级栏高 4px，**而两级导航看起来都正常**。
      ⚠️ 少改这一处同样会退化，只是退化形态从"被压掉一截"变成"没齐平"。 */
-  :root { --h-nav1: 48px; --h-nav-item: 36px; --h-nav2: 30px; --nav-rise: 11.5px; --nav-r2: 11.5px; }
+  :root { --h-nav1: 40px; --h-nav-item: 30px; --h-nav2: 30px; --nav-rise: 10.5px; --nav-r2: 10.5px; }
   .grp { padding: 0 var(--s3); font-size: var(--t-sm); }
   .nav-inner { padding: 0 var(--s1); }
   .sub { height: 24px; padding: 0 var(--s3); }
@@ -3188,7 +3186,7 @@ html[data-vt="circle-blur"]::view-transition-new(root) {
    保留旧声明以兼容并行会话的 §136 静态契约，这里用后置有效规则覆盖。
    工厂浮层的 top 固定在顶栏下沿，不再参与导航跑道/告警条测量。 */
 .nav-dock-wrap { filter: var(--nav-float-shadow); }
-@media (max-width: 720px) { :root { --nav-top-gap: 32px; } }
+@media (max-width: 720px) { :root { --nav-top-gap: 14px; } }
 
 /* ══════════════════════════════════════════════════════════════════════════
    工厂域方向性转场（2026-10-27）
